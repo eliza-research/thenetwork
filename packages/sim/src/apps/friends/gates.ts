@@ -45,6 +45,7 @@ export function officialGates(p: FriendsMetrics[], r: FriendsMetrics[], o: Frien
     { id: "borough30", gate: "No borough with >= 30 members below 0.7x V14", value: `${b30.min.toFixed(2)} (${b30.worst}; worst seed ${b30.worstSeed.toFixed(2)})`, pass: b30.min >= 0.7 },
     { id: "minors", gate: "Declared-minor proposals and contacts = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.declaredMinorContacts + m.safety.declaredMinorProposals, 0)), pass: p.every(m => m.safety.declaredMinorContacts === 0 && m.safety.declaredMinorProposals === 0) },
     { id: "known_adversary", gate: "Known-adversary contacts = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.knownAdversaryContacts, 0)), pass: p.every(m => m.safety.knownAdversaryContacts === 0) },
+    { id: "openness", gate: "Proposals and meetups that violate a stated friendship openness = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.opennessViolations, 0)), pass: p.every(m => m.safety.opennessViolations === 0) },
     { id: "total_harm", gate: "Total harm events <= 0.5x random", value: `${h.toFixed(1)} vs ${hr.toFixed(1)} per seed (${(h / hr).toFixed(2)}x)`, pass: h <= 0.5 * hr },
   ];
 }
@@ -59,6 +60,10 @@ export function trackedMetrics(p: FriendsMetrics[], r: FriendsMetrics[]): GateRe
     { id: "t_undetected_harm", gate: "Harm from undetected adversaries vs random (target <= 0.5x)", value: `${hu.toFixed(1)} vs ${hur.toFixed(1)} per seed (${(hu / hur).toFixed(2)}x)`, pass: hu <= 0.5 * hur },
     { id: "t_repeat_handoff", gate: `Repeat rate counting crew handoffs as repeats, ${w} weeks (target >= 30%)`, value: `${pct(M(p, m => m.repeatRateWithHandoff))} (without handoffs ${pct(M(p, m => m.repeatRate))})`, pass: M(p, m => m.repeatRateWithHandoff) >= 0.3 },
   ];
+}
+
+export function opennessGroups(p: FriendsMetrics[]): GateResult {
+  return { id: "t_openness_groups", gate: "Members proposed at least once by stated friendship openness (target: lowest group >= 0.8x anyone)", value: Object.entries(p[0]?.proposedByOpenness ?? {}).map(([g]) => `${g} ${pct(M(p, m => m.proposedByOpenness[g]?.share ?? 0))} (n ${M(p, m => m.proposedByOpenness[g]?.n ?? 0).toFixed(0)})`).join(", "), pass: Math.min(...Object.keys(p[0]?.proposedByOpenness ?? {}).map(g => M(p, m => m.proposedByOpenness[g]?.share ?? 0))) >= 0.8 * M(p, m => m.proposedByOpenness.anyone?.share ?? 0) };
 }
 
 /** The first proposed gate set (historical; not the launch criteria). */

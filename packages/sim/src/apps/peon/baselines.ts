@@ -20,6 +20,7 @@ import { candidates, jobs, type CandidateProfile, type JobProfile } from "@thene
 import { pairKey, World } from "@thenetwork/engine/src/world.ts";
 import { hash32 } from "@thenetwork/core";
 import { u01 } from "./oracle.ts";
+import { peonMarket } from "./yardstick.ts";
 import type { PeonSnapshot } from "./snapshot.ts";
 import { CAND_CAP, JOB_BOARD_WEEKLY, type Intro, type PeonMatcher, type PeonWorld } from "./world.ts";
 
@@ -120,7 +121,9 @@ export function packMatcher(o: PackMatcherOptions = {}): PeonMatcher {
   return {
     name: o.name ?? "peon-pack", blindReview: o.blindReview ?? true, audit: o.audit ?? "flag", relayScreen: o.relayScreen ?? true,
     async propose(ctx) {
-      const r = await runEngine(ctx.snapshot, { ...PEON_ENGINE_CONFIG, ...(o.cfg ?? {}), seed: hash32(ctx.seed, "engine", ctx.week) }, { pack });
+      const cfg = { ...PEON_ENGINE_CONFIG, ...(o.cfg ?? {}), seed: hash32(ctx.seed, "engine", ctx.week) };
+      const r = await runEngine(ctx.snapshot, cfg, { pack });
+      ctx.markets.push(peonMarket(ctx.week, ctx.snapshot, cfg, pack, r));
       // The tool's applicant pool: every candidate it scored for a job (after the hard filters).
       for (const s of r.runLog.scored) for (const id of s.participants) if (id.startsWith("c-")) ctx.assessed.add(id);
       const intros = r.proposals.map(p => {

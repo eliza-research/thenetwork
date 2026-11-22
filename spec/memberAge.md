@@ -37,7 +37,7 @@ pure def lawJoiningNeedsUsableAge(age: int): bool =
 
 ### Matching requires a usable age of at least 18
 
-Members aged 13 through 17 can use Eliza for themselves. A known adult age is necessary for matching. App and opportunity rules can require more.
+Members aged 13 through 17 can use Eliza for themselves. A known adult age is necessary for matching. App and opportunity rules can require more. The romance item gates of the ntwrk and slop packs and the peon job seat gate now call this rule through `canBeMatched`; before, they compared the age with 18 and let an age above 120 through.
 
 ```quint
 pure val adultAge: int = 18

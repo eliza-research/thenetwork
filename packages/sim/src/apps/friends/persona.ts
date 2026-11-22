@@ -9,6 +9,7 @@ import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { FIRST_NAMES, LAST_NAMES } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
 import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
+import { friendsMutuallyOpen, type FriendStatement } from "../../../../core/src/generated/mutualOpenness.ts";
 
 export type { RichnessTier };
 export const FRIEND_ACTIVITIES = ACTIVITIES.filter(a => !FRIENDS_EXCLUDED_ACTIVITIES.has(a.id));
@@ -69,6 +70,19 @@ export interface FriendsStated {
   newToCity: boolean;
   /** Outcomes of the onboarding checks (selfie liveness; facial age estimation with an ID fallback under 25). */
   verify: { liveness: VerifyResult; age: VerifyResult };
+  gender?: FriendGender;
+  openGender?: "women" | "men";
+}
+
+export type FriendGender = "woman" | "man" | "nonbinary";
+const FRIEND_GENDER_SHARES = { unstated: 0.15, nonbinary: 0.01, woman: 0.53, womenOnly: 0.2, menOnly: 0.08 };
+function drawFriendGender(seed: number | string, i: number, statedOpenness: boolean): Pick<FriendsStated, "gender" | "openGender"> {
+  const S = FRIEND_GENDER_SHARES, r = new Rng(hash32("friends-gender", seed, i));
+  const u = r.next();
+  const gender: FriendGender = u < S.nonbinary ? "nonbinary" : u < S.nonbinary + S.woman ? "woman" : "man";
+  const stated = !r.bool(S.unstated);
+  const openGender = !statedOpenness ? undefined : gender === "woman" && r.bool(S.womenOnly) ? "women" as const : gender === "man" && r.bool(S.menOnly) ? "men" as const : undefined;
+  return { ...(stated ? { gender } : {}), ...(openGender ? { openGender } : {}) };
 }
 
 export interface FriendsPersona { id: MemberId; name: string; hidden: FriendsHidden; stated: FriendsStated }
@@ -88,6 +102,7 @@ export interface FriendsGenOptions {
    * truth is on `hidden.planted`.
    */
   planted?: PlantedSpec;
+  statedOpenness?: boolean;
 }
 
 export const FRIENDS_DEFAULTS = {
@@ -200,7 +215,7 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
       id, name, hidden,
       stated: {
         claimedAge, home: homeH.id, often: oftenU, lifeStage, activities: [...new Set(stated)], energy: energyBucket(clamp01(energy + sr.normal(0, 0.15))),
-        groupPref, usuallyFree, maxTravel: statedTol, newToCity, verify,
+        groupPref, usuallyFree, maxTravel: statedTol, newToCity, verify, ...drawFriendGender(o.seed, i, o.statedOpenness === true),
       },
     });
   }
@@ -227,15 +242,13 @@ function verification(r: Rng, h: FriendsHidden, claimedAge: number): FriendsStat
 }
 
 export const hoodOf = (id: string) => byId.get(id)!;
-/**
- * Uniform [0, 1) from any key parts. hash32 (FNV-1a) alone barely moves its high bits when only the
- * last part changes by one character (week 3 vs week 4), so draws keyed that way are correlated; the
- * murmur3 finalizer fixes the avalanche.
- */
-export function h01(...parts: (string | number)[]): number {
-  let h = hash32(...parts);
-  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
-}
 /** Real members: true adults who are not adversaries (per-member metrics use these). */
 export const isReal = (p: FriendsPersona) => !p.hidden.isMinor && !p.hidden.adversary;
+
+export function statedFriend(p: FriendsPersona): FriendStatement {
+  const G = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" } as const;
+  const O = { women: "FriendsWithWomen", men: "FriendsWithMen" } as const;
+  return { friendGender: p.stated.gender ? G[p.stated.gender] : "GenderUnstated", friendOpenness: p.stated.openGender ? O[p.stated.openGender] : "FriendsWithAnyone" };
+}
+export const friendsStatedOpen = (a: FriendsPersona, b: FriendsPersona): boolean => friendsMutuallyOpen(statedFriend(a), statedFriend(b));
+export const openGroupOf = (p: FriendsPersona): string => (p.stated.openGender === "women" ? "women only" : p.stated.openGender === "men" ? "men only" : "anyone");

@@ -117,6 +117,53 @@ Hard flags make a proposal incompatible: minor, adversary, exes, romance mismatc
 
 The LLM persona agent writes only the words, given the decision the choice model has already made. `llmDecides: true` lets the model choose instead, for A/B experiments.
 
+### Planted worlds and the matching block
+
+`src/planted.ts` builds the planted worlds of the matching block (`scripts/sim/matching.ts`, `pnpm run sim --only matching`). The block runs the generic match core and `runEngine` on these worlds, engine only, offline and deterministic, for each pack and each lane that the pack offers. Pinned: seeds 1-10, exactness against brute force at N 100, 200 and 400, the engine gates at N 200 (the shipped config, plus a greedy-only arm for stability), the scale ladder (`scripts/sim/scale.ts`, seed 1) at N 1,000 to 20,000 for every lane and at 50,000 and 100,000 for each pack's primary lane, and the harder worlds up to N 5,000. `--quick`: seeds 1-3, exactness at N 100 and 200, the ladder to N 20,000, the harder worlds up to N 5,000. The block reads the hidden truth (planted circles and standing); network code never reads it. The ladder, its gates and its commands are in `docs/results/2026-11-17-scale-ladder.md`.
+
+The engine gates also measure how well the pair value ranks the hidden truth (tracked). The block takes each unordered pair that the pair gate admits once: in a Peers lane by entity id, in a TwoSided lane from the Offering side. A pair is good when its hidden worse-side utility reaches the lane's utility floor. The block records, for each run, the rank AUC of the pair value against the good pairs (ties count half, and a pair with no value scores lowest) and the share of good pairs that the search of either member keeps. It also records the number of proposed pairs in each run, which is the sample of the standing correlation.
+
+The default world:
+
+- The vocabulary has about two topics per circle, so circles rarely share a topic set.
+- Each planned offer or seek tag is replaced by a random skill with probability 1 - purity. Members outside a circle draw all four at random.
+- Minors never hold a Date membership.
+- In slop, each circle has one date pool, so a planted circle stays mutually compatible: a mixed circle alternates women and men who seek each other, and a same-pool circle seeks its own pool. Outside a circle, most women and men seek the other pool and a fifth seek their own. The age range of each member covers every circle mate, and a circle shares one ZIP inside every member's radius, so planted pairs stay feasible.
+
+The default world is easy, and partly circular with the engine's own terms (`docs/research/2026-11-17-matching-optimization/R9-test-data-quality.md`, section 4). Tags, area, home, ZIP, pool and age window all identify the circle. Observed standing correlates about 0.98 with hidden standing. The hidden utility rewards shared interests and offer-seek exchange, which are the engine's own affinity and complement terms.
+
+The option `world` selects an opt-in harder world. The default (`"planted"`) draws exactly as before this option existed.
+
+| World | What changes |
+|---|---|
+| `zipf` | Tag popularity is Zipf (exponent 1; rank k has weight 1/k) over a vocabulary of 200 (friends: its 42 activity tags). Interest counts are heavy-tailed (Pareto, alpha 1.5, minimum 2, at most half the vocabulary). |
+| `dense` | 42 tags. Each member holds each tag independently with probability 0.19 (as in the friends app world), so a member can hold no tag. Offers and seeks are uniform. Tags carry no circle signal. |
+| `graded` | Each interest comes, with probability 0.5, from the topics of the member's own circle and of a second random circle (circles overlap), else from the whole vocabulary. Offers, seeks and traits identify the circle only half the time (purity 0.5). Observed standing is noisy (SD 25, 15, 10, 6 by reviewed evidence; 30% newcomers). Area, home, ZIP, date pool and age window do not follow the circle. The hidden utility still rewards stated interest overlap and exchange, so this world is less circular, not free of circularity. |
+| `one-segment` | Every member is in one segment (one home, ZIP, pool, travel limit and radius), with one hidden and observed standing (50) and the widest age window (18-70). |
+| `one-tag` | The default world plus one interest that every member holds. |
+| `ties` | `one-segment` with identical interests, offers, seeks and traits, so every feasible pair value ties. |
+
+### Common random numbers
+
+A simulated member's decision draws its coin from a key that says what the decision is about. It never uses a proposal index, a message id or a meeting sequence number. When two engines ask the same person about the same thing in the same week, both runs use the same coin. A change in what an engine proposes then moves only the decisions that the change really touches. The results are in `docs/results/2026-11-17-paired-evaluation.md`.
+
+- `src/coins.ts` holds the keys. `Coins.key(meaning, instance)` gives the n-th distinct instance of a meaning the key `meaning#n`. Each event keeps its own independent draw, so the marginal probabilities do not change. When the same instance asks again, it gets the same key. `h01` is a uniform draw from key parts: FNV-1a with the murmur3 finalizer, because FNV-1a alone moves its high bits too little when only the last part changes. `signature` is the sorted member set of a group.
+- The ntwrk world (`src/world.ts`) keys the persona context of each delivered message by the persona, the message type, its category or activity, the people it is about and the day. It keys a meeting by its participants at the first booking and its day. Participants who join later do not change the key, so the booking and every flake check use the same key. The n-th invite of a member makes the same friend in every run. `src/oracle.ts` keys accept and show by people, category and week, and keys the anonymous probe by persona, category, kind and week. The time-conflict draw (`agent/availability.ts`) is keyed by persona and meeting time, with the proposal as its instance. Plan options, plan shows and crew opt-ins (`agent/policy.ts`, `plans.ts`) are keyed by persona, activity and time.
+- The slop world keys the anonymous probe by member and week inside `SlopBehavior.answerProbe`. The flow key stays the method's argument, so hooks can still identify the flow. Everything after the reveal is keyed by the pair and the week. The relay exchange gets the same pair key.
+- The friends world keys the probe by member, week, kind and activity, because an anonymous probe does not name the group. The reveal, attendance, meetup and feedback coins are keyed by the people at the table. A crew's own sessions are keyed by activity, members and week, with the crew id as the instance.
+
+### Expected value (simulator only)
+
+For each proposal the harness computes from the oracle the probability of the good outcome before any coin is drawn. The engine never sees these numbers.
+
+- friends: `FriendsOracle.expectedGood` takes 32 fixed Monte Carlo draws of the replies and yeses of the invited members, the booked option (the one that most yes-sayers are free for), attendance, chemistry and side noise. `meetup(..., draw)` with a draw number uses Monte Carlo chemistry, because chemistry is not known before people meet. Fatigue is 0, and caps and back-outs are left out, so the value does not depend on the order of the week's proposals. `FriendsMetrics.expected` gives the mean per proposal and the expected good meetups per real member.
+- slop: `SlopOracle.pDateHappens` (no earlier probes this week) times the `softLabel` P(good) and P(second date). The value is 0 when the proposal is dropped before its first probe. `SlopMetrics.expected` gives the mean per proposal and the expected good dates per safe member.
+- ntwrk: for each proposal, the product of the accept and show probabilities when the oracle rates the meeting good, else 0 (`ArmResult.expected` in `packages/network/harness/experiment.ts`).
+
+### A/A arms and paired statistics
+
+`src/paired.ts` has no imports, so `scripts/sim/paired.ts` can load it beside another tree. `paired` gives the mean difference B - A, its SD and SE, a 95% t interval, the correlation and the minimum detectable effect (alpha 0.05 two-sided, power 0.8). `overlap` is the Jaccard overlap of two runs' events. The neutral perturbations are simulator only: `idsSalted` shows a matcher every member under a salted alias and maps its proposals back to the real ids, and `saltSeed` gives an unrelated engine seed for salt 1 or more. The `$engineSalt` option of `apps/slop/packEval.ts` `runArm` uses it.
+
 ### Ground-truth isolation
 
 Hidden cards stay inside the simulator process. The Network gets only `ctx.send` and `ctx.snapshot()`. Personas reveal their public side, with noise, through the conversation.
@@ -246,5 +293,5 @@ The leaky-stub negative control fails the canary scenario, which confirms the ca
 
 - **Persona and judge model.** Persona agents and judges both default to `gpt-6-luna` (founder decision 2026-10-05). Judges use a different prompt and pass, not a different model. Use a different judge model (`JUDGE_MODEL`) for audits only; a cross-family audit needs founder approval because it sends data to another provider.
 - **JSON retries.** Reasoning models (`gpt-6-luna`, and the earlier `qwen-3.8-27b`) sometimes spend their whole token budget on reasoning and returns empty or truncated content. `chatJson`, and the judges' `ask`, retry with a larger budget, and persona agents fall back to template text if the model still fails.
-- **Stub network.** It is a test fixture, not a reference implementation. It parses replies with keywords, makes only random pairs (groups come only from an engine or a scenario), and has no relay or contact swap.
+- **Stub network.** It is a test fixture, not a reference implementation. It parses replies with keywords, makes only random pairs (groups come only from an engine or a scenario), and has no relay or contact swap. It sends nothing to a member who texted STOP, booked reminders and feedback requests included. It sends the same info or concierge text to the same member only once in 10 minutes.
 - **Not built yet:** world shocks (rainy weekend, holiday, invite burst) and a synthetic event calendar are not modeled yet.

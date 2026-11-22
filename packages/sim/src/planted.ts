@@ -22,8 +22,11 @@ import { FRIENDS_ACTIVITY_TAGS } from "@thenetwork/engine/src/packs/friends/vect
 import { appearanceFacet } from "@thenetwork/engine/src/packs/slop/appearance.ts";
 import { SLOTS as DATE_SLOTS } from "@thenetwork/engine/src/packs/slop/profile.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
-import { cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
+import {
+  cofounderIntentDetails, cofounderIntentObjective, unstatedCofounderFacts, type CofounderCommitment, type CofounderFacts, type CofounderIdea, type CofounderImportance, type CofounderRole,
+} from "../../core/src/generated/cofounderIntent.ts";
 import { laneOffered } from "../../core/src/generated/matchLane.ts";
+import type { DatingStatement, FriendStatement, StatedGender, TransOpenness } from "../../core/src/generated/mutualOpenness.ts";
 import { FIRST_NAMES, NEIGHBORHOODS } from "./taxonomy.ts";
 import { plantedPeonHire } from "./planted-peon.ts";
 
@@ -176,6 +179,81 @@ function datePools(seed: number | string, circle: number, position: number | und
   const is: DateGender = position % 2 ? "man" : "woman";
   return { is, seeks: otherBinary(is) };
 }
+function dateOpenness(seed: number | string, circle: number, position: number | undefined, is: DateGender, seeks: DateGender, r: Rng): string[] {
+  const extra = DATE_GENDERS.filter(g => g !== seeks);
+  const more: DateGender[] = r.bool(1 / 12) ? extra : r.bool(0.25) ? [r.pick(extra)] : [];
+  const tags = more.map(g => `romance:seeks:${g}`);
+  if (circle >= 0 && position !== undefined) {
+    if (hash32("planted-trans-circle", seed, circle) % 5 !== 0) return tags;
+    return [...tags, ...(position === 0 ? ["romance:trans:yes"] : []), "romance:open_trans:open"];
+  }
+  const trans = r.bool(0.1);
+  if (trans) tags.push("romance:trans:yes");
+  const answer = trans
+    ? r.weighted<string | undefined>([["open", 0.7], ["only", 0.2], [undefined, 0.1]])
+    : r.weighted<string | undefined>([["open", 0.25], ["not_open", 0.55], [undefined, 0.2]]);
+  if (answer) tags.push(`romance:open_trans:${answer}`);
+  if (is === "nonbinary" && r.bool(0.3)) tags.push(`romance:shown_to:${r.pick(["woman", "man"])}`);
+  return tags;
+}
+function friendOpennessTags(seed: number | string, circle: number, r: Rng): string[] {
+  if (circle >= 0 && hash32("planted-women-circle", seed, circle) % 4 === 0) return [`${FT.gender}woman`, `${FT.openGender}women`];
+  const gender = r.weighted<string>([["woman", 0.5], ["man", 0.48], ["nonbinary", 0.02]]);
+  const tags = r.bool(0.85) ? [`${FT.gender}${gender}`] : [];
+  if (circle < 0 && tags.length && gender === "woman" && r.bool(0.2)) tags.push(`${FT.openGender}women`);
+  if (circle < 0 && tags.length && gender === "man" && r.bool(0.1)) tags.push(`${FT.openGender}men`);
+  return tags;
+}
+const COFOUNDER_ROLES = ["technical", "business", "both"], COFOUNDER_COMMITMENTS = ["full_time_now", "part_time", "full_time_later"], COFOUNDER_IDEAS = ["has_idea", "open", "either"];
+function cofounderFactTags(seed: number | string, circle: number, position: number | undefined, r: Rng): string[] {
+  if (circle >= 0 && position !== undefined) {
+    const commitment = COFOUNDER_COMMITMENTS[hash32("planted-commitment", seed, circle) % COFOUNDER_COMMITMENTS.length]!;
+    return [`cofounder:role:${COFOUNDER_ROLES[Math.min(position, 2)]!}`, "cofounder:must:role", `cofounder:commitment:${commitment}`, "cofounder:must:commitment", "cofounder:idea:either"];
+  }
+  const tags = [`cofounder:role:${r.pick(COFOUNDER_ROLES)}`, `cofounder:commitment:${r.pick(COFOUNDER_COMMITMENTS)}`, `cofounder:idea:${r.pick(COFOUNDER_IDEAS)}`];
+  tags.push(r.bool(1 / 3) ? "cofounder:must:role" : "cofounder:prefer:role");
+  tags.push(r.bool(0.25) ? "cofounder:must:commitment" : "cofounder:prefer:commitment");
+  return tags;
+}
+const STATED_GENDER: Readonly<Record<string, StatedGender>> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
+const TRANS_ANSWER: Readonly<Record<string, TransOpenness>> = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans" };
+const COFOUNDER_ROLE: Readonly<Record<string, CofounderRole>> = { technical: "TechnicalCofounder", business: "BusinessCofounder", both: "BothRoles" };
+const COFOUNDER_COMMITMENT: Readonly<Record<string, CofounderCommitment>> = { full_time_now: "FullTimeNow", part_time: "PartTimeNow", full_time_later: "FullTimeLater" };
+const COFOUNDER_IDEA: Readonly<Record<string, CofounderIdea>> = { has_idea: "HasIdea", open: "OpenToIdea", either: "IdeaEither" };
+export function statedOpenness(input: EngineInput): { dating: Map<MemberId, DatingStatement>; friend: Map<MemberId, FriendStatement>; cofounder: Map<MemberId, CofounderFacts> } {
+  const tags = new Map<MemberId, string[]>();
+  for (const f of input.facets) tags.set(f.memberId, [...(tags.get(f.memberId) ?? []), ...f.tags]);
+  const dating = new Map<MemberId, DatingStatement>(), friend = new Map<MemberId, FriendStatement>(), cofounder = new Map<MemberId, CofounderFacts>();
+  for (const [id, ts] of tags) {
+    const all = (pre: string) => ts.filter(t => t.startsWith(pre)).map(t => t.slice(pre.length));
+    const seeks = all("romance:seeks:"), shown = all("romance:shown_to:");
+    dating.set(id, {
+      gender: STATED_GENDER[all("romance:is:")[0] ?? ""] ?? "GenderUnstated",
+      trans: all("romance:trans:")[0] === "yes" ? "StatedTrans" : all("romance:trans:")[0] === "no" ? "StatedNotTrans" : "TransNotStated",
+      seeksWomen: seeks.includes("woman"), seeksMen: seeks.includes("man"), seeksNonbinary: seeks.includes("nonbinary"),
+      shownToWomenSeekers: shown.includes("woman"), shownToMenSeekers: shown.includes("man"),
+      transOpenness: TRANS_ANSWER[all("romance:open_trans:")[0] ?? ""] ?? "TransUnanswered",
+    });
+    const open = all(FT.openGender)[0];
+    friend.set(id, { friendGender: STATED_GENDER[all(FT.gender)[0] ?? ""] ?? "GenderUnstated", friendOpenness: open === "women" ? "FriendsWithWomen" : open === "men" ? "FriendsWithMen" : "FriendsWithAnyone" });
+    const importance = (field: string): CofounderImportance => (ts.includes(`cofounder:must:${field}`) ? "MustHave" : ts.includes(`cofounder:prefer:${field}`) ? "Preference" : "DoNotMind");
+    cofounder.set(id, {
+      ...unstatedCofounderFacts,
+      role: COFOUNDER_ROLE[all("cofounder:role:")[0] ?? ""] ?? "RoleUnstated", roleImportance: importance("role"),
+      commitment: COFOUNDER_COMMITMENT[all("cofounder:commitment:")[0] ?? ""] ?? "CommitmentUnstated", commitmentImportance: importance("commitment"),
+      idea: COFOUNDER_IDEA[all("cofounder:idea:")[0] ?? ""] ?? "IdeaUnstated", ideaImportance: importance("idea"),
+    });
+  }
+  return { dating, friend, cofounder };
+}
+export function statedIdentityGroup(lane: PlantedLane, d: DatingStatement | undefined, f: FriendStatement | undefined): string {
+  if (lane === "Friend") return f?.friendOpenness === "FriendsWithWomen" ? "women only" : f?.friendOpenness === "FriendsWithMen" ? "men only" : "anyone";
+  if (!d) return "-";
+  if (d.trans === "StatedTrans") return "trans (stated)";
+  if (d.gender === "GenderNonbinary") return "nonbinary";
+  if ([d.seeksWomen, d.seeksMen, d.seeksNonbinary].filter(x => x).length > 1) return "multi-pool seeker";
+  return d.gender === "GenderWoman" ? "woman" : "man";
+}
 const DATE_ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
 const DATE_PLANS = [...DATE_ACTIVITIES.map(a => `activity:${a}`), ...DATE_SLOTS.map(s => `free:${s}`)];
 const DATE_ZIPS = { nyc: ZIPS.filter(z => z.market === "nyc"), sf: ZIPS.filter(z => z.market === "sf") };
@@ -202,8 +280,36 @@ export interface PlantedUtilityParams {
 }
 export const PLANTED_UTILITY: PlantedUtilityParams = { interestWeight: 1, exchangeWeight: 1, sameCircleBonus: 200, freeGap: 5, gapPenaltyPerPoint: 10 };
 
+export const PLANTED_WORLDS = ["planted", "zipf", "dense", "graded", "one-segment", "one-tag", "ties"] as const;
+export type PlantedWorld = (typeof PLANTED_WORLDS)[number];
+const ZIPF_VOCABULARY = 200, ZIPF_EXPONENT = 1, TAIL_ALPHA = 1.5, TAIL_MINIMUM = 2;
+const DENSE_TAGS = 42, DENSE_SHARE = 0.19;
+const GRADED_PURITY = 0.5, GRADED_NEWCOMERS = 0.3, GRADED_OBSERVATION_SD = [25, 15, 10, 6] as const;
+const FLAT_STANDING = 50;
+
+function tagDraw(size: number, zipf: boolean): (r: Rng, taken: ReadonlySet<number>) => number {
+  if (!zipf) return (r, taken) => freshIndex(r, size, taken);
+  const cumulative: number[] = [];
+  for (let k = 0, total = 0; k < size; k++) cumulative.push(total += 1 / (k + 1) ** ZIPF_EXPONENT);
+  const total = cumulative[size - 1]!;
+  return (r, taken) => {
+    for (;;) {
+      const u = r.next() * total;
+      let lo = 0, hi = size - 1;
+      while (lo < hi) { const mid = (lo + hi) >>> 1; if (cumulative[mid]! <= u) lo = mid + 1; else hi = mid; }
+      if (!taken.has(lo)) return lo;
+    }
+  };
+}
+function drawDistinct(r: Rng, count: number, draw: (r: Rng, taken: ReadonlySet<number>) => number): number[] {
+  const taken = new Set<number>();
+  while (taken.size < count) taken.add(draw(r, taken));
+  return [...taken];
+}
+
 export interface PlantedWorldOptions extends Omit<PlantedSpec, "seed" | "dimensions"> {
   seed: number | string;
+  world?: PlantedWorld;
   /** Members (50 to 100,000 in the gates; any n >= 1 works). */
   n: number;
   /** Lanes every member joins (default ["Friend"]). */
@@ -281,11 +387,13 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
   const apps = [...new Set(lanes.map(appOf))];
   const app = apps[0]!;
   const now = o.now ?? PLANTED_EPOCH;
-  const minorShare = o.minorShare ?? 0.02, offeringShare = o.offeringShare ?? 0.5, newcomerShare = o.newcomerShare ?? 0.15;
+  const world = o.world ?? "planted", flat = world === "one-segment" || world === "ties";
+  const minorShare = o.minorShare ?? 0.02, offeringShare = o.offeringShare ?? 0.5;
+  const newcomerShare = o.newcomerShare ?? (world === "graded" ? GRADED_NEWCOMERS : 0.15);
   const utility = { ...PLANTED_UTILITY, ...o.utility };
   if (utility.interestWeight < 0 || utility.exchangeWeight < 0 || utility.interestWeight + utility.exchangeWeight <= 0) throw new RangeError("planted: utility weights");
   const laneOffset = Object.fromEntries(PLANTED_LANES.map(l => [l, o.laneOffset?.[l] ?? (l === "Mentor" ? 25 : 0)])) as Record<PlantedLane, number>;
-  const purity = o.purity ?? PLANTED_DEFAULTS.purity;
+  const purity = o.purity ?? (world === "graded" ? GRADED_PURITY : PLANTED_DEFAULTS.purity);
   const root = new Rng(hash32("planted-world", o.seed));
 
   // Seats: id, market, age. Minors never join a circle.
@@ -298,8 +406,7 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     seats.push({ id: `p${String(i).padStart(width, "0")}`, market, age, eligible: canBeMatched(age) });
   }
   const topicsPerCircle = o.topicsPerCircle ?? PLANTED_DEFAULTS.topicsPerCircle;
-  // About two topics per circle in the vocabulary: circles rarely share a topic set.
-  const vocabSize = Math.max(48, Math.ceil((o.n * topicsPerCircle) / 9));
+  const vocabSize = world === "zipf" ? ZIPF_VOCABULARY : world === "dense" ? DENSE_TAGS : Math.max(48, Math.ceil((o.n * topicsPerCircle) / 9));
   const topics = app === "friends" ? FRIENDS_TOPICS : names("topic", vocabSize);
   const latent = plantLatent({ ...o, seed: o.seed, dimensions: lanes.length }, seats, topics, o.seed);
 
@@ -307,14 +414,45 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
   // Offering side receive complementary roles. Dates share the same cohort plans.
   const skills = app === "friends" ? FRIENDS_TOPICS : app === "slop" ? DATE_PLANS : names("skill", vocabSize);
   const twoSided = lanes.length === 1 && TWO_SIDED.has(lanes[0]!) ? lanes[0] : undefined;
+  const skillDraw = tagDraw(skills.length, world === "zipf");
   const planned = new Map<MemberId, { pool: readonly number[]; position: number }>();
   latent.circles.forEach((ids, c) => {
-    const pool = distinctIndices(root.fork("skills", c), Math.max(4, ids.length), skills.length);
+    const pool = world === "zipf"
+      ? drawDistinct(root.fork("skills", c), Math.min(Math.max(4, ids.length), skills.length), skillDraw)
+      : distinctIndices(root.fork("skills", c), Math.max(4, ids.length), skills.length);
     ids.forEach((id, position) => planned.set(id, { pool, position }));
   });
   const marketOf = new Map(seats.map(s => [s.id, s.market]));
   const ageOf = new Map(seats.map(s => [s.id, s.age]));
   const circleArea = latent.circles.map((ids, c) => root.fork("area", c).pick(NEIGHBORHOODS[marketOf.get(ids[0]!)!]));
+
+  const topicDraw = tagDraw(topics.length, world === "zipf");
+  const circleTopics = new Map<number, readonly number[]>();
+  const topicsOfCircle = (c: number): readonly number[] => {
+    let own = circleTopics.get(c);
+    if (!own) circleTopics.set(c, own = drawDistinct(root.fork(`${world}-circle-topics`, c), Math.min(topicsPerCircle, topics.length), topicDraw));
+    return own;
+  };
+  const memberTopics = (i: number, mark: PlantedMark): readonly string[] => {
+    if (world === "planted" || world === "one-segment") return mark.topics;
+    if (world === "one-tag") return [...new Set([topics[0]!, ...mark.topics])].sort();
+    if (world === "ties") return topics.slice(0, topicsPerCircle);
+    const r = root.fork("world-topics", i);
+    if (world === "dense") return topics.filter(() => r.bool(DENSE_SHARE));
+    const [ilo, ihi] = o.interestsPerMember ?? PLANTED_DEFAULTS.interestsPerMember;
+    const own = mark.circle < 0 ? []
+      : world === "graded" ? [...topicsOfCircle(mark.circle), ...topicsOfCircle(r.int(0, latent.circles.length - 1))]
+      : topicsOfCircle(mark.circle);
+    const count = world === "zipf"
+      ? Math.min(Math.floor(topics.length / 2), Math.floor(TAIL_MINIMUM / (1 - r.next()) ** (1 / TAIL_ALPHA)))
+      : Math.min(topics.length, r.int(ilo, ihi));
+    const taken = new Set<number>();
+    while (taken.size < count) {
+      const left = own.filter(t => !taken.has(t));
+      taken.add(left.length && r.bool(purity) ? r.pick(left) : topicDraw(r, taken));
+    }
+    return [...taken].sort((a, b) => a - b).map(t => topics[t]!);
+  };
 
   const members: Member[] = [], facets: Facet[] = [], intents: Intent[] = [], presence: Presence[] = [];
   const truthMembers: PlantedMember[] = [];
@@ -323,36 +461,37 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     const seat = seats[i]!, id = seat.id, adult = seat.eligible;
     const r = root.fork("member", i);
     const mark = latent.marks.get(id)!;
+    const interests = memberTopics(i, mark);
     const newcomer = r.bool(newcomerShare);
     const memberships: Partial<Record<PlantedLane, PlantedMembership>> = {};
     lanes.forEach((lane, d) => {
-      if (lane === "Date" && !adult) return; // dating is adults only; minors never hold a Date membership
+      if (lane === "Date" && !adult) return;
       const side: PlantedSide = TWO_SIDED.has(lane) ? (r.bool(offeringShare) ? "Offering" : "Seeking") : "Peer";
       const off = laneOffset[lane], up = Math.ceil(off / 2);
-      const standing = clampStanding(mark.standing[d]! + (side === "Offering" ? up : side === "Seeking" ? up - off : 0));
-      const reviewed = newcomer ? 0 : r.int(1, 3);
-      const observed = clampStanding(r.normal(standing, OBSERVATION_SD[reviewed]!));
+      const standing = flat ? FLAT_STANDING : clampStanding(mark.standing[d]! + (side === "Offering" ? up : side === "Seeking" ? up - off : 0));
+      const reviewed = flat ? 3 : newcomer ? 0 : r.int(1, 3);
+      const observed = flat ? FLAT_STANDING : clampStanding(r.normal(standing, (world === "graded" ? GRADED_OBSERVATION_SD : OBSERVATION_SD)[reviewed]!));
       memberships[lane] = { side, standing, observed, reviewed };
     });
-    // Noise: each planned tag is replaced by a random skill with P = 1 - purity; unplanted members draw all four.
-    const plan = planned.get(id);
+    const plan = world === "dense" ? undefined : planned.get(id);
     const taken = new Set<number>();
     const pickSkill = (plannedSkill: number | undefined) => {
-      const k = plannedSkill !== undefined && !taken.has(plannedSkill) && r.bool(purity) ? plannedSkill : freshIndex(r, skills.length, taken);
+      const k = plannedSkill !== undefined && !taken.has(plannedSkill) && r.bool(purity) ? plannedSkill : skillDraw(r, taken);
       taken.add(k);
       return k;
     };
     const side = twoSided ? memberships[twoSided]?.side : undefined;
     const position = app === "slop" || side === "Offering" ? 0 : side === "Seeking" ? 2 : plan?.position ?? 0;
     const drawSkill = (offset: number) => pickSkill(plan ? plan.pool[(position + offset) % plan.pool.length] : undefined);
-    const offerIdx = [drawSkill(0), drawSkill(1)];
-    const seekIdx = [drawSkill(2), drawSkill(3)];
+    const offerIdx = world === "ties" ? [0, 1] : [drawSkill(0), drawSkill(1)];
+    const seekIdx = world === "ties" ? [2, 3] : [drawSkill(2), drawSkill(3)];
     const planIdx = [...offerIdx, ...seekIdx];
     const level = app === "slop" ? 1 : plantedLevel(twoSided ? memberships[twoSided]!.standing : mark.standing[0]!);
     const offers = (app === "slop" ? planIdx : offerIdx).map(k => ({ skill: skills[k]!, level }));
     const seeks = (app === "slop" ? planIdx : seekIdx).map(k => ({ skill: skills[k]!, level }));
 
-    const area = mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(NEIGHBORHOODS[seat.market]);
+    const area = flat ? NEIGHBORHOODS[seat.market][0]!
+      : world !== "graded" && mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(NEIGHBORHOODS[seat.market]);
     const joinedAt = now - (newcomer ? r.int(0, 13) : r.int(14, 400)) * DAY;
     const categories = [...new Set(lanes.map(l => LANE_CATEGORY[l]))].filter(c => adult || c !== "romance");
     // Some cohorts are actively seeking an introduction this week. Keep the other cohorts on normal participation.
@@ -366,21 +505,23 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
       },
       joinedAt, age: seat.age, unansweredProactive: 0, apps: [...apps],
     });
-    const friendsArea = FRIENDS_NEIGHBORHOODS[hash32("friends-home", mark.circle < 0 ? id : mark.circle) % FRIENDS_NEIGHBORHOODS.length]!.id;
+    const friendsHome = flat ? 0 : hash32("friends-home", mark.circle < 0 || world === "graded" ? id : mark.circle) % FRIENDS_NEIGHBORHOODS.length;
+    const friendsArea = FRIENDS_NEIGHBORHOODS[friendsHome]!.id;
     presence.push({ memberId: id, city: seat.market, type: "home", areas: [app === "friends" ? friendsArea : area] });
     let f = 0;
     const add = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], provenance: Facet["provenance"] = "said", facetApp: AppId = app) =>
       facets.push({ id: `${id}-f${f++}`, memberId: id, kind, value, tags, scope, provenance, confidence: 0.9, app: facetApp });
     const trait = (label: string, count: number) => {
+      if (flat) return 0;
       const draw = r.fork("trait", label);
       return mark.circle >= 0 && draw.bool(purity)
         ? hash32("planted-trait", o.seed, mark.circle, label) % count
         : draw.int(0, count - 1);
     };
-    add("interest", `into ${mark.topics.join(", ")}`, [...mark.topics], "shareable");
+    add("interest", `into ${interests.join(", ")}`, [...interests], "shareable");
     for (const s of offers) add("offer", `can help with ${s.skill}`, [s.skill, `level:${s.level}`], "shareable");
     for (const s of seeks) add("desire", `looking for help with ${s.skill}`, [s.skill, `level:${s.level}`], "matchable");
-    const plantedMember: PlantedMember = { id, ordinal: i, market: seat.market, adult, circle: mark.circle, topics: mark.topics, offers, seeks, lanes: memberships };
+    const plantedMember: PlantedMember = { id, ordinal: i, market: seat.market, adult, circle: mark.circle, topics: interests, offers, seeks, lanes: memberships };
     for (const lane of lanes) {
       const m = memberships[lane];
       if (!m) continue;
@@ -390,6 +531,8 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
       const intent: Intent = { id: `${id}-i-${lane}`, memberId: id, app: appOf(lane), objective: LANE_OBJECTIVE[lane][m.side],
         category: LANE_CATEGORY[lane], horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY),
         ...(lane === "Cofounder" ? { details: cofounderIntentDetails } : {}) };
+      if (adult && lane === "Cofounder")
+        add("fact", "Cofounder work facts", cofounderFactTags(o.seed, mark.circle, planned.get(id)?.position, r.fork("cofounder facts")), "matchable", "said", appOf(lane));
       if (adult && app === "peon" && lane === "Hire") {
         const hire = plantedPeonHire(plantedMember, intent, area);
         intents.push(hire.intent);
@@ -404,20 +547,19 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
       add("preference", "Social energy", [`${FT.energy}${FRIENDS_ENERGY[trait("energy", FRIENDS_ENERGY.length)]!}`], "agent_private");
       add("preference", "Travel limit", [`${FT.maxTravel}${FRIENDS_TOLERANCE[trait("max travel", FRIENDS_TOLERANCE.length)]!}`], "agent_private");
       add("fact", "Verified by the service", [`${FT.liveness}${VERIFY_PASS}`, `${FT.age}${VERIFY_PASS}`], "agent_private", "connected_source");
+      const friendTags = flat ? [] : friendOpennessTags(o.seed, world === "graded" ? -1 : mark.circle, r.fork("friend openness"));
+      if (friendTags.length) add("preference", "Friendship openness", friendTags, "agent_private");
     }
     if (adult && app === "slop" && memberships.Date) {
       const zips = DATE_ZIPS[seat.market];
-      // One pool each, chosen per circle so that a planted circle stays mutually compatible: a mixed
-      // circle alternates women and men who seek each other, a same-pool circle seeks its own pool.
-      // Outside a circle, women and men mostly seek the other and a fifth seek their own.
-      const { is, seeks } = datePools(o.seed, mark.circle, planned.get(id)?.position, r.fork("orientation"));
+      const { is, seeks } = flat ? { is: "nonbinary" as const, seeks: "nonbinary" as const }
+        : datePools(o.seed, world === "graded" ? -1 : mark.circle, planned.get(id)?.position, r.fork("orientation"));
       const maxMiles = DATE_MAX_MILES[trait("max miles", DATE_MAX_MILES.length)]!;
-      // The age range also covers every circle mate, so the age windows keep planted pairs feasible.
-      const mates = mark.circle >= 0 ? latent.circles[mark.circle]!.map(m => ageOf.get(m)!) : [seat.age];
-      const ageLo = Math.max(18, Math.min(seat.age - 8, ...mates)), ageHi = Math.max(seat.age + 8, ...mates);
-      add("preference", "Dating preferences", [`romance:is:${is}`, `romance:seeks:${seeks}`, `romance:age:${ageLo}-${ageHi}`, "slop:scope:city", `slop:max_miles:${maxMiles}`], "agent_private");
-      // A circle shares one ZIP (one coarse cell), inside every member's radius.
-      const zip = mark.circle >= 0 ? zips[hash32("planted-zip", o.seed, mark.circle) % zips.length]! : r.fork("zip").pick(zips);
+      const mates = mark.circle >= 0 && world !== "graded" ? latent.circles[mark.circle]!.map(m => ageOf.get(m)!) : [seat.age];
+      const ageLo = flat ? 18 : Math.max(18, Math.min(seat.age - 8, ...mates)), ageHi = flat ? 70 : Math.max(seat.age + 8, ...mates);
+      const openness = flat ? [] : dateOpenness(o.seed, world === "graded" ? -1 : mark.circle, planned.get(id)?.position, is, seeks, r.fork("openness"));
+      add("preference", "Dating preferences", [`romance:is:${is}`, `romance:seeks:${seeks}`, `romance:age:${ageLo}-${ageHi}`, "slop:scope:city", `slop:max_miles:${maxMiles}`, ...openness], "agent_private");
+      const zip = flat ? zips[0]! : mark.circle >= 0 && world !== "graded" ? zips[hash32("planted-zip", o.seed, mark.circle) % zips.length]! : r.fork("zip").pick(zips);
       add("fact", "Home ZIP", [`slop:zip:${zip.zip}`], "agent_private");
       add("goal", "Long-term dating", ["slop:goal:long_term"], "matchable");
       const wantsKids = trait("wants kids", 2) === 0 ? "yes" : "no";

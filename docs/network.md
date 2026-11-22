@@ -338,6 +338,14 @@ Standing requests:
 - A repeat ask within 3 days ("still hoping to...") is the same request. It does not open a new one.
 - A member who already has an open opportunity hears "let's see how that goes first".
 
+Eligibility and the request search read their data once per pass:
+
+- `eligible()` tells if a member can go into a new opportunity now and be in New York for it this week. A requester (`asked`) is not interrupted, so a requester needs room on the Blooio streak only for logistics. All other members need room for an interruption.
+- `busy()` tells if a member is in an open opportunity (other than `exceptOpp`) and did not leave it. It reads every opportunity, or only the member's own list from `oppsByMember()` when one pass checks many members. That list holds each opportunity where the member is a participant or has a status, in stored order. A list with one of these missing gives a wrong "not busy", so give `busy()` only a list that `oppsByMember()` made.
+- `searchFor()` builds `oppsByMember()` and `metRecently()` once for each request, not once for each candidate. `metRecently()` gives every person who had a meeting (held or a no-show) with the requester in the last 60 days.
+- `snapshotRows()` indexes the member records and the presence and facet rows of each member once for each snapshot object, in snapshot order. The production snapshot adds the account status to the member record (service/snapshot.ts). Do not change a snapshot in place: a row added to its arrays after the index is built is not seen until the snapshot is built again. Member ids are unique in a snapshot. If an id occurs two times, the last record is used.
+- `learnedLive()` lets a fresh learned statement stand in for a missing or expired stored intent of the same want. It reads only the stored intents of that member.
+
 ### 5.2 Plans and plans buddies
 
 1. The member gets 3 nearby public venues that fit their interests.

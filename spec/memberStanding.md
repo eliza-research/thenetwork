@@ -87,24 +87,49 @@ pure def lawStandingMonotoneInEvidence(evidence: List[StandingEvidence], extra: 
   standingFromEvidence(evidence.append(extra)) >= standingFromEvidence(evidence)
 ```
 
-### A private photo rating maps onto the standing scale for dating
+### A private photo rating gives a percentile among rated adults of the same market and pool
 
-The Date lane uses the overall Clef rating in permille. The rating is clamped to 0 through 1000 and scaled to the standing range. Every standing estimate stays in the standing range.
+The Date lane does not trust the scale of the photo rating, because the shipped rating weights are not fitted and multimodal models compress their ratings. The standing is the member's midrank percentile among the rated adults of the same market and dating pool: the members rated lower count in full, and the members with an equal rating, the member included, count at half. The shell counts the members from the matching snapshot. A pool with fewer than twenty rated adults gives no percentile: each member in it keeps the middle standing with the widest uncertainty. A member with no usable rating also keeps the middle standing. The Friend lane has no vertical dimension, so every Friend member has the middle standing with uncertainty 0. Every standing estimate stays in the standing range. This rule replaces the linear map from the rating to the standing range, because that map assumed a calibrated rating scale that the shipped weights do not give.
 
 ```quint
-pure val standingRatingScale: int = 1000
+pure val standingMiddle: int = Lane::standingCeiling / 2
+pure val standingPoolMinimum: int = 20
 
-pure def standingFromRating(ratingPermille: int): int =
-  val rating = if (ratingPermille < 0) 0 else if (ratingPermille > standingRatingScale) standingRatingScale else ratingPermille
-  if (standingRatingScale > 0) rating * Lane::standingCeiling / standingRatingScale else 0
+pure def standingPoolReady(rated: int): bool = rated >= standingPoolMinimum
 
-pure val ratingPermilleValues = Set(-1, 0, 9, 10, 500, 999, 1000, 1001)
+pure def standingPercentile(below: int, equal: int, rated: int): int =
+  if (rated > 0) standingClamp(((2 * below + equal) * Lane::standingCeiling) / (2 * rated)) else standingMiddle
 
-pure def lawStandingBounded(evidence: List[StandingEvidence], ratingPermille: int): bool =
+pure val belowValues = Set(-1, 0, 1, 9, 19, 20, 39)
+pure val equalValues = Set(-1, 0, 1, 2, 20)
+pure val ratedValues = Set(-1, 0, 1, 19, 20, 21, 40)
+
+pure def lawStandingBounded(evidence: List[StandingEvidence], below: int, equal: int, rated: int): bool =
   val fromFacts = standingFromEvidence(evidence)
-  val fromRating = standingFromRating(ratingPermille)
+  val fromRating = standingPercentile(below, equal, rated)
   fromFacts >= 0 and fromFacts <= Lane::standingCeiling and
     fromRating >= 0 and fromRating <= Lane::standingCeiling
+
+pure def lawStandingPercentileRisesWithRank(below: int, equal: int, rated: int): bool =
+  (below >= 0 and equal >= 0) implies
+    standingPercentile(below + 1, equal, rated) >= standingPercentile(below, equal, rated)
+```
+
+### One rated adult who joins a pool moves another member's percentile by at most the weekly step
+
+The percentile of a member must stay stable when unrelated members join. In a pool of at least twenty rated adults, one more rated adult, whether rated lower, higher or the same, moves another member's percentile by at most five points. One rated adult who leaves a pool that keeps at least twenty does the same. The weekly step then limits how fast the standing used in matching follows the percentile. This rule is new, because a percentile depends on the other members of the pool, and the stability bound must be stated for it.
+
+```quint
+pure def standingMovesWithinStep(before: int, after: int): bool =
+  after - before <= standingWeeklyStep and before - after <= standingWeeklyStep
+
+pure def lawStandingPercentileStableWhenOneJoins(below: int, equal: int, rated: int): bool =
+  val held = standingPercentile(below, equal, rated)
+  (below >= 0 and equal >= 1 and below + equal <= rated and standingPoolReady(rated)) implies and {
+    standingMovesWithinStep(held, standingPercentile(below, equal, rated + 1)),
+    standingMovesWithinStep(held, standingPercentile(below + 1, equal, rated + 1)),
+    standingMovesWithinStep(held, standingPercentile(below, equal + 1, rated + 1)),
+  }
 ```
 
 ## Story: Treat a new member with wide uncertainty
@@ -139,6 +164,56 @@ pure def lawUncertaintyBounded(reviewedCount: int): bool =
 ```quint
 pure def lawUncertaintyShrinks(reviewedCount: int): bool =
   standingUncertainty(reviewedCount + 1) <= standingUncertainty(reviewedCount)
+```
+
+### A photo rating's uncertainty narrows with rated photos and widens with their disagreement
+
+A rating from fewer than two rated photos has no measure of agreement, so it keeps the widest uncertainty. From two rated photos, each rated photo narrows the uncertainty as a reviewed fact does, and the disagreement between the photos widens it again. The spread is the sample standard deviation of the overall per-photo ratings, on the rater's z scale, and a rater reports it only from two or more rated photos. The shell measures the disagreement as two percentiles in the member's pool: the percentile of the rating one spread below the member's rating, and the percentile one spread above it. Half the distance between them, rounded up, is added to the uncertainty, so a wider disagreement on either side never narrows it. The result stays between the floor and the lane ceiling. A rating stored without a measured disagreement, from a rater or an earlier build that did not measure it, counts as photos that disagree across the whole pool and keeps the widest uncertainty until the member is rated again. This rule is new, because the production rater did not report its photo count, so every rated member had the uncertainty of one photo whatever the number of photos or their agreement. The simulated rater reports a photo count and a spread from its own per-photo noise, but the count does not change the error of its rating, so the slop block exercises this rule and cannot show that it makes matching better.
+
+```quint
+pure def ratingSpreadPoints(spreadLow: int, spreadHigh: int): int =
+  if (spreadHigh > spreadLow) (spreadHigh - spreadLow + 1) / 2 else 0
+
+pure def ratingUncertainty(photos: int, spreadLow: int, spreadHigh: int): int =
+  val widened = standingUncertainty(photos) + ratingSpreadPoints(spreadLow, spreadHigh)
+  if (photos < 2) Lane::standingUncertaintyCeiling
+  else if (widened > Lane::standingUncertaintyCeiling) Lane::standingUncertaintyCeiling
+  else widened
+
+pure val photosValues = Set(-1, 0, 1, 2, 4, 9, 10)
+pure val spreadLowValues = Set(-1, 0, 30, 50)
+pure val spreadHighValues = Set(0, 31, 50, 51, 70, 100)
+pure val widerValues = Set(0, 51, 60, 100, 101)
+pure val lowerValues = Set(-2, -1, 0, 29, 30, 50)
+
+pure def lawRatingUncertaintyBounded(photos: int, spreadLow: int, spreadHigh: int): bool =
+  val spread = ratingUncertainty(photos, spreadLow, spreadHigh)
+  spread >= standingUncertaintyFloor and spread <= Lane::standingUncertaintyCeiling and
+    (photos < 2 implies spread == Lane::standingUncertaintyCeiling)
+
+pure def lawRatingUncertaintyShrinksWithPhotos(photos: int, spreadLow: int, spreadHigh: int): bool =
+  ratingUncertainty(photos + 1, spreadLow, spreadHigh) <= ratingUncertainty(photos, spreadLow, spreadHigh)
+
+pure def lawRatingUncertaintyGrowsWithSpread(photos: int, spreadLow: int, spreadHigh: int, wider: int, lower: int): bool =
+  (wider >= spreadHigh implies
+    ratingUncertainty(photos, spreadLow, wider) >= ratingUncertainty(photos, spreadLow, spreadHigh)) and
+  (lower <= spreadLow implies
+    ratingUncertainty(photos, lower, spreadHigh) >= ratingUncertainty(photos, spreadLow, spreadHigh))
+```
+
+### A standing that staff reviewed as a property of the offer has the floor uncertainty
+
+Some standings are not estimates of a person. The role level of a job seat is a property of the seat: the employer states it in the posting, and staff review the posting before the seat can be matched. So the seat's standing is its level, and its uncertainty is the floor, whatever count of facts the shell finds. A standing that is estimated from a member's facts keeps the count rule above. The shell passes true only for a standing that the reviewed offer itself defines. In the peon pack (`packages/engine/src/packs/peon/match.ts`, `standing`), a seat passes true, because an unverified seat has no membership. A candidate passes false with a count of reviewed facts: the level itself when a trusted source gave it, and each demonstrated or interview-verified skill at or above that level. The count takes one fact for each facet, as in the network pack, so a trusted facet that carries both the level and a skill is one reviewed fact.
+
+Decision (2026-11-17): the Hire lane gives a staff-reviewed posting level the floor uncertainty, not the uncertainty of one reviewed fact. Before, a posting got 18 points, so the parity check (band 15 plus both uncertainties) admitted a gap of 15 + 18 + 18 = 51 points against a candidate with one reviewed fact, which is two role levels of 25 points. On the peon block's pinned seeds, 142 of 4,767 proposed pairs with a backed candidate level had a role-level gap above one level. With the floor, the Hire limit is the band plus 3 plus the candidate's uncertainty, so no candidate is shown two levels away. The Hire band is 22, so the limit runs from 28 to 45 points and every candidate can be shown one level up or down. The measured effect and the band decision are in the Hire prose of the [lane table](matchLane.md).
+
+```quint
+pure def standingUncertaintyFor(reviewedCount: int, reviewedProperty: bool): int =
+  if (reviewedProperty) standingUncertaintyFloor else standingUncertainty(reviewedCount)
+
+pure def lawReviewedPropertyHasFloorUncertainty(reviewedCount: int, reviewedProperty: bool): bool =
+  standingUncertaintyFor(reviewedCount, true) == standingUncertaintyFloor and
+    standingUncertaintyFor(reviewedCount, true) <= standingUncertaintyFor(reviewedCount, reviewedProperty)
 ```
 
 ## Story: Move standing slowly

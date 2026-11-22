@@ -41,7 +41,7 @@ Fixed 2026-11-22 (spec/safetyCase.md, "A block or a report about a person closes
 Open code defects (the model keeps the intended rule in `safety`; a `*Code` action shows each one):
 
 - ST-D2 (`relayAgeSignalReachesAgePolicy`, in `openAgeDefects`). The engine relay sets `ageSignal` when a member's own relayed text says they are under 18 (`packages/engine/src/relay.ts`, `minor:signal`), but `packages/network/src/relay.ts` and `store.ts` only store it; nothing calls the minors policy, so the member stays matchable. Checked again 2026-11-19.
-- ST-D4 (`slotFromMeeting`, W3-237, low, matching data). `slotOf` in `packages/engine/src/packs/slop/profile.ts` reads `getUTCDay` and `getUTCHours`, so an 8 pm or a 2 pm New York meeting gets the wrong attended slot. The 2026-11-18 comparison left this rule in `safety` although `w3_237SlotZoneTest` shows it fail; on 2026-11-19 `quint:check` found it (seed `0x7c32d`), and it is now `openSlotDefect`, out of `safety`.
+- ST-D4 (`slotFromMeeting`, W3-237, low, matching data), fixed 2026-11-22. `slotOf` in `packages/engine/src/packs/slop/profile.ts` read `getUTCDay` and `getUTCHours`, so an 8 pm or a 2 pm New York meeting got the wrong attended slot. It now reads `localParts` in the zone of the member's home city, and `slotFromMeeting` is back in `safety`. `packages/engine/test/slop-attended-slot.integration.test.ts` checks a New York and a Los Angeles meeting. Abstraction: the model has one zone, so `slotNY` takes every meeting in New York time. The code reads the zone of each member's home city, and New York when the home city has no zone, because an interaction record has no meeting city. The two agree for a member whose home city is New York. For a member who dates in a city of another zone, the code gives the slot of the meeting in the home-city zone, which the model does not show. This note is new: a review found that the note said "where the members are", which is not what the code does.
 
 
 Code locations in the module body name functions of `vibestack-matching` (no line numbers). Bounds note: `packs.ts` sets `plans: false` for slop and peon, so the model's plans on those apps stand for a group item of any app.
@@ -192,8 +192,6 @@ module safety_trust {
   pure val REPORT_KINDS = Set("harassment", "no_show", "minor")
   // New York local hours of a meeting: a weekend afternoon, a 7 pm and an 8 pm date
   pure val HOURS = Set(14, 19, 20)
-  // New York is UTC-4 (summer) or UTC-5 (winter); the model uses -4 (the smaller shift)
-  pure val NY_UTC_SHIFT = 4
   pure val NO_TRUST: Trust = { rec: false, score: 0, level: "ok", reportsFrom: Set(), lastDecay: -1, strangers: Set(), blocksMade: List() }
   pure val NO_SRC: Src = { msgs: 0, reporters: Set(), staff: false, other: 0 }
   pure val NO_WHO: Who = { asked: false, at: 0, verb: "", kind: "", target: "" }
@@ -209,13 +207,8 @@ module safety_trust {
   // Day 0 is a Monday.
   pure def slotFor(dow: int, eve: bool): int =
     if (dow <= 4) (if (eve) dow else -1) else if (dow == 5) (if (eve) 6 else 5) else (if (eve) 8 else 7)
-  // The rule: the slot of the meeting where the members are (New York local time).
+  // The slot of the meeting in New York time, the one zone of the model (ST-D4 note: the code reads the home-city zone, W3-237).
   pure def slotNY(day: int, hour: int): int = slotFor(day % 7, hour >= 17)
-  // The code: slotOf reads getUTCDay and getUTCHours (W3-237, SD-442 remainder).
-  pure def slotUTC(day: int, hour: int): int = {
-    val h = hour + NY_UTC_SHIFT
-    slotFor((day + h / 24) % 7, h % 24 >= 17)
-  }
   // decisions.ts outboundKind (a proved LemmaScript core; the model calls it, it does not re-prove it)
   pure def outboundKind(reply: bool, causal: bool, replyingTo: bool, safetyMeta: bool, proactive: bool): str =
     if (reply and (causal or replyingTo)) "reply" else if (safetyMeta) "safety" else if (proactive) "proactive" else "transactional"
@@ -624,10 +617,10 @@ module safety_trust {
   }
 
   // onFeedback's record: one per answer, about this member (by), at the meeting time (SD-222, SD-442), with the
-  // people the booked plan reached (bookedTold, SD-044), and the slot that slotOf reads from it (UTC, W3-237).
+  // people the booked plan reached (bookedTold, SD-044), and the slot that slotOf reads from it (local time, W3-237).
   pure def recordOf(o: Opp, m: Mid, selfNoShow: bool): Inter =
     { parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: o.meetingAt, meetingAt: o.meetingAt, by: m,
-      hour: o.meetHour, slot: slotUTC(o.meetingAt, o.meetHour) }
+      hour: o.meetHour, slot: slotNY(o.meetingAt, o.meetHour) }
 
   // The answer to the check-in after a meeting (onFeedback). `intent`: what the member means ("fine",
   // "report", "selfNoShow"); `reader`: checkInReport's output (an oracle). After SD-067 a happy answer reads
@@ -1180,10 +1173,8 @@ module safety_trust {
   val noShowCountsAbsentOnly = ALL_MIDS.forall(m => s.live.get(m) implies
     noShows(s, m) <= OPP_IDS.filter(k => s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted").size())
 
-  // profile.ts attendedSlots are the slots the member attended: the meeting's slot, not the answer's (days of
-  // the week; the UTC hour that slotOf still reads is not modelled). SD-442 (fixed in 581888d, in part).
-  // W3-225: the model now has the New York hour and slotOf's UTC reading; this rule fails for an 8 pm or a 2 pm
-  // meeting (W3-237, SD-442 remainder; engine slop profile.ts).
+  // profile.ts attendedSlots are the slots the member attended: the meeting's slot, not the answer's, in the
+  // member's local time. SD-442 (fixed in 581888d); W3-237 (fixed 2026-11-22: slotOf reads localParts).
   val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies i.slot == slotNY(i.meetingAt, i.hour))
 
   // PRD F23 "'report' from any channel ... Reports create a safety case"; the slop and peon check-in copy. A
@@ -1243,25 +1234,20 @@ module safety_trust {
     safetyNoticeImmediate,
     banRevokesShares,
     // wave 4 rules (code items; see docs/research/quint-findings/safety_trust.md). The ones that fail in the
-    // intended design are listed below `safety` (openAgeDefects, openSlotDefect, reporterStandingDecision).
+    // intended design are listed below `safety` (openAgeDefects, reporterStandingDecision).
     bannedNeverMatchable,
     engineHoldVisible,
     strangersCannotEngineHold,
     checkInReportIntended,
     reportSubjectMeant,
     everyMetReportFiled,
+    slotFromMeeting,
   }
 
   // OPEN DEFECTS (2026-11-18), not in safety. relayAgeSignalReachesAgePolicy: nothing in the Network or the
   // service reads RelayRecord.ageSignal (packages/network/src/relay.ts and store.ts only store it), so a member
   // whose own relayed text says they are under 18 stays matchable.
   val openAgeDefects = relayAgeSignalReachesAgePolicy
-
-  // OPEN DEFECT (2026-11-19), not in safety. slotFromMeeting (W3-237, SD-442 remainder): the engine's slop
-  // profile.ts slotOf reads getUTCDay and getUTCHours of the record time, so an 8 pm or a 2 pm New York meeting
-  // gets the wrong attended slot. The 2026-11-18 comparison left the rule in `safety` although
-  // w3_237SlotZoneTest shows it fail; quint:check found it (seed 0x7c32d: bookDateAt at 20 h, meet, disclose).
-  val openSlotDefect = slotFromMeeting
 
   // FOUNDER DECISION (spec silent), not in safety. reporterNotHeld and reporterStandingKept (SD-072, W3-234):
   // reportHeld (pendingReportHold, the generated reportRestrictsMatching of spec/safetyCase.md) reads no reporter
@@ -1818,14 +1804,14 @@ module safety_trust {
       .then(tick(14))
       .expect(credibleT(s.trust.get(ANA_S), s.now))
 
-  // W3-225, W3-237 (SD-442 remainder): an 8 pm New York date on a Monday is 00:00 UTC on Tuesday; slotOf gives
-  // no evening slot.
+  // W3-225, W3-237 (SD-442 remainder): an 8 pm New York date on a Monday is 00:00 UTC on Tuesday; slotOf reads
+  // New York time and gives the Monday evening slot.
   run w3_237SlotZoneTest =
     init
       .then(bookDateAt("o1", "slop", "ana", "ben", 20, false))
       .then(meet("o1", Set()))
       .then(checkIn("o1", ANA_S, "fine", "none"))
-      .expect(not(slotFromMeeting) and s.inters.exists(i => i.slot == -1))
+      .expect(slotFromMeeting and s.inters.exists(i => i.slot == 0))
 
   // W3-232, W3-237: ben's own relayed text says he is 16; nothing reads the ageSignal and ben stays matchable.
   run w3_232RelayAgeSignalTest =

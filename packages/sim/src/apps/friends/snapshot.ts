@@ -26,7 +26,8 @@ import { fromLocal } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import { SLOT_TIME } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { verifyTag } from "@thenetwork/engine/src/packs/friends/info.ts";
-import { SLOTS, h01, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
+import { h01 } from "../../coins.ts";
+import { SLOTS, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
 
 export const NYC_TZ = "America/New_York";
 /** Monday 2026-10-12 (local): week 0 of every friends run. */
@@ -163,6 +164,8 @@ export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week = 0): 
   for (const tag of cues) f("fact", "flagged for review", [tag], "agent_private", { provenance: "inferred", inferred: true, confirmedByMember: false, confidence: 0.6 });
   if (cues.length && clearedAt(p, week)) f("fact", "review cleared", ["review:cleared"], "agent_private", { provenance: "inferred" });
   f("fact", `private note ${p.hidden.canary}`, [], "agent_private");
+  if (S.gender) f("fact", `gender ${S.gender}`, [`friends:gender:${S.gender}`], "agent_private");
+  if (S.openGender) f("preference", `friendship openness ${S.openGender}`, [`friends:open_gender:${S.openGender}`], "agent_private");
   return out;
 }
 

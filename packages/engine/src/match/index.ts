@@ -1,22 +1,12 @@
-// The candidate index: blocks of compatible partners sorted by (segment, standing, ordinal), with one
-// posting list per tag for offers, seeks and interests. Each segment is one range of block positions,
-// so a standing window inside a segment is one binary-search range. A posting holds block positions
-// in ascending order, so the window of a segment is one binary-search range in every posting too.
-// Memory is O(total tags); the build is one sort per block, O(T log T).
 import { blockKey, compareText, partnerSide, type MatchProfile } from "./profile.ts";
 
-/** Tag id -> positions in `CandidateBlock.profiles`, ascending. */
 export type Postings = ReadonlyMap<number, readonly number[]>;
 
-/** Block positions [start, end). */
 export interface Span { readonly start: number; readonly end: number }
-/** The positions of one segment; `segment` undefined holds the profiles without a segment. */
-export interface SegmentSpan extends Span { readonly segment: string | undefined }
+interface SegmentSpan extends Span { readonly segment: string | undefined; readonly packClasses: readonly number[] }
 
 export interface CandidateBlock {
-  /** Sorted by (segment asc, profiles without a segment first; standing asc; ordinal asc). */
   readonly profiles: readonly MatchProfile[];
-  /** One entry per segment present, in block order. */
   readonly segments: readonly SegmentSpan[];
   readonly byOrdinal: ReadonlyMap<number, MatchProfile>;
   readonly offers: Postings;
@@ -45,12 +35,18 @@ function compareSegment(x: MatchProfile, y: MatchProfile): number {
   return compareText(a, b);
 }
 
+function packClassesOf(profiles: readonly MatchProfile[]): number[] {
+  const classes = new Set<number>();
+  for (const p of profiles) if (p.packClass !== undefined) classes.add(p.packClass);
+  return [...classes].sort((x, y) => x - y);
+}
+
 function segmentsOf(sorted: readonly MatchProfile[]): SegmentSpan[] {
   const spans: SegmentSpan[] = [];
   let start = 0;
   for (let i = 1; i <= sorted.length; i++) {
     if (i < sorted.length && compareSegment(sorted[i - 1], sorted[i]) === 0) continue;
-    spans.push({ segment: sorted[start].segment?.own, start, end: i });
+    spans.push({ segment: sorted[start].segment?.own, start, end: i, packClasses: packClassesOf(sorted.slice(start, i)) });
     start = i;
   }
   return spans;
@@ -78,6 +74,5 @@ export function buildCandidateIndex(profiles: readonly MatchProfile[]): Candidat
   return { blocks };
 }
 
-/** The block of compatible partners of `profile` in its market. */
 export const partnerBlock = (index: CandidateIndex, profile: MatchProfile): CandidateBlock | undefined =>
   index.blocks.get(blockKey(profile.lane, partnerSide(profile.lane, profile.side), profile.market));

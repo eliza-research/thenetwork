@@ -1,26 +1,8 @@
-// slopPack's typed view of a member: the dating profile parsed from facet tags, plus what the
-// Network itself recorded about them (probe answers, dates, feedback, reports). Everything here is
-// agent-visible (the member's own agent may use agent_private facets to FILTER and RANK; it never
-// shows them to anyone). Hidden truth never reaches this module: it reads only the EngineInput.
-//
-// Facet tag schema (docs/results/2026-10-08-slop-world.md "Snapshot mapping"; the platform writes
-// the same tags from the onboarding chat):
-//   preference  romance:is:<g> romance:seeks:<g> romance:age:<lo>-<hi>
-//   fact        slop:zip:<zip>; slop:area:<neighborhood> (used when the zip is not in the table)
-//   preference  slop:scope:city | slop:scope:radius:<mi> | slop:scope:multi:<c1>,<c2>; slop:max_miles:<mi>
-//   goal        slop:goal:<casual|long_term|unsure>
-//   fact        slop:smoking:* slop:drinking:* slop:has_kids:* slop:wants_kids:* slop:religion:*
-//               slop:religion_importance:<0-3> slop:politics:*
-//   boundary    slop:dealbreaker:<smoker|heavy_drinker|has_kids|wants_kids|no_kids_ever|religious|nonreligious|right_politics|left_politics>
-//   interest    <tag>; preference slop:activity:<activity>; availability_pattern slop:free:<slot>
-//   preference  slop:wants:<dim>=<x>; fact slop:self:<dim>=<x>
-//   fact        safety:<scam_pattern|age_signal|photo_mismatch|hostile_language|relationship_signal>
-// NO RACE OR ETHNICITY: there is no field for it; tags that look like one are dropped here, so no
-// rule, score or explanation can read them (PRD 40.5; conformance test "no race filters").
 import type { City, Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched, DAY, temporaryPresenceWindow } from "@thenetwork/core";
+import { canBeMatched, CITY_TZ, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
+import type { DatingStatement, StatedGender, TransOpenness } from "../../../../core/src/generated/mutualOpenness.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
 import { pairKey } from "../../world.ts";
@@ -33,82 +15,53 @@ export type Scope = { mode: "city" } | { mode: "radius"; miles: number } | { mod
 export const SLOTS = ["mon_eve", "tue_eve", "wed_eve", "thu_eve", "fri_eve", "sat_day", "sat_eve", "sun_day", "sun_eve"] as const;
 export type Slot = (typeof SLOTS)[number];
 
-/** Tags never read for matching (no race / ethnicity field, filter or inference). */
 const NEVER_USED = /^(race|ethnicity|skin|nationality|immigration|hiv|sti|health|income)\b|:(race|ethnicity)\b/i;
 
 export interface History {
-  /** Probes this member answered yes / no / never answered (interaction records). */
   yes: number; no: number; silent: number;
-  /** Booked first dates that happened, no-shows (either side), back-outs at the reveal by this member. */
   dates: number; noShows: number; backouts: number;
-  /** Distinct people whose feedback about this member was negative. */
   negativeFrom: number;
-  /** Distinct members who blocked this member after a recorded shared encounter. */
   contextualBlocks: number;
-  /** Last completed date (ms), and whether this member wanted to see that person again. */
   lastDateAt?: number; lastDateLiked?: boolean;
-  /** Last time the member asked the agent for a date (the live want). */
   lastAskAt?: number;
-  /** Week slots (SLOTS index) the member attended a date at (learned availability). */
   attendedSlots: number[];
-  /** Ratings this member gave (0..1) about people they met, by id (revealed taste). */
   rated: { about: MemberId; v: number }[];
-  /** The same, joined with the rated person's self-description when known (filled after all profiles are parsed). */
   ratedSelf: { self: number[]; v: number }[];
-  /** The same, joined with the rated person's (confident) body type when rated (iteration 4; revealed body-type preference). */
   ratedBody: { type: string; v: number }[];
 }
 
 export interface SlopProfile {
   id: MemberId; age: number; adult: boolean; optedIn: boolean; paused: boolean;
   zip?: string; homeMarket: City; cell?: Cell;
-  /**
-   * The member gave a zip that is not in the table and no neighborhood we could place: slopPack asks
-   * for a nearby zip or neighborhood (ask "slop_zip") instead of failing. Until then `cell` is unset
-   * and the market's anchor cell stands in (cellIn), once the ask has gone unanswered for a week.
-   */
   zipUnknown: boolean;
   is?: Gender; seeks: Gender[];
+  trans?: "yes" | "no";
+  transOpenness?: "open" | "not_open" | "only" | "declined";
+  shownTo: Gender[];
   ageRange?: [number, number]; scope?: Scope; maxMiles?: number; goal?: Goal;
   values: { smoking?: string; drinking?: string; hasKids?: string; wantsKids?: string; religion?: string; religionImportance?: number; politics?: string };
   dealbreakers: string[];
   interests: string[]; shareableInterests: string[]; activities: string[]; free: Slot[];
   wants?: number[]; self?: number[];
-  /** Stated body-type preferences (slop:wants_body:<type>, appearance.ts BODY_TYPES); [] = none stated. Never shown. */
   wantsBody: string[];
   identity?: string; orientation?: string;
   safety: string[];
-  /** Verification results: verify:<check>:<pass|fail> tags. */
   verification: string[];
-  /** Age verification: true = passed, false = failed, undefined = no check recorded. */
   ageVerified?: boolean;
-  /** Appearance rating, read only for adults whose age is not known to be unverified. Internal only. */
-  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number; photos?: number };
-  /** The private source facets that supply the current appearance rating. */
+  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number; photos?: number; spread?: number };
   appearanceEvidenceIds?: readonly string[];
-  /**
-   * Hard-filter questions asked at least `silentAfterDays` ago and never answered (age_range,
-   * distance, orientation): the pack proposes on a narrow fallback instead of locking them out.
-   */
   silentAsks: string[];
-  /** Questions asked less than 7 days ago and not answered yet (reason minus "slop_"). */
   openAsks: string[];
-  /** How many times each question (reason) was asked (re-ask cap). */
   askCounts: Record<string, number>;
-  /** Human review of a safety hold: cleared (a false positive) or confirmed. */
   review?: "cleared" | "confirmed";
-  /** Markets this member is visiting in the coming days (an announced trip in progress at now + 2 days). */
   visiting: City[];
-  /** Facet ids by role, for evidence (only shareable ones ever reach member-facing text). */
   interestFacet: Map<string, string>;
   history: History;
 }
 
 const cache = new WeakMap<EngineInput, Map<MemberId, SlopProfile>>();
-/** An unanswered question older than this counts as silence (SlopPackOptions.silentFallback). */
-export const SILENT_AFTER_DAYS = 7;
+const SILENT_AFTER_DAYS = 7;
 
-/** Typed dating profiles for every member of an engine input (cached per input object). */
 export function slopProfiles(input: EngineInput, canonical: (id: MemberId) => MemberId = x => x): Map<MemberId, SlopProfile> {
   let out = cache.get(input);
   if (out) return out;
@@ -129,7 +82,6 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     facetsBy.set(id, l);
   }
   const hist = histories(input, C);
-  // Questions asked >= 7 days ago and never answered (recentAsks; reason slop_<field>).
   const silent = new Map<MemberId, string[]>();
   const answeredAny = new Map<string, boolean>();
   for (const a of input.recentAsks ?? []) { const k = `${C(a.memberId)}|${a.reason}`; answeredAny.set(k, (answeredAny.get(k) ?? false) || (a.answeredAt !== undefined && a.answeredAt <= now)); }
@@ -155,15 +107,13 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       ? parseAppearance(appearanceFacets.flatMap(f => f.tags)) : undefined;
     const appearanceSources = new Map<string, string>();
     if (appearance) for (const facet of appearanceFacets) for (const tag of facet.tags) {
-      const key = /^appearance:(face|body|overall|conf|photos)=/.exec(tag)?.[1];
-      if (key && (key !== "photos" || appearance.photos !== undefined)) appearanceSources.set(key, facet.id);
+      const key = /^appearance:(face|body|overall|conf|photos|spread)=/.exec(tag)?.[1];
+      if (key && (key !== "photos" || appearance.photos !== undefined) && (key !== "spread" || appearance.spread !== undefined)) appearanceSources.set(key, facet.id);
     }
     const has = (prefix: string) => tags.filter(x => x.t.startsWith(prefix)).map(x => x.t.slice(prefix.length));
     const one = (prefix: string) => has(prefix)[0];
-    // The first zip we know (a member may have corrected an unknown one), else the first given.
     const zips = has("slop:zip:");
     const zip = zips.find(isKnownZip) ?? zips[0];
-    // An unknown zip falls back to a neighborhood the member named, in their home market.
     const area = zip && isKnownZip(zip) ? undefined : has("slop:area:").map(a => zipForArea(a.replace(/_/g, " "), m.homeCity)).find(Boolean);
     const cell = zip && isKnownZip(zip) ? cellOfZip(zip) : area ? cellOfZip(area.zip) : undefined;
     const age = one("romance:age:");
@@ -175,11 +125,9 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const ri = one("slop:religion_importance:");
     const num = (t: string) => Number(t.slice(t.indexOf("=") + 1));
     const wants = has("slop:wants:"), self = has("slop:self:");
-    const interestFacets = fs.filter(f => f.kind === "interest" && f.tags[0] && !NEVER_USED.test(f.tags[0]));
+    const interestFacets = fs.filter(f => f.kind === "interest" && f.tags[0] && f.tags[0].trim().length > 0 && !NEVER_USED.test(f.tags[0]));
     const interestFacet = new Map<string, string>();
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
-    const is = one("romance:is:") as Gender | undefined;
-    const seeks = [...new Set(has("romance:seeks:"))].sort() as Gender[];
     const visiting = [...new Set(input.presence.flatMap(p => {
       if (C(p.memberId) !== m.id || p.city === m.homeCity) return [];
       const trip = temporaryPresenceWindow(p);
@@ -188,7 +136,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,
-      is, seeks,
+      ...datingFactsOf(tags.map(x => x.t)),
       ageRange: age ? (age.split("-").map(Number) as [number, number]) : undefined,
       scope, maxMiles: mm !== undefined ? Number(mm) : undefined,
       goal: one("slop:goal:") as Goal | undefined,
@@ -208,14 +156,12 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       safety: [...new Set(tags.filter(x => x.t.startsWith("safety:")).map(x => x.t))].sort(),
       verification: [...new Set(tags.filter(x => x.t.startsWith("verify:")).map(x => x.t))].sort(),
       ageVerified,
-      // Adults only: a rating on anyone else is ignored, whatever the snapshot says.
       appearance, appearanceEvidenceIds: [...new Set(appearanceSources.values())],
       visiting, interestFacet, silentAsks: silent.get(m.id) ?? [], openAsks: open.get(m.id) ?? [], askCounts: counts.get(m.id) ?? {},
       review: tags.some(x => x.t === "review:confirmed") ? "confirmed" : tags.some(x => x.t === "review:cleared") ? "cleared" : undefined,
       history: hist.get(m.id) ?? emptyHistory(),
     });
   }
-  // Revealed taste: the self-descriptions of the people a member rated, with the rating.
   for (const p of out.values()) {
     p.history.rated.sort((x, y) => (x.about < y.about ? -1 : x.about > y.about ? 1 : x.v - y.v));
     for (const r of p.history.rated) {
@@ -228,22 +174,50 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   return out;
 }
 
+const TRANS_STATUS: ReadonlySet<string> = new Set(["yes", "no"]);
+const TRANS_OPENNESS: ReadonlySet<string> = new Set(["open", "not_open", "only", "declined"]);
+const STATED_GENDER: Record<Gender, StatedGender> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
+const OPENNESS: Record<NonNullable<SlopProfile["transOpenness"]>, TransOpenness> = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans", declined: "TransUnanswered" };
+
+export type DatingFacts = Pick<SlopProfile, "is" | "seeks" | "trans" | "transOpenness" | "shownTo">;
+export function datingFactsOf(tags: readonly string[]): DatingFacts {
+  const has = (prefix: string) => tags.filter(t => t.startsWith(prefix)).map(t => t.slice(prefix.length));
+  const one = (prefix: string) => has(prefix)[0];
+  const trans = one("romance:trans:"), open = one("romance:open_trans:");
+  return {
+    is: one("romance:is:") as Gender | undefined,
+    seeks: [...new Set(has("romance:seeks:"))].sort() as Gender[],
+    trans: trans !== undefined && TRANS_STATUS.has(trans) ? trans as "yes" | "no" : undefined,
+    transOpenness: open !== undefined && TRANS_OPENNESS.has(open) ? open as SlopProfile["transOpenness"] : undefined,
+    shownTo: [...new Set(has("romance:shown_to:"))].filter(g => g === "woman" || g === "man").sort() as Gender[],
+  };
+}
+
+export function datingStatementOf(p: DatingFacts): DatingStatement {
+  return {
+    gender: p.is ? STATED_GENDER[p.is] : "GenderUnstated",
+    trans: p.trans === "yes" ? "StatedTrans" : p.trans === "no" ? "StatedNotTrans" : "TransNotStated",
+    seeksWomen: p.seeks.includes("woman"), seeksMen: p.seeks.includes("man"), seeksNonbinary: p.seeks.includes("nonbinary"),
+    shownToWomenSeekers: p.shownTo.includes("woman"), shownToMenSeekers: p.shownTo.includes("man"),
+    transOpenness: p.transOpenness ? OPENNESS[p.transOpenness] : "TransUnanswered",
+  };
+}
+
 const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
-/** Slot index of a timestamp in the dating week (the slop world's slots: weekday evenings 19:00, weekend 14:00 / 19:00 UTC). */
-function slotOf(t: number): number | undefined {
-  const d = new Date(t);
-  const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
-  const eve = d.getUTCHours() >= 17;
-  if (dow <= 4) return eve ? dow : undefined;
-  return dow === 5 ? (eve ? 6 : 5) : (eve ? 8 : 7);
+function slotOf(t: number, tz: string): number | undefined {
+  const { weekday, hour } = localParts(t, tz);
+  const eve = hour >= 17;
+  if (weekday <= 4) return eve ? weekday : undefined;
+  return weekday === 5 ? (eve ? 6 : 5) : (eve ? 8 : 7);
 }
 
 function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, History> {
   const out = new Map<MemberId, History>();
   const h = (id: MemberId) => { let x = out.get(id); if (!x) { x = emptyHistory(); out.set(id, x); } return x; };
   const now = input.now;
+  const zoneOf = new Map(input.members.map(m => [C(m.id), CITY_TZ[m.homeCity]]));
   const firstEncounter = new Map<string, number>();
   for (const r of input.interactions ?? []) {
     if (r.at > now) continue;
@@ -257,7 +231,7 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
     if (r.outcome === "completed") for (const id of r.participants) {
       const x = h(C(id)); x.dates++;
-      const s = slotOf(r.at);
+      const s = slotOf(r.at, zoneOf.get(C(id)) ?? CITY_TZ.nyc);
       if (s !== undefined) x.attendedSlots.push(s);
     }
     if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
@@ -268,7 +242,6 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     const k = C(id), cur = lastDate.get(k);
     if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
   }
-  // Order-independent: feedback in (time, id) order, so "the last word on the last date" is stable under shuffles.
   const fbs = [...(input.feedback ?? [])].sort((x, y) => (x.at - y.at) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   for (const f of fbs) {
     if (f.at > now) continue;
@@ -281,7 +254,6 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   }
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;
   for (const [id, d] of lastDate) { const y = h(id); y.lastDateAt = d.at; y.lastDateLiked = d.liked; }
-  // spec/datingRadius.md, "Only encounter-backed blocks inform a member review"
   const blockers = new Map<MemberId, Set<MemberId>>();
   for (const e of input.edges) {
     if (e.type !== "blocked") continue;
@@ -299,13 +271,11 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   return out;
 }
 
-/** Markets a member dates in this week: a stated multi-city set; else the trip market while traveling, else home. */
 export function datingMarkets(p: SlopProfile): City[] {
   if (p.scope?.mode === "multi") return [...new Set([...p.scope.markets, ...p.visiting])].sort();
   return p.visiting.length ? [...p.visiting] : [p.homeMarket];
 }
 
-/** The member's cell when meeting in `market`: their own zip cell at home, the market's anchor cell elsewhere. */
 export function cellIn(p: SlopProfile, market: City): Cell | undefined {
   return p.homeMarket === market && p.cell ? p.cell : cellOfZip(MARKET_ANCHOR_ZIP[market]);
 }

@@ -97,8 +97,7 @@ export function planYesProb(oracle: Oracle, p: Persona, like: number, size: numb
   return clamp01(cap * fatigue * (0.15 + 0.75 * like) * (0.6 + 0.4 * p.hidden.socialEnergy) * size_ * present);
 }
 
-/** The yes draw for one option of one plan (stable per seed, plan, option and persona). */
-export const planYesDraw = (seed: number | string, planId: string, key: string, id: MemberId) => new Rng(hash32(seed, "plan-probe", planId, key, id)).next();
+export const planYesDraw = (seed: number | string, coin: string, id: MemberId) => new Rng(hash32(seed, "plan-probe", coin, id)).next();
 
 /** A stated window covers `t` (the plan starts inside it, within an hour of its start). */
 export const windowCovers = (w: { start: number; end: number }, t: number) => t >= w.start - HOUR && t < w.end;
@@ -185,9 +184,8 @@ export function checkInText(windows: readonly TimeSlot[], city: City, rng: Rng):
 // ------------------------------------------------------------------------------------------------
 // Crews
 
-/** Crew offer opt-in (harness crewOptIn: 0.7 x (1 - ignore probability)); the persona agent applies the ignore draw. */
 export const CREW_OPT_IN = 0.7;
-export const crewOptInDraw = (seed: number | string, crewId: string, id: MemberId) => new Rng(hash32(seed, "crew-optin", crewId, id)).next();
+export const crewOptInDraw = (seed: number | string, coin: string, id: MemberId) => new Rng(hash32(seed, "crew-optin", coin, id)).next();
 
 // ------------------------------------------------------------------------------------------------
 // Words: multi-item picks and "would you do this again?"

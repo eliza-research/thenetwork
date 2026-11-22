@@ -7,11 +7,13 @@
 import { writePath } from "../../../../core/src/runtime/files.ts";
 import { slopScammerContactCounts, slopScammerMedianReachTwice } from "../../../../core/src/generated/slopAssignment.ts";
 import type { MemberId } from "@thenetwork/core";
+import { saltSeed } from "../../paired.ts";
 import { BASELINES } from "./baselines.ts";
 import { slopEngineMatcher } from "./enginePack.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { isSafe } from "./oracle.ts";
-import { groupOf } from "./persona.ts";
+import { groupOf, identityGroupOf, statedDating } from "./persona.ts";
+import { mutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import { biasMonitor, ratingQuintiles, type BiasReport } from "@thenetwork/engine/src/packs/slop/biasMonitor.ts";
 import { parseAppearance } from "@thenetwork/engine/src/packs/slop/appearance.ts";
 import { CHECKIN_DEFAULTS, RATER_DEFAULTS, demoGroupOf, raterFacet, RELAY_DEFAULTS, REVIEW_DEFAULTS, VERIFICATION_DEFAULTS, WIDEN_DEFAULTS, type PlatformModel, type VerificationModel } from "./snapshot.ts";
@@ -47,6 +49,10 @@ export interface Extra {
    * adversary or a minor), and its sum (expected second dates).
    */
   softSecondRate: number; softSecondDates: number;
+  datePairs: string[];
+  standing?: { weeks: number; kept: number; positives: number; negatives: number; placed: number; narrowed: number };
+  opennessViolations: number;
+  identity: Record<string, { n: number; proposals: number; dates: number }>;
 }
 
 const WEEKS_PER_MONTH = 4.345;
@@ -108,10 +114,14 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     for (const h of f.harms) { if (["offplatform_move", "money_ask", "financial_loss"].includes(h.kind)) scamHarms++; if (h.kind !== "deception") harmsNoDeception++; }
     if (f.revealed && [f.first, f.partner].some(id => ["romance_scammer", "harasser", "age_liar"].includes(O.p(id).hidden.adversary ?? ""))) coreAdversaryContacts++;
   }
+  const opennessViolations = res.flows.filter(f => !mutuallyOpen(statedDating(O.p(f.first)), statedDating(O.p(f.partner)))).length;
+  const identity: Extra["identity"] = {};
+  for (const p of real) { const g = (identity[identityGroupOf(p)] ??= { n: 0, proposals: 0, dates: 0 }); g.n++; g.proposals += propOf.get(p.id) ?? 0; g.dates += datesOf.get(p.id) ?? 0; }
   let soft = 0, nd = 0;
   for (const f of res.flows) if (f.stage === "date") { nd++; soft += res.world.oracle.softLabel(f.first, f.partner, f.activity, 32).pSecond; }
   return {
-    softSecondRate: nd ? soft / nd : 0, softSecondDates: soft,
+    softSecondRate: nd ? soft / nd : 0, softSecondDates: soft, opennessViolations, identity,
+    datePairs: res.flows.filter(f => f.stage === "date").map(f => [f.first, f.partner].sort().join("|")).sort(),
     scammerMedianReach: slopScammerMedianReachTwice(reachCounts) / 2,
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
@@ -127,8 +137,9 @@ export interface WorldSpec {
   rater?: boolean | Partial<NonNullable<PlatformModel["rater"]>>; checkin?: boolean; catfish?: number;
   /** Iteration 4: body types and body-type preferences in the world (bodyType.ts). */
   bodyTypes?: boolean | Partial<BodyTypeModel>;
+  statedOpenness?: boolean;
 }
-export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel; adversaryShares?: { catfish: number }; bodyTypes?: BodyTypeModel } {
+export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel; adversaryShares?: { catfish: number }; bodyTypes?: BodyTypeModel; statedOpenness?: boolean } {
   const platform: PlatformModel = {};
   if (w.rater) platform.rater = { ...RATER_DEFAULTS, ...(typeof w.rater === "object" ? w.rater : {}) };
   if (w.checkin) platform.checkin = { ...CHECKIN_DEFAULTS };
@@ -136,7 +147,7 @@ export function worldOptions(w: WorldSpec = {}): { verification?: VerificationMo
   if (w.relay) platform.relay = { ...RELAY_DEFAULTS, ...(typeof w.relay === "object" ? w.relay : {}) };
   if (w.review !== undefined) platform.review = { ...REVIEW_DEFAULTS, days: w.review };
   if (w.widen) platform.widen = { ...WIDEN_DEFAULTS };
-  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}), ...(w.catfish !== undefined ? { adversaryShares: { catfish: w.catfish } } : {}), ...(w.bodyTypes ? { bodyTypes: { ...BODY_TYPE_DEFAULTS, ...(typeof w.bodyTypes === "object" ? w.bodyTypes : {}) } } : {}) };
+  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}), ...(w.catfish !== undefined ? { adversaryShares: { catfish: w.catfish } } : {}), ...(w.bodyTypes ? { bodyTypes: { ...BODY_TYPE_DEFAULTS, ...(typeof w.bodyTypes === "object" ? w.bodyTypes : {}) } } : {}), ...(w.statedOpenness ? { statedOpenness: true } : {}) };
 }
 
 /**
@@ -146,16 +157,20 @@ export function worldOptions(w: WorldSpec = {}): { verification?: VerificationMo
  */
 export async function runArm(arm: string, seeds: number[], weeks: number, perCity: number, options?: Record<string, unknown>, world: WorldSpec = {}): Promise<ArmResult> {
   const out: ArmResult = { arm, seeds, metrics: [], extra: [] };
-  const { $world, $baseline, ...packOpts } = (options ?? {}) as { $world?: WorldSpec; $baseline?: string };
+  const { $world, $baseline, $engineSalt, ...packOpts } = (options ?? {}) as { $world?: WorldSpec; $baseline?: string; $engineSalt?: number };
   const wo = worldOptions({ ...world, ...($world ?? {}) });
   const base = $baseline ?? (arm in BASELINES && !options ? arm : undefined);
   for (const seed of seeds) {
+    const standing = { weeks: 0, kept: 0, positives: 0, negatives: 0, placed: 0, narrowed: 0 };
     const res = base
       ? runSlopWorld({ seed, perCity, weeks, matcher: BASELINES[base as keyof typeof BASELINES] as never, ...wo })
-      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed }), ...wo });
+      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed: saltSeed(seed, $engineSalt ?? 0), onStanding: (_, s) => {
+        standing.weeks++; standing.kept += s.validity.predicts ? 1 : 0; standing.placed += s.placed; standing.narrowed += s.narrowed;
+        standing.positives = s.validity.positives; standing.negatives = s.validity.negatives;
+      } }), ...wo });
     const m = slopMetrics(res);
     out.metrics.push(m);
-    out.extra.push(extraOf(res, m));
+    out.extra.push({ ...extraOf(res, m), ...(base ? {} : { standing: { ...standing } }) });
   }
   return out;
 }
@@ -179,7 +194,6 @@ export const PRESETS: Record<string, [string, object][]> = {
     ["x backup round", { congestion: { perMemberPerTick: 2 } }],
     ["x minValue 0.4", { minValue: 0.4 }],
     ["x hold for basics", { holdForBasics: true }],
-    ["x typeWeight 0.3", { compat: { typeWeight: 0.3 } }],
     ["x scarce 4", { congestion: { scarceDegree: 4 } }],
     ["x guess after a silent ask", { silentFallback: { enabled: true } }],
   ],
@@ -190,7 +204,6 @@ export const PRESETS: Record<string, [string, object][]> = {
     ["- no asks (guess)", { asks: false, compatAsks: false }],
     ["- no compat asks", { compatAsks: false }],
     ["- no learned", { learned: { enabled: false } }],
-    ["- no compat model", { compat: { goalClash: 1, goalUnsure: 1, goalUnknown: 1, lifestyleMismatch: 1, politicsClash: 1, religionGap: 1, kidsClash: 1, unknownField: 1, hiddenDealbreaker: 0, sharedInterest: [1, 1, 1], activityMiss: 1, typeWeight: 0 } }],
   ],
   // Iteration 2 (held-out seeds 9-12). W = the safety stack: verification, relay classifier, 3-day review, widen answers.
   it2: [
@@ -231,6 +244,16 @@ export function fairnessRatios(a: ArmResult, feasible = false): { byGroup: Recor
   }
   const elig = Object.entries(byGroup).filter(([, g]) => g.n >= 15);
   const [minGroup, minG] = elig.sort((x, y) => x[1].ratio - y[1].ratio)[0] ?? ["-", { ratio: 0 }];
+  return { byGroup, min: minG.ratio, minGroup };
+}
+
+export function identityRatios(a: ArmResult): { byGroup: Record<string, { n: number; proposals: number; dates: number; ratio: number }>; min: number; minGroup: string } {
+  const sum = (k: string, f: "n" | "proposals" | "dates") => a.extra.reduce((t, e) => t + (e.identity[k]?.[f] ?? 0), 0);
+  const keys = [...new Set(a.extra.flatMap(e => Object.keys(e.identity)))].sort();
+  const n = keys.reduce((t, k) => t + sum(k, "n"), 0), overall = keys.reduce((t, k) => t + sum(k, "proposals"), 0) / Math.max(1, n);
+  const byGroup: Record<string, { n: number; proposals: number; dates: number; ratio: number }> = {};
+  for (const k of keys) byGroup[k] = { n: sum(k, "n") / a.seeds.length, proposals: sum(k, "proposals") / Math.max(1, sum(k, "n")), dates: sum(k, "dates") / Math.max(1, sum(k, "n")), ratio: sum(k, "proposals") / Math.max(1, sum(k, "n")) / overall };
+  const [minGroup, minG] = Object.entries(byGroup).filter(([, g]) => g.n >= 5).sort((x, y) => x[1].ratio - y[1].ratio)[0] ?? ["-", { ratio: 0 }];
   return { byGroup, min: minG.ratio, minGroup };
 }
 
@@ -281,6 +304,7 @@ export function gates3(a: ArmResult, random: ArmResult): Gate[] {
   return [
     { name: "Declared-minor contacts", value: M(m => m.safety.minorContacts), target: "= 0", pass: a.metrics.every(m => m.safety.minorContacts === 0) },
     { name: "Stated-filter violations", value: M(m => m.filterViolations), target: "= 0", pass: a.metrics.every(m => m.filterViolations === 0) },
+    { name: "Stated-openness violations (gender, trans)", value: X(e => e.opennessViolations), target: "= 0", pass: a.extra.every(e => e.opennessViolations === 0) },
     { name: "Scam harm events cut vs random", value: cut(e => e.scamHarms), target: ">= 90%", pass: cut(e => e.scamHarms) >= 0.9 },
     { name: "Minor contacts (age liars) cut vs random", value: cutM(m => m.safety.undisclosedMinorContacts), target: ">= 90%", pass: cutM(m => m.safety.undisclosedMinorContacts) >= 0.9 },
     { name: "Repeat harassment victims per offender after the first report (max)", value: rep, target: "<= 1", pass: rep <= 1 },
@@ -292,6 +316,7 @@ export function gates3(a: ArmResult, random: ArmResult): Gate[] {
     { name: "Top-10% share of proposals", value: M(m => m.congestion.top10ProposalShare), target: "<= 20%", pass: M(m => m.congestion.top10ProposalShare) <= 0.2 },
     { name: `Lowest group vs overall (${fair.minGroup})`, value: fair.min, target: ">= 0.7x", pass: fair.min >= 0.7 },
     { name: `Same, feasible members (${fairF.minGroup})`, value: fairF.min, target: ">= 0.7x", pass: fairF.min >= 0.7 },
+    ...((g => [{ name: `Lowest stated identity group proposals per member vs overall (${g.minGroup})`, value: g.min, target: ">= 0.7x", pass: g.min >= 0.7 }])(identityRatios(a))),
     { name: "Back-outs at reveal", value: M(m => m.backoutRate), target: "< 10%", pass: M(m => m.backoutRate) < 0.1 },
     { name: "Dates per member-month vs random", value: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random), target: ">= 0.9x", pass: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random) >= 0.9 },
     // Iteration 5: no rating quintile under 0.85x the overall date rate (pooled over seeds).

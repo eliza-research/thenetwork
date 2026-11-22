@@ -1,5 +1,3 @@
-// Generic match profiles: one per lane membership of a matchable member or entity (a member, or a
-// peon job seat owned by a manager). Packs supply the vectors; the engine owns the rest.
 import type { Category, City, MemberId } from "@thenetwork/core";
 import {
   laneOffered, laneShape, laneSidesCompatible, standingCeiling, standingUncertaintyCeiling,
@@ -14,16 +12,13 @@ import { standingObservations } from "./standing.ts";
 export type EntityId = string & { readonly __brand: "EntityId" };
 export const isEntityId = (value: string): value is EntityId => value.length > 0;
 
-/** Interned tag ids, sorted ascending, no duplicates. */
 export type TagSet = readonly number[];
 
-/** One lane membership as a pack reports it. */
 export interface Membership {
   readonly id: string;
   readonly lane: MatchLane;
   readonly side: LaneSide;
   readonly market: City;
-  /** Introductions this entity can still take this week; discovery requires a positive value. */
   readonly capacity: number;
 }
 export interface MatchEntity extends Membership { readonly memberId: MemberId }
@@ -32,42 +27,38 @@ export interface EntityTags {
   readonly seeks: readonly string[];
   readonly interests: readonly string[];
 }
-/** Whole numbers from the generated memberStanding helpers; the engine clamps them to their ranges. */
 export interface EntityStanding {
   readonly standing: number;
   readonly uncertainty: number;
-  /** Exact source identities used for the estimate. Kept out of public match profiles and logs. */
   readonly evidenceIds?: readonly string[];
 }
-/**
- * A hard-constraint segment of one membership (spec/candidateSearch.md, "Segment blocking never drops
- * a pair the pair gate admits"): its own segment and the segments it can pair with. A pack gives
- * segments only as a superset of its own pair rules.
- */
 export interface EntitySegment { readonly own: string; readonly partners: readonly string[] }
-export interface MatchSegment { readonly own: string; readonly partners: ReadonlySet<string> }
-/** Scalar attributes compared by closeness: `of` returns one whole number per entry of `costs`. */
-export interface PackTraits {
+interface EntityMask { readonly own: number; readonly accepts: number }
+interface MatchSegment { readonly own: string; readonly partners: ReadonlySet<string> }
+interface PackTraits {
   readonly costs: readonly number[];
   of(w: World, entity: MatchEntity): readonly number[];
 }
+interface PackClasses {
+  of(w: World, entity: MatchEntity): number;
+  cap(w: World, a: MatchProfile, packClass: number, untouched: boolean): number;
+}
 
-/** The hook a pack implements to take part in generic matching (AppPack.vectors). */
 export interface PackVectors {
   memberships(w: World, memberId: MemberId): readonly Membership[];
   tags(w: World, entity: MatchEntity): EntityTags;
   standing(w: World, entity: MatchEntity): EntityStanding;
   readonly traits?: PackTraits;
-  /** The entity's segment; undefined pairs with every segment. */
   segment?(w: World, entity: MatchEntity): EntitySegment | undefined;
-  /** Directed value of `b` for `a`, 0..1000 (whole number). */
   packValue?(w: World, a: MatchProfile, b: MatchProfile): number;
+  packBound?(w: World, a: MatchProfile, b: MatchProfile): number;
+  readonly packClasses?: PackClasses;
+  masks?(w: World, entity: MatchEntity): readonly EntityMask[];
 }
 
 export interface MatchProfile {
   readonly id: EntityId;
   readonly memberId: MemberId;
-  /** Position in the canonical (entity id) order of its block: unique and stable inside the block. */
   readonly ordinal: number;
   readonly lane: MatchLane;
   readonly side: LaneSide;
@@ -79,18 +70,17 @@ export interface MatchProfile {
   readonly seeks: TagSet;
   readonly interests: TagSet;
   readonly traits: readonly number[];
-  /** Absent: the profile reaches every partner and every partner reaches it. */
   readonly segment?: MatchSegment;
+  readonly masks?: readonly EntityMask[];
+  readonly packClass?: number;
 }
 
-/** The legacy category whose opt-in, cooldowns and pack pair rules apply to a lane. */
 const LANE_CATEGORY: Readonly<Record<MatchLane, Category>> = {
   Friend: "social", Date: "romance", Cofounder: "professional", Intro: "professional",
   Hire: "professional", Mentor: "professional", Invest: "professional",
 };
 export const laneCategory = (lane: MatchLane): Category => LANE_CATEGORY[lane];
 
-/** The side a partner holds: the same side in a Peers lane, the other side in a TwoSided lane. */
 export function partnerSide(lane: MatchLane, side: LaneSide): LaneSide {
   if (laneShape(lane) === "Peers") return side;
   switch (side) {
@@ -110,9 +100,8 @@ export function wholeNumber(value: number, what: string): number {
 }
 const clamp = (value: number, ceiling: number): number => (value < 0 ? 0 : value > ceiling ? ceiling : value);
 
-export interface TagInterner { readonly size: number; tagSet(tags: readonly string[]): TagSet }
-/** Ids follow the sorted order of the distinct tags, so one run always interns the same way. */
-export function internTags(tags: Iterable<string>): TagInterner {
+interface TagInterner { readonly size: number; tagSet(tags: readonly string[]): TagSet }
+function internTags(tags: Iterable<string>): TagInterner {
   const sorted = [...new Set(tags)].sort(compareText);
   const ids = new Map(sorted.map((tag, id) => [tag, id] as const));
   return {
@@ -127,21 +116,23 @@ interface Draft {
   readonly entity: MatchEntity; readonly id: EntityId; readonly key: string;
   readonly capacity: number; readonly tags: EntityTags; readonly standing: EntityStanding; readonly traits: readonly number[];
   readonly segment?: MatchSegment;
+  readonly masks?: readonly EntityMask[];
+  readonly packClass?: number;
 }
 
-/**
- * Profiles in canonical order (block key, then entity id). A member who cannot be matched (minor or
- * unknown age, under the pack or config age floor, safety hold, paused, not opted in to the lane's
- * category) gets none, and the pack is not asked about a member who fails the core checks.
- */
+const maskBits = (bits: number): number => {
+  if (!Number.isSafeInteger(bits) || bits < 0 || bits > 0xffffffff) throw new RangeError(`mask must be a whole number in 0..2^32-1, got ${bits}`);
+  return bits;
+};
+
 export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], mode: "discovery" | "existingFriendPlan" = "discovery"): readonly MatchProfile[] {
   const vectors = w.pack.vectors;
   if (!vectors) return [];
   const existingFriendPlan = mode === "existingFriendPlan";
   const traitCount = vectors.traits?.costs.length ?? 0;
+  let maskCount: number | undefined;
   const drafts: Draft[] = [];
   const seen = new Set<string>();
-  // Packs memoize partner lists, so members with the same list share one set.
   const partnerSets = new WeakMap<readonly string[], ReadonlySet<string>>();
   const partnerSet = (partners: readonly string[]): ReadonlySet<string> => {
     let set = partnerSets.get(partners);
@@ -166,9 +157,14 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       const traits = vectors.traits ? vectors.traits.of(w, entity).map(t => wholeNumber(t, "trait")) : [];
       if (traits.length !== traitCount) throw new Error(`entity ${id} has ${traits.length} traits, the pack declares ${traitCount}`);
       const segment = vectors.segment?.(w, entity);
+      const masks = vectors.masks?.(w, entity).map(m => ({ own: maskBits(m.own), accepts: maskBits(m.accepts) }));
+      if (masks && masks.length !== (maskCount ??= masks.length)) throw new Error(`entity ${id} has ${masks.length} masks, another has ${maskCount}`);
+      const packClass = vectors.packClasses ? wholeNumber(vectors.packClasses.of(w, entity), "pack class") : undefined;
       drafts.push({
         entity, id, key: blockKey(lane, side, market), capacity, traits,
         ...(segment ? { segment: { own: segment.own, partners: partnerSet(segment.partners) } } : {}),
+        ...(masks ? { masks } : {}),
+        ...(packClass !== undefined ? { packClass } : {}),
         tags: { offers: normalTags(raw.offers), seeks: normalTags(raw.seeks), interests: normalTags(raw.interests) },
         standing: {
           standing: clamp(wholeNumber(rated.standing, "standing"), standingCeiling),
@@ -191,6 +187,8 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       offers: interner.tagSet(d.tags.offers), seeks: interner.tagSet(d.tags.seeks), interests: interner.tagSet(d.tags.interests),
       traits: d.traits,
       ...(d.segment ? { segment: d.segment } : {}),
+      ...(d.masks ? { masks: d.masks } : {}),
+      ...(d.packClass !== undefined ? { packClass: d.packClass } : {}),
     };
   });
 }

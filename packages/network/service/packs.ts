@@ -21,7 +21,7 @@
 import { canBeMatched, DAY, HOUR, type MemberId } from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
-  type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput,
+  type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput, type World,
 } from "@thenetwork/engine";
 import { classifyYesNo } from "@thenetwork/core";
 import {
@@ -29,6 +29,7 @@ import {
   SLOP_ONBOARD_QUESTIONS, slopBookedText, slopCheckInText, slopOnboardTags, slopProbeText, type OnboardField, type SlopOnboarding,
 } from "@thenetwork/engine/src/packs/slop/index.ts";
 import { finalize } from "@thenetwork/engine/src/packs/slop/extract.ts";
+import { DateStandings, type DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
 import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/slop/onboard.ts";
 import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/slop/rules.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
@@ -46,6 +47,7 @@ export interface AppWiring {
   hooks?: AppHooks;
   /** The Network's planner and plan lane (plans v1.1). Off for slop (romance never goes in plans) and peon. */
   plans?: boolean;
+  dateStanding?(w: World): DateStandingValidity;
   /** The member prefs a new member of this app starts with (createMember). Romance only for adults. */
   prefs(age: number): { categoriesOptIn: string[]; romanceOptIn: boolean };
 }
@@ -60,6 +62,7 @@ export function appWiring(app: AppId): AppWiring {
       const pack = makeSlopPack({ verification: { required: false } });
       return {
         pack, engine: { ...SLOP_ENGINE_CONFIG, cities: ["nyc"] }, hooks: slopHooks(pack.options), plans: false,
+        dateStanding: w => new DateStandings(w, pack.options).validity,
         prefs: age => ({ categoriesOptIn: canBeMatched(age) ? ["romance"] : [], romanceOptIn: canBeMatched(age) }),
       };
     }

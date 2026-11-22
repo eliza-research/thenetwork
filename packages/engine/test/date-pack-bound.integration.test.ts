@@ -1,0 +1,175 @@
+import { type MemberId, Rng } from "@thenetwork/core";
+import { expect, test } from "vitest";
+import { laneLimits, laneWeights } from "../../core/src/generated/matchLane.ts";
+import { dateTypeCeiling } from "../../core/src/generated/datePackValue.ts";
+import { directedUtility } from "../../core/src/generated/pairValue.ts";
+import { localEmbed } from "../src/embed.ts";
+import { bruteForceCandidates } from "../src/match/mod.ts";
+import { sharesTag } from "../src/match/pair.ts";
+import type { AppPack } from "../src/pack.ts";
+import { slopPack, SLOP_ENGINE_DEFAULTS } from "../src/packs/slop/index.ts";
+import { SLOP_DEFAULT_OPTIONS } from "../src/packs/slop/options.ts";
+import { datePackBound, datePackClassCap, datePackClassKey } from "../src/packs/slop/packBound.ts";
+import { SLOTS, slopProfiles, type SlopProfile } from "../src/packs/slop/profile.ts";
+import { DATE_TYPE_WEIGHT, datePackCheapOf, datePackValue } from "../src/packs/slop/score.ts";
+import { baseMember, emptyInput, facet } from "../src/testkit.ts";
+import { World } from "../src/world.ts";
+
+const INTERESTS = ["climbing", "jazz", "cooking", "film", "running", "board_games", "art", "travel", "dogs", "books", "yoga", "wine"];
+const ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
+const BODY = ["slim", "athletic", "average", "curvy", "plus_size"];
+
+function profile(r: Rng, n: number): SlopProfile {
+  const maybe = <T>(p: number, x: () => T): T | undefined => (r.bool(p) ? x() : undefined);
+  const pickSome = (xs: readonly string[], most: number) => r.sample(xs, r.int(0, most)).sort();
+  const unit = (v: number[]) => { const l = Math.hypot(...v) || 1; return v.map(x => x / l); };
+  const rated = r.bool(0.4) ? r.int(1, 6) : 0;
+  return {
+    id: `m${n}` as MemberId, age: r.int(18, 60), adult: true, optedIn: true, paused: false, homeMarket: "nyc", zipUnknown: false,
+    seeks: [], shownTo: [], dealbreakers: r.bool(0.4) ? r.sample(["smoker", "heavy_drinker", "religious", "right_politics"], r.int(1, 2)) : [],
+    goal: maybe(0.8, () => r.weighted([["casual", 0.25], ["long_term", 0.5], ["unsure", 0.25]] as const)),
+    values: {
+      smoking: maybe(0.7, () => r.weighted([["never", 0.8], ["sometimes", 0.13], ["regular", 0.07]] as const)),
+      drinking: maybe(0.7, () => r.weighted([["never", 0.12], ["social", 0.7], ["regular", 0.18]] as const)),
+      hasKids: maybe(0.6, () => r.pick(["yes", "no"])),
+      wantsKids: maybe(0.6, () => r.weighted([["yes", 0.42], ["no", 0.23], ["open", 0.35]] as const)),
+      religionImportance: maybe(0.6, () => r.int(0, 3)),
+      politics: maybe(0.6, () => r.weighted([["left", 0.6], ["moderate", 0.28], ["right", 0.12]] as const)),
+    },
+    interests: pickSome(INTERESTS, 5), shareableInterests: [], activities: pickSome(ACTIVITIES, 3), free: pickSome(SLOTS, 3) as SlopProfile["free"],
+    wants: maybe(0.6, () => unit([0, 1, 2, 3, 4].map(() => r.normal()))),
+    self: maybe(0.7, () => [0, 1, 2, 3, 4].map(() => r.normal(0, 1.3))),
+    wantsBody: r.bool(0.25) ? pickSome(BODY, 3) : [],
+    appearance: maybe(0.7, () => ({ face: r.next(), body: r.next(), overall: r.next(), confidence: r.range(0.2, 1), bodyType: r.pick(BODY) as never, bodyTypeConfidence: r.range(0.2, 1) })),
+    safety: [], verification: [], silentAsks: [], openAsks: [], askCounts: {}, visiting: [], interestFacet: new Map(),
+    history: {
+      yes: 0, no: 0, silent: 0, dates: rated, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [],
+      ratedSelf: Array.from({ length: rated }, () => ({ self: [0, 1, 2, 3, 4].map(() => r.normal(0, 1.3)), v: r.next() })),
+      ratedBody: Array.from({ length: rated }, () => ({ type: r.pick(BODY), v: r.next() })),
+    },
+  };
+}
+
+const quantile = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
+
+test("the Date pair bound and class caps are at least the pack value, and many fall below the untagged floor", () => {
+  const r = new Rng(20261118);
+  const people = Array.from({ length: 3000 }, (_, n) => profile(r, n));
+  const o = SLOP_DEFAULT_OPTIONS;
+  const w = laneWeights("Date"), floor = laneLimits("Date").rules.utilityFloor;
+  const untaggedUtility = (pack: number) => directedUtility([{ weight: w.complement, value: 0 }, { weight: w.affinity, value: 0 }, { weight: w.pack, value: pack }]);
+  let infeasibleBelow = 1000;
+  while (untaggedUtility(infeasibleBelow) >= floor) infeasibleBelow--;
+  expect(infeasibleBelow).toBe(933);
+  expect(Math.round(1000 * Math.exp(2 * DATE_TYPE_WEIGHT))).toBeLessThanOrEqual(dateTypeCeiling);
+
+  const violations = { bound: 0, cap: 0, boundOverCap: 0, untouchedCap: 0 };
+  const slack: number[] = [];
+  let pairs = 0, untouched = 0, valueLow = 0, boundLow = 0, capLow = 0, untouchedLow = 0;
+  for (let n = 0; n < 200_000; n++) {
+    const a = people[r.int(0, people.length - 1)]!, b = people[r.int(0, people.length - 1)]!;
+    if (a === b) continue;
+    pairs++;
+    const value = datePackValue(a, b, o), bound = datePackBound(a, b, o), cap = datePackClassCap(a, datePackClassKey(b), false, o);
+    if (bound < value) violations.bound++;
+    if (cap < value) violations.cap++;
+    if (cap < bound) violations.boundOverCap++;
+    slack.push(bound - value);
+    if (value <= infeasibleBelow) valueLow++;
+    if (bound <= infeasibleBelow) boundLow++;
+    if (cap <= infeasibleBelow) capLow++;
+    if (!a.interests.some(x => b.interests.includes(x)) && !(b.free.length && a.free.some(s => b.free.includes(s)))) {
+      untouched++;
+      const untouchedCap = datePackClassCap(a, datePackClassKey(b), true, o);
+      if (untouchedCap < bound) violations.untouchedCap++;
+      if (untouchedCap <= infeasibleBelow) untouchedLow++;
+    }
+  }
+  slack.sort((x, y) => x - y);
+  const share = (k: number, of: number) => Number((k / of).toFixed(3));
+  console.log(JSON.stringify({
+    pairs, infeasibleBelow,
+    slack: { mean: Number((slack.reduce((s, x) => s + x, 0) / slack.length).toFixed(1)), q1: quantile(slack, 0.25), median: quantile(slack, 0.5), q3: quantile(slack, 0.75), max: slack[slack.length - 1] },
+    shareAtOrBelow: { value: share(valueLow, pairs), pairBound: share(boundLow, pairs), classCap: share(capLow, pairs), untouchedClassCap: share(untouchedLow, untouched) },
+    untouchedPairs: untouched,
+  }));
+  expect(violations).toEqual({ bound: 0, cap: 0, boundOverCap: 0, untouchedCap: 0 });
+});
+
+function daterInput(): ReturnType<typeof emptyInput> {
+  const r = new Rng(20261122);
+  const input = emptyInput();
+  for (let n = 0; n < 40; n++) {
+    const id = `d${String(n).padStart(2, "0")}`, is = n % 2 === 0 ? "woman" : "man";
+    input.members.push(baseMember(id, { homeCity: "nyc", prefs: { romanceOptIn: true, categoriesOptIn: ["romance"] } }));
+    input.facets.push(facet(id, 0, "preference", "Private dating preferences", [
+      `romance:is:${is}`, `romance:seeks:${is === "woman" ? "man" : "woman"}`, "romance:age:18-65", "slop:zip:11222", "slop:max_miles:10",
+    ], "agent_private"));
+    const answers = [
+      ...(r.bool(0.8) ? [`slop:goal:${r.pick(["casual", "long_term", "unsure"])}`] : []),
+      ...(r.bool(0.7) ? [`slop:smoking:${r.pick(["never", "sometimes", "regular"])}`] : []),
+      ...(r.bool(0.7) ? [`slop:drinking:${r.pick(["never", "social", "regular"])}`] : []),
+      ...(r.bool(0.6) ? [`slop:wants_kids:${r.pick(["yes", "no", "open"])}`] : []),
+      ...(r.bool(0.6) ? [`slop:religion_importance:${r.int(0, 3)}`] : []),
+      ...(r.bool(0.6) ? [`slop:politics:${r.pick(["left", "moderate", "right"])}`] : []),
+      ...r.sample(ACTIVITIES.slice(0, 4), r.int(0, 2)).map(a => `slop:activity:${a}`),
+    ];
+    input.facets.push(facet(id, 1, "fact", "Dating answers", answers, "agent_private"));
+    r.sample(INTERESTS.slice(0, 6), r.int(0, 2)).forEach((tag, k) => input.facets.push(facet(id, 2 + k, "interest", tag, [tag])));
+    const free = r.sample(SLOTS, r.int(0, 2));
+    if (free.length) input.facets.push(facet(id, 9, "availability_pattern", "Free evenings", free.map(s => `slop:free:${s}`), "agent_private"));
+  }
+  return input;
+}
+
+test("the Date pair bound and class caps keep every Date search equal to the search without them, with fewer pair checks", () => {
+  const vectors = slopPack.vectors;
+  if (!vectors) throw new Error("slopPack has no match vectors");
+  const unbounded: AppPack = { ...slopPack, vectors: { ...vectors, packBound: undefined, packClasses: undefined } };
+  const [bounded, full] = [slopPack, unbounded].map(pack => {
+    const w = new World(daterInput(), SLOP_ENGINE_DEFAULTS, localEmbed, pack);
+    const profiles = w.match.profiles.filter(p => p.lane === "Date");
+    const kept = profiles.map(p => {
+      const result = w.match.candidates(p);
+      expect(result.exact).toBe(true);
+      expect(result.kept).toEqual(bruteForceCandidates(w, w.match.index, p));
+      return { id: p.id, kept: result.kept.map(c => [c.profile.id, c.value]) };
+    });
+    return { profiles: profiles.length, kept, tally: w.match.tally() };
+  });
+  expect(bounded.profiles).toBe(40);
+  expect(bounded.kept).toEqual(full.kept);
+  expect(bounded.kept.some(entry => entry.kept.length > 0)).toBe(true);
+  for (const { tally } of [bounded, full]) expect(tally).toMatchObject({ members: 40, exact: 40, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0 });
+  expect(bounded.tally.checks).toBeLessThan(full.tally.checks);
+  expect(bounded.tally.touches).toBeLessThan(full.tally.touches);
+});
+
+test("a blank interest tag is in no posting and in no pack value, so the untouched class cap stays sound", () => {
+  const input = emptyInput();
+  for (let n = 0; n < 4; n++) {
+    const id = `b${n}`, is = n % 2 === 0 ? "woman" : "man";
+    input.members.push(baseMember(id, { homeCity: "nyc", prefs: { romanceOptIn: true, categoriesOptIn: ["romance"] } }));
+    input.facets.push(facet(id, 0, "preference", "Private dating preferences", [
+      `romance:is:${is}`, `romance:seeks:${is === "woman" ? "man" : "woman"}`, "romance:age:18-65", "slop:zip:11222", "slop:max_miles:10",
+    ], "agent_private"));
+    input.facets.push(facet(id, 1, "interest", "blank", ["  "]));
+  }
+  const w = new World(input, SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
+  const o = SLOP_DEFAULT_OPTIONS;
+  const people = slopProfiles(w.input, w.canonical);
+  const profiles = w.match.profiles.filter(p => p.lane === "Date");
+  expect(profiles).toHaveLength(4);
+  for (const p of profiles) expect(people.get(p.memberId)?.interests).toEqual([]);
+  let untouchedPairs = 0;
+  for (const a of profiles) for (const b of profiles) {
+    if (a === b || sharesTag(a, b)) continue;
+    const pa = people.get(a.memberId)!, pb = people.get(b.memberId)!;
+    untouchedPairs++;
+    expect(datePackCheapOf(pa, pb, o).sharedInterests).toBe(0);
+    expect(datePackValue(pa, pb, o)).toBeLessThanOrEqual(datePackClassCap(pa, datePackClassKey(pb), true, o));
+  }
+  expect(untouchedPairs).toBe(12);
+  for (const p of profiles) expect(w.match.candidates(p).kept).toEqual(bruteForceCandidates(w, w.match.index, p));
+  expect(w.match.tally()).toMatchObject({ members: 4, exact: 4, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0 });
+});

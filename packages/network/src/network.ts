@@ -28,7 +28,7 @@
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
   ADULT_AGE, canBeMatched, canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
-  type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
+  type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Presence, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
   attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans,
@@ -147,6 +147,8 @@ import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, t
 import { RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeldItem, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
+import { datingFactsOf, datingStatementOf, type DatingFacts } from "../../engine/src/packs/slop/profile.ts";
+import { mutuallyOpen } from "../../core/src/generated/mutualOpenness.ts";
 import { ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
@@ -774,6 +776,11 @@ const activeOpportunityParticipant = (o: Opp, id: MemberId) =>
   o.participants.includes(id) && !["unavailable", "no", "dropped"].includes(o.status.get(id) ?? "");
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+function byMember<T extends { memberId: MemberId }>(rows: readonly T[]): Map<MemberId, T[]> {
+  const by = new Map<MemberId, T[]>();
+  for (const row of rows) { const own = by.get(row.memberId); if (own) own.push(row); else by.set(row.memberId, [row]); }
+  return by;
+}
 
 export { gatheringRepeatOppPrefix };
 
@@ -847,12 +854,13 @@ const NEVER_MIND = /^\W*(?:never ?mind|nvm|nobody|no one|none|forget it|no|nope|
 
 /** Actual NYC presence for the whole requested window; conversation ownership grants no location. */
 export function presentInNyc(snapshot: WorldSnapshot, id: MemberId, from: number, to: number): boolean {
-  const member = snapshot.members.find(m => m.id === id);
+  return presentFor(snapshot.members.find(m => m.id === id), snapshot.presence.filter(p => p.memberId === id), from, to);
+}
+function presentFor(member: WorldSnapshot["members"][number] | undefined, own: readonly Presence[], from: number, to: number): boolean {
   const requested = { from, to };
   if (!member || !presenceWindowValid(requested)) return false;
   let present = member.homeCity === "nyc";
-  for (const p of snapshot.presence) {
-    if (p.memberId !== id) continue;
+  for (const p of own) {
     const trip = temporaryPresenceWindow(p);
     if (!trip) continue;
     if (p.city !== "nyc" && presenceWindowsOverlap(trip, requested)) return false;
@@ -2809,12 +2817,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     const load = new Map<MemberId, number>();
     for (const o of this.opps.values()) if (o.origin === "request" && now - o.createdAt < 7 * DAY) for (const p of o.participants) if (p !== o.requester) load.set(p, (load.get(p) ?? 0) + 1);
     const out: { id: MemberId; score: number; fit: number; why: string; whyBack: string; tie: number }[] = [];
+    const opps = this.oppsByMember(), met = this.metRecently(m.id);
     for (const x of this.members.values()) {
-      if (x.id === m.id || !this.eligible(x.id) || this.blocked(m.id, x.id) || this.avoid.has(pairKey(m.id, x.id))) continue;
+      if (x.id === m.id || !this.eligible(x.id, undefined, false, opps.get(x.id) ?? []) || this.blocked(m.id, x.id) || this.avoid.has(pairKey(m.id, x.id))) continue;
       // Never two people with one first name in a request: the reveal "meet Bilal B." must be unambiguous.
       if (x.first.toLowerCase() === m.first.toLowerCase()) continue;
       if (x.state === "receiving") continue; // Receiving members are never asked to help others (support-only)
-      if (this.pairHistory(m.id, x.id, 30)) continue;
+      if (this.pairHistory(m.id, x.id, 30, met)) continue;
       if (!known.has(x.id) || (this.opts.selective && this.responsiveness(x.id) < this.opts.minResponsiveness)) continue;
       const { fit, why, whyBack } = this.askFit(m.id, x.id, req, known);
       if (fit < 0.45) continue;
@@ -2841,16 +2850,18 @@ export class ConsentNetwork implements NetworkUnderTest {
    * a requester's confirm), a reviewer turned it down, or the two already met or had a no-show, within
    * `days`. Blocks and avoid edges are separate (blocked(), avoid).
    */
-  private pairHistory(a: MemberId, b: MemberId, days: number): boolean {
+  private pairHistory(a: MemberId, b: MemberId, days: number, metByA: ReadonlySet<MemberId> = this.metRecently(a)): boolean {
     const k = pairKey(a, b);
     if ((this.declined.get(k) ?? -Infinity) > this.now() - days * DAY) return true;
-    return this.metRecently(a, b, 60);
+    return metByA.has(b);
   }
 
-  /** The two had a meeting (held, or a no-show) within `days`. */
-  private metRecently(a: MemberId, b: MemberId, days: number): boolean {
-    const since = this.now() - days * DAY;
-    return this.interactions.some(x => x.at >= since && (x.outcome === "completed" || x.outcome === "no_show") && x.participants.includes(a) && x.participants.includes(b));
+  private metRecently(id: MemberId): Set<MemberId> {
+    const since = this.now() - 60 * DAY, met = new Set<MemberId>();
+    for (const x of this.interactions) {
+      if (x.at >= since && (x.outcome === "completed" || x.outcome === "no_show") && x.participants.includes(id)) for (const p of x.participants) met.add(p);
+    }
+    return met;
   }
 
   /**
@@ -3528,15 +3539,15 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** What the Network knows about when a member is free (engine-visible; never shareable). */
-  private evidence(m: MemberState, now: number, exceptOpp?: string): attention.AvailabilityEvidence {
-    const snap = this.snapshotCached();
+  private evidence(m: MemberState, now: number, exceptOpp?: string, opps: Iterable<Opp> = this.opps.values()): attention.AvailabilityEvidence {
+    const rows = this.snapshotRows();
     const stated = (m.availability ?? []).filter(a => now - a.at < 7 * DAY).map(a => ({ kind: "availability_pattern", tags: a.tags, observedAt: a.at }));
     // Standing availability said at onboarding does not expire (plans ask 1).
     const said = m.standing ? [{ kind: "availability_pattern", tags: m.standing.tags, observedAt: m.standing.at }] : [];
-    const standing = attention.standingFromFacets([...snap.facets.filter(f => f.memberId === m.id), ...stated, ...said], now);
+    const standing = attention.standingFromFacets([...rows.facets.get(m.id) ?? [], ...stated, ...said], now);
     // A member's booked plans count as away when a time is chosen for anything else (plans ask 5).
-    const booked = [...this.opps.values()].filter(o => o.id !== exceptOpp && o.stage === "scheduled" && o.meetingAt !== undefined && o.status.get(m.id) === "yes").map(o => ({ start: o.meetingAt! - 2 * HOUR, end: o.meetingAt! + 3 * HOUR }));
-    const away = [...snap.presence.filter(p => p.memberId === m.id && p.type === "temporary" && p.city !== "nyc" && p.from !== undefined && p.to !== undefined).map(p => ({ start: p.from!, end: p.to! })), ...booked];
+    const booked = [...opps].filter(o => o.id !== exceptOpp && o.stage === "scheduled" && o.meetingAt !== undefined && o.status.get(m.id) === "yes").map(o => ({ start: o.meetingAt! - 2 * HOUR, end: o.meetingAt! + 3 * HOUR }));
+    const away = [...(rows.presence.get(m.id) ?? []).filter(p => p.type === "temporary" && p.city !== "nyc" && p.from !== undefined && p.to !== undefined).map(p => ({ start: p.from!, end: p.to! })), ...booked];
     const calendar = this.calendarEvidence(m, now);
     return { memberId: m.id, tz: NY, quietHours: m.quietHours, standing, history: m.availHistory ?? [], ...(away.length ? { away } : {}), ...(calendar ? { calendar } : {}) };
   }
@@ -4579,8 +4590,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** What the planner knows about when a member is free: the attention evidence plus this week's stated windows. */
-  private planEvidence(m: MemberState, now: number): plans.PlanEvidence {
-    return { ...this.evidence(m, now), ...(m.stated && m.stated.until > now ? { stated: m.stated } : {}) };
+  private planEvidence(m: MemberState, now: number, opps?: Iterable<Opp>): plans.PlanEvidence {
+    return { ...this.evidence(m, now, undefined, opps), ...(m.stated && m.stated.until > now ? { stated: m.stated } : {}) };
   }
 
   /** Is the member booked into a meeting within 4 hours of `t` (other than `exceptOpp`)? */
@@ -4634,8 +4645,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** May this member take a seat in a plan now: an active adult, reachable, not on hold, not in another open opportunity. */
-  private planSeatOk(m: MemberState, exceptOpp?: string, o: { busyOk?: boolean } = {}): boolean {
-    return this.adultMember(m.id) && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && !this.reportHeld(m.id) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
+  private planSeatOk(m: MemberState, exceptOpp?: string, o: { busyOk?: boolean; opps?: Iterable<Opp> } = {}): boolean {
+    return this.adultMember(m.id) && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && !this.reportHeld(m.id) && (!!o.busyOk || !this.busy(m.id, exceptOpp, false, o.opps));
   }
 
   private planFriendSeatFits(world: EngineWorld, id: MemberId, peers: readonly MemberId[], mode: "discovery" | "existingPlan"): boolean {
@@ -4676,10 +4687,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.lastPlanRunDay = p.day;
     const evidence = new Map<MemberId, plans.PlanEvidence>();
     const exclude = new Set<MemberId>();
+    const opps = this.oppsByMember();
     for (const m of this.members.values()) {
-      if (!this.planSeatOk(m)) { exclude.add(m.id); continue; }
+      const own = opps.get(m.id) ?? [];
+      if (!this.planSeatOk(m, undefined, { opps: own })) { exclude.add(m.id); continue; }
       if (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked") { exclude.add(m.id); continue; }
-      const ev = this.planEvidence(m, now);
+      const ev = this.planEvidence(m, now, own);
       if (!ev.standing?.length && !ev.stated && !ev.history?.length) continue;
       evidence.set(m.id, ev);
     }
@@ -6133,29 +6146,21 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  /**
-   * Romance, checked again here whatever the engine did (adults only, PRD 17.4; founder 2026-10-08):
-   * exactly two people; each opted in on the record (romanceOptIn and the romance category); each
-   * has a verified adult age on the record (never a stated or unknown age); each stated who they
-   * hope to meet; and each is what the other seeks.
-   */
   private romanceGate(ids: readonly MemberId[]): string | undefined {
     if (ids.length !== 2) return "romance_not_pair";
     const snap = this.snapshotCached();
-    const prefs = new Map<MemberId, { is: string[]; seeks: string[] }>();
+    const prefs = new Map<MemberId, DatingFacts>();
     for (const id of ids) {
       const r = this.record(id);
       const m = this.members.get(id);
       if (!r || !r.prefs?.romanceOptIn || !(r.prefs.categoriesOptIn ?? []).includes("romance")) return "romance_not_opted_in";
       if (!canBeMatched(r.age) || !m || m.minor || m.minorSignal || m.ageConflict) return "romance_not_verified_adult";
       const tags = [...snap.facets.filter(f => f.memberId === id).flatMap(f => f.tags), ...(m.appTags ?? []).map(t => t.tag)].map(t => t.toLowerCase());
-      const is = tags.filter(t => t.startsWith("romance:is:")).map(t => t.slice(11));
-      const seeks = tags.filter(t => t.startsWith("romance:seeks:")).map(t => t.slice(14));
-      if (!seeks.length) return "romance_prefs_unstated";
-      prefs.set(id, { is, seeks });
+      const facts = datingFactsOf(tags);
+      if (!facts.seeks.length) return "romance_prefs_unstated";
+      prefs.set(id, facts);
     }
-    const [a, b] = [prefs.get(ids[0]!)!, prefs.get(ids[1]!)!];
-    if (!a.seeks.some(x => b.is.includes(x)) || !b.seeks.some(x => a.is.includes(x))) return "romance_mismatch";
+    if (!mutuallyOpen(datingStatementOf(prefs.get(ids[0]!)!), datingStatementOf(prefs.get(ids[1]!)!))) return "romance_mismatch";
     return undefined;
   }
 
@@ -6287,9 +6292,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const local = new Set(snap.members.filter(m => markets.has(m.homeCity) && !this.declinedIds.has(m.id)).map(m => m.id));
     const facets: Facet[] = snap.facets.filter(f => local.has(f.memberId));
     const intents: Intent[] = snap.intents.filter(i => local.has(i.memberId));
+    const stated = byMember(facets), stored = byMember(snap.intents);
     for (const m of this.members.values()) {
       if (!local.has(m.id)) continue;
-      const have = new Set(facets.filter(f => f.memberId === m.id).flatMap(f => f.tags));
+      const have = new Set((stated.get(m.id) ?? []).flatMap(f => f.tags));
       const add = (kind: Facet["kind"], tag: string, value: string) => {
         if (have.has(tag)) return;
         facets.push({ id: `${m.id}:l:${tag}`, memberId: m.id, kind, value, tags: [tag], scope: "matchable", provenance: "said", confidence: 0.85, validFrom: now, source: "chat", observedAt: now, inferred: false, confirmedByMember: true });
@@ -6298,7 +6304,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       m.learned.skills.forEach(t => add("skill", t, skillLabel(t)));
       for (const [d, statedAt] of m.learned.desires) {
         const def = desireById.get(d);
-        if (!def || !this.learnedLive(m.id, d, statedAt, now, snap.intents)) continue;
+        if (!def || !this.learnedLive(m.id, d, statedAt, now, stored.get(m.id) ?? [])) continue;
         // The intent is as old as the member's statement, not refreshed on every run.
         intents.push({ id: `${m.id}:li:${d}`, memberId: m.id, objective: def.text, category: def.category, details: `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}`, horizonDays: learnedIntentDays, status: "active", createdAt: statedAt });
       }
@@ -6372,14 +6378,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     return this.opts.hooks?.engineInput?.(this.seatView(out)) ?? this.seatView(out);
   }
 
-  /** A fresh learned statement fills in for an absent or expired record of the same want. */
-  private learnedLive(id: MemberId, desireId: string, statedAt: number, now: number, stored: readonly Intent[]): boolean {
+  private learnedLive(id: MemberId, desireId: string, statedAt: number, now: number, own: readonly Intent[]): boolean {
     const control = this.members.get(id)?.intentControls?.[`learned:${desireId}`];
     const status = control ? INTENT_CONTROL_STATUS[control] : "active";
     const phase = standingIntentPhaseAt({ status, createdAt: statedAt, horizonDays: learnedIntentDays }, now);
     const objective = desireById.get(desireId)?.text;
-    const blockingRecord = phase === "IntentLive" && objective !== undefined && stored.some(i =>
-      i.memberId === id && i.objective === objective && standingIntentBlocksLearnedCopy(standingIntentPhaseAt(i, now)));
+    const blockingRecord = phase === "IntentLive" && objective !== undefined && own.some(i =>
+      i.objective === objective && standingIntentBlocksLearnedCopy(standingIntentPhaseAt(i, now)));
     return learnedIntentMayProject(phase, blockingRecord);
   }
 
@@ -7266,11 +7271,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       const def = [...desireById.values()].find(d => d.text === i.objective);
       if (def) x.desires.add(def.id);
     }
+    const stored = byMember(snap.intents);
     for (const m of this.members.values()) {
       const x = get(m.id);
       m.learned.interests.forEach(t => x.interests.add(t)); m.learned.skills.forEach(t => x.skills.add(t));
       this.vouchedSkills.get(m.id)?.forEach(t => x.strongSkills.add(t));
-      for (const [d, at] of m.learned.desires) if (this.learnedLive(m.id, d, at, now, snap.intents)) {
+      for (const [d, at] of m.learned.desires) if (this.learnedLive(m.id, d, at, now, stored.get(m.id) ?? [])) {
         firstIntentExpiry = Math.min(firstIntentExpiry, standingIntentDeadline({ createdAt: at, horizonDays: learnedIntentDays }));
         x.desires.add(d);
         x.intents++;
@@ -7282,7 +7288,8 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Is the member in New York for all of [from, to]? Announced trips elsewhere say no. */
   inNyc(id: MemberId, from: number, to: number): boolean {
-    return presentInNyc(this.snapshotCached(), id, from, to);
+    const rows = this.snapshotRows();
+    return presentFor(rows.byId.get(id), rows.presence.get(id) ?? [], from, to);
   }
   private snapCache?: { at: number; snap: WorldSnapshot };
   /** The public snapshot, rebuilt at most every 20 sim minutes or when something we learned changed. */
@@ -7299,12 +7306,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Share of our asks this member answers (Laplace prior: 2 of 2), the best predictor of a silent reveal. */
   responsiveness(id: MemberId): number { const m = this.members.get(id); return m ? (m.answered + 2) / (m.asked + 2) : 1; }
 
-  /**
-   * Can this member be put into a new opportunity right now (and be here for it this week)? A member
-   * who asked for it (`asked`, a requester) is not interrupted by it, so they need room on the Blooio
-   * streak only for logistics (the booked plan); everyone else needs room for an interruption.
-   */
-  eligible(id: MemberId, exceptOpp?: string, asked = false): boolean {
+  eligible(id: MemberId, exceptOpp?: string, asked = false, opps?: Iterable<Opp>): boolean {
     const m = this.members.get(id);
     if (m) this.syncRecord(m);
     if (!m || m.minor || m.account || m.optedOut || m.stage === "new" || !this.trust.ok(id) || m.onlyWhenAsked || this.reportHeld(id)) return false;
@@ -7312,12 +7314,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const c = { outboundSinceInbound: m.outbound ?? 0 };
     if (!(asked ? attention.canSendLogistics(c) : attention.canInterrupt(c))) return false;
     if (!this.inNyc(id, this.now(), this.now() + 6 * DAY)) return false;
-    return !this.busy(id, exceptOpp) && !this.overBudget(m);
+    return !this.busy(id, exceptOpp, false, opps) && !this.overBudget(m);
   }
-  /** In an open opportunity (other than `exceptOpp`) and not out of it. */
-  busy(id: MemberId, exceptOpp?: string, seats = false) {
-    for (const o of this.openOpps()) {
-      if (o.id === exceptOpp || !activeOpportunityParticipant(o, id)) continue;
+  busy(id: MemberId, exceptOpp?: string, seats = false, opps: Iterable<Opp> = this.opps.values()) {
+    for (const o of opps) {
+      if (!OPEN_STAGES.has(o.stage) || o.id === exceptOpp || !activeOpportunityParticipant(o, id)) continue;
       // A hiring manager reviews every candidate for their seats at once: a seat item never makes them busy (`seats`: it does, for dropMember).
       if (!seats && o.seat?.manager === id) continue;
       // A yes to a plan still waiting for quorum does not block other items (plans ask 6).
@@ -7327,6 +7328,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return false;
   }
   private openOpps(): Opp[] { return [...this.opps.values()].filter(o => OPEN_STAGES.has(o.stage)); }
+  private oppsByMember(): Map<MemberId, Opp[]> {
+    const by = new Map<MemberId, Opp[]>();
+    for (const o of this.opps.values()) for (const id of new Set([...o.participants, ...o.status.keys()])) {
+      const own = by.get(id);
+      if (own) own.push(o); else by.set(id, [o]);
+    }
+    return by;
+  }
   /**
    * Blocked by either member: a block made here, or a "blocked" edge in the snapshot (the platform
    * service adds one for every person-to-person block made on any app). The snapshot read is the
@@ -7341,13 +7350,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     return this.snapBlocks.set;
   }
 
-  /** The member record from the snapshot (indexed once per snapshot). The production snapshot adds the account status (service/snapshot.ts). */
   private record(id: MemberId): MemberRecord | undefined {
-    const snap = this.snapshotCached();
-    if (this.records?.snap !== snap) this.records = { snap, byId: new Map(snap.members.map(x => [x.id, x as MemberRecord])) };
-    return this.records.byId.get(id);
+    return this.snapshotRows().byId.get(id);
   }
-  private records?: { snap: WorldSnapshot; byId: Map<MemberId, MemberRecord> };
+  private snapshotRows(): SnapshotRows {
+    const snap = this.snapshotCached();
+    if (this.rows?.snap !== snap) {
+      this.rows = { snap, byId: new Map(snap.members.map(x => [x.id, x as MemberRecord])), presence: byMember(snap.presence), facets: byMember(snap.facets) };
+    }
+    return this.rows;
+  }
+  private rows?: SnapshotRows;
 
   private syncRecord(m: MemberState): boolean {
     const r = this.record(m.id);
@@ -8093,6 +8106,7 @@ type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string;
 function recordMinorSignalOpen(r: Pick<MemberRecord, "minorSignalAt">, m?: Pick<MemberState, "minorClearedAt">): boolean {
   return personMinorSignalOpen(r.minorSignalAt !== undefined, r.minorSignalAt ?? 0, m?.minorClearedAt !== undefined, m?.minorClearedAt ?? 0);
 }
+interface SnapshotRows { snap: WorldSnapshot; byId: Map<MemberId, MemberRecord>; presence: Map<MemberId, Presence[]>; facets: Map<MemberId, Facet[]> }
 /** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
 type SeatProposal = EngineProposal & { seat?: HireSeat };
 

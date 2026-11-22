@@ -1,18 +1,6 @@
-// friends.help hard filters (friendsPack.eligibility). They run AFTER the core prefixes (minors,
-// holds, pause; duplicate / minors / blocks for pairs) and can only remove. Order is the contract:
-// the first failing rule names the funnel reason.
-//
-//   romance_excluded   friends.help never matches romance (lane, member, pair and configuration)
-//   unverified         liveness and age assurance must both have passed (fail closed); bots fail
-//                      liveness, age liars fail the age check (domain research C2 "Safety", C7.3-4)
-//   safety_review      any safety cue the agent observed (romantic pursuit, sales pitch, bot pattern,
-//                      hostile language, age signal) holds the member for human review
-//   reliability        two no-shows without a completed meetup since: no group seats
-//   group_first        one-to-one only after the member has attended a group meetup (groups first;
-//                      domain research C2 safety recommendations)
-//   transit            geo.pairReason: two homes too far apart for any venue to fit both tolerances
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { NETWORK_MEMBER_RULES, NETWORK_PAIR_RULES } from "../network/rules.ts";
+import { friendsMutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import { friendsInfo } from "./info.ts";
 import type { World } from "../../world.ts";
 import type { MemberId } from "@thenetwork/core";
@@ -28,7 +16,6 @@ const netPair = (id: string) => {
   return r;
 };
 
-/** Members who attended at least one group meetup (>= 3 participants, completed). */
 const groupVeterans = new WeakMap<World, Set<MemberId>>();
 export function attendedGroup(w: World, id: MemberId): boolean {
   let s = groupVeterans.get(w);
@@ -57,6 +44,10 @@ export const friendsPairRules = (): readonly PairRule[] => (pairRules ??= [
   netPair("negative_feedback_cooldown"),
   netPair("unknown_member"),
   netPair("dealbreaker"),
+  { id: "friend_openness", check: (w, a, b) => {
+    const info = friendsInfo(w), fa = info.get(a)?.friend, fb = info.get(b)?.friend;
+    return fa && fb && friendsMutuallyOpen(fa, fb) ? null : "friend_openness";
+  } },
 ]);
 
 export const FRIENDS_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [

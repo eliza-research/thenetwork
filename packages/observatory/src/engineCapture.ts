@@ -1,6 +1,3 @@
-// engine-v1 for the observatory: the same runEngine the simulator adapter uses, but every run's
-// MatchingRunLog is summarized for the run inspector (funnel, generators, rejections, fairness,
-// top configurations and why they lost) and each proposal is linked to its run.
 import type { City, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { emptySearchTally, runEngine, type EngineProposal, type MatchingRunLog } from "@thenetwork/engine";
 import type { Engine } from "@thenetwork/core";
@@ -34,12 +31,16 @@ export function summarizeRun(log: MatchingRunLog, proposals: EngineProposal[], o
       gini: fair.gini, top10Share: fair.top10Share, zeroExposureShare: fair.zeroExposureShare, newcomerCoverage: fair.newcomerCoverage,
       viableCoverage: fair.viableCoverage, lorenz: [...fair.lorenz], membersWithProposal: fair.membersWithProposal, eligibleMembers: fair.eligibleMembers,
     },
-    emptyStates: log.emptyStates.length, emptyStatesByReason, search: log.search ?? emptySearchTally, timingsMs: { ...log.timingsMs }, top,
+    emptyStates: log.emptyStates.length, emptyStatesByReason, search: log.search ?? emptySearchTally, searchOutcomes: (log.searchOutcomes ?? []).map(o => ({ ...o })), timingsMs: { ...log.timingsMs }, top,
     proposalIds: proposals.map(p => p.id),
   };
 }
 
-/** Run engine-v1 once on a snapshot (optionally one city) and summarize it. */
+export type StoredRunSummary = Omit<EngineRunSummary, "search" | "searchOutcomes"> & Partial<Pick<EngineRunSummary, "search" | "searchOutcomes">>;
+
+export const storedRunSummary = (stored: StoredRunSummary): EngineRunSummary =>
+  ({ ...stored, search: stored.search ?? emptySearchTally, searchOutcomes: stored.searchOutcomes ?? [] });
+
 export async function runEngineSummarized(snapshot: WorldSnapshot, opts: { seed: number; city?: City; shadow?: boolean }) {
   const t0 = performance.now();
   const { proposals, runLog } = await runEngine(snapshot, opts.city ? { seed: opts.seed, cities: [opts.city] } : { seed: opts.seed });
@@ -48,10 +49,8 @@ export async function runEngineSummarized(snapshot: WorldSnapshot, opts: { seed:
   return { proposals: mine, runLog, summary };
 }
 
-/** Simulator Engine that records a summary of every run. */
 export class CapturingEngine implements Engine {
   readonly name = "engine-v1";
-  /** proposal id -> run summary id */
   readonly runOf = new Map<string, string>();
   constructor(private onRun: (s: EngineRunSummary) => void, private onStart?: (city?: City) => void) {}
   async propose(snapshot: WorldSnapshot, opts?: { city?: City; seed?: number | string }) {
