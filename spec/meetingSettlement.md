@@ -227,6 +227,18 @@ pure def lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: int, handledE
   not(meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs))
 ```
 
+### Use the active roster in interaction history
+
+The history of a completed booking lists the members who still held accepted seats when the Network recorded feedback. It keeps each member's own check-in outcome, including a self-reported absence. Keep the original planned roster in the opportunity. For an older group feedback row, use the saved opportunity and its accepted seats only when the saved feedback author and opportunity match.
+
+```quint
+pure def feedbackHistorySeat(status: str): bool =
+  status == "yes"
+
+pure def lawWithdrawnSeatCannotEnterFeedbackHistory(status: str): bool =
+  (status == "dropped") implies not(feedbackHistorySeat(status))
+```
+
 ### Learn a dating availability slot from the booked time
 
 Slop uses completed meeting evidence when it ranks future time options. Read the booked start in the meeting venue's time zone, or the zone of the planned meeting. Keep the time feedback was received for feedback history. An older interaction can use the booked start from its stored opportunity. The synthetic dating world uses UTC for its local calendar.

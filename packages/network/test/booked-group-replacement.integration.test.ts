@@ -12,6 +12,55 @@ import { NetworkService } from "../service/service.ts";
 import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
 
+test("a booked group that continues after a withdrawal records only its active participants", async () => {
+  const planned = ["ana", "ben", "cy", "dee"];
+  const remaining = planned.slice(0, 3);
+  const world = new Mini(planned.map(id => ({
+    id, name: id, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
+  })), { review: "human", growth: false });
+  await world.onboard(...planned);
+  const id = world.propose(planned);
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
+  expect(world.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  await world.answerProbes(planned);
+  expect(world.meetings).toMatchObject([{ participants: planned }]);
+
+  await world.say("dee", "I can't make it anymore.");
+  const opportunity = () => world.net.exportState().opps.find(item => item.id === id)!;
+  expect(opportunity()).toMatchObject({ stage: "scheduled", participants: planned });
+  expect(opportunity().status.filter(([, status]) => status === "yes").map(([member]) => member)).toEqual(remaining);
+  for (const member of remaining) await world.say(member, "Thanks, still coming.");
+  world.restart();
+
+  const feedbackRecipients = () => world.sent.filter(item =>
+    item.meta.type === "feedback_request" && item.meta.proposalId === id).map(item => item.to);
+  await world.run(opportunity().meetingAt! - world.clock.now());
+  for (const member of remaining) await world.say(member, "Thanks.");
+  expect(await world.runUntil(() => feedbackRecipients().length >= remaining.length, DAY)).toBe(true);
+  expect(feedbackRecipients().toSorted()).toEqual(remaining);
+  for (const member of remaining) await world.say(member, member === "ben" ? "I couldn't make it." : "It was great!");
+
+  expect(opportunity()).toMatchObject({ stage: "done", participants: planned, feedbackFrom: remaining, post: {
+    ana: { came: true }, ben: { came: false }, cy: { came: true },
+  } });
+  expect(world.net.engineInput(world.clock.now()).feedback?.some(item => item.from === "dee" || item.about === "dee")).toBe(false);
+  const rows = () => world.net.exportState().interactions.filter(item => item.id.startsWith(`${id}:fb:`));
+  const history = [
+    { id: `${id}:fb:ana`, participants: remaining, outcome: "completed" },
+    { id: `${id}:fb:ben`, participants: remaining, outcome: "no_show" },
+    { id: `${id}:fb:cy`, participants: remaining, outcome: "completed" },
+  ];
+  expect(rows()).toMatchObject(history);
+  world.restart();
+  expect(rows()).toMatchObject(history);
+
+  const legacy = world.net.exportState();
+  for (const item of legacy.interactions) if (item.id.startsWith(`${id}:fb:`)) item.participants = planned;
+  world.net.importState(legacy);
+  expect(rows()).toMatchObject(history);
+  expect(opportunity().participants).toEqual(planned);
+});
+
 const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability", "expired generic invite"] as const;
 
 test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current admission (%s)", async scene => {
