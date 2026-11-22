@@ -61,7 +61,7 @@ import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../cor
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
-import { rescheduleAnswerAfterReceipt, rescheduleBookingSelected, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
+import { bookingNoticeRosterCurrent, rescheduleAnswerAfterReceipt, rescheduleBookingSelected, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
   describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
   rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
@@ -3661,24 +3661,31 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     this.ctx.recordMeeting({ proposalId: o.id, participants: [...o.participants], at: o.meetingAt, city: "nyc", kind: o.kind });
     for (const id of [...o.participants]) {
-      if (o.stage !== "scheduled" || o.status.get(id) !== "yes") continue;
-      const m = this.member(id);
-      const others = o.participants.filter(x => x !== id).map(x => this.member(x).display);
-      const why = capitalize(o.explanations[id] ?? GOOD_FIT);
-      const where = `${o.venue} (${o.venueArea})`, when = whenPhrase(o.meetingAt);
-      // The calendar and weekly check-in offer rides once, in the member's first booked plan (decision 4c, 4d).
-      const offer = !m.offerMade && !m.minor;
-      const text = this.opts.hooks?.booked?.(this.hookOpp(o), id, { others, where, when }) ?? copy.booked(others, why, where, when, offer);
-      const proactive = !this.opts.probes && !o.primed.has(id);
-      const curatedLink = proactive ? undefined : venueBookingLink(o, id, true, now);
-      const link = published?.listing?.url ?? curatedLink;
-      const source = link ? `\n${link}` : "";
-      this.send(m, text + source, {
-        type: "proposal", proposalId: o.id, participants: [...o.participants], meetingAt: o.meetingAt,
-        booked: { proposalId: o.id, at: o.meetingAt, optOutHours: OPT_OUT_HOURS }, proactive,
-      }, "reveal", { about: o.participants, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer) + source,
-        hook: { t: "reveal", oppId: o.id, id }, ...(curatedLink ? { key: venueBookingNoticeKey(o.id, id, spot.venue.id) } : {}) });
+      if (o.stage === "scheduled" && o.status.get(id) === "yes") this.bookingReveal(o, id);
     }
+  }
+
+  private bookingReveal(o: Opp, id: MemberId) {
+    if (o.meetingAt === undefined) return;
+    const m = this.member(id);
+    const going = o.participants.filter(seat => o.status.get(seat) === "yes");
+    const others = going.filter(seat => seat !== id).map(seat => this.member(seat).display);
+    const unchangedRoster = going.length === o.participants.length;
+    const why = capitalize((unchangedRoster ? o.explanations[id] : undefined) ?? GOOD_FIT);
+    const where = `${o.venue} (${o.venueArea})`, when = whenPhrase(o.meetingAt);
+    // The calendar and weekly check-in offer rides once, in the member's first booked plan (decision 4c, 4d).
+    const offer = !m.offerMade && !m.minor;
+    const packText = unchangedRoster ? this.opts.hooks?.booked?.(this.hookOpp(o), id, { others, where, when }) : undefined;
+    const text = packText ?? copy.booked(others, why, where, when, offer);
+    const proactive = !this.opts.probes && !o.primed.has(id);
+    const curatedLink = proactive ? undefined : venueBookingLink(o, id, true, this.now());
+    const link = this.currentPublishedEvent(o)?.listing?.url ?? curatedLink;
+    const source = link ? `\n${link}` : "";
+    this.send(m, text + source, {
+      type: "proposal", proposalId: o.id, participants: going, meetingAt: o.meetingAt,
+      booked: { proposalId: o.id, at: o.meetingAt, optOutHours: OPT_OUT_HOURS }, proactive,
+    }, "reveal", { about: going, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer) + source,
+      hook: { t: "reveal", oppId: o.id, id }, ...(curatedLink && o.venueId ? { key: venueBookingNoticeKey(o.id, id, o.venueId) } : {}) });
   }
 
   /**
@@ -5140,7 +5147,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       const valid = this.hookFns(m, d.o.hook).valid;
       if (valid && !valid()) continue;
       if (!this.timingOk(m, d.timing ?? "logistics", now)) { this.deferred.push(d); continue; }
-      this.send(m, d.body, d.meta, d.kind, d.o);
+      // spec/meetingReschedule.md, "A named booking notice still needs every recorded seat"
+      const booking = d.o.hook?.t === "reveal" ? this.opps.get(d.o.hook.oppId) : undefined;
+      const roster = d.meta.participants;
+      if (booking?.kind === "group" && !bookingNoticeRosterCurrent(true, roster !== undefined,
+        roster?.includes(m.id) === true, roster?.every(id => booking.status.get(id) === "yes") === true)) {
+        if (booking.plan) this.planReveal(booking, m.id);
+        else this.bookingReveal(booking, m.id);
+      } else this.send(m, d.body, d.meta, d.kind, d.o);
     }
     for (const o of [...this.opps.values()]) this.advance(o, now);
     this.checkSeats();

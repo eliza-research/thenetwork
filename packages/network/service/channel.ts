@@ -117,27 +117,26 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
   if (!ids.length) return false;
   const rows = await tx<{
     scheduled: boolean; confirmed: boolean | null; revision: number | null; meeting_at: Date | null;
-    group_booking: boolean | null; roster_recorded: boolean; roster_includes_recipient: boolean | null; roster_confirmed: boolean;
+    group_booking: boolean | null; roster_recorded: boolean; roster_includes_recipient: boolean | null; roster_accepted: boolean;
   }[]>`select opp.meeting_at,
     (booking.id is not null and opp.state='SCHEDULED') as scheduled,
     (seat.role='participant' and seat.status='confirmed') as confirmed,booking."scheduleRevision" as revision,
     opp.kind='group' as group_booking,msg.booking_roster_member_ids is not null as roster_recorded,
     msg.member_id=any(msg.booking_roster_member_ids) as roster_includes_recipient,
     not exists (select 1 from unnest(msg.booking_roster_member_ids) named(member_id) where not exists (
-      select 1 from network.participations current_seat where current_seat.app_id=msg.app_id
-        and current_seat.opportunity_id=msg.opportunity_id and current_seat.member_id=named.member_id
-        and current_seat.role='participant' and current_seat.status='confirmed'
-    )) as roster_confirmed
+      select 1 from jsonb_array_elements(booking.status) accepted(seat)
+      where accepted.seat->>0=named.member_id and accepted.seat->>1='yes'
+    )) as roster_accepted
     from network.messages msg
     left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     left join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=msg.opportunity_id and seat.member_id=msg.member_id
     left join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
-    left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int) on booking.id=msg.opportunity_id
+    left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int,status jsonb) on booking.id=msg.opportunity_id
     where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.direction='outbound' and msg.type='proposal' and msg.opportunity_id is not null`;
   const now = clock.now();
   return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true,
     (row.revision ?? 0) === 0, (row.meeting_at?.getTime() ?? now) - now)
-    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_confirmed))
+    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_accepted))
     || !await venueBookingNoticesCurrent(tx, app, runtimeId, ids, now, queued);
 }
 

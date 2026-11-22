@@ -12,7 +12,7 @@ import { NetworkService } from "../service/service.ts";
 import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
 
-const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability", "expired generic invite"] as const;
+const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "deferred booking roster", "changed queued availability", "expired generic invite"] as const;
 
 test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current admission (%s)", async scene => {
   // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
@@ -107,7 +107,11 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     const [ari, blair, charlie, drew, elliot] = ids;
     if (!ari || !blair || !charlie || !drew || !elliot) throw new Error("The five fixture members did not join");
     const checksDisclosure = scene === "withdrawn identity";
-    const invited = checksDisclosure ? [ari, blair, charlie, elliot] : [ari, blair, charlie];
+    const deferBooking = scene === "deferred booking roster";
+    const fourSeats = checksDisclosure || deferBooking;
+    const invited = fourSeats ? [ari, blair, charlie, elliot] : [ari, blair, charlie];
+    const quietAri = () => sql`update network.members set prefs=prefs || ${{ quietHours: [14, 15] }}::jsonb
+      where app_id=${app.id} and id=${ari}`;
     const freshRoster = [ari, blair, elliot];
     const now = clock.now();
     const fixture = new Mini(members, { app: app.id, plans: false, growth: false });
@@ -117,7 +121,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     const plan: plans.Plan = {
       id: "booked_group_replacement_original", city: "nyc", activityId: "day_hike", venueId: "inwood-hill",
       place: { name: "Inwood Hill Park", area: "Inwood" }, window: { start: now + 5 * DAY, end: now + 5 * DAY + 4 * HOUR },
-      invited, alternates: checksDisclosure ? [] : [drew, elliot], partner: false, size: { min: 3, target: invited.length, max: invited.length }, quorum: 3,
+      invited, alternates: fourSeats ? [] : [drew, elliot], partner: false, size: { min: 3, target: invited.length, max: invited.length }, quorum: 3,
       probeDeadline: now + (scene === "expired generic invite" ? 2 * HOUR : 3 * DAY),
       score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
@@ -178,9 +182,34 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     const firstOriginalYes = turn("original-ari-yes", people[0].e164, "yes");
     const firstOriginalReply = await answer(firstOriginalYes);
     await answer(turn("original-blair-yes", people[1].e164, "yes"));
+    if (deferBooking) await quietAri();
     if (checksDisclosure) await adapter.lineSafety("review");
     const bookedYes = turn("original-charlie-yes", people[2].e164, "yes");
     const bookedReply = await answer(bookedYes);
+    if (deferBooking) {
+      // spec/meetingReschedule.md, "A named booking notice still needs every recorded seat"
+      await answer(turn("original-elliot-late-yes", people[4].e164, "yes"));
+      const booked = await booking(original.oppId);
+      expect(booked).toMatchObject({ stage: "scheduled", bookedTold: expect.arrayContaining([blair, charlie, elliot]) });
+      expect(booked?.bookedTold).not.toContain(ari);
+      expect((await runtime().pg.load())?.deferred).toContainEqual(expect.objectContaining({
+        memberId: ari, kind: "reveal", body: expect.stringContaining("Charlie"),
+      }));
+      expect(await delivered(original.oppId, "proposal")).toEqual([expect.objectContaining({ to: people[1].e164 })]);
+      await answer(turn("booked-charlie-steps-out", people[2].e164, "I can't make it."));
+      const ongoing = await booking(original.oppId);
+      expect(ongoing).toMatchObject({ stage: "scheduled" });
+      expect(ongoing?.status.filter(([, status]) => status === "yes").map(([id]) => id).sort()).toEqual([...freshRoster].sort());
+      clock.advance(HOUR);
+      await runtime().tick();
+      const refreshed = (await delivered(original.oppId, "proposal")).filter(call => call.to === people[0].e164);
+      expect(refreshed.map(call => call.text)).toEqual([expect.stringContaining("with Blair, Elliot")]);
+      expect(refreshed[0]?.text).not.toContain("Charlie");
+      const [recorded] = await sql`select booking_roster_member_ids from network.messages
+        where app_id=${app.id} and id=${refreshed[0]?.idempotencyKey.slice(3)} and member_id=${ari}`;
+      expect(recorded?.booking_roster_member_ids).toEqual(freshRoster);
+      return;
+    }
     if (checksDisclosure) {
       // spec/meetingReschedule.md, "A named booking notice still needs every recorded seat"
       // The reviewed fourth invitee accepts after booking. Their collected reply still names Charlie.
