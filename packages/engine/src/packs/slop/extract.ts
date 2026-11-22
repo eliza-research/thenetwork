@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, ageInsideQuote, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -156,24 +156,27 @@ const G_MAN = "man|guy|dude|male|boy|gentleman|bloke|trans ?man|trans ?guy|ftm|d
 const G_NB = "non[- ]?binary|nonbinary|nonbinery|nb|enby|genderqueer|gender ?queer|agender|gender ?fluid|genderfluid|two[- ]spirit";
 const ADJ_LITE = "straight|gay|bi|queer|trans|cis|single|lesbian|pan";
 
-const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then|"|')\s*$/;
+const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then)\s*$/;
 /** What may follow a number for it to be the sender's age ("I'm 15", "I'm 27, woman"); never "15 minutes", "5'4". */
-const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
+const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b(?!\\s+(?:the\\s+)?(?:queue|line)\\b)|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
 const FRACTION_AGE_END = `(?=\\s*(?:$|[,!?:)]|${YEARS_OLD}))`;
 const LOOSE_END = `(?=\\s+(?:${AGE_LOOSE_TAIL}))`;
-const SELF_AGE = `\\b(?:${ME}\\s+(?:only |just |literally |barely |like |about )?|i (?:just )?turned\\s+)(\\d{1,2}|${NUM_WORD_RX})\\b`;
+const SELF_CURRENT_AGE = `\\b${ME}\\s+${AGE_CURRENT_ADVERB}(?:(?:only|just|literally|barely|like|about)\\s+)?`;
+const SELF_AGE = `(?:${SELF_CURRENT_AGE}|\\bi (?:just )?turned\\s+)(\\d{1,2}|${NUM_WORD_RX})\\b`;
+const NOT_UPCOMING_AGE = `(?!${AGE_BIRTHDAY_AFTER_AGE})`;
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : wordNum(value);
 const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
-  { rx: new RegExp(`${SELF_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageNumber(m[1] ?? ""), strict: true },
-  { rx: new RegExp(`${SELF_AGE}${LOOSE_END}`), age: m => {
+  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageNumber(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}${LOOSE_END}`), age: m => {
     const age = ageNumber(m[1] ?? "");
     return canJoin(age) ? age : NaN;
   }, strict: true },
-  { rx: new RegExp(`(?<!\\b(?:my|our|his|her|their|a|an|the)\\s+)\\b(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },
-  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely )?an?\\s+(\\d{1,2}|${NUM_WORD_RX})[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => ageNumber(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`^\\s*(?:(?:hi|hey|hello)[\\s,!]+)?(\\d{1,2})${NOT_UPCOMING_AGE}\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|${NUM_WORD_RX})[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => ageNumber(m[1] ?? ""), strict: true },
   { rx: /\b(?:my age is|age\s*[:=-]|age is)\s*(\d{1,2})\b|(?:^|[,.(]\s*)age\s+(\d{1,2})\b/, age: m => Number(m[1] ?? m[2]), strict: true },
+  { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD_RX})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => ageNumber(m[1] ?? "") - 1, strict: false },
   { rx: new RegExp(`\\b(?:${ME}\\s+)?(?:almost|nearly|turning|about to (?:be|turn))\\s+(\\d{1,2}|${NUM_WORD_RX})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi\\b|km|percent|%|feet|ft|times))`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD_RX})\\s+(?:in|on|next|this|soon)\\b`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   // Shorthand "27f", "27 m", "27/nb", "f27", "m 31": an age and a gender together.
@@ -197,10 +200,10 @@ const MINOR_SIGNS: { rx: RegExp; age?: (m: RegExpExecArray) => number }[] = [
 
 function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Cand<true> } {
   const out: { age?: Cand<number>; strict?: boolean; minor?: Cand<true> } = {};
-  for (const s of sentences(t)) {
+  for (const s of sentences(normalizeAgeInitialism(t))) {
     for (const r of AGE_RULES) for (const m of all(r.rx, s.text)) {
       const lead = m[0].length - m[0].trimStart().length;
-      if (NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
+      if (ageInsideQuote(t.slice(0, s.start + m.index + lead)) || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
       if (KIN_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
       const a = r.age(m);
       if (!Number.isFinite(a) || a < 1 || a > 99) continue;

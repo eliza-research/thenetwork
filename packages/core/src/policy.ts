@@ -34,3 +34,45 @@ export const AGE_LOOSE_TAIL = "and\\b(?!\\s+(?:\\d|(?:a|one)\\s+half\\b))|now\\b
 export const ARTICLE_AGE_END =
   "(?:\\s+(?:(?:trans|cis|single|straight|gay|bi|queer|lesbian|pan)\\s+)*(?:person|human|guy|girl|boy|man|woman|kid|teen(?:ager)?|student|non[- ]?binary|enby))?" +
   "(?=\\s*(?:$|[.,!?;:)]|but\\b|so\\b|btw\\b|lol\\b|haha\\b|lmao\\b|here\\b|tho(?:ugh)?\\b|from\\b|looking\\b|in (?:high|middle) school\\b))";
+
+// Grammar shared by the deterministic profile and conversation readers.
+export const AGE_CURRENT_ADVERB = "(?:(?:still|currently|now)\\s+)?";
+const BIRTHDAY_MONTH = "january|february|march|april|may|june|july|august|september|october|november|december";
+const BIRTHDAY_WEEKDAY = "monday|tuesday|wednesday|thursday|friday|saturday|sunday";
+const BIRTHDAY_COUNT = "(?:an?|a\\s+few|a\\s+couple(?:\\s+of)?|[1-9]\\d?|one|two|three|four|five|six|seven|eight|nine|ten)";
+const BIRTHDAY_TIME = `(?:in\\s+(?:${BIRTHDAY_COUNT}\\s+(?:minutes?|hours?|days?|weeks?|months?)|${BIRTHDAY_MONTH}|one\\s+year|a\\s+year)|next\\s+(?:week|month|year|${BIRTHDAY_WEEKDAY})|on\\s+(?:${BIRTHDAY_WEEKDAY})|tomorrow|tonight|soon)\\b`;
+const BIRTHDAY_SEPARATOR = "(?:\\s+|\\s*[,(]\\s*)";
+const BIRTHDAY_AGE_MARKER = "(?:y(?:ears?|rs?)[\\s-]+old|y\\/?o|years of age)(?![a-z])";
+export const AGE_BIRTHDAY_AFTER_AGE = `(?:\\s*${BIRTHDAY_AGE_MARKER})?${BIRTHDAY_SEPARATOR}${BIRTHDAY_TIME}`;
+export const AGE_BIRTHDAY_END = "(?=\\s*(?:$|[.,!?;:)]|and\\b|but\\b|lol\\b|btw\\b|tho(?:ugh)?\\b))";
+const DOTTED_AGE = new RegExp(`\\by\\.o\\b(?:\\.(?=${BIRTHDAY_SEPARATOR}${BIRTHDAY_TIME}${AGE_BIRTHDAY_END}))?`, "g");
+
+/** Treat the letters of y.o. as one age token and keep source offsets for profile evidence. */
+export function normalizeAgeInitialism(text: string): string {
+  return text.replace(DOTTED_AGE, m => m.endsWith(".") ? "y/o " : "y/o");
+}
+
+/**
+ * True when `prefix` (the text before an age) leaves a quotation open, so the age is inside it
+ * (`she said "I'm 15"`, `"I'm 15"`). Apostrophes in "I'm" and "don't", and a foot mark (`5'6`, `5'`),
+ * are not quotes. A quote that has closed is not open: `he said "hi" I'm 15` is a real age.
+ */
+export function ageInsideQuote(prefix: string): boolean {
+  let double = false, single = false;
+  for (let i = 0; i < prefix.length; i++) {
+    const c = prefix[i]!;
+    const prev = i > 0 ? prefix[i - 1]! : "";
+    const next = i + 1 < prefix.length ? prefix[i + 1]! : "";
+    if (c === "\"") {
+      // 6" is inches, unless this mark closes a quote that is already open.
+      if (!double && /[0-9]/.test(prev)) continue;
+      double = !double;
+      continue;
+    }
+    if (c !== "'") continue;
+    if (/[a-z0-9]/.test(prev) && /[a-z0-9]/.test(next)) continue;
+    if (!single && (/[0-9]/.test(prev) || /[a-z]/.test(prev))) continue;
+    single = !single;
+  }
+  return double || single;
+}
