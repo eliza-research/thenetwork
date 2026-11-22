@@ -203,7 +203,13 @@ export class World {
   private scheduleMeeting(m: MeetingReport): string {
     if (m.previousAt !== undefined) {
       const old = [...this.meetings.values()].find(x => x.proposalId === m.proposalId && x.at === m.previousAt);
-      if (old) this.meetings.delete(old.id);
+      if (old) {
+        this.meetings.delete(old.id);
+        for (const id of old.participants) {
+          const memory = this.memories.get(id);
+          if (memory?.forceFlakeFor?.meetingId === old.id) delete memory.forceFlakeFor;
+        }
+      }
     }
     // Re-reporting a proposal's meeting (e.g. a late joiner) updates it in place.
     const existing = [...this.meetings.values()].find(x => x.proposalId === m.proposalId && x.at === m.at);
@@ -212,11 +218,19 @@ export class World {
       existing.participants = [...existing.participants, ...added];
       this.rec({ type: "meeting_scheduled", meetingId: existing.id, proposalId: m.proposalId, participants: existing.participants, at: m.at, city: m.city });
       const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.int(0, 60) * MINUTE;
-      for (const pid of added) this.scheduler.at(Math.min(morning, m.at - 30 * MINUTE), "flake_check", { meetingId: existing.id, personaId: pid });
+      for (const pid of added) {
+        const memory = this.memories.get(pid);
+        if (memory?.forceFlake && !memory.forceFlakeFor) memory.forceFlakeFor = { meetingId: existing.id, proposalId: m.proposalId };
+        this.scheduler.at(Math.min(morning, m.at - 30 * MINUTE), "flake_check", { meetingId: existing.id, personaId: pid });
+      }
       return existing.id;
     }
     const id = `mt${++this.meetingSeq}`;
     this.meetings.set(id, { ...m, id });
+    for (const pid of m.participants) {
+      const memory = this.memories.get(pid);
+      if (memory?.forceFlake && !memory.forceFlakeFor) memory.forceFlakeFor = { meetingId: id, proposalId: m.proposalId };
+    }
     this.rec({ type: "meeting_scheduled", meetingId: id, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city });
     // Morning-of flake check (8-9am local on the meeting day, or now if that has passed).
     const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.int(0, 60) * MINUTE;
@@ -478,13 +492,13 @@ export class World {
     const key = `${m.id}|${personaId}`;
     // Time-aware: a participant booked at a time that clashes with its week drops out (and says so more often).
     const clash = this.clashes(m, p);
-    if (this.notices.has(key) || this.cancelledDeliveries.has(key) || (!clash && (!pr || pr.plannedShow))) return;
+    const forced = mem.forceFlakeFor?.meetingId === meetingId ? mem.forceFlake : undefined;
+    if (this.notices.has(key) || this.cancelledDeliveries.has(key) || (!forced && !clash && (!pr || pr.plannedShow))) return;
     const r = this.rng.fork("flake", meetingId, personaId);
-    if (mem.forceFlake === "notice" || (!mem.forceFlake && r.bool(clash ? 0.8 : 0.45))) {
+    if (forced === "notice" || (!forced && r.bool(clash ? 0.8 : 0.45))) {
       const text = templateText(this.personaCtx(p, `flake${meetingId}`), { intent: "flake_notice", messageType: "reminder", decision: "none", delayMs: 0 });
       this.personaSend(p, text, { noticeMeetingId: m.id });
     }
-    if (mem.forceFlake) mem.forceFlake = undefined; // one-shot
   }
 
   /** WorldOptions.timeAware: the meeting's time clashes with the participant's hidden week. */
@@ -509,8 +523,13 @@ export class World {
       const key = `${m.id}|${id}`;
       const notice = this.notices.has(key);
       const cancelledByNetwork = this.cancelledDeliveries.has(key);
-      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !notice && !cancelledByNetwork && !mem.optedOut && !this.clashes(m, this.personas.get(id)!);
+      const forced = mem.forceFlakeFor?.meetingId === meetingId;
+      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !forced && !notice && !cancelledByNetwork && !mem.optedOut && !this.clashes(m, this.personas.get(id)!);
       attendance[id] = { showed: s, cancelledWithNotice: notice, ...(cancelledByNetwork ? { cancelledByNetwork: true } : {}), enjoyment: 0 };
+      if (forced) {
+        delete mem.forceFlake;
+        delete mem.forceFlakeFor;
+      }
       if (s) showed.push(id);
     }
     const plan = this.opts.plans ? this.planOf(m, prop) : undefined;
@@ -551,7 +570,20 @@ export class World {
     switch (a.do) {
       case "join": await this.onJoin(a.persona); break;
       case "go_silent": if (mem) mem.silentFrom = this.clock.now(); break;
-      case "force_flake": if (mem) mem.forceFlake = a.how; break;
+      case "force_flake": {
+        if (!mem) break;
+        mem.forceFlake = a.how;
+        delete mem.forceFlakeFor;
+        const now = this.clock.now();
+        const next = [...this.meetings.values()].filter(m => m.at >= now && m.participants.includes(a.persona)
+          && !this.cancelledDeliveries.has(`${m.id}|${a.persona}`)).sort((x, y) => x.at - y.at)[0];
+        if (next) {
+          mem.forceFlakeFor = { meetingId: next.id, proposalId: next.proposalId };
+          const morning = nextLocalHour(next.at - 14 * HOUR, next.city, 8);
+          this.scheduler.at(Math.max(now, Math.min(morning, next.at - 30 * MINUTE)), "flake_check", { meetingId: next.id, personaId: a.persona });
+        }
+        break;
+      }
       case "say": this.personaSend(this.personas.get(a.persona)!, a.text); break;
       case "opt_out": this.personaSend(this.personas.get(a.persona)!, "STOP"); break;
       case "propose": {
