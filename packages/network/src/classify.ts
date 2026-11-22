@@ -233,7 +233,7 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought)\s*$/;
 /** A clause break. The words before it do not apply to an age after it. */
 const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
-type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean };
+type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean; estimated?: boolean };
 const STATED_AGE = `\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)`;
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : AGE_WORDS[value] ?? NaN;
 
@@ -250,10 +250,10 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
-  { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
-  { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
-  { rx: new RegExp(`\\bi turn\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
-  { rx: /\bwhen i turn\s+(1[4-8]|sixteen|seventeen|eighteen)\b/, age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1 },
+  { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
+  { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
+  { rx: new RegExp(`\\bi turn\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
+  { rx: /\bwhen i turn\s+(1[4-8]|sixteen|seventeen|eighteen)\b/, age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1, estimated: true },
   // "15f here", "16 m", "15/f", "im 15f", "f15".
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:${ME}\\s+)?(1\\d|\\d)\\s*\\/?\\s*[fmx](?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
   { rx: new RegExp(`\\b${ME}\\s+(1\\d|\\d)\\s*\\/?\\s*[fm](?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
@@ -261,38 +261,38 @@ const AGE_RX: AgeRule[] = [
   // "15 here", "16 lol" as the whole opening.
   { rx: /^\W*(1[0-7])\s+(?:here|lol)\b/, age: m => Number(m[1]) },
   // "I'm a minor", "I'm under 18", "I'm underage": a minor (17 fails closed; never a decline).
-  { rx: new RegExp(`\\b${ME}\\s+(?:a minor|underage|under ?age|under 18|not 18 yet|not (?:an )?adult yet)\\b`), age: () => 17 },
+  { rx: new RegExp(`\\b${ME}\\s+(?:a minor|underage|under ?age|under 18|not 18 yet|not (?:an )?adult yet)\\b`), age: () => 17, estimated: true },
   // School year: "I'm a sophomore in high school", "I'm a high school junior", "junior at Lincoln High", "I'm in 7th grade", "9th grader".
-  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
-  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+[\\w' .-]{1,30}?\\bhigh(?: school)?\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high school|hs)\\s+(freshman|sophomore|junior|senior|student)\\b`), age: m => SCHOOL_YEAR[m[1]!] ?? 15 },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader\\b`), age: m => Number(m[1]) + 5 },
+  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)\\b`), age: m => SCHOOL_YEAR[m[1]!]!, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+[\\w' .-]{1,30}?\\bhigh(?: school)?\\b`), age: m => SCHOOL_YEAR[m[1]!]!, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high school|hs)\\s+(freshman|sophomore|junior|senior|student)\\b`), age: m => SCHOOL_YEAR[m[1]!] ?? 15, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+a\\s+(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader\\b`), age: m => Number(m[1]) + 5, estimated: true },
   // "grade" must end the clause: "I'm in 7th grade classrooms all day as a teacher" is not an age.
-  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => Number(m[1]) + 5 },
-  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => ORDINAL[m[1]!]! + 5 },
+  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => Number(m[1]) + 5, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => ORDINAL[m[1]!]! + 5, estimated: true },
   // Middle school (ages 11-14) alone fails closed to "minor", not to "under 13": a decline deletes the
   // member's data, so it needs an explicit age or grade ("I'm 12", "I'm in 6th grade").
-  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+middle school\\b(?!\\s*(?:teacher|counselor|principal|nurse|coach|librarian|aide|staff))|\\bi'?m a\\s+middle schooler\\b`), age: () => 13 },
-  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+high school\\b`), age: () => 15 },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
+  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+middle school\\b(?!\\s*(?:teacher|counselor|principal|nurse|coach|librarian|aide|staff))|\\bi'?m a\\s+middle schooler\\b`), age: () => 13, estimated: true },
+  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+high school\\b`), age: () => 15, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15, estimated: true },
 ];
 
 // These messages omit the pronoun. Read the whole message so a quote, question, or an
 // account of school years does not lower the sender's age.
 const SHORT_AGE_START = "^\\s*(?:(?:hi|hey|hello|yo)[\\s,!]+)?";
 const SHORT_AGE_END = "(?:\\s*,?\\s+(?:lol|lmao|haha|here|btw|rn|now|tho|fyi))*(?:\\s*,?\\s+(?:hbu|wbu)\\s*\\??)?\\s*[.!]*\\s*$";
-const shortAgeRule = (form: string, age: AgeRule["age"]): AgeRule => (
-  { rx: new RegExp(`${SHORT_AGE_START}(?:${form})${SHORT_AGE_END}`), age }
+const shortAgeRule = (form: string, age: AgeRule["age"], estimated = false): AgeRule => (
+  { rx: new RegExp(`${SHORT_AGE_START}(?:${form})${SHORT_AGE_END}`), age, estimated }
 );
 const SHORT_AGE_RX = [
   shortAgeRule(`(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?`, m => joinAgeOnly(ageNumber(m[1] ?? ""))),
   shortAgeRule(`(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:${IDENTITY_WORD}|dude|female|male|[fm]))?`, m => joinAgeOnly(ageNumber(m[1] ?? ""))),
   shortAgeRule("(1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen)\\s+(?:here|lol|btw|haha|rn)", m => ageNumber(m[1] ?? "")),
-  shortAgeRule("(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)", () => 17),
-  shortAgeRule("(?:almost|nearly|turning)\\s+(1[6-8]|sixteen|seventeen|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?|(1[6-8]|sixteen|seventeen|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))", m => joinAgeOnly(ageNumber(m[1] ?? m[2] ?? "") - 1)),
-  shortAgeRule("(?:still\\s+)?in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade|(?:an?\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader", m => Math.max(13, Number(m[1] ?? m[2]) + 5)),
-  shortAgeRule("(?:an?\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)|(?:an?\\s+)?(?:high school|hs)\\s+(freshman|sophomore|junior|senior)", m => SCHOOL_YEAR[(m[1] ?? m[2])!]!),
-  shortAgeRule("(?:still\\s+)?in (middle|high) school", m => m[1] === "middle" ? 13 : 15),
+  shortAgeRule("(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)", () => 17, true),
+  shortAgeRule("(?:almost|nearly|turning)\\s+(1[6-8]|sixteen|seventeen|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?|(1[6-8]|sixteen|seventeen|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))", m => joinAgeOnly(ageNumber(m[1] ?? m[2] ?? "") - 1), true),
+  shortAgeRule("(?:still\\s+)?in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade|(?:an?\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader", m => Math.max(13, Number(m[1] ?? m[2]) + 5), true),
+  shortAgeRule("(?:an?\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)|(?:an?\\s+)?(?:high school|hs)\\s+(freshman|sophomore|junior|senior)", m => SCHOOL_YEAR[(m[1] ?? m[2])!]!, true),
+  shortAgeRule("(?:still\\s+)?in (middle|high) school", m => m[1] === "middle" ? 13 : 15, true),
 ];
 
 /** Every match of one rule. A rule can match more than once in one message. */
@@ -355,13 +355,14 @@ function notNowBefore(text: string, at: number): boolean {
  * change the member's age. An age inside a quote that is still open is not theirs; a quote that
  * has closed does not hide the next statement (`he said "hi" I'm 15`).
  */
-export function agesStated(body: string): { age?: number; explicit?: number } {
+export function agesStated(body: string, { directOnly = false } = {}): { age?: number; explicit?: number } {
   const t = normText(body);
   const out: { age?: number; explicit?: number } = {};
   // Rules that start at the beginning of the text ("age: 15", "15 y/o here", "15f", "f15", "15 here")
   // are read on each sentence. On the whole message they would see only the first sentence.
   for (const s of sentencesOf(t, true)) {
-    for (const { rx, age, explicit } of AGE_RX) {
+    for (const { rx, age, explicit, estimated } of AGE_RX) {
+      if (directOnly && estimated) continue;
       for (const m of allMatches(rx, s.text)) {
         if (notNowBefore(t, s.at + m.index)) continue;
         const a = age(m);
@@ -371,7 +372,8 @@ export function agesStated(body: string): { age?: number; explicit?: number } {
       }
     }
   }
-  for (const { rx, age } of SHORT_AGE_RX) {
+  for (const { rx, age, estimated } of SHORT_AGE_RX) {
+    if (directOnly && estimated) continue;
     const m = rx.exec(t);
     if (!m) continue;
     const a = age(m);

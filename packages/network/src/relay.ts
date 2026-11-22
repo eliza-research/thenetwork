@@ -80,6 +80,7 @@ export interface RelayHost {
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
+  observeSenderAge?(memberId: MemberId, text: string): boolean;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
 }
@@ -192,6 +193,9 @@ export class RelayDesk {
       ? { id: ask.itemId, kind: "photo", from: ask.from, to, at: now, photoIds: [...new Set(ask.photoIds ?? [])], ...(ask.text?.trim() ? { text: ask.text.trim() } : {}),
           consent: { kind: "photo", by: ask.from, itemId: ask.itemId, at: now, photoIds: [...new Set(ask.photoIds ?? [])] } }
       : { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text: (ask.text ?? "").trim() };
+    if (item.kind === "text" && item.text && this.host.observeSenderAge?.(item.from, item.text)) {
+      return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+    }
     const res = await this.decide(item, match, o);
     const out = this.apply(res, match, item, o);
     // Photos cannot be shown to a match until a photo consent exists (Legal); say so plainly.
