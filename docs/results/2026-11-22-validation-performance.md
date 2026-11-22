@@ -52,6 +52,30 @@ The generated check compares 232 current artifacts in both cache states. On GitH
 
 The matching changes preserve the decisions in [candidate search](../../spec/candidateSearch.md), [pair value](../../spec/pairValue.md), [travel presence](../../spec/travelPresence.md) and [dating radius](../../spec/datingRadius.md). The [candidate pool model](../../spec/models/candidate_pool.md) consumes the same ordered candidates. The existing generated decisions stay in the serving path.
 
+## Postgres integration settings
+
+The GitHub integration job uses four workers on its four-vCPU runner. The local
+Vitest default stays at two. The hosted four-worker run completed 998
+integration tests in 254.26s and 53 end-to-end tests in 20.21s. The paired
+two-worker integration sample ran in 304.25s and had one Peon intent-list
+assertion fail after an earlier two-worker run of the same revision passed
+all 998 cases. Both runner jobs reported Intel Xeon 6975P-C CPUs. The timing
+comparison is directional because the pass counts differ and the runner
+instances are separate. [Worker benchmark](https://github.com/lalalune/thenetwork-1/actions/runs/45065826024).
+
+The service-apps tests create a fresh database per case by cloning one
+migrated database local to the test process. Each case closes the previous
+pool first. The template refuses new connections and the database drops do
+not force open connections to close. The suite still runs its 31 tests,
+including the app-scoped database role assertions.
+
+Three alternating pairs on one PostgreSQL 16 runner reduced the median
+service-apps wall time from 25.15s (23.40–30.23s) to 13.38s (12.92–13.47s).
+The total time for 30 database refreshes fell from 14.71s to 2.64s. All 31
+cases passed on every trial. The test clone changes only fixture setup, so
+migration tests still apply and verify migrations as before.
+[Database benchmark](https://github.com/lalalune/thenetwork-1/actions/runs/45066126514).
+
 ## Container builds
 
 Both Dockerfiles fetch the pinned production packages in a layer before copying application source. After a source edit, the install links the workspace offline from that layer.

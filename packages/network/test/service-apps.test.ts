@@ -4,7 +4,7 @@
 // sent: the adapters are dry-run (or Blooio with a fake provider), and OTP codes come from a fake.
 import { setTimeout as sleep } from "node:timers/promises";
 import { findExecutable } from "../../core/src/runtime/process.ts";
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
@@ -27,9 +27,9 @@ import { START } from "./mini.ts";
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_service_apps_test_${process.pid}`;
-const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
-const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
+const TEMPLATE_DB = `network_service_apps_template_${process.pid}`;
+const DB_SERVER = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}`;
+const URL_ = `${DB_SERVER}/${DB}`;
 
 /** The NYC friends app (the registry's id; it was renamed once, so the test reads it). */
 const FR: AppId = "friends";
@@ -44,7 +44,16 @@ class FakeOtp implements OtpProvider {
   async send(e164: string) { const code = String(100000 + this.codes.size * 7919); this.codes.set(e164, code); return { code }; }
 }
 
+let admin: SQL;
 let sql: SQL;
+
+async function resetCaseDatabase() {
+  await sql?.close();
+  // A live service connection must fail the reset rather than be terminated.
+  await admin.unsafe(`drop database if exists ${DB}`);
+  await admin.unsafe(`create database ${DB} template ${TEMPLATE_DB}`);
+  sql = new SQL({ url: URL_, max: 2 });
+}
 const open: NetworkService[] = [];
 interface Direct { app: string; to: string; body: string }
 
@@ -106,20 +115,34 @@ describe("per-app copy", () => {
 describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => {
   beforeAll(async () => {
     await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
-    await admin(`create database ${DB}`);
-    sql = new SQL({ url: URL_, max: 2 });
+    admin = new SQL({ url: `${DB_SERVER}/postgres`, max: 1 });
+    await admin.unsafe("set lock_timeout = '5s'");
+    await admin.unsafe(`drop database if exists ${TEMPLATE_DB}`);
+    await admin.unsafe(`create database ${TEMPLATE_DB}`);
+    await applySchema(`${DB_SERVER}/${TEMPLATE_DB}`, { lockTimeout: "5s" });
+    await admin.unsafe(`alter database ${TEMPLATE_DB} allow_connections false`);
   }, T);
+  beforeEach(resetCaseDatabase, T);
   // Each service holds a pool: close a test's services when it ends.
   afterEach(async () => { for (const s of open.splice(0)) await s.close().catch(() => {}); });
   afterAll(async () => {
     for (const s of open) await s.close().catch(() => {});
-    await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
+    try {
+      await sql?.close();
+    } finally {
+      if (admin) {
+        const errors: unknown[] = [];
+        for (const database of [DB, TEMPLATE_DB]) {
+          try { await admin.unsafe(`drop database if exists ${database}`); }
+          catch (error) { errors.push(error); }
+        }
+        await admin.close();
+        if (errors.length) throw new AggregateError(errors, "Could not drop the service-apps fixture databases");
+      }
+    }
   });
 
   test("text joins: an open app asks for name and age and stores nothing until the age check passes; invite-only answers once; keywords on the shared line pick the app", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
     await s.start();
@@ -213,7 +236,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("one person in two apps: the link notice names no app, SHARE stores a grant, STOP is per app, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
     const p = newPhone();
@@ -268,7 +290,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("the person cap: at most 3 proactive messages a day across every app, counted at send time; two networks at once cannot pass it", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const p = newPhone();
@@ -300,7 +321,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("per-app live flags; per-app staff roles; the matching switch refuses a network the registry keeps off", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const both = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" };
     const flag = `${FR.toUpperCase()}_LIVE_APPROVED`;
     expect(liveSendAllowed(both, "ntwrk")).toBe(true);
@@ -343,7 +363,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   test("shared line: a member's sentence that names another app stays with their app; a bare number in a sentence is not an age", async () => {
     // Before the fix "my ex is on slop.date lol" started a slop join, and the next reply "Sounds good,
     // 7 works for me" was read as age 7: a slop decline and lowest_age = 7 for an adult.
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
     const p = newPhone();
@@ -369,7 +388,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("a plain name, age and supported city joins without moving the person's home to the matching city", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     for (const [answer, homeCity] of [["Ari, 29, San Francisco", "sf"], ["Ari, 29, New York", "nyc"],
@@ -395,7 +413,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("a text join refused under age cannot retry with an older age (new phone, no person)", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const kid = newPhone();
@@ -410,7 +427,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("STOP on one app's line leaves the other app's adapter sending; the consent ledger refuses sends after a restart", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const flags = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", [`${FR.toUpperCase()}_LIVE_APPROVED`]: "1", SLOP_LIVE_APPROVED: "1" };
     const sent: SendRequest[] = [];
@@ -439,7 +455,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("the cross-app reads work under the network_service role (row-level security on): the cap counts and the member lookup", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const p = newPhone();
@@ -463,7 +478,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("staff invite to The Network: an invited membership and one invitation text; the reply with name and age joins", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
     const call = (token: string, path: string, b: unknown) =>
@@ -481,7 +495,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("a reviewer for one app sees only that app's network in /health", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const h = await (await s.fetch(new Request(`http://127.0.0.1/health?app=${FR}`, { headers: { authorization: "Bearer fr-tok" } }))).json();
@@ -489,7 +502,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("reviewer of record: X-Network-Staff-Id counts only with the console's token", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock, { consoleToken: "adm-tok" });
     const sw = (token: string, staff: string) => s.fetch(new Request(`http://127.0.0.1/apps/${FR}/matching`, {
@@ -510,7 +522,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   test("eight networks tick together without exhausting the connection pool", async () => {
     // Before the fix the pool had 8 connections: 8 ticks each held one for the advisory lock and waited forever for another.
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const nets = APP_IDS.flatMap(a => [{ id: `${a}:nyc` }, { id: `${a}:sf` }]);
     const { s } = service(clock, { networks: nets });
@@ -520,7 +531,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("public API on the service: login, join two apps with one phone, each host sees only its app, stop one app, export, leave", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s, otp } = service(clock);
     const host = (app: AppId) => `localhost:${5101 + APP_IDS.indexOf(app)}`;
@@ -617,7 +627,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("an unsigned member request cannot issue an invite link or contact the named person", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const p = newPhone();
@@ -638,7 +647,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     } }));
   };
   test("the prepared Peon signup text joins Peon on the shared signed line", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock, {
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
@@ -671,7 +679,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await s.memberApps(childPhone)).toEqual([]);
   }, T);
   test("a committed age correction follows its owner when the old number is reassigned", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const opts = { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } };
     const { s } = service(clock, opts);
@@ -717,7 +724,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test.each([{ before: 25, after: 15 }, { before: 15, after: 12 }])("a signed age correction from $before to $after survives interrupted projection", async ({ before, after }) => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const opts = { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } };
     const { s } = service(clock, opts);
@@ -793,7 +799,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/cofounderIntent.md, "Story: Keep looking for a cofounder"
   test("only signed own cofounder goals persist as standing intents without an immediate proposal", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const { s } = service(clock, {
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
@@ -878,7 +883,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/cofounderDispatch.md, "A review, probe and reveal require both exact intents"
   test("cofounder dispatch rechecks the exact approved intents and mutual consent at the queue", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const sent: SendRequest[] = [];
     const { s } = service(clock, {
@@ -989,7 +993,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/profileFactEdit.md, "Only a direct request from the current app member can show their saved facts"
   test("signed own-fact edits confirm one current fact and keep other apps and members unchanged", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const { s } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } });
     await s.start();
@@ -1088,7 +1091,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/product/stories.md, "Seed invitations use the same acceptance rules"
   test("a scoped staff seed batch is private and only creates membership on its first verified acceptance", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const sent: SendRequest[] = [];
     const { s, otp } = service(clock, {
@@ -1224,7 +1226,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   // spec/memberInvitation.md, "The link goes to the inviter as a reply"
   // spec/memberInvitation.md, "A new verified acceptance can be attributed"
   test("a signed vouch issues a private single-use invitation for a verified app join", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const hashKey = "synthetic-vouch-review-fixture-hash";
     const { s, otp } = service(clock, {
@@ -1366,7 +1367,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/invitationJoinProjection.md, "The inviter's conversation owns a notice after the welcome"
   test("a verified invitation projects welcome and join notice through their separate city owners", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const { s } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
       networks: [{ id: "ntwrk:nyc" }, { id: "ntwrk:sf" }] });
@@ -1414,7 +1414,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/expectedMemberInvitation.md, "Only a confirmed expected invitation can enter the shared line queue"
   test("the signed turn sends one expected invitation and only the intended verified phone can use it", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const sent: SendRequest[] = [];
     let deliveryLive = true;
@@ -1564,7 +1563,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/expectedMemberInvitation.md, "Only a confirmed expected invitation can enter the shared line queue"
   test("the Cloud line offers forwarding without storing a first-contact draft or fetching the carrier", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const cloudRequests: string[] = [];
     const { s } = service(clock, {
@@ -1624,7 +1622,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   // spec/boundedHelp.md, "Fix the roster before review and recheck it at approval"
   // spec/homeHelpConsent.md, spec/privateHomeHelpVenue.md
   test("reviewed home help reaches only the exact roster and shares the address privately after unanimous consent", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const sent: SendRequest[] = [];
     let simulatedDelivery = false;
@@ -1757,7 +1754,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   }, T);
 
   test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const p = newPhone();
@@ -1794,7 +1790,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/slopOnboarding.md, "Only a plain yes confirms the read-back"; spec/slopOnboarding.md, "A correction needs another confirmation"
   test("slop read-back: an orientation correction recomputes a derived seeking set and keeps a stated one; a hedged or conditional answer never confirms", async () => {
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const slopMember = async (id: string) => {
