@@ -256,3 +256,7 @@
 {"text":"I am five and we won the tournament.","teen":false}
 {"text":"I am 38 and my team won.","teen":false,"age":38}
 {"text":"I am 12 years old and my team won.","teen":true,"age":12}
+{"text":"I just turned 12 and I am undefeated.","teen":true,"age":12}
+{"text":"I just turned twelve and we won the tournament.","teen":true,"age":12}
+{"text":"I'm 12 and a half and I am undefeated.","teen":true,"age":12}
+{"text":"I am 12 and my team won.","teen":true,"age":12}

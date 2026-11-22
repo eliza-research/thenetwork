@@ -69,4 +69,8 @@
 {"text":"im in middle school","minor":true}
 {"text":"my mom wont let me date yet","minor":true}
 {"text":"I'm 3 and 0 this season","minor":false}
+{"text":"I just turned 12 and I am undefeated.","minor":true,"declined":true,"age":12}
+{"text":"I just turned twelve and we won the tournament.","minor":true,"declined":true,"age":12}
+{"text":"I'm 12 and a half and I am undefeated.","minor":true,"declined":true,"age":12}
+{"text":"I am 12 and my team won.","minor":true,"declined":true,"age":12}
 {"text":"I'm a 17 year old trans girl looking for guys","minor":true,"age":17}

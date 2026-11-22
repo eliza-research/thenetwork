@@ -91,6 +91,9 @@ test("a sports score leaves a verified adult's age intact across signed app turn
   const age = turn("sports-real-age", phone, "I am 17 years old and my team won.", "friends");
   expect((await post(age)).status).toBe(200);
   expect(await service.accounts.lowestAge(phone, (await service.accounts.personFor(phone))!)).toBe(17);
+  const birthday = turn("sports-birthday-age", phone, "I just turned 12 and I am undefeated.", "friends");
+  expect((await post(birthday)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, (await service.accounts.personFor(phone))!)).toBe(13);
 }, 60_000);
 
 // spec/travelPresence.md, "Tell the Network my travel dates"

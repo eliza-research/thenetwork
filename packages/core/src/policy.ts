@@ -30,12 +30,16 @@ export const UNDER_MIN_AGE_DECLINE =
 
 const ageAndSpeaker = "\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b";
 export const AGE_AND_CLAUSE = `(?=${ageAndSpeaker})`;
-const sportsCountSuffix = new RegExp(`^${ageAndSpeaker}\\s+(?:undefeated|won|winning|record|bracket|season|team|score)\\b`);
-export function ageBeforeConjunction(age: number, suffix: string): number {
-  return !canJoin(age) && sportsCountSuffix.test(suffix) ? NaN : age;
+export const AGE_HALF = "(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\.5(?!\\d)|\\s+1/2\\b)";
+const statedBirthday = /^i (?:just )?turned\s/;
+const statedHalfAge = new RegExp(`${AGE_HALF}$`);
+const sportsCountSuffix = new RegExp(`^${ageAndSpeaker}\\s+(?:undefeated|won|winning)\\b`);
+export function ageBeforeConjunction(age: number, match: RegExpExecArray): number {
+  if (canJoin(age) || statedBirthday.test(match[0]) || statedHalfAge.test(match[0])) return age;
+  const suffix = match.input.slice(match.index + match[0].length);
+  return sportsCountSuffix.test(suffix) ? NaN : age;
 }
 
-export const AGE_HALF = "(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\.5(?!\\d)|\\s+1/2\\b)";
 export const AGE_LOOSE_TAIL = "and\\b(?!\\s+(?:\\d|(?:a|one)\\s+half\\b))|now\\b|too\\b";
 export const ARTICLE_AGE_END =
   "(?:\\s+(?:(?:trans|cis|single|straight|gay|bi|queer|lesbian|pan)\\s+)*(?:person|human|guy|girl|boy|man|woman|kid|teen(?:ager)?|student|non[- ]?binary|enby))?" +
