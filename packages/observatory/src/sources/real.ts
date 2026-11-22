@@ -34,6 +34,7 @@ import type {
 import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
 import type { GatheringRequest } from "../gatherings.ts";
+import { staffSearchHitVisible } from "../../../core/src/generated/staffSearch.ts";
 import { Listeners, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
 
 export interface RealOptions {
@@ -921,32 +922,68 @@ export class RealSource implements DataSource {
   /** Outbound agent messages (scrubbed unless revealed) and system events. Never what a member wrote. */
   async search(q: string, limit = 100): Promise<SearchHit[]> {
     const sql = this.sql;
-    if (!sql) return [];
+    if (!sql || limit <= 0) return [];
     const re = searchPattern(q);
     const like = `%${q.trim().replace(/[\\%_]/g, x => `\\${x}`)}%`;
-    const [msgs, events] = await Promise.all([
-      sql`select id, member_id, ts, direction, status, system, body, type, opportunity_id
-        from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like} order by ts desc limit ${limit}`,
-      // Feedback events hold what a member wrote: never searched.
-      sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${this.app} and type <> 'feedback_given' order by at desc, id desc limit 5000`,
+    const batch = Math.max(100, Math.min(limit, 250));
+    const name = (id: string) => this.store.member(id)?.name ?? id;
+    type Cursor = { id: string; cursor_at: string };
+    type MessageRow = MessageEvidenceKey & Cursor & { ts: Date; body: string; type: string | null; opportunity_id: string | null };
+
+    // Read bounded pages in database order. Apply the result limit after the visibility and scrub checks.
+    const collect = async <Row extends Cursor>(
+      page: (before?: Cursor) => Promise<Row[]>,
+      project: (rows: Row[]) => SearchHit[] | Promise<SearchHit[]>,
+    ): Promise<SearchHit[]> => {
+      const hits: SearchHit[] = [];
+      let before: Cursor | undefined;
+      while (hits.length < limit) {
+        const rows = await page(before);
+        hits.push(...await project(rows));
+        if (rows.length < batch) break;
+        before = rows.at(-1);
+      }
+      return hits.slice(0, limit);
+    };
+    const [messages, events] = await Promise.all([
+      collect(
+        before => sql<MessageRow[]>`select id, member_id, ts, ts::text as cursor_at, direction, status, system, body, type, opportunity_id
+          from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like}
+          ${before ? sql`and (ts, id) < (${before.cursor_at}::timestamptz, ${before.id})` : sql``}
+          order by ts desc, id desc limit ${batch}`,
+        async rows => {
+          const evidence = await this.deliveryEvidence(rows);
+          const hits: SearchHit[] = [];
+          for (const row of rows) {
+            const readable = !deliveryOf(this.app, row, evidence.get(row.id)).withheld;
+            if (!readable || !this.store.members.has(row.member_id)) continue;
+            const rendered = scrubText(row.body, this.reveal);
+            if (!staffSearchHitVisible(readable, re.test(rendered))) continue;
+            hits.push({ memberId: row.member_id, memberName: name(row.member_id), t: ms(row.ts) ?? 0,
+              kind: "message", snippet: snippet(rendered, re), ...(row.type ? { type: row.type } : {}),
+              ...(row.opportunity_id ? { opportunityId: row.opportunity_id } : {}) });
+          }
+          return hits;
+        },
+      ),
+      collect(
+        before => sql<(EventRow & Cursor)[]>`select e.id::text as id, e.at, e.at::text as cursor_at, e.actor_type, e.actor_id, e.type, e.object_type, e.object_id, e.payload
+          from network.events e where e.app_id = ${this.app} and e.type <> 'feedback_given'
+          ${before ? sql`and (e.at, e.id) < (${before.cursor_at}::timestamptz, ${before.id}::bigint)` : sql``}
+          order by e.at desc, e.id desc limit ${batch}`,
+        rows => {
+          const hits: SearchHit[] = [];
+          for (const row of rows) {
+            const d = describe(row, name);
+            if (!d.memberId || !staffSearchHitVisible(this.store.members.has(d.memberId), re.test(d.text) || re.test(d.type))) continue;
+            hits.push({ memberId: d.memberId, memberName: name(d.memberId), t: d.t, kind: "event", snippet: d.text,
+              type: d.type, ...(d.opportunityId ? { opportunityId: d.opportunityId } : {}) });
+          }
+          return hits;
+        },
+      ),
     ]);
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
-    const name = (x: string) => this.store.member(x)?.name ?? x;
-    const hits: SearchHit[] = [];
-    for (const r of msgs as any[]) {
-      if (!this.store.members.has(r.member_id) || deliveryOf(this.app, r, evidence.get(r.id)).withheld) continue;
-      const text = scrubText(r.body, this.reveal);
-      // The match must survive scrubbing: a phone number or email is not findable by searching for it.
-      if (!re.test(text)) continue;
-      hits.push({ memberId: r.member_id, memberName: name(r.member_id), t: ms(r.ts) ?? 0, kind: "message", snippet: snippet(text, re), ...(r.type ? { type: r.type } : {}), ...(r.opportunity_id ? { opportunityId: r.opportunity_id } : {}) });
-    }
-    for (const e of events as any[]) {
-      if (hits.length >= limit * 2) break;
-      const d = describe(e as EventRow, name);
-      if (!d.memberId || !this.store.members.has(d.memberId) || !(re.test(d.text) || re.test(d.type))) continue;
-      hits.push({ memberId: d.memberId, memberName: name(d.memberId), t: d.t, kind: "event", snippet: d.text, type: d.type, ...(d.opportunityId ? { opportunityId: d.opportunityId } : {}) });
-    }
-    return hits.sort((a, b) => b.t - a.t).slice(0, limit);
+    return [...messages, ...events].sort((a, b) => b.t - a.t).slice(0, limit);
   }
 
   // ------------------------------------------------------------------ controls
