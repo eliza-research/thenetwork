@@ -64,6 +64,26 @@ export function lawAnUntimedProbeNeedsASeparateAnswer(separateYes: boolean): boo
   return !mayRetryCounter(false, separateYes);
 }
 
+/** Story: Make a choice about a proposed opportunity / An untimed probe needs an answer to the opportunity (spec/probeReply.md) */
+//@ pure
+export function untimedProbeTimeRejectionNeedsClarification(offeredTimes: boolean, rejectedTimes: boolean, otherwiseUnqualified: boolean): boolean {
+  return !offeredTimes && rejectedTimes && otherwiseUnqualified;
+}
+
+/** Story: Make a choice about a proposed opportunity / An untimed probe needs an answer to the opportunity (spec/probeReply.md) */
+//@ pure
+export function lawATimedProbeKeepsItsTimeRejectionRules(rejectedTimes: boolean, otherwiseUnqualified: boolean): boolean {
+  //@ ensures \result === true
+  return !untimedProbeTimeRejectionNeedsClarification(true, rejectedTimes, otherwiseUnqualified);
+}
+
+/** Story: Make a choice about a proposed opportunity / An untimed probe needs an answer to the opportunity (spec/probeReply.md) */
+//@ pure
+export function lawAnUntimedTimeRejectionKeepsTheProbeOpen(modelConsent: string): boolean {
+  //@ ensures \result === true
+  return untimedProbeTimeRejectionNeedsClarification(false, true, true) && probeReplyReading(true, false, modelConsent) === "KeepOffline";
+}
+
 /** Story: Make a choice about a proposed opportunity / A short acknowledgement must immediately follow its own probe (spec/probeReply.md) */
 //@ pure
 export function weakProbeAcknowledgementAllowed(direct: boolean, latestProbe: boolean, uninterrupted: boolean, precedingMessages: number, receiptAccepted: boolean, acceptedAt: number, receivedAt: number, now: number): boolean {
