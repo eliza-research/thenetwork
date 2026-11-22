@@ -61,7 +61,7 @@ const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId
   state.opps.push(op);n.importState(state);
 });
 /** The pair as the stored state holds it now (a close commits before its own delivery, which waits for the held dispatch). */
-const pairClosed=async()=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==='string'?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id==='relay-pair')?.stage==='closed';};
+const pairClosed=async(matchId="relay-pair")=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==='string'?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id===matchId)?.stage==='closed';};
 const waitFor=async(cond:()=>Promise<boolean>)=>{for(let i=0;i<400;i++){if(await cond())return true;await sleep(5);}return false;};
 /** Hold the dispatch of the next relayed row right after its asynchronous gates (the leak check), before admission. */
 const gateDispatch=()=>{
@@ -468,7 +468,8 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   const senderFriends = await join("friends", sender, "Bo");
   const recipientFriends = await join("friends", recipient, "Jae");
   const senderSlop = await join("slop", sender, "Bo");
-  await fixturePair(false, "friends", [senderFriends, recipientFriends]);
+  const matchId = "friends.relay-age-pair";
+  await fixturePair(false, "friends", [senderFriends, recipientFriends], matchId);
   const controls = [
     ["other", "tell them my 15 year old will be with me"],
     ["quote", "tell them I heard her say, \"I'm 16\""],
@@ -490,7 +491,7 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   const replay = await post(RELAY_PATH, request);
   expect(await replay.json()).toMatchObject({ decision: "block", delivered: false, replayed: true });
   expect(posts).toBe(before);
-  expect(await pairClosed()).toBe(true);
+  expect(await pairClosed(matchId)).toBe(true);
   expect((await service.accounts.personFor(sender))?.lowestAge).toBe(16);
   const snapshot = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
   expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
