@@ -940,14 +940,16 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     server, url, token: adminToken, openUrl: adminToken ? `${url}/#token=${encodeURIComponent(adminToken)}` : `${url}/`, mode: () => mode, source, setMode, audit, lab,
     async stop() {
       clearInterval(checkTimer);
-      lab.dispose();
-      stored?.stop();
-      for (const [k, s] of sources) { unsub.get(k)?.(); await s.dispose(); }
-      server.stop(true);
-      await audit.close();
-      await people?.close();
-      await costs.close();
-      await rolesSql?.close();
+      try { await lab.dispose(); }
+      finally {
+        stored?.stop();
+        for (const [k, s] of sources) { unsub.get(k)?.(); await s.dispose(); }
+        server.stop(true);
+        await audit.close();
+        await people?.close();
+        await costs.close();
+        await rolesSql?.close();
+      }
     },
   };
 }

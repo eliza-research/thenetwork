@@ -162,6 +162,21 @@ pure def countMark(known: bool, count: int): CountMark =
 pure def lawEveryKnownPositiveCountIsAnAlarm(count: int): bool = (countMark(true, count) == CountAlarm) iff count > 0
 ```
 
+### Stopping the console closes the lab and finishes interrupted runs
+
+Close admission before stopping the lab. Active children exit before shutdown returns. A seed that was waiting for its start record cannot launch after admission closes. Persist an end time and a failed status for jobs stopped while queued or running. Keep the result of each finished run. A repeated shutdown waits for the same work.
+
+```quint
+pure def labAcceptsWork(stopping: bool): bool = not(stopping)
+
+pure def labRunInterrupted(status: str): bool = status == "queued" or status == "running"
+
+pure def lawLabClosesAdmissionOnShutdown(stopping: bool): bool = stopping implies not(labAcceptsWork(stopping))
+
+pure def lawFinishedLabRunSurvivesShutdown(status: str): bool =
+  (status == "done" or status == "failed") implies not(labRunInterrupted(status))
+```
+
 ## Story: Compare two matching runs
 
 > As a staff member, I want to pick two matching runs and see what changed between them, so that I can see the effect of an engine change.

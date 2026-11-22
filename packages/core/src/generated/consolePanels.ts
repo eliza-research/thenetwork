@@ -327,22 +327,36 @@ export function lawEveryKnownPositiveCountIsAnAlarm(count: number): boolean {
   return (countMark(true, count) === "CountAlarm") === count > 0;
 }
 
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function labAcceptsWork(stopping: boolean): boolean {
+  return !stopping;
+}
+
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function labRunInterrupted(status: string): boolean {
+  return status === "queued" || status === "running";
+}
+
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function lawLabClosesAdmissionOnShutdown(stopping: boolean): boolean {
+  //@ ensures \result === true
+  return !stopping || !labAcceptsWork(stopping);
+}
+
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function lawFinishedLabRunSurvivesShutdown(status: string): boolean {
+  //@ ensures \result === true
+  return !(status === "done" || status === "failed") || !labRunInterrupted(status);
+}
+
 /** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
 //@ pure
 export function runsView(r: RunCompare): RunsView {
   return r.runTotal <= 0 ? "NoRunsView" : (!r.comparing ? "RunDetailView" : (r.picked < 2 || r.diff === "NoDiff" ? "PickTwoView" : (r.diff === "DiffLoading" ? "DiffLoadingView" : (r.diff === "DiffShown" ? "DiffShownView" : "DiffFailedView"))));
-}
-
-/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
-//@ pure
-export function sometimesPickTwo(p: ConsolePanels): boolean {
-  return runsView(p.runs) === "PickTwoView";
-}
-
-/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
-//@ pure
-export function canReceiveRuns(p: ConsolePanels, runTotal: number): boolean {
-  return runTotal >= 0;
 }
 
 /** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
@@ -370,6 +384,18 @@ export function receiveRuns(p: ConsolePanels, runTotal: number): ConsolePanels {
 //@ pure
 export function sometimesRunDetail(p: ConsolePanels): boolean {
   return runsView(p.runs) === "RunDetailView";
+}
+
+/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
+//@ pure
+export function sometimesPickTwo(p: ConsolePanels): boolean {
+  return runsView(p.runs) === "PickTwoView";
+}
+
+/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
+//@ pure
+export function canReceiveRuns(p: ConsolePanels, runTotal: number): boolean {
+  return runTotal >= 0;
 }
 
 /** Story: Compare two matching runs / Compare opens only with two runs, and a third pick drops the oldest (spec/consolePanels.md) */
