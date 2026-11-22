@@ -272,7 +272,7 @@ export interface OptOutReading {
 
 const EXACT_EN = /^(?:stop|stopall|stop all|unsubscribe|cancel|end|quit|optout|opt out|opt-out|revoke)$/;
 const EXACT_ES = /^(?:para|parar|alto|baja|cancelar|detener|basta|no mas)$/;
-const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already)\b/;
+const LIKELY_EN = /\b(?:(?:stop|quit|cease) (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already)\b/;
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 const MSGS = "(?:texts?|texting|messages?|messaging|msgs?|sms|notifications?|spam)";
 const TEXT_REFUSAL = new RegExp(`^(?:please |pls )?i (?:don't|do not|dont) want (?:to (?:get|receive) )?(?:(these|your|any more|anymore|any|more|the|those) )?${MSGS}(?: (anymore|any more))?(?: (?:please|pls|thanks|thank you))?$`);
@@ -283,7 +283,8 @@ function readsTextRefusal(clause: string): boolean {
 }
 
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
-const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
+const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|quit|cease|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
+const REPORTED_OR_INSTRUCTIONAL_STOP = /\b(?:said|says|told|asked) (?:me )?(?:to )?["']?(?:stop|quit|cease)\b|\bhow (?:do|can) i (?:stop|quit|cease|unsubscribe|opt out)\b/;
 const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b/i;
 const OPT_OUT_COORDINATION = /\band\b/i;
 const LEAVE_COURTESY = / (?:please|pls|thanks|thank you|now|right now|for now|asap|today|immediately)$/;
@@ -350,7 +351,7 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   const lang = courtesyLang ?? (LIKELY_ES.test(t) || EXACT_ES.test(t) ? "es" : "en");
   if (EXACT_EN.test(t) || EXACT_ES.test(t)) return { match: "exact", scope: "all", lang };
   // Reported speech and how-to questions do not opt out.
-  if (/\b(?:said|says|told|asked) (?:me )?(?:to )?["']?stop\b/.test(t) || /\bhow (?:do|can) i (?:stop|unsubscribe|opt out)\b/.test(t)) return { match: "none", scope: "all", lang };
+  if (REPORTED_OR_INSTRUCTIONAL_STOP.test(t)) return { match: "none", scope: "all", lang };
   if (/^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
   const leave = o.apps?.length ? readAppLeaveName(text) : undefined;
@@ -460,6 +461,8 @@ export function optOutPhrase(text: string, isLeave: (text: string) => boolean = 
   if (!t || t.length > 160 || isLeave(text)) return false;
   const startsStop = (clause: string) => !isLeave(clause)
     && (readsTextRefusal(clause) || OPT_OUT_EN.some(r => r.exec(clause)?.index === 0) || OPT_OUT_ES.some(r => r.exec(clause)?.index === 0));
-  return optOutClauses(text, norm, startsStop).some(clause => readsTextRefusal(clause)
-    || OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause)));
+  return optOutClauses(text, norm, startsStop).some(clause => {
+    if (REPORTED_OR_INSTRUCTIONAL_STOP.test(clause) && !/^i (?:(?:already|just) )?said /.test(clause)) return false;
+    return readsTextRefusal(clause) || OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause));
+  });
 }
