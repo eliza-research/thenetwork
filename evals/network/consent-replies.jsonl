@@ -320,3 +320,28 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"tomorrow works","label":"unclear"}
+{"text":"tomorrow 7pm works","label":"unclear"}
+{"text":"tomorrow evening works","label":"unclear"}
+{"text":"today works","label":"unclear"}
+{"text":"tonight works","label":"unclear"}
+{"text":"tmr 7pm works","label":"unclear"}
+{"text":"tmr works","label":"unclear"}
+{"text":"next Saturday, 11am works","label":"unclear"}
+{"text":"next month works","label":"unclear"}
+{"text":"the Saturday after next works","label":"unclear"}
+{"text":"2 hours works","label":"unclear"}
+{"text":"in 2 hours works","label":"unclear"}
+{"text":"a week from now works","label":"unclear"}
+{"text":"yes, this afternoon works","label":"unclear"}
+{"text":"Saturday works, and tmr works too","label":"yes","keys":["b"]}
+{"text":"Saturday works and this afternoon works too","label":"yes","keys":["b"]}
+{"text":"next Saturday, Sunday works","label":"yes","keys":["c"]}
+{"text":"next Saturday; 11am works","label":"unclear"}
+{"text":"a week from Saturday works","label":"unclear"}
+{"text":"within 45 mins works","label":"unclear"}
+{"text":"half an hour works","label":"unclear"}
+{"text":"I can do 2 hours","label":"unclear"}
+{"text":"2 hours works, Saturday 11am","label":"unclear"}
+{"text":"2 hours works, Saturday 11am, Sunday 2pm too","label":"yes","keys":["b","c"]}
+{"text":"7pm works, and this afternoon works too","label":"unclear"}

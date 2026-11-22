@@ -105,6 +105,32 @@ test("a current busy conflict discovered after the probes cannot book the picked
   expect(world.net.exportState().opps.find(opp => opp.id === oppId)?.stage).toBe("closed");
 });
 
+test("a dated probe stays open for relative times and duration-only answers", async () => {
+  // spec/probeReply.md, "A relative time or duration alone cannot choose an offered slot"
+  const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
+    plans: false, growth: false, review: "human",
+  });
+  await world.onboard("a", "b");
+  const oppId = world.propose(["a", "b"]);
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === oppId))).toBe(true);
+  expect(world.net.decide(oppId, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  expect(await world.runUntil(() => world.probed("a"), DAY)).toBe(true);
+  const probe = world.to("a").find(message => message.meta.probe?.key === oppId);
+  expect(probe?.meta.timeOptions?.length ?? 0).toBeGreaterThan(1);
+
+  for (const text of ["Tomorrow works", "Tmr 7pm works", "Yes, this afternoon works", "Next Saturday, 11am works", "2 hours works"]) {
+    await world.say("a", text);
+    expect(world.probed("a")).toBe(true);
+    expect(world.log("probe_answer")).toEqual([]);
+    expect(world.meetings).toEqual([]);
+  }
+
+  await world.say("a", "Yes, the first time works");
+  expect(await world.runUntil(() => world.probed("b"), DAY)).toBe(true);
+  await world.say("b", "Yes, the first time works");
+  expect(world.meetings.map(meeting => meeting.proposalId)).toEqual([oppId]);
+});
+
 test.each([-1, 0, 1])("the default meeting slot includes the exact search boundary (%d ms)", async offset => {
   // spec/opportunityLifecycle.md, "Only an approved proposal with enough consent can book"
   // spec/calendarFreeBusy.md, "A known busy interval excludes the slot and incomplete coverage cannot make it free"

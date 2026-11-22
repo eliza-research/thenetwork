@@ -64,6 +64,19 @@ export function lawAnUntimedProbeNeedsASeparateAnswer(separateYes: boolean): boo
   return !mayRetryCounter(false, separateYes);
 }
 
+/** Story: Make a choice about a proposed opportunity / A relative time or duration alone cannot choose an offered slot (spec/probeReply.md) */
+//@ pure
+export function unboundProbeTimeNeedsClarification(unboundTime: boolean, independentChoice: boolean): boolean {
+  return unboundTime && !independentChoice;
+}
+
+/** Story: Make a choice about a proposed opportunity / A relative time or duration alone cannot choose an offered slot (spec/probeReply.md) */
+//@ pure
+export function lawUnboundTimeAloneKeepsTheProbeOpen(modelConsent: string): boolean {
+  //@ ensures \result === true
+  return unboundProbeTimeNeedsClarification(true, false) && probeReplyReading(true, false, modelConsent) === "KeepOffline";
+}
+
 /** Story: Make a choice about a proposed opportunity / An untimed probe needs an answer to the opportunity (spec/probeReply.md) */
 //@ pure
 export function untimedProbeTimeRejectionNeedsClarification(offeredTimes: boolean, rejectedTimes: boolean, otherwiseUnqualified: boolean): boolean {

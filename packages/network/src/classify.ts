@@ -10,7 +10,7 @@
 import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canJoin, parseReply, type Category } from "@thenetwork/core";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { historicalProbeTimeClause, mayRetryCounter, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
+import { historicalProbeTimeClause, mayRetryCounter, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -808,7 +808,11 @@ const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\
 const EXPLICIT_KEY_CLAUSE = /(^\s*|[,;.!\n]\s*|\b(?:and|or)\s+)([abc])\s+(?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please)\b/g;
 const EXPLICIT_NO_OFFERED_TIMES = /^\s*none of (?:(?:those|these)(?: times| options)?|them|the (?:times|options)) works?(?: for me)?[.!\s]*$/;
 // A day and clock label cannot establish consent to a relative or separately named date.
-const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
+const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|tmr|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
+const PROBE_DURATION = String.raw`(?:\d+|a|an|one|two|three|four|a few|a couple(?: of)?|half an?)\s+(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`;
+const RELATIVE_PROBE_DURATION = new RegExp(String.raw`\b(?:in|within)\s+${PROBE_DURATION}|\b${PROBE_DURATION}\s+from\b`);
+const UNBOUND_PROBE_WINDOW = /\bthis\s+(?:morning|afternoon|evening|night)\b|\b(?:next|following)\s+(?:week|month|year)\b|\bafter next\b/;
+const PROBE_DURATION_ONLY = new RegExp(String.raw`^\s*(?:(?:for\s+)?${PROBE_DURATION}\s+(?:works?|(?:will|would) work|is (?:fine|good|ok(?:ay)?|perfect))\b|(?:i )?can do\s+${PROBE_DURATION}\s*$)`);
 const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
@@ -920,6 +924,36 @@ function separatePastProbeTimes(text: string): { current: string; past: boolean 
   return { current: past ? current.join(" ").trim() : text, past };
 }
 
+function hasUnboundProbeTime(text: string): boolean {
+  return UNBOUND_OFFER_DATE.test(text) || UNBOUND_PROBE_WINDOW.test(text) || RELATIVE_PROBE_DURATION.test(text) || PROBE_DURATION_ONLY.test(text);
+}
+
+function separateUnboundProbeTimes(text: string): { current: string; unbound: boolean } {
+  const clauses = text.split(PROBE_CLAUSE_BOUNDARY);
+  const current: string[] = [];
+  let unbound = false, carryDate = false;
+  for (let i = 0; i < clauses.length; i += 2) {
+    const clause = clauses[i]!, punctuation = clauses[i + 1];
+    const parts = clause.split(/\s+and\s+/);
+    const qualified = parts.findIndex(hasUnboundProbeTime);
+    if (qualified !== -1) {
+      unbound = true;
+      if (punctuation !== "?") for (const part of parts.slice(0, qualified)) {
+        if (isIndependentProbeAnswer(part)) current.push(`${part}.`);
+      }
+      carryDate = punctuation === "," || punctuation === ";";
+      continue;
+    }
+    const mentions = carryDate ? timeMentions(clause) : [];
+    // A clock or part of the day after a comma can continue the unbound date.
+    if (clause.trim() && !(mentions.length && mentions.every(mention => !mention.day))) {
+      current.push(clause + (punctuation ?? ""));
+    }
+    carryDate = false;
+  }
+  return { current: unbound ? current.join(" ").trim() : text, unbound };
+}
+
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
  * "either", "a or b", "neither", "none of those work", "yes", "no thanks". Returns the answer and,
@@ -941,15 +975,21 @@ interface ProbeReply {
 
 export function parseProbeReply(body: string, options: readonly TimeOption[] = [], explicitTimesOnly = false): ProbeReply {
   const normalized = normText(body);
-  const { current: t, past } = options.length ? separatePastProbeTimes(normalized) : { current: normalized, past: false };
+  const historic = options.length ? separatePastProbeTimes(normalized) : { current: normalized, past: false };
+  const { past } = historic;
+  const { current: t, unbound } = separateUnboundProbeTimes(historic.current);
   const original = consentScan(body);
-  const c = past && original.why !== "conditional" && original.why !== "hedged" ? consentScan(t) : original;
+  const scoped = (past || unbound && original.answer !== "counter") && original.why !== "conditional" && original.why !== "hedged";
+  const c = scoped ? consentScan(t) : original;
   if (past && c.answer !== "no" && normalized.split(PROBE_CLAUSE_BOUNDARY).some(clause => /^\s*if\b/.test(clause))) {
     return { answer: "unclear", keys: [], why: "conditional" };
   }
   const rejectedTimes = OFFERED_TIME_REJECTION.test(t);
   // spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
   if (untimedProbeTimeRejectionNeedsClarification(options.length > 0, rejectedTimes, c.why === "affirm" || c.why === "none")) {
+    return { answer: "unclear", keys: [], why: "slot" };
+  }
+  if (!options.length && unboundProbeTimeNeedsClarification(unbound, false) && c.answer !== "no" && c.why !== "conditional" && c.why !== "hedged") {
     return { answer: "unclear", keys: [], why: "slot" };
   }
   if (!options.length || c.answer === "counter") {
@@ -961,12 +1001,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
-  const mark = (keys: string[], i: number, len: number) => {
+  const mark = (keys: string[], i: number, len: number, calendar = false) => {
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
       const cl = clauseAt(t, i, len);
-      if (onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
+      if ((!unbound || !calendar) && onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
@@ -1001,26 +1041,28 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (refused) {
       namedExclusion ||= exclusion;
       for (const key of matching) neg.add(key);
-    } else if (!matching.length || matching.length > 1 && (explicitTimesOnly || !m.part)
+    } else if (unbound && !m.day || !matching.length || matching.length > 1 && (explicitTimesOnly || !m.part)
       || m.part && !m.day && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
         && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
       // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
       unresolved.push(m);
-    } else mark(matching, m.at, m.end - m.at);
+    } else mark(matching, m.at, m.end - m.at, true);
   }
   // "Weekends work best" names the weekend: it picks the offered Saturday and Sunday options, and with
   // none offered it names a time the probe did not offer (asked again, never booked).
   for (const m of t.matchAll(/\bweekends?\b/g)) {
     const weekend = offered.filter(o => o.day === "Saturday" || o.day === "Sunday").map(o => o.key);
     if (negatedAt(t, m.index!, m[0].length)) for (const key of weekend) neg.add(key);
-    else if (weekend.length) mark(weekend, m.index!, m[0].length);
+    else if (weekend.length) mark(weekend, m.index!, m[0].length, true);
     else unresolved.push({ at: m.index!, end: m.index! + m[0].length });
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
-  residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
-  if (!residue && !/\?/.test(t)) for (const k of pos) strong.add(k);
+  residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
+  const addsChoice = /\b(?:also|too|as\s+well)\b/.test(residue)
+    && !residue.replace(/\b(?:also|too|as\s+well|first|second|third|last)\b/g, "").trim();
+  if ((unbound ? addsChoice : !residue) && !/\?/.test(t)) for (const k of pos) strong.add(k);
   const picked = all.filter(k => pos.has(k) && (!explicitTimesOnly || !neg.has(k)));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
@@ -1032,6 +1074,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (explicitTimesOnly) {
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
     if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
+  }
+  if (unbound) {
+    const current = picked.filter(key => strong.has(key));
+    return unboundProbeTimeNeedsClarification(unbound, current.length > 0)
+      ? { ...unclear, why: "slot" } : explicitYes(current);
   }
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.

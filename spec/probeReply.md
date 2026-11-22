@@ -61,6 +61,18 @@ pure def lawAnUntimedProbeNeedsASeparateAnswer(separateYes: bool): bool =
   not(mayRetryCounter(false, separateYes))
 ```
 
+### A relative time or duration alone cannot choose an offered slot
+
+A relative day, future period, date-less “this afternoon,” or duration does not identify one of the offered slots. A clock time or part of the day that continues the same relative date does not identify a slot either. Ask again unless the member makes a separate clear choice of an offered slot. Treat the unbound time as a qualified answer so a model cannot replace it. A separate yes and counter-offer can still ask for fresh choices under the preceding rule.
+
+```quint
+pure def unboundProbeTimeNeedsClarification(unboundTime: bool, independentChoice: bool): bool =
+  unboundTime and not(independentChoice)
+
+pure def lawUnboundTimeAloneKeepsTheProbeOpen(modelConsent: str): bool =
+  unboundProbeTimeNeedsClarification(true, false) and probeReplyReading(true, false, modelConsent) == KeepOffline
+```
+
 ### An untimed probe needs an answer to the opportunity
 
 Rejection of time options keeps an untimed probe open for a clear answer, including when the reply contains affirmative wording. Treat the reply as a qualified time signal and keep it when a model reads it as yes. A clear no to the opportunity still declines it. When the probe offered times, keep the ordinary empty-selection rules.
