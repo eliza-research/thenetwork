@@ -348,3 +348,24 @@
 {"text":"afraid not","label":"no"}
 {"text":"I'm afraid not","label":"no"}
 {"text":"not a chance","label":"no"}
+{"text":"why the hell not","label":"yes"}
+{"text":"why the heck not","label":"yes"}
+{"text":"I don't see why not","label":"yes"}
+{"text":"I can't see why not","label":"yes"}
+{"text":"I do not see why not","label":"yes"}
+{"text":"any other day but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"all days but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"every day but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"any day of the week but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"anything else but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"everything else but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"anything but this Saturday works","label":"yes","keys":["a","c"]}
+{"text":"anything but that Saturday works","label":"yes","keys":["a","c"]}
+{"text":"anything but next Saturday works","label":"unclear"}
+{"text":"any morning but Saturday works","label":"unclear"}
+{"text":"any morning but Saturday works. Sunday 2pm works too.","label":"yes","keys":["c"]}
+{"text":"anything but Saturday, Saturday works","label":"unclear"}
+{"text":"all days but Saturday are busy","label":"unclear"}
+{"text":"each day but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"whatever but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"any other time but Saturday works","label":"yes","keys":["a","c"]}

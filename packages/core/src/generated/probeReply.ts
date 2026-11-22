@@ -79,6 +79,26 @@ export function lawProbeGroupDoesNotCrossWeekBoundary(groupWeekend: boolean, off
   return !probeGroupIncludes(groupWeekend, offeredWeekend, needsEvening, offeredEvening, namesPart, partMatches) || groupWeekend === offeredWeekend;
 }
 
+/** Story: Make a choice about a proposed opportunity / Remove a named exclusion from the offered alternatives (spec/probeReply.md) */
+//@ pure
+export function probeExclusionAlternative(needsPart: boolean, partMatches: boolean, excluded: boolean, contradicted: boolean): boolean {
+  return !(excluded || contradicted) && (!needsPart || partMatches);
+}
+
+/** Story: Make a choice about a proposed opportunity / Remove a named exclusion from the offered alternatives (spec/probeReply.md) */
+//@ pure
+export function lawProbeExclusionNeverRestoresExcludedTime(needsPart: boolean, partMatches: boolean, contradicted: boolean): boolean {
+  //@ ensures \result === true
+  return !probeExclusionAlternative(needsPart, partMatches, true, contradicted);
+}
+
+/** Story: Make a choice about a proposed opportunity / Remove a named exclusion from the offered alternatives (spec/probeReply.md) */
+//@ pure
+export function lawProbeExclusionKeepsTimeOfDay(partMatches: boolean, excluded: boolean, contradicted: boolean): boolean {
+  //@ ensures \result === true
+  return !probeExclusionAlternative(true, partMatches, excluded, contradicted) || partMatches;
+}
+
 /** Story: Make a choice about a proposed opportunity / A past time reference leaves the offered time open (spec/probeReply.md) */
 //@ pure
 export function historicalProbeTimeClause(describesPast: boolean, timeReference: boolean): boolean {

@@ -25,6 +25,28 @@ test("a weekend preference is a yes only to the offered weekend times", async ()
   expect(w.log("probe_answer").filter(l => l.detail.memberId === "a").map(l => [l.detail.yes, l.detail.picked])).toEqual([[true, weekend]]);
 });
 
+test("a reviewed offer keeps exclusions and the member's time-of-day limit", async () => {
+  const ids = ["a", "b"];
+  const starts = [Date.UTC(2026, 9, 8, 23), Date.UTC(2026, 9, 10, 15), Date.UTC(2026, 9, 11, 18)];
+  const w = new Mini([newcomer("a", "Ana Diaz"), newcomer("b", "Ben Ito")], {
+    plans: false, growth: false, review: "human",
+    hooks: { timeOptions: () => starts.map(start => ({ start, end: start + HOUR })) },
+  });
+  await w.onboard(...ids);
+  const id = w.propose(ids, { category: "social", objective: "play board games together" });
+  expect(await w.runUntil(() => w.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
+  expect(w.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+  await w.say("a", "Any morning but Saturday works.");
+  expect(w.meetings).toEqual([]);
+  expect(w.log("probe_answer").filter(item => item.detail.memberId === "a")).toEqual([]);
+  await w.say("a", "Every day but Saturday works.");
+  expect(w.log("probe_answer").filter(item => item.detail.memberId === "a").map(item => item.detail.picked)).toEqual([["a", "c"]]);
+  expect(await w.runUntil(() => w.probed("b"))).toBe(true);
+  await w.say("b", "Thursday 7pm works.");
+  expect(w.meetings).toMatchObject([{ proposalId: id, participants: ids, at: starts[0] }]);
+});
+
 test("a past date reference neither books nor replaces the active time choice", async () => {
   const ids = ["rae", "sam"];
   const thursday = Date.UTC(2026, 9, 8, 22);

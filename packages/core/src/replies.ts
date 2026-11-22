@@ -71,8 +71,12 @@ const DIRECT_WITHDRAWAL = new RegExp(
   WITHDRAWAL_WORDS + String.raw`(?:[\s,.!;:]+(?:please|thanks|thank you|sorry))*[.!]*$`,
 );
 const WITHDRAWAL_QUOTE = /"[^"]*(?:"|$)|(?<![\p{L}\p{N}])'(?:[^']|'(?=[\p{L}\p{N}]))*(?:'(?![\p{L}\p{N}])|$)/gu;
-const SHORT_REFUSAL = /^(?:(?:sorry|thanks|thank you)[\s,]+)*(?:(?:(?:i'm|i am)\s+)?afraid\s+not|not\s+a\s+chance|no\s+chance)(?:[\s,]+(?:thanks|thank you|sorry))*[.!]*$/;
+const SHORT_REFUSAL = /^(?:(?:sorry|thanks|thank you)[\s,]+)*(?:(?:(?:i'm|i am)\s+)?afraid\s+not|not\s+a\s+chance|no\s+chance|that would(?:n't| not) work(?: for me)?|let'?s not do (?:that|this|it))(?:[\s,]+(?:thanks|thank you|sorry))*[.!]*$/;
 const SHORT_REFUSAL_CLAUSES = /[.!?,;\n]/;
+const DIRECT_AGREEMENT = /^(?:(?:i )?(?:don't|do not|can't|cannot) see (?:any )?(?:reason )?why not|why (?:the )?(?:hell|heck) not|let'?s do (?:that|this)|(?:(?:that )?would|that'd) (?:be (?:great|awesome|fun)|work(?: for me)?)|i(?:'d| would) be down)(?:[\s,]+(?:thanks|thank you|please))*[.!]*$/;
+
+/** A complete reply can answer an offer with a common affirmative phrase. */
+export const directAgreementIdiom = (text: string): boolean => DIRECT_AGREEMENT.test(normalize(text).trim());
 
 function readNormalizedWithdrawal(text: string) {
   const direct = DIRECT_WITHDRAWAL.test(text) || SHORT_REFUSAL.test(text);
@@ -121,7 +125,7 @@ const RULES: Rule[] = [
   // Negated hedges ("not sure", "really not sure") before refusals.
   r("unsure", "\\b(?:not (?:sure|certain|100%|positive|definitely|decided)|no estoy segur[oa])\\b"),
   // Time refusals: "not thursday", "can't do tonight", "except fridays", "pero no el jueves".
-  r("timeNeg", `(?:\\b(?:not|no|except|excepto|menos|never|nunca)|\\b(?:can't|cannot|can not|won't|don't|no puedo)(?: do| make| make it)?)(?: on| the| el| los| la| this)?\\s+${DAY}\\b`),
+  r("timeNeg", `(?:\\b(?:not(?: around| in town| free)?|no|except|excepto|menos|never|nunca)|\\b(?:can't|cannot|can not|won't|don't|no puedo)(?: do| make| make it)?)(?: on| the| el| los| la| this)?\\s+${DAY}\\b`),
   // Strong refusals (multi-word first).
   r("no", "\\b(?:absolutely|definitely|certainly|totally|hell|heck|of course|obviously|surely|honestly|really|seriously) (?:not|no)\\b", true),
   r("no", "\\b(?:claro|por supuesto|obvio|desde luego) que no\\b", true),
@@ -229,6 +233,7 @@ export function parseReply(text: string): ParsedReply {
     ({ answer, constraints, counter: !!o.counter, ...(o.leaning ? { leaning: o.leaning } : {}), reason });
 
   if (withdrawal.reading === "DirectWithdrawal") return done("no", "refusal");
+  if (DIRECT_AGREEMENT.test(t)) return done("yes", "yes");
   let sig = extract(t);
   // A reversal keeps only what follows it ("yes. actually no" → "no").
   const lastRev = sig.map(s => s.kind).lastIndexOf("reversal");

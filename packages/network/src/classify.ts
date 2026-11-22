@@ -7,11 +7,11 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canJoin, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canJoin, directAgreementIdiom, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { historicalProbeTimeClause, mayRetryCounter, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
+import { historicalProbeTimeClause, mayRetryCounter, probeExclusionAlternative, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearning.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
@@ -704,6 +704,7 @@ const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|bigg
 function consentScan(body: string): Consent & { separateYes?: boolean } {
   const withdrawal = readParticipationWithdrawal(body);
   if (withdrawal.reading === "DirectWithdrawal") return { answer: "no", why: "refusal" };
+  if (directAgreementIdiom(withdrawal.text)) return { answer: "yes", why: "affirm" };
   const qualifiedWithdrawal = withdrawal.reading === "QualifiedWithdrawal";
   const t = normText(withdrawal.text).replace(HARMLESS_NO, " ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
@@ -834,9 +835,10 @@ const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\
 const PROBE_DAY_GROUP = /\b(?:weekdays?|weekends?|weeknights?|during the week)\b/g;
 const RELATIVE_DAY_GROUP = /\b(?:next|last|following)\s+weekends?\b/;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
-const NAMED_EXCLUSION_RANGE = "(?:any day|any ?time|anything|everything|all|whichever)";
+const NAMED_EXCLUSION_RANGE = "(?:any(?: other)? (?:day(?: of the week)?|time)|anytime|(?:any|every)thing(?: else)?|(?:all|every|each) (?:days?|times?)|all|whichever|whatever)";
+const DAYPART_EXCLUSION = /\b(?:any|every|each)\s+(morning|afternoon|evening|night)s?\s+but\s+(?:(?:on|this|that)\s+)*/;
 const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
-const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|except|${NAMED_EXCLUSION_PHRASES})\s+(?:on\s+)?$`);
+const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|except|${NAMED_EXCLUSION_PHRASES})\s+(?:(?:on|this|that)\s+)*$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type TimeMention = {
@@ -1064,6 +1066,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   const ordinalMissing = ordinalKeys.some(key => key === undefined);
   let namedExclusion = false, refusedGroup = false;
+  let contradictedExclusion = false;
+  const namedExcluded = new Set<string>();
+  const partExclusion = DAYPART_EXCLUSION.exec(t);
+  const partExclusionEnd = partExclusion ? partExclusion.index + partExclusion[0].length : -1;
+  const requiredPart = partExclusion?.[1] === "night" ? "evening" : partExclusion?.[1];
   const unresolved: TimeMention[] = [];
 
   const offered = options.map(o => {
@@ -1074,17 +1081,22 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute) };
   });
   for (const m of timeMentions(t)) {
+    if (partExclusion && m.at >= partExclusion.index && m.at < partExclusionEnd) continue;
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
         m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
-    const exclusion = NAMED_EXCLUSION.test(t.slice(0, m.at));
+    const exclusion = m.at === partExclusionEnd || NAMED_EXCLUSION.test(t.slice(0, m.at));
     const refused = exclusion || negatedAt(t, m.at, m.end - m.at);
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
     } else if (refused) {
       namedExclusion ||= exclusion;
+      contradictedExclusion ||= exclusion && NEG_AFTER.test(t.slice(m.end));
       refusedGroup ||= !!m.group;
-      for (const key of matching) neg.add(key);
+      for (const key of matching) {
+        neg.add(key);
+        if (exclusion) namedExcluded.add(key);
+      }
     } else if (unbound && !m.day || !matching.length || !m.group && matching.length > 1 && (explicitTimesOnly || !m.part)
       || m.part && !m.day && !m.group && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
         && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
@@ -1100,9 +1112,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const addsChoice = /\b(?:also|too|as\s+well)\b/.test(residue)
     && !residue.replace(/\b(?:also|too|as\s+well|first|second|third|last)\b/g, "").trim();
   if ((unbound ? addsChoice : !residue) && !/\?/.test(t)) for (const k of pos) strong.add(k);
-  const isPicked = (key: string) => pos.has(key) && (!neg.has(key) || !explicitTimesOnly && (!grouped.has(key) || individual.has(key)));
+  const isPicked = (key: string) => !namedExcluded.has(key) && pos.has(key)
+    && (!neg.has(key) || !explicitTimesOnly && (!grouped.has(key) || individual.has(key)));
   const picked = all.filter(isPicked);
-  const open = all.filter(key => !neg.has(key) || isPicked(key));
+  const open = offered.filter(slot => probeExclusionAlternative(requiredPart !== undefined, requiredPart === slot.part,
+    neg.has(slot.key) && !isPicked(slot.key), contradictedExclusion)).map(slot => slot.key);
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
   const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
@@ -1122,7 +1136,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
-  if (rejectedTimes || OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
+  if (contradictedExclusion || namedExclusion && (open.length === 0 || [...namedExcluded].some(key => strong.has(key)))) {
+    return { ...unclear, why: "slot" };
+  }
+  if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && !negatedAt(t, allAt.index, allAt[0].length)

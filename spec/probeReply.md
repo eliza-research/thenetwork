@@ -40,6 +40,13 @@ beside another statement leaves the offer open until the member gives a
 clear answer. A quotation does not refuse the offer. An independent
 current answer outside that quotation still counts.
 
+As a whole answer, “I can't see why not,” “let's do that,” and “that
+would work” accept the offer in the usual way. “That wouldn't work”
+and “let's not do that” refuse it. A condition attached to the answer
+still keeps the offer open. A refusal of a named day, such as “I'm not
+around Thursday,” supplies a time constraint. Another suggested day
+does not undo that constraint.
+
 ```quint
 type ParticipationWithdrawal = NoWithdrawalWords | DirectWithdrawal | QualifiedWithdrawal
 
@@ -90,6 +97,25 @@ pure def probeGroupIncludes(groupWeekend: bool, offeredWeekend: bool, needsEveni
 
 pure def lawProbeGroupDoesNotCrossWeekBoundary(groupWeekend: bool, offeredWeekend: bool, needsEvening: bool, offeredEvening: bool, namesPart: bool, partMatches: bool): bool =
   probeGroupIncludes(groupWeekend, offeredWeekend, needsEvening, offeredEvening, namesPart, partMatches) implies groupWeekend == offeredWeekend
+```
+
+### Remove a named exclusion from the offered alternatives
+
+An answer such as “every day but Saturday” excludes Saturday from the
+member's choices. A time-of-day limit still applies to the other options.
+“Any morning but Saturday” can use only another offered morning. A
+contradiction or an empty selection leaves the offer open. A separate
+affirmative choice can identify another offered slot.
+
+```quint
+pure def probeExclusionAlternative(needsPart: bool, partMatches: bool, excluded: bool, contradicted: bool): bool =
+  not(excluded or contradicted) and (not(needsPart) or partMatches)
+
+pure def lawProbeExclusionNeverRestoresExcludedTime(needsPart: bool, partMatches: bool, contradicted: bool): bool =
+  not(probeExclusionAlternative(needsPart, partMatches, true, contradicted))
+
+pure def lawProbeExclusionKeepsTimeOfDay(partMatches: bool, excluded: bool, contradicted: bool): bool =
+  probeExclusionAlternative(true, partMatches, excluded, contradicted) implies partMatches
 ```
 
 ### A past time reference leaves the offered time open
