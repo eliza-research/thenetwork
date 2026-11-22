@@ -132,6 +132,7 @@ import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import { bookingWithdrawalAcknowledgmentAllowed } from "../../core/src/generated/replyDuplication.ts";
 import { recommendationLocation } from "../../core/src/generated/plansLocation.ts";
 import { currentPairAllowed } from "../../core/src/generated/currentPairRestrictions.ts";
+import { newMatchCategoryAllowed, newMatchParticipationAllowed } from "../../core/src/generated/newMatchParticipation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
@@ -2745,6 +2746,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (c.category === "help" && this.allowedCategories.has("help") && this.routeBoundedHelp(m, c.text ?? "", !!o.quiet)) return;
     const now = this.now();
     const canSearch = this.trust.ok(m.id) && !this.reportHeld(m.id);
+    const category = c.category ?? "social";
+    const matching = this.opts.matchingEnabled && this.canStartMatching(m);
     // Repeat asks ("still hoping to...") are the same request: don't open another one while one is
     // in progress, and don't re-search the same want more than once every 3 days.
     const prior = [...this.requests].reverse().find(r => sameStandingRequest(
@@ -2752,14 +2755,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     ));
     const probing = prior?.outcome === "probing";
     // The re-search interval is the member's effort overlay (NC; the floor is 3 days).
+    const categoryAllowed = this.allowedCategories.has(category) && this.allowsMatchCategory(m.id, category);
     const admission = stepMemberRequest(initialMemberRequest, {
       type: "checkRequestAdmission",
-      repeat: !!prior && requestInReuseWindow(probing, now - prior.at, probing ? 0 : this.effort(m.id).intentReSearchDays * DAY),
-      categoryAllowed: this.allowedCategories.has(c.category ?? "social"),
+      repeat: categoryAllowed && !!prior && requestInReuseWindow(probing, now - prior.at, probing ? 0 : this.effort(m.id).intentReSearchDays * DAY),
+      categoryAllowed,
     });
     if (admission.phase === "RequestRepeated" && prior) {
       const route = stepMemberRequest(admission, {
-        type: "routeRepeatedRequest", quiet: !!o.quiet, probing, matching: this.opts.matchingEnabled,
+        type: "routeRepeatedRequest", quiet: !!o.quiet, probing, matching,
       });
       if (route.phase === "RequestQuietRepeat") return;
       if (route.phase === "RequestAlreadyProbing") { this.send(m, "Still on it; I'll get back to you soon.", { type: "info" }, "reply"); return; }
@@ -2782,7 +2786,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     this.counters.requests++;
-    const req: Request = { id: this.sid(`rq${++this.reqSeq}`), memberId: m.id, at: now, kind: "people", category: c.category ?? "social", desireId: c.desireId, tags: c.tags };
+    const req: Request = { id: this.sid(`rq${++this.reqSeq}`), memberId: m.id, at: now, kind: "people", category, desireId: c.desireId, tags: c.tags };
     this.requests.push(req);
     this.emit({ type: "help_asked", member: m.id }, req.id);
     if (c.desireId) m.learned.desires.set(c.desireId, now);
@@ -2791,8 +2795,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Privacy (P3): the log keeps what was asked for (category, want, tags), never the member's words.
     this.ctx.log("request", { requestId: req.id, memberId: m.id, kind: "people", category: req.category, desireId: req.desireId, tags: req.tags });
     const search = stepMemberRequest(admission, {
-      type: "routeNewRequest", matching: this.opts.matchingEnabled, eligible: canSearch,
-      busy: this.opts.matchingEnabled && canSearch && this.busy(m.id),
+      type: "routeNewRequest", matching, eligible: canSearch,
+      busy: matching && canSearch && this.busy(m.id),
     });
     if (search.phase === "RequestMatchingPaused") return this.requestWaits(m, req, o);
     if (search.phase !== "RequestSearching") {
@@ -2901,6 +2905,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Who could answer this ask? Skeptical: only candidates whose KNOWN profile fits, nearby, available, safe. */
   searchFor(m: MemberState, req: { category: Category; desireId?: string; tags: string[] }): { id: MemberId; score: number; fit: number; why: string; whyBack: string }[] {
+    if (!this.canStartMatching(m) || !this.allowsMatchCategory(m.id, req.category)) return [];
     const known = this.knownProfiles();
     const now = this.now();
     // Load (matching-e2e-5, -15): how often each member was put into a request this past week.
@@ -2908,7 +2913,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const o of this.opps.values()) if (o.origin === "request" && now - o.createdAt < 7 * DAY) for (const p of o.participants) if (p !== o.requester) load.set(p, (load.get(p) ?? 0) + 1);
     const out: { id: MemberId; score: number; fit: number; why: string; whyBack: string; tie: number }[] = [];
     for (const x of this.members.values()) {
-      if (x.id === m.id || !this.eligible(x.id) || !this.pairAllowed(m.id, x.id)) continue;
+      if (x.id === m.id || !this.eligible(x.id) || !this.allowsMatchCategory(x.id, req.category) || !this.pairAllowed(m.id, x.id)) continue;
+      if (req.category === "romance" && this.romanceGate([m.id, x.id])) continue;
       // Never two people with one first name in a request: the reveal "meet Bilal B." must be unambiguous.
       if (x.first.toLowerCase() === m.first.toLowerCase()) continue;
       if (x.state === "receiving") continue; // Receiving members are never asked to help others (support-only)
@@ -3230,10 +3236,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (level === "hold" || this.reportHeld(id)) return "held";
       if (level !== "ok") return "on_watch";
       if (m.minor) return "participant_minor";
+      if (!this.canStartMatching(m)) return "participant_unavailable";
+      if (!this.allowsMatchCategory(id, o.category)) return "category_opt_out";
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (!this.pairAllowed(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
+    if (o.category === "romance") {
+      const refusal = this.romanceGate(o.participants);
+      if (refusal) return refusal;
+    }
     if (!this.currentDatingPair(o)) return "slop_pair_changed";
     if (o.seat && !this.currentHireSeat(o.seat, o.participants)) return "peon_search_changed";
     if (o.origin === "second_encounter" && (!this.repeatSourceCurrent(o) || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
@@ -3255,7 +3267,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
-    const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => !this.pairAllowed(p, a) || this.pairHistory(p, a, 60))
+    const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.canUseAlternate(o, a, stay) && !this.sharesFirstName(o, a) && !stay.some(p => !this.pairAllowed(p, a) || this.pairHistory(p, a, 60))
       && (!o.seat || !!this.hireSeatFor(o.seat, a)));
     const nextSeat = alt && o.seat ? this.hireSeatFor(o.seat, alt) : undefined;
     const next = stepOpportunity(opportunityLifecycle(o), { type: "reroll", replacementFound: !!alt && (!o.seat || !!nextSeat) });
@@ -3712,11 +3724,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (route === "CloseManager") return this.close(o, "manager unavailable", { releasePartial: true });
     if (o.seat) return this.close(o, "candidate unavailable", { releasePartial: true });
     const group = o.participants.length > 2;
+    const stay = o.participants.filter(id => id !== out);
     let alt: MemberId | undefined;
     while (!alt && mayTryAlternate(o.alternates.length > 0, o.replacements)) {
       const a = o.alternates.shift()!;
       // The same checks as a reroll: blocks, avoid edges and pair history with everyone staying (network-consent-26).
-      const eligible = this.eligible(a);
+      const eligible = this.canUseAlternate(o, a, stay);
       const sameFirstName = eligible && this.sharesFirstName(o, a);
       const conflict = eligible && !sameFirstName && o.participants.some(p => p !== out && (!this.pairAllowed(p, a) || this.pairHistory(p, a, 60)));
       if (alternateAllowed(eligible, sameFirstName, conflict)) alt = a;
@@ -6541,7 +6554,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // new the member said, the conversation has moved on and the old ack is dropped.
     if (m.pendingAck && (reply || now - m.pendingAck.at > OUTREACH.ackFoldMs)) m.pendingAck = undefined;
     const fns = this.hookFns(m, o.hook);
-    const chk = this.checkRecipient(m.id, kind, { about: o.about, proactive, reply });
+    const chk = this.checkRecipient(m.id, kind, { about: o.about, proactive, reply, category: opportunity?.category });
     if (!chk.ok) return this.refuse(m.id, kind, chk.reason, fns);
     // Plan invites under the plan allowance were checked against their own ledger (planProbe); never the intro cap.
     if (proactive && !o.planInvite && this.overBudget(m)) return this.refuse(m.id, kind, "budget", fns);
@@ -7011,7 +7024,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return this.checkRecipient(memberId, kind, { ...o, reply: kind === "reply" });
   }
 
-  private checkRecipient(id: MemberId, kind: SendKind, o: { about?: MemberId[]; proactive?: boolean; reply: boolean }): RecipientCheck {
+  private checkRecipient(id: MemberId, kind: SendKind, o: { about?: MemberId[]; proactive?: boolean; reply: boolean; category?: Category }): RecipientCheck {
     const no = (reason: string): RecipientCheck => ({ ok: false, reason });
     if (this.declinedIds.has(id)) return no("declined");
     const m = this.members.get(id);
@@ -7019,6 +7032,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.syncRecord(m);
     if (m.optedOut) return no("opted_out");
     if (m.account && !o.reply && kind !== "safety") return no(`account_${m.account}`);
+    if (kind === "probe" && (!this.canStartMatching(m) || (o.category && !this.allowsMatchCategory(id, o.category)))) return no("matching_not_active");
     const reportHold = this.reportHeld(id);
     const needsAdult = outreachRequiresAdult(kind);
     if ((!o.reply && kind !== "safety" || needsAdult) && (this.trust.level(id) === "hold" || reportHold)) return no("held");
@@ -7028,11 +7042,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!this.trust.ok(id)) return no("on_watch");
       for (const x of o.about ?? []) {
         if (x === id) continue;
-        if (this.blocked(id, x) || ((kind === "probe" || kind === "plan_probe") && !this.pairAllowed(id, x))) return no("blocked_pair");
+        if (this.blocked(id, x) || (kind === "probe" && !this.pairAllowed(id, x))) return no("blocked_pair");
         const other = this.members.get(x);
         if (!other && kind === "invite_notice" && !this.declinedIds.has(x) && this.ctx.verifiedJoinedInviteeName?.(id, x)) continue;
         if (other) this.syncRecord(other);
         if (!other || other.minor || other.account || this.declinedIds.has(x)) return no("other_not_matchable");
+        if (kind === "probe" && (!this.canStartMatching(other) || (o.category && !this.allowsMatchCategory(x, o.category)))) return no("other_not_matchable");
         if (this.reportHeld(x)) return no("other_held");
         if (!this.trust.ok(x)) return no("other_on_watch");
       }
@@ -7170,11 +7185,25 @@ export class ConsentNetwork implements NetworkUnderTest {
     const m = this.members.get(id);
     if (m) this.syncRecord(m);
     if (!m || m.minor || m.account || m.optedOut || m.stage === "new" || !this.trust.ok(id) || m.onlyWhenAsked || this.reportHeld(id)) return false;
+    if (!this.canStartMatching(m)) return false;
     // Room on the Blooio streak for an interruption (at most 1 message unanswered), or logistics for a requester.
     const c = { outboundSinceInbound: m.outbound ?? 0 };
     if (!(asked ? attention.canSendLogistics(c) : attention.canInterrupt(c))) return false;
     if (!this.inNyc(id, this.now(), this.now() + 6 * DAY)) return false;
     return !this.busy(id, exceptOpp) && !this.overBudget(m);
+  }
+  private canStartMatching(member: MemberState): boolean {
+    const record = this.record(member.id);
+    const active = !!record && (record.accountStatus === undefined || record.accountStatus === "active");
+    return newMatchParticipationAllowed((record?.state ?? member.state) === "paused", active);
+  }
+  private allowsMatchCategory(id: MemberId, category: Category): boolean {
+    const prefs = this.record(id)?.prefs;
+    return newMatchCategoryAllowed(prefs?.categoriesOptIn?.includes(category) === true, category === "romance", prefs?.romanceOptIn === true);
+  }
+  private canUseAlternate(opp: Opp, id: MemberId, staying: readonly MemberId[]): boolean {
+    return this.eligible(id) && this.allowsMatchCategory(id, opp.category)
+      && (opp.category !== "romance" || !this.romanceGate([...staying, id]));
   }
   /** In an open opportunity (other than `exceptOpp`) and not out of it. */
   busy(id: MemberId, exceptOpp?: string, seats = false) {
