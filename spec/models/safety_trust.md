@@ -12,7 +12,7 @@ Imported from `quint/safety_trust.qnt` at `30d950e`. See [model index](README.md
 
 Production uses [Safety cases and report review](../safetyCase.md) for the case lifecycle, report decisions, and staff hold and age-clearance admission. The standalone model also covers member contact, trust scores, and cross-app effects.
 
-The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. [Exact open report restrictions](../safetyCase.md#the-exact-open-report-follows-its-subject-through-ordinary-app-leave) carry within their originating app. This model has one runtime per app and represents the exact report ID by its immutable report identity tuple. A reported minor signal restricts matching in its originating app. The [membership and age model](join_age.md) checks person-wide propagation of an age stated by the member or verified through signup.
+The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents decisions with increasing identifiers and global releases with an app set. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. [Exact open report restrictions](../safetyCase.md#the-exact-open-report-follows-its-subject-through-ordinary-app-leave) carry within their originating app. This model has one runtime per app and represents the exact report ID by its immutable report identity tuple. A reported minor signal restricts matching in its originating app. The [membership and age model](join_age.md) checks person-wide propagation of an age stated by the member or verified through signup.
 
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
@@ -96,8 +96,8 @@ module safety_trust {
   type ReportIdentity = (Mid, Mid, str, str, int)
   // slot: what profile.ts slotOf reads from the record; hour: the New York hour of the meeting (truth)
   type Inter = { parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int }
-  // A staff lift in flight (service.ts:1797): read the "*" row, then the person_holds transaction, then the unit.
-  type Lift = { m: Mid, scope: str, star: bool, stage: str }
+  // A staff lift reads the decision identifiers, then commits the durable and runtime changes together.
+  type Lift = { m: Mid, scope: str, expectedLocal: int, expectedGlobal: int, stage: str }
   type Src = { msgs: int, reporters: Set[Mid], staff: bool, other: int }
   type Who = { asked: bool, at: int, verb: str, kind: str, target: str }
   type State = {
@@ -113,6 +113,9 @@ module safety_trust {
     contextualBlocks: Set[(Mid, Mid)],
     // platform.person_holds: (person, app or "*")
     personHolds: Set[(str, str)],
+    holdDecisions: (str, str) -> int,
+    nextHold: int,
+    globalHoldReleases: Set[(str, str)],
     opps: str -> Opp,
     reports: Set[Report],
     carriedReports: Set[ReportIdentity],
@@ -161,6 +164,7 @@ module safety_trust {
   // ------------------------------------------------------------------ constants
   pure val APPS = Set("slop", "peon")
   pure val PERSONS = Set("ana", "ben", "cy")
+  pure val HOLD_SCOPES = APPS.union(Set("*"))
   pure val GENS = 0.to(1)
   pure val OPP_IDS = Set("o1", "o2", "o3")
   pure val ALL_MIDS: Set[Mid] = tuples(APPS, PERSONS, GENS).map(t => { app: t._1, p: t._2, g: t._3 })
@@ -182,7 +186,7 @@ module safety_trust {
   pure val NO_TRUST: Trust = { rec: false, score: 0, level: "ok", reportsFrom: Set(), lastDecay: -1, strangers: Set(), blocksMade: List() }
   pure val NO_SRC: Src = { msgs: 0, reporters: Set(), staff: false, other: 0 }
   pure val NO_WHO: Who = { asked: false, at: 0, verb: "", kind: "", target: "" }
-  pure val NO_LIFT: Lift = { m: { app: "", p: "", g: -1 }, scope: "", star: false, stage: "none" }
+  pure val NO_LIFT: Lift = { m: { app: "", p: "", g: -1 }, scope: "", expectedLocal: -1, expectedGlobal: -1, stage: "none" }
   pure val FREE_OPP: Opp = {
     app: "", kind: "", parts: Set(), going: Set(), told: Set(), stage: "free", meetingAt: -1, meetHour: 19,
     feedbackFrom: Set(), absent: Set(), closedBy: "", blocker: "", target: "", blockRoster: Set()
@@ -224,7 +228,19 @@ module safety_trust {
   pure def carriedReportHeld(st: State, m: Mid): bool = st.reports.exists(r =>
     r.subject.p == m.p and r.subject.app == m.app and urgentOpen(r) and st.carriedReports.contains(reportIdentity(r)))
   // Durable coverage for this app or every app. Production preserves global authority on the other apps after a lift.
-  pure def covered(st: State, m: Mid): bool = st.personHolds.exists(h => h._1 == m.p and (h._2 == m.app or h._2 == "*"))
+  pure def localHoldDecision(st: State, m: Mid): int =
+    if (st.personHolds.contains((m.p, m.app))) st.holdDecisions.get((m.p, m.app)) else -1
+  pure def globalHoldDecision(st: State, m: Mid): int =
+    if (st.personHolds.contains((m.p, "*")) and not(st.globalHoldReleases.contains((m.p, m.app))))
+      st.holdDecisions.get((m.p, "*")) else -1
+  pure def covered(st: State, m: Mid): bool = localHoldDecision(st, m) >= 0 or globalHoldDecision(st, m) >= 0
+  pure def writeHold(st: State, p: str, scope: str): State = {
+    ...st,
+    personHolds: st.personHolds.union(Set((p, scope))),
+    holdDecisions: st.holdDecisions.set((p, scope), st.nextHold),
+    nextHold: st.nextHold + 1,
+    globalHoldReleases: if (scope == "*") st.globalHoldReleases.filter(x => x._1 != p) else st.globalHoldReleases,
+  }
   // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
   pure def noShows(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "no_show").size()
   pure def dates(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "completed").size()
@@ -498,6 +514,9 @@ module safety_trust {
     personBlocks: Set(),
     contextualBlocks: Set(),
     personHolds: Set(),
+    holdDecisions: tuples(PERSONS, HOLD_SCOPES).mapBy(_ => -1),
+    nextHold: 0,
+    globalHoldReleases: Set(),
     opps: OPP_IDS.mapBy(_ => FREE_OPP),
     reports: Set(),
     carriedReports: Set(),
@@ -752,7 +771,7 @@ module safety_trust {
   action staffHoldBy(m: Mid, scope: str, onlyRep: str): bool = all {
     s.live.get(m), scope == "*" or scope == m.app,
     onlyRep == "" or s.reports.exists(r => r.subject == m and r.status == "open" and r.reporterP == onlyRep),
-    val s1 = holdMember({ ...s, personHolds: s.personHolds.union(Set((m.p, scope))) }, m, "safety", onlyRep)
+    val s1 = holdMember(writeHold(s, m.p, scope), m, "safety", onlyRep)
     s' = { ...s1,
       pendingHold: if (scope == "*") liveMidsOf(s, m.p).exclude(Set(m)) else Set(),
       staffHeldP: s1.staffHeldP.union(Set((m.p, scope))),
@@ -760,7 +779,7 @@ module safety_trust {
   }
   action staffHold(m: Mid): bool = staffHoldBy(m, "*", "")
   action staffHoldApply(x: Mid): bool = all {
-    s.pendingHold.contains(x), s.live.get(x),
+    s.pendingHold.contains(x), s.live.get(x), globalHoldDecision(s, x) >= 0,
     s' = { ...holdMember(s, x, "safety", ""), pendingHold: s.pendingHold.exclude(Set(x)), lastAction: "staffHoldApply" },
   }
   // The service process stops between two awaits; nothing resumes a loop (the next unit or tick of the other app
@@ -770,21 +789,24 @@ module safety_trust {
     s' = { ...s, pendingHold: Set(), banning: Set(), clearing: Set(), leaving: Set(), lift: NO_LIFT, lastAction: "crash" },
   }
 
-  // Staff lift a hold on one app (service.ts:1797). (1) liftStart: a plain select of the "*" row OUTSIDE the
-  // transaction, and the role check on it (needs_safety_everywhere). (2) liftTx: one transaction writes one row
-  // per other app when the read found "*", and deletes this app's row and "*" (whatever is there now). (3)
-  // liftUnit: network.ts:1313 liftHold -> trust.ts:60 (not_on_hold when the member is not on hold; the rows are
-  // gone anyway). Other actors run between the steps (W3-644, W3-231, W3-435).
-  pure def liftTxOf(st: State): State = {
+  // An authorized lift commits the runtime and durable changes together after verifying the current
+  // owner, both decision identifiers and staff scope. A new decision invalidates an in-flight lift.
+  pure def liftStillAuthorized(st: State): bool = {
     val l = st.lift
-    val others = APPS.exclude(Set(l.m.app)).filter(a => st.live.get(midOf(st, a, l.m.p)))
-    val rows = (if (l.star) st.personHolds.union(others.map(a => (l.m.p, a))) else st.personHolds).exclude(Set((l.m.p, l.m.app), (l.m.p, "*")))
-    // ghost: the staff decision. A lift by safety@* staff ends the hold on this app and keeps the others; a lift
-    // by staff of one app ends that app's hold only and never a hold on every app.
-    val ghostAll = st.staffHeldP.contains((l.m.p, "*"))
-    val ghost = st.staffHeldP.exclude(Set((l.m.p, l.m.app)))
-    val ghost2 = if (ghostAll and l.scope == "*") ghost.exclude(Set((l.m.p, "*"))).union(APPS.exclude(Set(l.m.app)).map(a => (l.m.p, a))) else ghost
-    { ...st, personHolds: rows, staffHeldP: ghost2, lift: { ...l, stage: "tx" } }
+    val local = localHoldDecision(st, l.m)
+    val global = globalHoldDecision(st, l.m)
+    st.live.get(l.m) and local == l.expectedLocal and global == l.expectedGlobal and
+      (global < 0 or l.scope == "*") and (lvl(st, l.m) == "hold" or local >= 0 or global >= 0)
+  }
+  pure def releaseHold(st: State): State = {
+    val l = st.lift
+    val memberScope = (l.m.p, l.m.app)
+    val ghost = st.staffHeldP.exclude(Set(memberScope))
+    val ghost2 = if (st.staffHeldP.contains((l.m.p, "*")) and l.scope == "*")
+      ghost.exclude(Set((l.m.p, "*"))).union(APPS.exclude(Set(l.m.app)).map(a => (l.m.p, a))) else ghost
+    { ...st, personHolds: st.personHolds.exclude(Set(memberScope)), staffHeldP: ghost2,
+      globalHoldReleases: if (l.expectedGlobal >= 0) st.globalHoldReleases.union(Set(memberScope)) else st.globalHoldReleases,
+      pendingHold: st.pendingHold.exclude(Set(l.m)) }
   }
   pure def liftUnitOf(st: State): State = {
     val m = st.lift.m
@@ -806,22 +828,25 @@ module safety_trust {
       lastAction: "liftUnit" }
     else { ...st, lift: NO_LIFT, lastAction: "liftNotOnHold" }
   }
-  action liftStart(m: Mid, scope: str): bool = {
-    val star = s.personHolds.contains((m.p, "*"))
-    all {
-      s.lift.stage == "none", s.live.get(m), scope == "*" or scope == m.app,
-      not(star and scope != "*"),    // needs_safety_everywhere (refused: nothing changes)
-      s' = { ...s, lift: { m: m, scope: scope, star: star, stage: "read" }, lastAction: "liftStart" },
-    }
+  pure def liftRead(st: State, m: Mid, scope: str): Lift =
+    { m: m, scope: scope, expectedLocal: localHoldDecision(st, m), expectedGlobal: globalHoldDecision(st, m), stage: "read" }
+
+  pure def commitLift(st: State): State =
+    if (liftStillAuthorized(st)) { ...liftUnitOf(releaseHold(st)), lift: { ...st.lift, stage: "tx" }, lastAction: "liftTx" }
+    else { ...st, lift: NO_LIFT, lastAction: "liftChanged" }
+
+  action liftStart(m: Mid, scope: str): bool = all {
+    s.lift.stage == "none", s.live.get(m), scope == "*" or scope == m.app,
+    globalHoldDecision(s, m) < 0 or scope == "*",
+    s' = { ...s, lift: liftRead(s, m, scope), lastAction: "liftStart" },
   }
-  action liftTx: bool = all { s.lift.stage == "read", s' = { ...liftTxOf(s), lastAction: "liftTx" } }
-  action liftUnit: bool = all { s.lift.stage == "tx", s' = liftUnitOf(s) }
-  // The three steps with nothing between them (run tests only).
+  action liftTx: bool = all { s.lift.stage == "read", s' = commitLift(s) }
+  action liftUnit: bool = all { s.lift.stage == "tx", s' = { ...s, lift: NO_LIFT, lastAction: "liftResult" } }
   action liftHoldBy(m: Mid, scope: str): bool = {
-    val star = s.personHolds.contains((m.p, "*"))
+    val ready = { ...s, lift: liftRead(s, m, scope) }
     all {
-      s.lift.stage == "none", s.live.get(m), lvl(s, m) == "hold", not(star and scope != "*"),
-      s' = liftUnitOf(liftTxOf({ ...s, lift: { m: m, scope: scope, star: star, stage: "read" } })),
+      s.lift.stage == "none", liftStillAuthorized(ready),
+      s' = { ...commitLift(ready), lift: NO_LIFT },
     }
   }
   action liftHold(m: Mid): bool = liftHoldBy(m, "*")
@@ -905,12 +930,12 @@ module safety_trust {
   // Committed hard holds and exact open reports use current state at the atomic forget.
   action leaveStart(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val rows = if (lvl(s, m) != "hold" and s.minorF.get(m)) s.personHolds.union(Set((p, app))) else s.personHolds
-    all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...s, personHolds: rows, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
+    val recorded = if (lvl(s, m) != "hold" and s.minorF.get(m) and not(covered(s, m))) writeHold(s, p, app) else s
+    all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...recorded, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
   }
   pure def retainHardHold(st: State, m: Mid): State =
     if (lvl(st, m) == "hold" and not(covered(st, m) or st.banned.contains(m.p)))
-      { ...st, personHolds: st.personHolds.union(Set((m.p, m.app))) }
+      writeHold(st, m.p, m.app)
     else st
   pure def retainOpenReports(st: State, m: Mid): State = { ...st,
     carriedReports: st.carriedReports.union(st.reports.filter(r => r.subject == m and urgentOpen(r)).map(reportIdentity)) }
@@ -922,8 +947,8 @@ module safety_trust {
   // The leave with nothing between the two steps (run tests only).
   action leave(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val rows = if (lvl(s, m) != "hold" and s.minorF.get(m)) s.personHolds.union(Set((p, app))) else s.personHolds
-    all { s.live.get(m), s' = { ...forget(retainOpenReports(retainHardHold({ ...s, personHolds: rows }, m), m), m), lastAction: "leave" } }
+    val recorded = if (lvl(s, m) != "hold" and s.minorF.get(m) and not(covered(s, m))) writeHold(s, p, app) else s
+    all { s.live.get(m), s' = { ...forget(retainOpenReports(retainHardHold(recorded, m), m), m), lastAction: "leave" } }
   }
 
   // A join by text: a banned person is refused; a hold does not refuse a join (PRD 40.3). A former member gets
@@ -1054,9 +1079,9 @@ module safety_trust {
   // does not refuse a join, but the person cannot be matched until staff resolve it"; admin-console 3.7.1
   // "Hold (the person, on every app, until a review)". A staff hold holds every live member of the person.
   // SD-021 (leave and rejoin), SD-022 (join during a hold, the non-atomic loop): fixed in 059965d. W3-226,
-  // W3-435: the ghost is (person, scope); a lift on one app keeps the person's other apps under the rule, so a
-  // lift that drops the "*" row with no per-app rows is visible (W3-644: service.ts:1800 reads it outside the
-  // transaction). A hold by staff of one app holds that app only (W3-231).
+  // W3-435: the ghost is (person, scope); a lift on one app keeps the person's other apps under the rule. The
+  // row scope and exact decision are checked again inside the lift transaction. A hold by staff of
+  // one app holds that app only (W3-231).
   val staffHoldFollowsPerson = s.staffHeldP.forall(h =>
     liveMidsOf(s, h._1).filter(x => h._2 == "*" or x.app == h._2).forall(x => not(matchable(s, x))))
 
@@ -1685,18 +1710,14 @@ module safety_trust {
       .then(banApply(BEN_P))
       .expect(bannedNeverMatchable and s.restricted.contains(BEN_P))
 
-  // W3-644 (confirmed): staff of slop lift ana's slop hold. Their read finds no "*" row. Staff with safety@* then
-  // hold ana on every app. The lift's transaction deletes the new "*" row with no per-app rows, and its unit
-  // lifts ana@slop: a one-app staff action undid a hold on every app.
-  run w3_644LiftRaceTest =
+  run staleLocalLiftKeepsNewGlobalHoldTest =
     init
       .then(staffHoldBy(ANA_S, "slop", ""))
       .then(liftStart(ANA_S, "slop"))
       .then(staffHoldBy(ANA_P, "*", ""))
       .then(staffHoldApply(ANA_S))
       .then(liftTx)
-      .then(liftUnit)
-      .expect(not(staffHoldFollowsPerson) and matchable(s, ANA_S) and not(s.personHolds.exists(h => h._1 == "ana")))
+      .expect(s.lastAction == "liftChanged" and staffHoldFollowsPerson and covered(s, ANA_S) and covered(s, ANA_P))
 
   // W3-644: with no race, staff of one app cannot lift a hold on every app (needs_safety_everywhere).
   run w3_644OneAppStaffRefusedTest =
@@ -1711,7 +1732,7 @@ module safety_trust {
       .then(liftStart(BEN_S, "*"))
       .then(liftTx)
       .then(liftUnit)
-      .expect(s.personHolds == Set(("ben", "peon")) and lvl(s, BEN_S) == "ok" and covered(s, BEN_P) and staffHoldFollowsPerson)
+      .expect(s.personHolds == Set(("ben", "*")) and not(covered(s, BEN_S)) and lvl(s, BEN_S) == "ok" and covered(s, BEN_P) and staffHoldFollowsPerson)
 
   // W3-231: a hold from one report marks that report only. After the lift cy's urgent report still holds ben
   // (safe: staff dismiss it to end it).
