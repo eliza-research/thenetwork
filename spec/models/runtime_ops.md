@@ -8,7 +8,7 @@ An operator needs the backend to complete scheduled work, report failures, and r
 
 Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The VibeLang shell sequences the effects. The store owns the queue, database advisory locks, and transaction commit. The model represents one database. Staff health observes a granted lock for the runtime's network key in that database. A lock with the same key in another database is independent.
+The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The VibeLang shell sequences the effects. The store owns the queue, database advisory locks, and transaction commit. The model represents one database. Staff health observes a granted lock for the runtime's network key in that database. A lock with the same key in another database is independent. The local development migration runner joins a second, shared lock in the maintenance database before it changes the common role catalog. The migration action abstracts this lock and the target's schema transaction as one step. The Postgres integration case runs a legacy upgrade beside migrations for other databases.
 
 The [backend lifecycle spec](../backendLifecycle.md) drives worker
 reservations and shutdown decisions. The serving shell starts a single
@@ -22,13 +22,11 @@ The [platform retention rules](../platformRetention.md) set the account
 and inbox cutoffs and retain counters needed for STOP hints.
 
 The [alert dispatch spec](../opsAlertDispatch.md) drives the VibeLang
-shell under the existing alert-store transaction. The backend keeps missing
-episodes open while their source is unreadable. The model represents one
-network and its read warning. Production checks each network, the shared line
-and the cost ledger separately. With a readable source, the backend may close
-a missing episode without a prior successful post. The backend can still ping
-its heartbeat after a failed alert delivery. The retained model below describes
-different behavior for failed posts and the heartbeat.
+shell under the existing alert-store transaction. The backend
+evaluates the alerts it could collect, may close a missing episode without
+a prior successful post, and can still ping its heartbeat after a failed
+alert delivery. The retained model below describes different behavior for
+those cases.
 
 [Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
 eligibility, and aggregate outcome rules. The backend reads saved
@@ -480,7 +478,7 @@ module runtime_ops {
     val cur = current(s, readOk)
     val truth = current(s, true)
     val prev = s.al.st
-    // opsAlertDispatch.md: a failed read of the network leaves its condition keys unknown. The read warning is current evidence.
+    // ops.ts unread(): a failed read of the network leaves its keys unknown; they neither resolve nor close (SD-113 fix, 7717e2b).
     val known = ALERT_KEYS.filter(k => readOk or k == "read")
     val firing = ALERT_KEYS.filter(k => and { cur.get(k).on, isDue(nextA(prev.get(k), cur.get(k)), cur.get(k), s.now) })
     // failedWhileOpen is lastFailedAt: an alert whose post failed is resolved with a notice, never closed quietly (SD-235 fix, 0f6ca0f).
