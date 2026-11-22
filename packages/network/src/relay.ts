@@ -41,6 +41,7 @@ const HOUR = 3_600_000, DAY = 24 * HOUR;
  * runs out, the other member's request starts a new swap and the first member is asked again.
  */
 export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
+export const SWAP_WITHDRAWN = "consent:withdrawn";
 /** Log rows kept in the state (the rate limits look back one day; staff and ban notices further). */
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
@@ -310,11 +311,16 @@ export class RelayDesk {
     return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
   }
 
-  /** The member takes back their pending number swap ("don't send my number"). Returns how many requests were removed. */
   cancelSwaps(from: MemberId): number {
     const before = this.s.swaps.length;
     this.s.swaps = this.s.swaps.filter(x => x.from !== from);
-    return before - this.s.swaps.length;
+    let changed = before - this.s.swaps.length;
+    this.s.log = this.s.log.map(record => {
+      if (record.kind !== "contact_share" || record.decision !== "pass" || (record.from !== from && record.to !== from) || record.reasons.includes(SWAP_WITHDRAWN)) return record;
+      changed++;
+      return { ...record, reasons: [...record.reasons, SWAP_WITHDRAWN].sort() };
+    });
+    return changed;
   }
 
   private share(id: string, from: MemberId, to: MemberId, at: number, value: string, consentAt = at): RelayItem {

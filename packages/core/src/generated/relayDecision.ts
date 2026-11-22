@@ -51,6 +51,19 @@ export function lawDirectRefusalWithdrawsPendingSwap(namesOwnContact: boolean, w
   return pendingSwapWithdrawn(namesOwnContact, withholdsContact, true);
 }
 
+/** Story: Share only the item I approved / A phone exchange must still have consent at dispatch (spec/relayDecision.md) */
+//@ pure
+export function relayRecordMayDispatch(passed: boolean, rejected: boolean, withdrawn: boolean): boolean {
+  return passed && !rejected && !withdrawn;
+}
+
+/** Story: Share only the item I approved / A phone exchange must still have consent at dispatch (spec/relayDecision.md) */
+//@ pure
+export function lawWithdrawnRelayRecordsCannotDispatch(passed: boolean, rejected: boolean): boolean {
+  //@ ensures \result === true
+  return !relayRecordMayDispatch(passed, rejected, true);
+}
+
 /** Story: Keep unsafe items from reaching a match / A blocking reason takes precedence over a hold (spec/relayDecision.md) */
 //@ pure
 export function relayVerdict(hasBlock: boolean, hasReason: boolean): RelayVerdict {

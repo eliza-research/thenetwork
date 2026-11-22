@@ -20,15 +20,10 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 // The model follows the code after the relay fixes on branch wave2/relay (SD-039, SD-040, SD-064, SD-133, SD-137,
 // SD-138, SD-252, SD-320, SD-387, Q-relay-1).
 //
-// OPEN DRIFT (2026-11-09 review; not modelled): the code makes a number swap all or nothing (07c5567, SD-007).
-// RelayDesk.swap preflights both shares (canSend, transitions.ts swapPlan) and sends both or neither; a pair
-// that waits for quiet hours is checked again as a pair at the tick (network.ts flushSwapShares, swapFlush);
-// and the queue admission refuses a contact share whose partner share is not passed, rejected, withdrawn or
-// ended unsent (runtime.ts:277-287). commitShare, tickFlush and queueSend below still model the older
-// one-at-a-time swap, so noOneWayNumber and the run tests that expect it violated describe that older code.
-// The Vibestack branch only removes pending requests on withdrawal. The legacy model below still shows
-// a withdrawn marker on an already prepared share, and admission of a swap question checks a live request.
-// These two dispatch fences are absent from current production and remain separate from the parser change.
+// The Vibestack branch dispatches the two shares separately. The 07c5567 branch's preflight and paired
+// quiet-hours flush are absent, so SD-007 can still occur when the sides independently fail admission.
+// A withdrawal now marks prepared shares in both directions. A swap question uses the live request's
+// window at final admission. The current code can still defer the initial question before it is queued.
 //
 // Machines in this model:
 //   relay-item            packages/network/src/relay.ts (RelayDesk.request, apply, deliver, release, reject, forget)
@@ -415,34 +410,35 @@ module relay {
     }
   }
 
-  // A member's own message can remove their pending request before any signed relay action is made.
+  // A member's own message can revoke consent before any signed relay action is made.
   pure def pendingSwapWithdrawn(namesOwnContact: bool, withholdsContact: bool, declinesPendingSend: bool): bool =
     declinesPendingSend or (namesOwnContact and withholdsContact)
 
+  pure def markWithdrawn(r: LogRec, member: str): LogRec =
+    if (r.kind == "share" and r.decision == "pass" and (r.src == member or r.dst == member)) r.with("withdrawn", true) else r
+
+  pure def withdrawSwaps(d: Desk, member: str): Desk = d
+    .with("swaps", d.swaps.filter(s => s.src != member))
+    .with("log", d.log.keys().mapBy(k => markWithdrawn(d.log.get(k), member)))
+    .with("verdict", d.verdict.keys().mapBy(k => markWithdrawn(d.verdict.get(k), member)))
+
   action readPendingSwapReply(src: str, namesOwnContact: bool, withholdsContact: bool, declinesPendingSend: bool): bool = {
     val withdraws = pendingSwapWithdrawn(namesOwnContact, withholdsContact, declinesPendingSend)
+    val nextDesk = if (withdraws) withdrawSwaps(desk, src) else desk
     all {
-      desk.swaps.exists(sw => sw.src == src),
-      desk' = if (withdraws) desk.with("swaps", desk.swaps.filter(sw => sw.src != src)) else desk,
+      MEMBERS.contains(src),
+      desk' = nextDesk,
       g' = if (withdraws) g.with("consent", g.consent.set(src, g.consent.get(src).with("live", false))) else g,
-      w' = w, ep' = ep, queue' = queue, photo' = photo,
+      queue' = if (withdraws) persist(nextDesk, queue) else queue,
+      w' = w, ep' = ep, photo' = photo,
     }
   }
 
   // The signed relay action responds "Okay, I won't share your number" for a recognized withdrawal.
-  // The pending swap goes, and each passed share of theirs gets consent:withdrawn, which the queue admission refuses (SD-039).
+  // The pending request goes, and both directions of a prepared swap lose consent at admission (SD-039).
   action commitWithdraw(k: str): bool = {
     val src = owner(k)
-    val log1 = desk.log.keys().mapBy(i => {
-      val r = desk.log.get(i)
-      if (r.src == src and r.kind == "share" and r.decision == "pass") r.with("withdrawn", true) else r
-    })
-    // Ghost: the member withdrew every passed share of theirs, whether or not its row is still in the capped log.
-    val verdict1 = desk.verdict.keys().mapBy(i => {
-      val r = desk.verdict.get(i)
-      if (r.src == src and r.kind == "share" and r.decision == "pass") r.with("withdrawn", true) else r
-    })
-    val d1 = desk.with("swaps", desk.swaps.filter(s => s.src != src)).with("log", log1).with("verdict", verdict1)
+    val d1 = withdrawSwaps(desk, src)
     all {
       ep.phase.get(k) == "claimed", ep.kind.get(k) == "withdraw",
       not(w.erased.get(src)),
@@ -509,15 +505,18 @@ module relay {
     }
   }
 
-  // The outbound queue's final admission and send (runtime.ts relayAdmission, lines 257-302).
+  pure def relayRecordMayDispatch(passed: bool, rejected: bool, withdrawn: bool): bool =
+    passed and not(rejected) and not(withdrawn)
+
+  // The outbound queue's final admission and send (runtime.ts relayAdmission).
   action queueSend(key: str): bool = {
     val r = queue.rows.get(key)
     val s = r.send
     // The swap question goes only while its swap still waits inside its 15 minutes (runtime.ts:268-272, SD-138);
     // an item row needs a passed record for this recipient, not rejected and not withdrawn (runtime.ts:274-276, SD-039).
     val recOk = if (s.ask) desk.swaps.exists(sw => sw.iid == s.iid and sw.src == s.src and sw.at <= w.now and w.now - sw.at <= TTL)
-      else (queue.records.keys().contains(s.iid) and queue.records.get(s.iid).decision == "pass"
-        and queue.records.get(s.iid).dst == s.dst and queue.records.get(s.iid).review != "rejected" and not(queue.records.get(s.iid).withdrawn))
+      else (queue.records.keys().contains(s.iid) and queue.records.get(s.iid).dst == s.dst
+        and relayRecordMayDispatch(queue.records.get(s.iid).decision == "pass", queue.records.get(s.iid).review == "rejected", queue.records.get(s.iid).withdrawn))
     // A row that carries the selected photo needs the item still approved and current (runtime.ts:294-301,
     // photoRelay.approved: "photo:revoked").
     val photoOk = s.iid != PHOTO_ITEM or (photo.state == "approved" and w.now < photo.exp)
@@ -958,22 +957,22 @@ module relay {
       .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
       .expect(desk.swaps.exists(sw => sw.src == "B") and not(numberPending("A")) and not(numberPending("B")) and safety)
 
-  // SD-039 (fixed): both shares pass at quiet hours and wait in Network.deferred; A says "don't send my number";
-  // in the morning the admission refuses A's share (consent:withdrawn). B's share still goes to A (SD-007, open).
+  // A withdrawal recorded while both shares are queued stops both directions at final admission.
   run withdrawAfterSwapTest =
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
-      .then(setQuiet("B", true))
-      .then(setQuiet("A", true))
       .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
-      .expect(desk.deferred.size() == 2)
-      .then(claim("a2", "withdraw")).then(commitWithdraw("a2")).then(answer("a2"))
-      .expect(queue.records.get("a1").withdrawn)
-      .then(setQuiet("A", false)).then(setQuiet("B", false))
-      .then(tickFlush(Set()))
+      .expect(numberPending("A") and numberPending("B"))
+      .then(readPendingSwapReply("A", false, false, true))
+      .expect(queue.records.get("a1").withdrawn and queue.records.get("b1").withdrawn)
       .then(queueSend("a1")).then(queueSend("b1"))
-      .expect(queue.rows.get("a1").status == "ended" and not(numberSent("A")) and withdrawnNotSent and safety
-        and numberSent("B") and not(noOneWayNumber))
+      .expect(queue.rows.get("a1").status == "ended" and queue.rows.get("b1").status == "ended" and safety)
+
+  run withdrawBeforeSwapQuestionTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(readPendingSwapReply("A", false, false, true)).then(queueSend("a1:ask"))
+      .expect(queue.rows.get("a1:ask").status == "ended" and safety)
 
   // SD-137 (fixed): the unit commits, deliver() throws after the commit; the endpoint still answers the decision.
   run postCommitDeliverErrorTest =

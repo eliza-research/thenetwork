@@ -53,10 +53,10 @@ const open=async(messageId:string,text:string,phone=a):Promise<RelaySendRequest>
   clock.advance(MINUTE);const r=await post(TURN_PATH,turn(phone,messageId,text));expect(r.status).toBe(200);const body=await r.json() as any;expect(body.outcome).toBe("open");
   return {channel:"blooio",messageId,app:"friends",memberId:body.memberId,itemId:null,text:text.trim()};
 };
-const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId,toId])=>service.runtimeFor(app)!.unitOfWork(n=>{
+const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId,toId],matchId="relay-pair")=>service.runtimeFor(app)!.unitOfWork(n=>{
   // Explicit canonical mutual-consent fixture. This case qualifies relay, not engine matching or human review.
-  const state=n.exportState();state.opps=state.opps.filter(op=>op.id!=="relay-pair");
-  const op:NetworkState["opps"][number]={id:"relay-pair",origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:pair,alternates:[],primed:[],status:pair.map(id=>[id,"yes"]),explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:pair,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
+  const state=n.exportState();state.opps=state.opps.filter(op=>op.id!==matchId);
+  const op:NetworkState["opps"][number]={id:matchId,origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:pair,alternates:[],primed:[],status:pair.map(id=>[id,"yes"]),explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:pair,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
   state.opps.push(op);n.importState(state);
 });
 /** The pair as the stored state holds it now (a close commits before its own delivery, which waits for the held dispatch). */
@@ -126,6 +126,47 @@ test("relay binds the original text and pair, sends only rendered wording, swaps
   expect((await(await post(RELAY_PATH,privateRequest)).json() as any).decision).not.toBe("pass");expect(posts).toBe(guardedBefore);
   const logs=JSON.stringify(await sql`select * from network.relay_records`);expect(logs).not.toContain(a.slice(2));expect(logs).not.toContain("running ten minutes late");
 },60_000);
+
+test.each(["question", "shares"])("a withdrawal that commits before dispatch suppresses queued swap %s", async stage => {
+  clock.advance(11 * MINUTE);
+  const pair = [fromId, toId];
+  const matchId = `withdraw-queued-${stage}`;
+  await fixturePair(false, "friends", pair, matchId);
+
+  const mine = await open(`${matchId}-ask`, "send Sam my number");
+  if (stage === "shares") {
+    const waiting = await post(RELAY_PATH, mine);
+    expect(await waiting.json()).toMatchObject({ decision: "hold" });
+  }
+  const request = stage === "shares" ? await open(`${matchId}-accept`, "send Ari my number", b) : mine;
+  const before = posts;
+  const dispatch = gateDispatch();
+  const sending = post(RELAY_PATH, request);
+  let withdrawal: Promise<Response> | undefined;
+  try {
+    const first = await Promise.race([dispatch.atGate.then(() => "gate"), sending.then(response => response.clone().text())]);
+    expect(first).toBe("gate");
+
+    clock.advance(MINUTE);
+    const messageId = `${matchId}-cancel`;
+    withdrawal = post(TURN_PATH, turn(a, messageId, "actually don't send it"));
+    const inboundId = `in:blooio:${messageId}`;
+    const withdrawalCommitted = async () => {
+      const [row] = await sql`select id from network.messages where id=${inboundId} and app_id='friends' and direction='inbound'`;
+      return row !== undefined;
+    };
+    expect(await waitFor(withdrawalCommitted)).toBe(true);
+    dispatch.resume();
+
+    expect((await withdrawal).status).toBe(200);
+    expect(await (await sending).json()).toMatchObject({ delivered: false });
+    expect(posts - before).toBe(0);
+  } finally {
+    dispatch.resume();
+    await Promise.allSettled([sending, withdrawal]);
+    await fixturePair(true, "friends", pair, matchId);
+  }
+}, 60_000);
 
 test("inside the match, asking for the match's number is a swap ask for the agent, never scored; anyone else's number still is",async()=>{
   await fixturePair();
