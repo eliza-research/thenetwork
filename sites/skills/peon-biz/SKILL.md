@@ -78,8 +78,8 @@ The person signs up through you, in this conversation:
    Reading this file does not install a connector or authorize access. If the client cannot add it,
    use the text link in "Phone or computer"; do not claim success and never send the profile yourself.
    The person confirms their phone on our page. When the connector first asks for access, they sign in
-   on the ntwrk.party page in their own browser and choose **Allow** there. The Network serves the
-   connector of every app at ntwrk.party. A session from the peon.biz page does not apply there, so that page can ask for a new code. Call `check_status` first and confirm its app is peon. If the
+   on the connector's sign-in page in their own browser and choose **Allow** there. A session from
+   the peon.biz page does not apply there, so that page can ask for a new code. Call `check_status` first and confirm its app is peon. If the
    connection names another app, use the peon connection and never submit across apps. If the status
    is `not_joined` or `invited`, ask the person to finish on the page.
    If it is `stopped` or `on_hold`, stop and explain the result. Only an `onboarding` or `active`

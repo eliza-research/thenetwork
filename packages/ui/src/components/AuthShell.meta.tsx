@@ -14,7 +14,6 @@ export const meta: ComponentMeta<AuthShellProps> = {
       await expect(page.getByRole("link", { name: "Terms" }).getAttribute("href")).toBe("/terms");
     },
     "Rendered by ntwrk.party": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-      // ntwrk.party renders the page for slop.date: the brand mark and the legal links open slop.date's own pages.
       const page = within(canvasElement);
       await expect(page.getByRole("link", { name: "slop.date" }).getAttribute("href")).toBe("https://slop.date/");
       await expect(page.getByRole("link", { name: "Privacy" }).getAttribute("href")).toBe("https://slop.date/privacy");

@@ -1,7 +1,3 @@
-// spec/authorizationPages.md, "Every page shows the brand mark and the legal links". ntwrk.party renders the connector
-// pages of every app at /mcp/<app> (spec/connectorTools.md). The legal links of a page for slop, peon or friends then open
-// that app's own site, because the text consent names that app's terms. On the app's own site the links stay relative.
-// The real platform (people store, OTP service, accounts, sessions) with a fake OTP provider; nothing is sent.
 import { describe, expect, test } from "vitest";
 import type { McpAppId } from "../src/apps.ts";
 import { CHALLENGE, origin, PHONE_B, register, setup, type Env } from "./harness.ts";
@@ -9,13 +5,10 @@ import { CHALLENGE, origin, PHONE_B, register, setup, type Env } from "./harness
 const RETURN = "https://client.example/callback";
 const SITE: Record<McpAppId, string> = { ntwrk: "ntwrk.party", slop: "slop.date", peon: "peon.biz", friends: "friends.help" };
 
-/** The apps whose consent page on ntwrk.party offers the signup form to a new person (peon.biz offers none there). */
 const SIGNUP: McpAppId[] = ["ntwrk", "slop", "friends"];
 
-/** The href of each link on a page, in order. */
 const hrefs = (html: string) => [...html.matchAll(/<a [^>]*href="([^"]+)"/g)].map(m => m[1]!.replaceAll("&amp;", "&"));
 
-/** Authorize `app` on `domain` with a new phone, then open the signup form when the consent page offers it. */
 async function signupPages(env: Env, domain: string, app: McpAppId) {
   const reg = await register(env, domain, { redirect_uris: [RETURN] });
   expect(reg.res.status).toBe(201);
@@ -64,7 +57,6 @@ describe("the legal links of a connector page open the pages of the app it is fo
         expect(links).toContain(`${site}/`);
         expect(links).toContain(`${site}/privacy`);
         expect(links).toContain(`${site}/terms`);
-        // No link opens ntwrk.party's own home or legal pages.
         expect(links.filter(h => h === "/" || h.startsWith("/terms") || h.startsWith("/privacy"))).toEqual([]);
       }
       expect(pages.signup !== null).toBe(SIGNUP.includes(app));

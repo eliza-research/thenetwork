@@ -17,7 +17,6 @@ export const meta: ComponentMeta<InspectorSectionProps> = {
     },
   },
   play: {
-    // The title names the section, so a screen reader can move from one section of the inspector to the next.
     Default: async ({ canvasElement }: Context) => {
       const section = within(canvasElement).getByRole("region", { name: "Profile" });
       await expect(within(section).getByRole("heading", { name: "Profile" })).toBeTruthy();

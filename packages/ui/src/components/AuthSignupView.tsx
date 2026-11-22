@@ -1,5 +1,4 @@
 // spec/authorizationPages.md, "A verified person can choose a separate signup step during connector authorization"
-// and "The signup form shows the draft that the person approved in the agent"
 import { signupConsentStartsTicked } from "../../../core/src/generated/authorizationPages.ts";
 import { focusRing } from "../lib/cn.ts";
 import { AuthShell, type AuthShellProps } from "./AuthShell.tsx";
@@ -21,7 +20,6 @@ export type AuthSignupViewProps = Omit<AuthShellProps, "title" | "chrome" | "chi
   signupView: string;
   /** The handler's user-facing error for a rejected signup. */
   error?: string;
-  /** The first name and home city that the person approved in the agent (or sent in a refused form). Never an age or consent. */
   prefill?: { firstName: string; homeCity?: "nyc" | "sf" };
 };
 
@@ -55,8 +53,6 @@ export function AuthSignupView({ rid, consent, requiresInvitation, signupView, e
           <Input name="invitation" type="text" autoComplete="off" spellCheck={false} required={requiresInvitation} />
         </Field>
         <div className="flex items-start gap-3">
-          {/* A native checkbox, not the shared `Checkbox`: connector pages are static markup under `script-src 'none'`
-              (packages/mcp/src/pages.ts), and the shared one is a scripted button that cannot toggle or post without JS. */}
           <input id="signup-sms-consent" name="smsConsent" type="checkbox" value="yes" required defaultChecked={signupConsentStartsTicked(!!prefill?.firstName)} className={`${focusRing} mt-1 size-4 shrink-0 accent-primary`} />
           <Label htmlFor="signup-sms-consent" className="font-normal">{consent.text}</Label>
         </div>

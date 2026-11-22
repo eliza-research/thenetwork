@@ -168,7 +168,6 @@ export function checkRefreshRotation(rotation: RefreshRotation, refresh: Token |
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
-/** The authorization request that asks to show a draft on its signup form (spec/authorizationPages.md). */
 export interface SignupPrefillAsk { clientId: string; app: McpAppId; phoneKey: string; personId: string | null; ageAllowed: boolean }
 
 export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "personId">;
@@ -181,8 +180,6 @@ export interface OAuthStore {
   /** Recoverable read for the verified phone/app until deliberate discard or expiry. */
   claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
   discardSignupDrafts(phoneKey: string, app: McpAppId, at: number): Promise<void>;
-  /** Use the one live draft of this request's client, app, phone and person, at most once; it is scrubbed when used
-   * (spec/authorizationPages.md, "The signup form shows the draft that the person approved in the agent"). */
   useSignupPrefill(ask: SignupPrefillAsk, at: number): Promise<SignupDraftFields | undefined>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;

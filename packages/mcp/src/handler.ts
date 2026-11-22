@@ -123,7 +123,6 @@ export interface McpHandler {
   assistantUpdateSurfacesForClaim(candidates: readonly AssistantGrantCandidate[]): AssistantKind[];
 }
 
-/** One request: the app it is for, and the host app whose site received it (the issuer, the cookies and the clients). */
 interface Ctx { app: McpApp; host: McpApp; issuer: string; ip: string; req: Request; url: URL }
 interface Authed { token: Token; grant: Grant; client: OAuthClient }
 
@@ -198,7 +197,6 @@ const tokenAuthority: Record<"valid" | "invalid" | "unavailable", TokenAuthority
 const PROFILE_DAY_MS = 86_400_000;
 
 const OWNED = (p: string) =>
-  // /mcp/<app> and /mcp/<app>/openai: the ntwrk.party paths of each app (requestApp refuses a path its host does not serve).
   p === "/mcp" || p.startsWith("/mcp/") || p.startsWith("/oauth/") ||
   p.startsWith("/.well-known/oauth-authorization-server") || p.startsWith("/.well-known/oauth-protected-resource");
 
@@ -319,7 +317,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const browserCookie = (a: McpApp) => (secureCookies(a) ? "__Host-mcp_auth" : "mcp_auth");
   let lastSweep = 0;
 
-  /** The resource (the MCP endpoint URL) of one app on one host (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path"). */
   function resourceOf(issuer: string, host: McpAppId, app: McpAppId, surface: Surface): string {
     const path = mcpPath(host, app, surface);
     if (path === undefined) throw new Error(`${host} does not serve ${app}`);
@@ -336,7 +333,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const at = appAtPath(c.host.id, path);
     return at && apps[at.app] ? { ...at, resource: `${c.issuer}${path}` } : undefined;
   }
-  /** The canonical resource of this request's own app, or undefined (a resource of another app is not this request's). */
   function canonicalResource(raw: string, c: Pick<Ctx, "issuer" | "host" | "app">): string | undefined {
     const served = servedResource(raw, c);
     return served && served.app === c.app.id ? served.resource : undefined;
@@ -374,10 +370,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   // ---------------------------------------------------------------- clients
   // Private pilot is DCR-only. Re-check persisted clients on every auth/write path so an
   // operator disabling the opt-in suspends access without deleting consent or blocking revoke.
-  /**
-   * Whether this host serves the request's app on the OpenAI surface: the registry setting of the app and the site rule
-   * (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path": slop.date's own site has no OpenAI surface).
-   */
   function openAiOn(c: Pick<Ctx, "app" | "host">): boolean {
     return c.app.openai && siteOffersOpenAi(connectorApp[c.host.id], connectorApp[c.app.id]);
   }
@@ -405,7 +397,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   function grantAllowsUpdates(grant: Grant, client: OAuthClient): boolean {
     const app = apps[grant.app], host = apps[client.app];
-    // The client belongs to the host where it registered; the host must serve the grant's app.
     if (!app || !host || !hostBindsApp(connectorApp[host.id], connectorApp[app.id]) || !tokenCovers("get_updates", grant.scopes)) return false;
     const pathSurface = grant.resource.endsWith("/openai") ? "openai" : o.surface ?? "full";
     if (grant.resource !== resourceOf(issuerOf(host), host.id, app.id, pathSurface)) return false;
@@ -546,7 +537,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const scopes = parseScopes(q.get("scope"));
     if (!scopes) return fail("invalid_scope", `Supported scopes: ${SCOPES.join(", ")}.`);
     const rawResource = q.get("resource");
-    // On the ntwrk.party host the resource names the app (the router chose c.app from it); without one, the host's own app.
     const resource = rawResource ? canonicalResource(rawResource, c) : resourceFor(c, client.surface);
     if (!resource) return fail("invalid_target", "resource must be this site's MCP endpoint");
     if (customSlopClient(c, client) && resource !== resourceFor(c, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
@@ -649,8 +639,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const r = rid ? await store.getAuthRequest(rid) : undefined;
     const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host));
     if (!r) return undefined;
-    // The request must belong to this host and this app: ntwrk.party serves every app, so the app alone no longer
-    // fixes the host. A request started on an app's own site (its resource names that site) never continues here.
     const sameApp = r.app === c.app.id && canonicalResource(r.resource, c) === r.resource;
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
     const bound = stepBrowser(browserInitial, { type: "bindBrowser", matchesDigest: safeEqual(sha256hex(browser), r.browserHash) });
@@ -712,11 +700,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     });
   }
 
-  /**
-   * The draft that this request's own client saved for this phone and app, used once
-   * (spec/authorizationPages.md, "The signup form shows the draft that the person approved in the agent").
-   * No draft, a refusal or a storage failure gives an empty form and never an error.
-   */
   async function signupPrefillFor(c: Ctx, r: AuthRequest, who: SignedIn): Promise<SignupPrefill | undefined> {
     const key = o.platform.phoneKey(who.e164);
     try {
@@ -752,7 +735,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       return response;
     };
     if (decision === "open") return showSignup(undefined, await signupPrefillFor(c, r, who));
-    // A refused form shows again with the name and city that the person sent; age and consent stay empty.
     const sentCity = form.get("homeCity");
     const sent: SignupPrefill = { firstName: (form.get("firstName") ?? "").slice(0, 50), ...(sentCity === "nyc" || sentCity === "sf" ? { homeCity: sentCity } : {}) };
 
@@ -1016,8 +998,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (openAiUnavailable(c, client)) return json(401, { error: "invalid_client" });
     const bad = (error: string, d?: string) => json(400, { error, ...(d ? { error_description: d } : {}) });
     const refused = (flow: TokenFlow) => flow.phase === "RetryAuthority" ? temporarilyUnavailable() : bad(...tokenErrors[flow.reason]);
-    // The token endpoint is the host's (c.app is the host app), but on ntwrk.party a grant can be for any app: check the
-    // OpenAI setting and the host binding of the grant's own app, as /oauth/authorize did.
     const grantAppClosed = (grant: Grant) => {
       const app = apps[grant.app];
       return !app || !hostBindsApp(connectorApp[c.host.id], connectorApp[app.id]) || openAiUnavailable({ app, host: c.host }, client);
@@ -1130,11 +1110,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       .digest("base64url");
   }
 
-  /**
-   * The person's consent records. An app site lists its own app. The ntwrk.party host serves every app (hostBindsApp),
-   * so it lists the grants of each app for which this browser holds a confirmed phone session of that app, each grant
-   * labeled with its app. Each grant is checked and removed with the session of its own app.
-   */
   async function consents(c: Ctx, revokeOne: boolean): Promise<Response> {
     const served = [c.host, ...Object.values(apps).filter(a => a.id !== c.host.id && hostBindsApp(connectorApp[c.host.id], connectorApp[a.id]))];
     const signInFirst = () => messagePage(c, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
@@ -1186,14 +1161,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       ]);
       return [grant.id, { authority, clientName: client?.name ?? null }] as const;
     })));
-    // A session whose phone now belongs to another person shows nothing; when no session is current: sign in first.
     const current: Array<{ s: Session; grants: Grant[] }> = [];
     for (const s of sessions) {
       const grants = candidates.some(g => g.app === s.owner.app) ? await store.grantsFor(s.owner.phoneKey, s.owner.app, now()) : [];
       if (s.who.personId === await o.platform.personForKey(s.owner.phoneKey)) current.push({ s, grants });
     }
     if (!current.length) return signInFirst();
-    // On a host that serves more than one app, each grant names its app.
     const label = (grant: Grant, name: string | null) => served.length > 1 ? `${name ?? "An unnamed assistant"} (${apps[grant.app]?.name ?? grant.app})` : name;
     const at = now();
     const grants: Array<Grant & { clientName: string | null }> = [];
@@ -1450,10 +1423,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   // ---------------------------------------------------------------- routing
 
-  /**
-   * The app of one signup-draft request. On ntwrk.party, a request that names its authorization request (rid) acts for
-   * the app of that request, but only when this browser holds that live request on this host. Without a rid: the host's app.
-   */
   async function signupDraftApp(c: Ctx, rid: unknown): Promise<McpApp | undefined> {
     if (rid === undefined) return c.host;
     if (typeof rid !== "string" || !/^[A-Za-z0-9_-]{22}$/.test(rid)) return undefined;
@@ -1492,19 +1461,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const PRM = "/.well-known/oauth-protected-resource";
   const AUTH_FORMS = new Set(["/oauth/authorize/phone", "/oauth/authorize/code", "/oauth/authorize/signup", "/oauth/authorize/consent", "/oauth/authorize/cancel"]);
 
-  /** The app of a stored authorization request, when this host serves it. */
   async function storedRequestApp(host: McpApp, rid: string | null | undefined): Promise<McpApp | undefined> {
     const stored = rid && /^[A-Za-z0-9_-]{22}$/.test(rid) ? await store.getAuthRequest(rid) : undefined;
     const app = stored ? apps[stored.app] : undefined;
     return app && hostBindsApp(connectorApp[host.id], connectorApp[app.id]) ? app : undefined;
   }
 
-  /**
-   * The app that one request is for (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path").
-   * An MCP path or its metadata path names the app (/mcp/<app> on ntwrk.party); the path is then served as /mcp or
-   * /mcp/openai for that app. The authorization link names it by its resource, and each later page of the same
-   * request by the stored request. Every other path is for the host's own app. Null: a path that this host does not serve.
-   */
   async function requestApp(c: Ctx, p: string): Promise<{ app: McpApp; path: string } | null> {
     const own = { app: c.host, path: p };
     if (p === "/mcp" || p.startsWith("/mcp/") || p.startsWith(`${PRM}/mcp`)) {
@@ -1522,8 +1484,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     }
     if (p === "/oauth/retry" || p === "/oauth/cloud-return") return { app: await storedRequestApp(c.host, c.url.searchParams.get("rid")) ?? c.host, path: p };
     if (AUTH_FORMS.has(p) && c.req.method === "POST") {
-      // A cross-site form is refused (403) by its step before any read: do not read its body here either.
-      // The read is the step's own bounded read (at most 16 KiB of a form body).
       if (!originOk(c)) return own;
       const form = await readForm(c.req.clone());
       return { app: await storedRequestApp(c.host, form?.get("rid")) ?? c.host, path: p };
@@ -1562,7 +1522,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         // Same-origin session only. No draft IDs, phone or facts in URLs or request bodies.
         const browserConfirmed = req.headers.get("origin") !== null || req.headers.get("sec-fetch-site") === "same-origin";
         if (!signupDraftBrowserSource(originOk(c), browserConfirmed, !!url.search)) return json(403, { error: "not_allowed" });
-        // The body is read only after the Origin check, and at most 16 KiB of it.
         const body = await readJson(req);
         const draftApp = await signupDraftApp(c, body?.rid);
         if (!draftApp) return json(403, { error: "not_allowed" });

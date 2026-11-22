@@ -8,7 +8,6 @@ import { Link } from "./Link.tsx";
 export type SiteFooterProps = Omit<ComponentProps<"footer">, "children"> & {
   /** The pages the footer links, in order. */
   pages?: readonly SitePage[];
-  /** The origin of the site whose pages the links open, such as `https://slop.date`, when another site renders the footer. Without it, the links stay relative. */
   origin?: string;
 };
 

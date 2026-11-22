@@ -159,7 +159,6 @@ function successfulEvent(s: Site, event: string, transport: Transport): SignupEv
   const kind = skillKindFor(s.key);
   const inviteOnly = brandFor(s.key).joinMode === "InviteOnly";
   switch (event) {
-    // A fresh agent has no connector tools: it tells the person to add this app's endpoint, then continues.
     case "checkConnectorSetup": return { type: "checkConnectorSetup", clientCanAdd: true };
     case "resumeAfterConnector": return { type: "resumeAfterConnector" };
     case "chooseTransport": return { type: "chooseTransport", skillKind: kind,
@@ -203,7 +202,6 @@ export function signupStepProblems(s: Site, text: string): string[] {
     const got = reportFor(state.phase);
     if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${transport} steps end in phase ${state.phase} (${got}), not at ${want}`);
   }
-  // A client without the connector tools stops only after the connector setup step (spec/agentSignup.md:13).
   if (!problems.length && transportFor(skillKindFor(s.key), false) === "NoTransport") {
     let state: AgentSignup = signupStart;
     for (const m of markers.filter(x => x.transport === null)) {
@@ -222,7 +220,6 @@ export function signupStepProblems(s: Site, text: string): string[] {
 /** Files that may hold placeholders. Bundled JS and CSS never do (minified JS can contain "{{" legitimately). */
 const TEXT = /\.(html|md|txt|json|xml)$/;
 
-/** The production connector endpoint of The Network on ntwrk.party: the default MCP_URL template, filled for ntwrk.party. */
 const PRODUCTION_HUB_MCP = mcpUrlFor("ntwrk.party", {});
 
 /** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint), {{TEXT_LINE}} and {{TURNSTILE_SITE_KEY}}. */
@@ -234,8 +231,6 @@ export function fill(text: string, env: Record<string, string | undefined> = pro
     .replaceAll("{{MCP_URL}}", mcpUrlFor(domain, env))
     .replaceAll("{{TEXT_LINE}}", cfg.TEXT_LINE)
     .replaceAll("{{TURNSTILE_SITE_KEY}}", key);
-  // Every app's connector endpoint is on ntwrk.party, at /mcp and /mcp/<app> (spec/agentEntry.md), and the skills name it.
-  // A local or test MCP_URL template moves the ntwrk.party endpoint, so those URLs follow it. Staging rewrites them below.
   const hubMcp = mcpUrlFor("ntwrk.party", env);
   if (hubMcp !== PRODUCTION_HUB_MCP) filled = filled.replace(/https:\/\/ntwrk\.party\/mcp(?=[/\s"'`<>?#)]|$)/g, hubMcp);
   const staging = stagingSiteOrigins(env);

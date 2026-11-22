@@ -7,7 +7,6 @@ export const meta: ComponentMeta<SiteFooterProps> = {
   play: {
     Default: ({ canvasElement }: { canvasElement: HTMLElement }) =>
       expect(within(canvasElement).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([["Privacy", "/privacy"], ["Terms", "/terms"]]),
-    // ntwrk.party renders connector pages for the other apps: their footers open the app's own legal pages.
     "Another site's pages": ({ canvasElement }: { canvasElement: HTMLElement }) =>
       expect(within(canvasElement).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([["Privacy", "https://slop.date/privacy"], ["Terms", "https://slop.date/terms"]]),
     Empty: ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).queryByRole("link")).toBeNull(),

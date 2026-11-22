@@ -7,7 +7,6 @@ import { cn } from "../lib/cn.ts";
 import { AgentTile } from "./AgentTile.tsx";
 
 export type AgentRowProps = Omit<ComponentProps<"nav">, "children"> & {
-  /** The app of the site: the row leaves out an agent that this app's connector refuses. */
   app: AppKey;
   /** The prompt and the skill URL that the tile links carry. */
   links: Pick<LandingLinks, "prompt" | "skillUrl">;

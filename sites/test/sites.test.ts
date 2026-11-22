@@ -19,7 +19,7 @@ import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { serveSite } from "../../scripts/sites-dev.ts";
 import { toE164 } from "../../packages/ui/src/api/join.ts";
-import { brandFor } from "../../packages/core/src/generated/brandIdentity.ts";
+import { brandFor, hubTextsOnAppSurface } from "../../packages/core/src/generated/brandIdentity.ts";
 import { type JoinPage, initial as joinStart, step as joinStep } from "../../packages/core/src/generated/browserJoin.ts";
 import { preparedPeonTextHeader } from "../../packages/core/src/generated/textEnrollment.ts";
 import {
@@ -76,14 +76,8 @@ const AGENTS: { id: AgentId; name: string; href?: string; toast: string; desktop
   { id: "Hermes", name: "Hermes", href: "hermes://skill/install?identifier={skill}", toast: "Copied. If Hermes did not open, send it the prompt." },
 ];
 
-/**
- * Whether the app's own connector accepts this agent. ChatGPT reaches the connector only on the OpenAI surface,
- * and signupClientAllowed (packages/mcp/src/handler.ts) refuses ChatGPT on an app that the OpenAI surface does not offer.
- * The OpenAI surface offers every app, slop.date included (spec/connectorTools.md).
- */
 const connectorAccepts = (s: Site, agent: AgentId) => agent !== "ChatGpt" || connectorApps()[s.app].openai;
 
-/** The path of an app's connector endpoint on ntwrk.party (spec/agentEntry.md, appEndpointPath). */
 const hubPath = (app: string) => (app === "ntwrk" ? "/mcp" : `/mcp/${app}`);
 
 /** The first text that joins this app on the shared line (packages/platform/src/apps.ts keywordApp). */
@@ -198,7 +192,7 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
       const skill = read(s, f).toLowerCase();
       for (const d of OTHER_APP_DOMAINS(s)) expect(skill.includes(d), `${f} mentions ${d}`).toBe(false);
-      if (s.app !== "ntwrk") expect(skill.replaceAll("help@ntwrk.party", ""), f).not.toMatch(/the network|ntwrk\.party/);
+      if (s.app !== "ntwrk") expect(hubTextsOnAppSurface(s.key, "SkillSurface").reduce((t, allowed) => t.replaceAll(allowed, ""), skill), f).not.toMatch(/the network|ntwrk\.party/);
       // Direct API instructions name region codes; discovery copy remains location-neutral.
       if (["friends", "slop", "ntwrk"].includes(s.app)) expect(skillDescription(read(s, f)).toLowerCase(), f).not.toMatch(/new york|nyc|san francisco/);
       else expect(skill, f).not.toMatch(/new york|nyc|san francisco/);
@@ -225,11 +219,9 @@ describe.each(SITES)("$domain", (s) => {
       expect(skill).not.toContain("\r");
       expect(skill).toContain(`confirm its app is ${s.app}`);
       expect(skill).toMatch(/never submit across apps/i);
-      // A fresh agent without the connector is told to add this app's own endpoint, then continues (spec/agentSignup.md:13).
       expect(skill).toContain(`“Connect ${s.app === "ntwrk" ? "The Network" : s.domain}” and give`);
       expect(skill).toContain("then come back to this conversation");
       expect(skill).not.toContain("RESPONSE_STYLE");
-      // Every app's connector endpoint is on ntwrk.party, at the path of the app (spec/agentEntry.md).
       expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
       if (s.app !== "ntwrk") expect(skill).not.toContain(`https://${s.domain}/mcp`);
       expect(skill).not.toContain("cannot add this app's connector");
@@ -248,7 +240,6 @@ describe.each(SITES)("$domain", (s) => {
       } else if (s.app === "peon") {
         expect(skill).toContain(`In ChatGPT, add https://ntwrk.party${hubPath(s.app)}/openai instead`);
         expect(skill).toContain(`this app's own connector endpoint, https://ntwrk.party${hubPath(s.app)}`);
-        // The person adds the connector and presses Allow; nothing connects by itself, and the skill does sign the person up.
         expect(skill).not.toContain("connects automatically");
         expect(skill).toContain("**Allow**");
         expect(skill).not.toMatch(/Never signs anyone up|Never sign anyone up|they do it, not you/);
@@ -339,7 +330,6 @@ test("staging builds keep the served entry, skills and signed router on configur
     const prompt = `Read ${origins.slop}/SKILL.md and follow it.`;
     expect(home).toContain(`>${prompt}</code>`);
     expect(home).toContain(`https://claude.ai/new?q=${encodeURIComponent(prompt)}`);
-    // The OpenAI connector surface serves slop.date, so the staging slop page keeps its ChatGPT tile.
     for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
       const href = [...home.matchAll(/href="([^"]+)"/g)].map(m => m[1]!).find(href => href.startsWith(`${origin}?q=`));
       expect(href, origin).toBeDefined();
@@ -358,7 +348,6 @@ test("staging builds keep the served entry, skills and signed router on configur
     const base = `http://127.0.0.1:${server.port}`;
     const skill = await (await fetch(`${base}/SKILL.md`)).text();
     expect(skill).toContain(`${origins.slop}/`);
-    // The skill names the slop path of the staging ntwrk.party endpoint, never the slop.date site endpoint.
     expect(skill).toContain(`${origins.ntwrk}/mcp/slop`);
     expect(skill).not.toContain(`${origins.slop}/mcp`);
     expect(skill).toContain("native connector authorization");
@@ -386,12 +375,10 @@ test("staging builds keep the served entry, skills and signed router on configur
 });
 
 test("a local or test MCP_URL moves the ntwrk.party connector endpoints that the skills name", () => {
-  // spec/agentEntry.md: every skill names its app's endpoint on ntwrk.party (/mcp or /mcp/<app>, /openai in ChatGPT).
   const env = { MCP_URL: "https://{domain}.dev.example.test/mcp", BACKEND_ORIGIN: "https://api.dev.example.test" };
   for (const site of SITES) {
     const source = readFileSync(join(SKILLS_DIR, site.skill, "SKILL.md"), "utf8");
     const path = site.app === "ntwrk" ? "/mcp" : `/mcp/${site.app}`;
-    // Production keeps the canonical endpoints.
     const production = fill(source, { ...env, MCP_URL: undefined, BACKEND_ORIGIN: undefined }, site.domain);
     expect(production, site.domain).toContain(`https://ntwrk.party${path}`);
     expect(production, site.domain).toContain(`https://ntwrk.party${path}/openai`);
@@ -434,7 +421,6 @@ test("landing pages keep agent onboarding and the Messages entry", () => {
     for (const a of AGENTS) {
       const label = `${a.href ? "Open in" : "Copy the prompt for"} ${a.name}`;
       const still = tileIn(row, label), live = tileIn(agentRow(desktop), label), small = tileIn(agentRow(phone), label);
-      // A tile never leads to an agent that the app's connector refuses (ChatGPT on slop.date).
       expect(landingAgentOffered(s.key, a.id), `${s.domain} ${a.id}`).toBe(connectorAccepts(s, a.id));
       if (!connectorAccepts(s, a.id)) {
         expect([still, live, small], `${s.domain} ${a.id}`).toEqual(["", "", ""]);
@@ -607,24 +593,19 @@ test("a skill cannot stop an agent without the connector before it gives the con
 test("each plugin skill and its MCP dependency use its own app's ntwrk.party endpoint, and the snapshots are current", () => {
   const files = buildPlugins();
   const appOf = (skill: string) => SITES.find(s => s.skill === skill)!.app;
-  // The ntwrk.party endpoint of another app: its own path, or The Network's bare /mcp and /mcp/openai.
   const otherEndpoint = (app: string) => app === "ntwrk" ? /https:\/\/ntwrk\.party\/mcp(?:\/openai)?(?![\w/])/ : new RegExp(`https://ntwrk\\.party/mcp/${app}(?![\\w])`);
   for (const skill of PLUGINS.openai.skills) {
     const url = `https://ntwrk.party${hubPath(appOf(skill))}/openai`;
     const yaml = files.get(join("openai", "skills", skill, "agents", "openai.yaml"))!;
     expect(yaml, skill).toContain(`url: ${url}\n`);
     const text = files.get(join("openai", "skills", skill, "SKILL.md"))!;
-    // The connector server binds a connection to the app of its path: no skill names another app's endpoint.
     for (const other of SITES.filter(s => s.skill !== skill)) {
       expect(text, `${skill} names ${other.domain}`).not.toMatch(otherEndpoint(other.app));
-      // The site endpoint of another app (https://<domain>/mcp). On ntwrk.party that is The Network's own /mcp, checked above;
-      // its /mcp/<app> paths are the endpoints of the other apps.
       if (other.app !== "ntwrk") expect(text, `${skill} names ${other.domain}`).not.toContain(`https://${other.domain}/mcp`);
     }
     expect(text, skill).toContain(url);
   }
   for (const skill of PLUGINS.claude.skills) expect(files.get(join("claude", "skills", skill, "SKILL.md")), skill).toContain(`https://ntwrk.party${hubPath(appOf(skill))}`);
-  // OpenAI lets a plugin manifest list one MCP server: it is The Network's endpoint on ntwrk.party.
   const manifest = JSON.parse(files.get(join("openai", "mcp.json"))!) as { mcpServers: Record<string, { url: string }> };
   expect(Object.values(manifest.mcpServers).map(x => x.url)).toEqual([OPENAI_MCP_URL]);
   expect(OPENAI_MCP_URL).toBe("https://ntwrk.party/mcp/openai");

@@ -1,5 +1,3 @@
-// spec/authorizationPages.md, "The signup form shows the draft that the person approved in the agent".
-// The normal OAuth browser pages and MCP tools on the real platform; only OTP delivery is a fixture.
 import { expect, test } from "vitest";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
@@ -11,10 +9,6 @@ import { call, connect, type Env, PHONE_A, PHONE_B, register, setup, VERIFIER } 
 const ridOf = (html: string) => /name="rid" value="([^"]+)"/.exec(html)?.[1];
 const field = (html: string, name: string) => new RegExp(`name="${name}" value="([^"]+)"`).exec(html)?.[1] ?? "";
 
-/**
- * One authorization request of `clientId` in a browser that holds a verified phone session of that app
- * (no new code is sent, so the per-phone code limit does not apply). Returns the consent page and a form poster.
- */
 async function authorize(e: Env, domain: string, clientId: string, phone: string) {
   const app = domain === "ntwrk.party" ? "ntwrk" : "friends";
   const cookies = new Map<string, string>([[`sid_${app}`, (await e.sessions.create(app, phone, null)).token]]);
@@ -41,7 +35,6 @@ async function authorize(e: Env, domain: string, clientId: string, phone: string
   return { consent, post };
 }
 
-/** The same request, then "Finish signup": the signup form and its submit. */
 async function openSignup(e: Env, domain: string, clientId: string, phone: string) {
   const { consent, post } = await authorize(e, domain, clientId, phone);
   expect(consent).toContain('action="/oauth/authorize/signup"');
@@ -54,13 +47,11 @@ async function openSignup(e: Env, domain: string, clientId: string, phone: strin
   return { form, post, join };
 }
 
-/** Whether the signup form shows the draft (name and city), and never an age or a ticked consent box. */
 const shows = (html: string, firstName: string, city: string) =>
   new RegExp(`name="firstName"[^>]*value="${firstName}"`).test(html) && html.includes(`<option value="${city}" selected="">`);
 const blank = (html: string) => !/name="firstName"[^>]*value="/.test(html) && !/<option value="(nyc|sf)" selected/.test(html);
 const neverPrefilledAgeOrConsent = (html: string) => !/name="age"[^>]*value="/.test(html) && !/name="smsConsent"[^>]*checked/.test(html);
 
-/** A pre-signup grant of a client for a new phone, and the draft it saved for that phone. */
 async function draftFor(e: Env, domain: string, phone: string, fields: Record<string, unknown> = { firstName: "Ari", homeCity: "sf" }) {
   const c = await connect(e, domain, phone, { scope: "membership:read profile:write" });
   const saved = await call(e, `https://${domain}/mcp`, "prepare_signup", fields, { token: c.token.access_token });
@@ -75,12 +66,10 @@ test("the same client's next authorization shows the approved draft once; the pe
   expect(neverPrefilledAgeOrConsent(first.form)).toBe(true);
   expect(first.form).toContain("Finish signup");
   expect(first.form).not.toContain(PHONE_A);
-  // Used once: the draft is scrubbed, a reopen of the same request and a new request of the same client get an empty form.
   expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
   await first.post("/oauth/authorize/signup", { decision: "skip", signupView: field(first.form, "signupView") });
   expect(blank(await (await first.post("/oauth/authorize/signup", { decision: "open" })).text())).toBe(true);
   expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
-  // The person changes the name; the form never ticks consent: without the tick nothing is joined.
   const unticked = await first.join({ firstName: "Rae", age: "29", homeCity: "sf" });
   const refused = await unticked.text();
   expect(refused).toContain("Review and accept the current text message terms to continue.");
@@ -95,15 +84,12 @@ test("the same client's next authorization shows the approved draft once; the pe
 
 test("another client, another app, another phone, an expired draft and a stale grant get an empty form and no error", async () => {
   const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
-  // Another client of the same app and phone: empty, and the draft stays for its own client.
   const other = (await register(e, "friends.help")).body.client_id as string;
   const cross = await openSignup(e, "friends.help", other, PHONE_A);
   expect(blank(cross.form)).toBe(true);
   expect(cross.form).not.toContain("This page has expired");
-  // Another app on the same phone.
   const ntwrk = (await register(e, "ntwrk.party")).body.client_id as string;
   expect(blank((await openSignup(e, "ntwrk.party", ntwrk, PHONE_A)).form)).toBe(true);
-  // The same client with another phone.
   expect(blank((await openSignup(e, "friends.help", clientId, PHONE_B)).form)).toBe(true);
   expect(shows((await openSignup(e, "friends.help", clientId, PHONE_A)).form, "Ari", "sf")).toBe(true);
 
@@ -120,10 +106,8 @@ test("another client, another app, another phone, an expired draft and a stale g
 test("a recorded age below 13 hides and scrubs the draft; an age below 13 on the form is refused and a teen joins unmatched", async () => {
   const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
   await e.accounts.recordAge(PHONE_A, undefined, 12);
-  // The draft is scrubbed and no page of the request shows it.
   expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
   const minor = await authorize(e, "friends.help", clientId, PHONE_A);
-  // The name as a word (the page CSS names the "Arial" font, which is not the draft).
   expect(minor.consent).not.toMatch(/\bAri\b/);
   const opened = await (await minor.post("/oauth/authorize/signup", { decision: "open" })).text();
   expect(opened).not.toMatch(/\bAri\b/);
@@ -137,7 +121,6 @@ test("a recorded age below 13 hides and scrubs the draft; an age below 13 on the
   expect(neverPrefilledAgeOrConsent(refused)).toBe(true);
   expect(await child.accounts.personFor(PHONE_A)).toBeUndefined();
 
-  // The lowest stated age wins: a teen age already recorded beats the adult age on the form, and a teen is never matched.
   const teen = setup(), teenClient = await draftFor(teen, "friends.help", PHONE_A);
   await teen.accounts.recordAge(PHONE_A, undefined, 15);
   const teenPage = await openSignup(teen, "friends.help", teenClient, PHONE_A);
@@ -163,7 +146,6 @@ test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also wh
     expect(pair.filter(Boolean)).toEqual([{ firstName: "Ari", homeCity: "sf" }]);
     expect((await store.sql`select fields, consumed_at is not null as used from oauth.signup_drafts where phone_key=${key}`)).toEqual([{ fields: {}, used: true }]);
     expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
-    // A new draft of the same client shows on the real signup page through the Postgres store.
     const again = await draftFor(e, "friends.help", PHONE_A, { firstName: "Rae", homeCity: "nyc" });
     expect(shows((await openSignup(e, "friends.help", again, PHONE_A)).form, "Rae", "nyc")).toBe(true);
   } finally { await store.close(); await dropTestDb(); }

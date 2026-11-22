@@ -22,13 +22,8 @@ export function appKeyOf(app: McpApp): AppKey {
   return connectorApp[app.id];
 }
 
-/**
- * The app a page is for. A bare app: the app's own site renders the page. `{ app, host }`: the site of `host` renders it,
- * as ntwrk.party does at /mcp/<app> for the other apps (the handler's `Ctx` has this shape).
- */
 export type PageApp = McpApp | { app: McpApp; host: McpApp };
 
-/** The app of the page and the origin of its own site when another site renders the page (else ""), so the brand mark and the legal links open the app's own pages. */
 export function pageAppOf(p: PageApp): { app: McpApp; siteOrigin: string } {
   if (!("host" in p)) return { app: p, siteOrigin: "" };
   return { app: p.app, siteOrigin: p.host.id === p.app.id ? "" : new URL(p.app.links.site).origin };
@@ -106,7 +101,6 @@ export function consentPage(at: PageApp, rid: string, clientName: string | null,
 }
 
 export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error" | "prefill">;
-/** The fields that the signup form shows filled in: never a phone, a code, an age or consent. */
 export type SignupPrefill = NonNullable<AuthSignupViewProps["prefill"]>;
 
 /** The verified browser's transient form for confirming the app's signup. */

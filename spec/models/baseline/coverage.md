@@ -15,11 +15,11 @@ How the ledger was made: six agents read every file and the models on the three 
 | Verdict | Files |
 |---|---|
 | covered | 297 |
-| na | 406 |
+| na | 411 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 703 |
+| total | 708 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
@@ -204,19 +204,19 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/mcp/src/apps.ts | production | oauth_mcp, spec/connectorTools.md | packages/core/src/generated/connectorTools.ts | covered | The app table and host maps, and mcpPath and appAtPath: the app of each MCP path on each host. The paths call the generated hostBindsApp; oauth_mcp models the host of a client and the app of a request (hostBindsApp, startAuth). |
 | packages/mcp/src/decisions.ts | production | oauth_mcp [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
 | packages/mcp/src/dev-server.ts | devtool | none | none | na | Local development entry point. |
-| packages/mcp/src/handler.ts | production | oauth_mcp, spec/connectorTools.md, spec/authorizationPages.md | packages/core/src/generated/connectorTools.ts, packages/core/src/generated/oauthBrowserAuthorization.ts, packages/core/src/generated/oauthGrantIssuance.ts, packages/core/src/generated/oauthTokenLifecycle.ts | covered | The router binds each request to its host and app (requestApp, servedResource, liveRequest) and each token to the app of its grant (grantServesApp). oauth_mcp models the host binding (startAuth, approveReadOn, bearerOk) and the signup prefill (openSignup). The cited decisions.ts is not on this branch. |
+| packages/mcp/src/handler.ts | production | oauth_mcp, spec/connectorTools.md, spec/authorizationPages.md | packages/core/src/generated/connectorTools.ts, packages/core/src/generated/oauthBrowserAuthorization.ts, packages/core/src/generated/oauthGrantIssuance.ts, packages/core/src/generated/oauthTokenLifecycle.ts | covered | The router binds each request to its host and app (requestApp, servedResource, liveRequest) and each token to the resource and app of its grant (bearer, grantServesApp). oauth_mcp models the host binding (startAuth, approveReadOn, bearerOk with host and app), the consents removal on each host (consentsRevokeOn) and the signup prefill (openSignup). The cited decisions.ts is not on this branch. |
 | packages/mcp/src/hooks.ts | production | oauth_mcp [wave2/oauth_mcp] | packages/mcp/src/decisions.ts [claude/lemmascript-backend] | covered | publicStatus comes from the verified core and the platform hooks are part of oauth_mcp. |
 | packages/mcp/src/html-core.ts | removed | spec/authorizationPages.md | none | covered | Not on this branch. spec/authorizationPages.md owns the page views and the retry link; `esc` is in packages/mcp/src/util.ts. |
 | packages/mcp/src/index.ts | production | none | none | na | Re-exports only. |
 | packages/mcp/src/leaks.ts | production | oauth_mcp [wave2/oauth_mcp] | none | covered | The regex leak matcher is outside LemmaScript; oauth_mcp models it as an oracle and the gate around it is proved in update-gate.ts. |
-| packages/mcp/src/pages.ts | production | oauth_mcp [wave2/oauth_mcp], spec/authorizationPages.md, spec/connectedAssistants.md | none | covered | The connector pages. spec/authorizationPages.md owns the view of each reply and spec/connectedAssistants.md owns /oauth/consents; the cited html-core.ts is not on this branch. |
+| packages/mcp/src/pages.ts | production | oauth_mcp, spec/authorizationPages.md, spec/connectedAssistants.md | packages/core/src/generated/authorizationPages.ts, packages/core/src/generated/connectedAssistants.ts | covered | The connector pages. spec/authorizationPages.md owns the view of each reply and spec/connectedAssistants.md owns /oauth/consents. pageAppOf gives the app of the page and absolute legal links when another host renders it; oauth_mcp leaves the page views out (no state). The cited html-core.ts is not on this branch. |
 | packages/mcp/src/pages/build-css.ts | devtool | none | none | na | Build step: it renders the sample pages and compiles the connector CSS from the design-system tokens. It makes no product decision. |
 | packages/mcp/src/pages/samples.ts | data | none | none | na | Fictional sample pages for the CSS build and the design preview; not production data. |
 | packages/mcp/src/pages/styles.ts | production | none | none | na | Reads the built connector CSS once and gives its CSP style hash. It holds no state and no decision that a spec owns. |
 | packages/mcp/src/pg-store.ts | production | oauth_mcp | packages/core/src/generated/authorizationPages.ts, packages/core/src/generated/mcpSignupDraft.ts | covered | oauth_mcp models each Postgres statement as one action; SQL is outside LemmaScript. useSignupPrefill locks the grants, then the drafts, and the generated rules decide each row (oauth_mcp openSignup). |
 | packages/mcp/src/request-core.ts | production | see its shell | self [claude/lemmascript-frontend] | covered | New import-free core with //@ contracts; the shell calls it. |
 | packages/mcp/src/store.ts | production | oauth_mcp, spec/authorizationPages.md, spec/mcpSignupDraft.md | packages/core/src/generated/authorizationPages.ts, packages/core/src/generated/mcpSignupDraft.ts | covered | OAuth store types and the in-memory store. useSignupPrefill calls the generated signupPrefillAllowed and useSignupPrefill; oauth_mcp openSignup models the once-only use. |
-| packages/mcp/src/tools.ts | production | oauth_mcp [wave2/oauth_mcp], spec/connectorTools.md | none | covered | spec/connectorTools.md owns the tool list, scopes, status rules, daily limit and update reads as the agent sees them; the cited decisions.ts and update-gate.ts are not on this branch. |
+| packages/mcp/src/tools.ts | production | oauth_mcp, spec/connectorTools.md, spec/mcpSignupDraft.md | packages/core/src/generated/connectorTools.ts, packages/core/src/generated/mcpSignupDraft.ts | covered | spec/connectorTools.md owns the tool list, scopes, status rules, daily limit and update reads as the agent sees them. The connection takes the app of the MCP path as its host (connectionOf), so the draft tool works only at a friends or ntwrk path; oauth_mcp models this as the friends guard of prepareSignup after bearerOk. The cited decisions.ts and update-gate.ts are not on this branch. |
 | packages/mcp/src/update-gate.ts | production | oauth_mcp [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
 | packages/mcp/src/util.ts | production | oauth_mcp [wave2/oauth_mcp] | none | covered | Hashing, PKCE shape checks, form and JSON reads, `esc` and cookieValue; the cited request-core.ts and html-core.ts are not on this branch. |
 | packages/network/db/network-state.sql | sql | none | none | na | Schema only; sql-schema.md maps it and the integration tests use it. |
@@ -473,6 +473,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/AgentRow.tsx | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
 | packages/ui/src/components/AgentTile.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/AgentTile.tsx | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
+| packages/ui/src/components/Alert.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Alert.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/AuthCodeView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/AuthCodeView.tsx | production | spec/authorizationPages.md | packages/core/src/generated/authorizationPages.ts | covered | Calls the generated decisions of authorizationPages and does not recompute them. |
@@ -532,6 +533,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/LegalDocument.tsx | production | spec/brandIdentity.md, spec/sitePages.md | packages/core/src/generated/brandIdentity.ts | covered | Calls the generated decisions of brandIdentity and does not recompute them. |
 | packages/ui/src/components/Link.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Link.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
+| packages/ui/src/components/MemberStep.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/MemberStep.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/components/MessagesButton.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/MessagesButton.tsx | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
@@ -562,11 +564,13 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/SecurityCheck.tsx | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
 | packages/ui/src/components/Select.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Select.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
+| packages/ui/src/components/SiteFooter.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/SiteFooter.tsx | production | spec/sitePages.md | packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of sitePages and does not recompute them. |
 | packages/ui/src/components/SkipLink.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/SkipLink.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/SmsTerms.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/SmsTerms.tsx | production | spec/sitePages.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
+| packages/ui/src/components/Spinner.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Spinner.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/StatusLine.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/StatusLine.tsx | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
@@ -582,6 +586,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/Toast.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/Tooltip.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Tooltip.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
+| packages/ui/src/components/VisuallyHidden.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/VisuallyHidden.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/Wordmark.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Wordmark.tsx | production | spec/brandIdentity.md | packages/core/src/generated/brandIdentity.ts | covered | Calls the generated decisions of brandIdentity and does not recompute them. |
@@ -670,7 +675,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/lib/meta.ts | production | none | none | na | Class name and type helpers; no decision. |
 | packages/ui/vite.config.ts | devtool | none | none | na | Build, test or storybook configuration; no product state or decision. |
 | packages/ui/vitest.config.ts | devtool | none | none | na | Build, test or storybook configuration; no product state or decision. |
-| plugins/build.ts | devtool | none | none | na | Plugin snapshot build with a --check mode; deploy-ops.md gives it no Quint value. |
+| plugins/build.ts | devtool | spec/agentEntry.md, spec/brandIdentity.md | packages/core/src/generated/agentEntry.ts, packages/core/src/generated/brandIdentity.ts | na | Plugin snapshot build with a --check mode. The MCP URL of each skill comes from the generated pluginEndpoint, endpointPath and endpointHost (every app at its own path on ntwrk.party), and the OpenAI manifest server from openAiManifestApp. It holds no state for a Quint flow. |
 | scripts/check-contract-mirror.ts | devtool | none | none | na | Dev tool that compares the mirror files with upstream; the contract-mirror test checks the pinned hashes. |
 | scripts/clef-fit.ts | devtool | none | none | na | Operator CLI for Clef weight fitting; it does not run in production. |
 | scripts/inspect-network-backend.py | devtool | none | none | na | Read-only Python inspection tool that sends GET requests only. |
@@ -721,7 +726,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | sites/shared/prefill.ts | removed | spec/browserJoin.md | none | covered | Not on this branch. useJoin.ts reads the fragment; spec/browserJoin.md owns the fragment rule. |
 | sites/shared/turnstile.ts | removed | spec/browserJoin.md | none | na | Not on this branch. packages/ui/src/api/turnstile.ts loads the widget. |
 | sites/shared/ui.ts | removed | none | none | na | Not on this branch. DOM helpers that the React components replace. |
-| sites/sites.ts | devtool | none | none | na | Site build script with file I/O and constant headers. |
+| sites/sites.ts | devtool | spec/agentSignup.md, spec/sitePages.md, spec/brandIdentity.md | packages/core/src/generated/agentSignup.ts, packages/core/src/generated/sitePages.ts, packages/core/src/generated/brandIdentity.ts | na | Site build script with file I/O and constant headers. Its skill check walks each SKILL.md through the generated agentSignup machine, the connector setup step included. It holds no state for a Quint flow. |
 | sites/skill-responses.ts | removed | none | none | na | Not on this branch. sites/sites.ts serves the SKILL.md files without it. |
 | sites/skills.config.ts | config | none | none | na | Skill build configuration with a URL check. |
 | tools/clef-label/build.ts | devtool | none | none | na | Inlines core.ts into the local rater page. |

@@ -85,23 +85,16 @@ export function defaultHostMap(apps: Record<McpAppId, McpApp>): Record<string, M
 export const devHostMap = (): Record<string, McpAppId> =>
   Object.fromEntries(MCP_APP_IDS.flatMap((a, i) => [[`localhost:${5101 + i}`, a], [`127.0.0.1:${5101 + i}`, a]]));
 
-/**
- * The MCP path of one app on one host (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path"):
- * /mcp for the host's own app, /mcp/<app> for another app on the ntwrk.party host, and /openai added for the OpenAI
- * surface. Undefined when the host does not serve the app.
- */
 export function mcpPath(host: McpAppId, app: McpAppId, surface: Surface): string | undefined {
   if (!hostBindsApp(connectorApp[host], connectorApp[app])) return undefined;
   return `${app === host ? "/mcp" : `/mcp/${app}`}${surface === "openai" ? "/openai" : ""}`;
 }
 
-/** The app and surface of an MCP path on a host (the inverse of mcpPath), or undefined for a path that the host does not serve. */
 export function appAtPath(host: McpAppId, path: string): { app: McpAppId; surface: Surface } | undefined {
   const m = /^\/mcp(?:\/([a-z]+))?(\/openai)?$/.exec(path);
   if (!m) return undefined;
   const surface: Surface = m[2] ? "openai" : "full";
   if (m[1] === undefined) return { app: host, surface };
-  // "/mcp/openai" is the host's own app on the OpenAI surface, never an app named "openai".
   if (m[1] === "openai" && !m[2]) return { app: host, surface: "openai" };
   const app = m[1];
   if (!isMcpAppId(app) || app === host) return undefined;

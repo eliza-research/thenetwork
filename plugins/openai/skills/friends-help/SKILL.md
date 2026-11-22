@@ -34,8 +34,8 @@ phone number.
 1. Check that this app's connector tools (`check_status` and `submit_profile`) are <!-- agentSignup: checkConnectorSetup resumeAfterConnector chooseTransport -->
    available in this conversation. If they are not, say “Connect friends.help” and give
    this app's own connector endpoint, `https://ntwrk.party/mcp/friends`
-   (in ChatGPT, `https://ntwrk.party/mcp/friends/openai`). The Network serves every app; this
-   path is for friends.help only. Ask the person to add it as a connector in this
+   (in ChatGPT, `https://ntwrk.party/mcp/friends/openai`). This path is for friends.help only.
+   Ask the person to add it as a connector in this
    client's connector or integration settings, then come back to this conversation.
    Give this setup step one time only. When the tools are available, continue with
    step 2. Reading this file does not give you tools or access.

@@ -4,7 +4,6 @@ import type { ModeIndicatorProps } from "./ModeIndicator.tsx";
 
 type Context = { canvasElement: HTMLElement };
 
-// spec/consoleNavigation.md: the console always shows which world it shows, so real data is never taken for the simulated world.
 export const meta: ComponentMeta<ModeIndicatorProps> = {
   args: { mode: "SimulatedMode", label: "SLOP · SIM · seed 1", details: "Simulated world, seed 1, day 14" },
   examples: {

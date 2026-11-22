@@ -5,9 +5,6 @@
 //   node --import tsx --env-file-if-exists=.env plugins/build.ts           write plugins/openai/skills and plugins/claude/skills
 //   node --import tsx --env-file-if-exists=.env plugins/build.ts --check   exit 1 if a snapshot differs from a fresh build (tests run this)
 //
-// Every app's MCP endpoint is on ntwrk.party, each app at its own path (the server binds a connection to the app
-// of that path; spec/agentEntry.md). The OpenAI plugin manifest (openai/mcp.json) may list one server only: it
-// lists The Network's.
 // The OpenAI plugin leaves out slop.date: OpenAI requires plugins that suit people aged 13-17
 // (developers.openai.com/plugins/plugin-guidelines). Its copy of the hub skill is cut down to the
 // other apps, and the build fails if "slop" or "dating" is left anywhere in plugins/openai.
@@ -80,7 +77,6 @@ export function withoutSlop(md: string): string {
   return out.join("\n");
 }
 
-/** The name of the manifest's one server; the skill of the same app names it as its dependency. */
 const OPENAI_SERVER_NAME = "the-network";
 
 /** The MCP dependency of an OpenAI skill (developers.openai.com/plugins/build/skills): its own app's endpoint. */
@@ -94,7 +90,6 @@ dependencies:
       url: ${url}
 `;
 
-/** plugins/openai/mcp.json: the one server that the OpenAI plugin manifest lists. */
 export const openaiMcpJson = () => JSON.stringify({
   $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
   mcpServers: { [OPENAI_SERVER_NAME]: { type: "streamable-http", url: OPENAI_MCP_URL } },

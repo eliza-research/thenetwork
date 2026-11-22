@@ -66,10 +66,6 @@ export function landingLinks(app: AppKey, { skillVersion, textLine, siteHost = "
   };
 }
 
-/**
- * The agents of one app's agent row, in the fixed order, without an agent that the app's connector refuses (none today: ChatGPT reaches every app).
- * spec/landingEntry.md, "The agent row never shows an agent that the app's connector refuses"
- */
 export function landingAgents(app: AppKey): AgentId[] {
   return agentOrder.filter((agent) => landingAgentOffered(app, agent));
 }

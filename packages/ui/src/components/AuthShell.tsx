@@ -16,10 +16,6 @@ export type AuthShellProps = Omit<ComponentProps<"div">, "title"> & {
   chrome?: PageChrome;
   /** Where the brand mark goes. Default: the home page of the app's site. */
   homeHref?: string;
-  /**
-   * The origin of the app's own site, such as `https://slop.date`, when another site (ntwrk.party) renders the page for the app.
-   * The brand mark and the legal links then open the app's own pages. Without it, the links stay relative to the site that renders the page.
-   */
   siteOrigin?: string;
 };
 

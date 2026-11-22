@@ -4,7 +4,6 @@ import type { AuditQueryProps } from "./AuditRow.tsx";
 
 type Context = { args: AuditQueryProps; canvasElement: HTMLElement };
 
-/** Enter in the actor field, then a click on Load: neither loads the audit log while `canLoad` is false. */
 const refusesLoad = async ({ args, canvasElement }: Context) => {
   clearAllMocks();
   const canvas = within(canvasElement);
@@ -13,7 +12,6 @@ const refusesLoad = async ({ args, canvasElement }: Context) => {
   await expect(args.onLoad).not.toHaveBeenCalled();
 };
 
-// spec/consoleWorkspace.md, "Only an admin loads the audit log": `canLoad` is the generated `canLoadAudit(w)`.
 export const meta: ComponentMeta<AuditQueryProps> = {
   args: { phase: "AuditClosed", canLoad: true, actor: "", target: "" },
   examples: {

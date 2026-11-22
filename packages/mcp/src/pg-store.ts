@@ -122,7 +122,6 @@ export class PgOAuthStore implements OAuthStore {
 
   async useSignupPrefill(ask: import("./store.ts").SignupPrefillAsk, at: number) {
     try { return await this.sql.begin(async tx => {
-      // Lock grants in the same order as revocation before taking draft rows; the generated rule decides each row.
       const grants = (await tx`select g.* from oauth.grants g
         join oauth.signup_drafts d on d.grant_id=g.id
         where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} and d.consumed_at is null

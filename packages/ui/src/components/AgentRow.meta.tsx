@@ -15,7 +15,6 @@ export const meta: ComponentMeta<AgentRowProps> = {
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       await expect(within(canvasElement).getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();
     },
-    // spec/landingEntry.md, "The agent row never shows an agent that the app's connector refuses": the OpenAI surface serves slop.date too.
     Slop: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const row = within(canvasElement);
       await expect(row.getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();

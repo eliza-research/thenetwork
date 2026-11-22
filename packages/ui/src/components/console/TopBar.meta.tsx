@@ -17,7 +17,6 @@ export const meta: ComponentMeta<TopBarProps> = {
     ),
   },
   play: {
-    // The children sit between the brand and the end controls, in reading order as well as on screen.
     Default: async ({ canvasElement }: Context) => {
       const bar = within(canvasElement).getByRole("banner");
       const brand = within(bar).getByText("Observatory");

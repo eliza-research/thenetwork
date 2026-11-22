@@ -35,7 +35,6 @@ export function ConsentView({ view = "ConsentView", rid, clientName, redirectHos
   const parts = consentParts(view, clientName !== null);
   const offers = offersFor(view);
   const client = parts.client === "ProvidedName" && clientName !== null ? clientName : "An unnamed assistant";
-  // spec/authorizationPages.md, "A new person sees Finish signup as the main action on the consent page"
   const primary = consentPrimaryAction(view, canSignup);
   const approvePrimary = primary === "PrimaryAllow" || primary === "PrimaryTryAgain";
   return (
@@ -57,7 +56,6 @@ export function ConsentView({ view = "ConsentView", rid, clientName, redirectHos
           <ScopeList scopes={scopes} />
         </Card>
       ) : null}
-      {/* When signup is offered it is always the first action (lawNewPersonSeesFinishSignupFirst). */}
       {offersSignupConfirmation(view, canSignup) ? (
         <form method="post" action="/oauth/authorize/signup">
           <input type="hidden" name="rid" value={rid} />

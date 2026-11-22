@@ -20,7 +20,6 @@ function hiddenField(html: string, name: string): string {
   return value;
 }
 
-/** The "Finish signup" button (decision=open) is in the page before the "Allow" button (decision=approve). */
 function finishSignupComesFirst(html: string): boolean {
   const open = html.indexOf('name="decision" value="open"'), approve = html.indexOf('name="decision" value="approve"');
   return open >= 0 && approve >= 0 && open < approve;
@@ -90,7 +89,6 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       expect(verified.status).toBe(200);
       const verifiedPage = await verified.text();
       expect(verifiedPage).toContain('action="/oauth/authorize/signup"');
-      // spec/authorizationPages.md, "A new person sees Finish signup as the main action on the consent page"
       expect(finishSignupComesFirst(verifiedPage)).toBe(true);
       expect(await service.accounts.personFor(phone)).toBeUndefined();
 
@@ -105,7 +103,6 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       expect(joined.status).toBe(200);
       const approvalForm = await joined.text();
       expect(approvalForm).toContain('action="/oauth/authorize/consent"');
-      // After signup the page confirms it, offers no second signup and "Allow" is the main action again.
       expect(approvalForm).toContain("Signup confirmed.");
       expect(approvalForm).not.toContain('action="/oauth/authorize/signup"');
       const person = await service.accounts.personFor(phone);
@@ -178,7 +175,6 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
   }
 }, 60_000);
 
-// --- spec/authorizationPages.md: the browser signup step on each open app, the invite-only web path and typed ages ---
 
 type SignupWorld = {
   service: NetworkService;
@@ -187,7 +183,6 @@ type SignupWorld = {
   harness: ReturnType<typeof setup>;
 };
 
-/** The real service and connector on the test database, with each app's site host routed to them. */
 async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Promise<void>) {
   const url = await testDb();
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
@@ -225,7 +220,6 @@ async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Prom
   }
 }
 
-/** One browser with its own cookies on one site. */
 function browserOn(w: SignupWorld, site: string) {
   const cookies = new Map<string, string>();
   return async (path: string, fields?: Record<string, string>) => {
@@ -247,7 +241,6 @@ function browserOn(w: SignupWorld, site: string) {
 
 type Browser = ReturnType<typeof browserOn>;
 
-/** Register a client on the site and open its connection link in the browser; returns the first page. */
 async function openConnection(w: SignupWorld, site: string, browser: Browser, state: string) {
   const registration = await register(w.env, site);
   expect(registration.res.status).toBe(201);
@@ -261,7 +254,6 @@ async function openConnection(w: SignupWorld, site: string, browser: Browser, st
   return { clientId, html: await page.text() };
 }
 
-/** Confirm a new phone on the code page; returns the consent page that follows. */
 async function confirmPhone(w: SignupWorld, browser: Browser, rid: string, number: string) {
   expect((await browser("/oauth/authorize/phone", { rid, phone: number })).status).toBe(200);
   const code = w.harness.provider.last(number);
@@ -271,7 +263,6 @@ async function confirmPhone(w: SignupWorld, browser: Browser, rid: string, numbe
   return verified.text();
 }
 
-/** Open the signup form from the consent page and send it with these fields. */
 async function submitSignup(browser: Browser, rid: string, fields: Record<string, string>) {
   const opened = await browser("/oauth/authorize/signup", { rid, decision: "open" });
   expect(opened.status).toBe(200);
@@ -290,7 +281,6 @@ async function exchange(w: SignupWorld, site: string, clientId: string, location
   return token.body.access_token as string;
 }
 
-// spec/authorizationPages.md, "A new person sees Finish signup as the main action on the consent page"
 test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Finish signup is first and a later signup ends that grant", async () => {
   await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
     const site = "friends.help", number = "+12125550164";
@@ -300,7 +290,6 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
     const consent = await confirmPhone(w, browser, rid, number);
     expect(finishSignupComesFirst(consent)).toBe(true);
 
-    // The person presses Allow anyway: the grant has no person and the agent sees not_joined.
     const allowed = await browser("/oauth/authorize/consent", { rid, decision: "approve" });
     expect(allowed.status).toBe(303);
     const early = await exchange(w, site, first.clientId, allowed.headers.get("location")!);
@@ -309,7 +298,6 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
     expect((await status(early)).body?.result.structuredContent).toMatchObject({ app: "friends", status: "not_joined" });
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
 
-    // A new connection in the same browser needs no second code and again puts Finish signup first.
     const second = await openConnection(w, site, browser, "signup-second");
     expect(second.html).toContain('action="/oauth/authorize/signup"');
     expect(finishSignupComesFirst(second.html)).toBe(true);
@@ -321,7 +309,6 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
     const person = await w.service.accounts.personFor(number);
     if (!person) throw new Error("No person after signup");
 
-    // The grant made before the person existed never follows the new person.
     expect((await status(early)).res.status).toBe(401);
     const approved = await browser("/oauth/authorize/consent", { rid: rid2, decision: "approve", signupApproval: hiddenField(joined.html, "signupApproval") });
     expect(approved.status).toBe(303);
@@ -330,7 +317,6 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
   });
 }, 60_000);
 
-// memberAge: under 13 cannot join; the lowest stated age wins, also when it is typed in the browser.
 test.skipIf(!pgAvailable)("slop.date: an age under 13 typed on the signup page is refused and a higher age later does not undo it", async () => {
   await withSignupWorld(["slop:nyc"], async w => {
     const site = "slop.date", number = "+12125550165";
@@ -354,7 +340,6 @@ test.skipIf(!pgAvailable)("slop.date: an age under 13 typed on the signup page i
   });
 }, 60_000);
 
-// Founder decision 1: 13-17 may join an app but are never matched.
 test.skipIf(!pgAvailable)("friends.help: a teen age typed on the signup page joins but can never be matched", async () => {
   await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
     const site = "friends.help", number = "+12125550166";
@@ -374,7 +359,6 @@ test.skipIf(!pgAvailable)("friends.help: a teen age typed on the signup page joi
   });
 }, 60_000);
 
-// Founder decision (2026-10-09): ntwrk stays invite-only on the web.
 test.skipIf(!pgAvailable)("ntwrk.party: the signup page requires an invitation and refuses a missing or unknown one", async () => {
   await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
     const site = "ntwrk.party", number = "+12125550167";

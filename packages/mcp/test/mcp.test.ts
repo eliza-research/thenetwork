@@ -129,7 +129,6 @@ describe("surface=openai offers every app", () => {
     expect((await rpc(setup({ apps }), `${host}/mcp`, "tools/list")).res.status).toBe(200);
   });
 
-  // spec/connectorTools.md, "Each surface offers every app, slop.date included" (founder decision 2026-11-18).
   test("tools/list, app_info and start_signup offer slop on the OpenAI surface; slop.date's own site keeps no OpenAI endpoint", async () => {
     const env = setup();
     const l = await rpc(env, OPENAI, "tools/list");
@@ -142,9 +141,7 @@ describe("surface=openai offers every app", () => {
       expect(r.body!.result.isError).toBe(false);
       expect(r.body!.result.structuredContent).toMatchObject(name === "app_info" ? { id: "slop" } : { app: "slop" });
     }
-    // Adults-only rules travel with slop on the OpenAI surface too.
     expect((await call(env, OPENAI, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
-    // ChatGPT reaches slop at the ntwrk.party endpoint only (spec/connectorTools.md, lawSlopSiteKeepsNoOpenAiSurface).
     expect((await rpc(env, `${origin("slop.date")}/mcp/openai`, "tools/list")).res.status).toBe(404);
     expect((await rpc(env, `${origin("ntwrk.party")}/mcp/slop/openai`, "tools/list")).res.status).toBe(200);
   });
