@@ -12,6 +12,7 @@ import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { historicalProbeTimeClause, mayRetryCounter, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
+import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearning.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -512,7 +513,7 @@ const INTEREST_LEX: Record<string, RegExp> = {
   dogs: /\b(dogs?|puppy|puppies|my pup)\b/, meditation: /\b(meditation|meditate|mindfulness)\b/, yoga: /\byoga\b/, dancing: /\b(dancing|dance|salsa|bachata|swing dancing)\b/,
   writing: /\b(writing|writer|poetry|poems|essays|screenwriting|short stories)\b/, gardening: /\b(gardening|garden|plants|community garden)\b/,
 };
-const SKILL_LEX: Record<string, RegExp> = {
+const SKILL_LEX = Object.entries({
   guitar: /\b(play(s|ing)? (the )?guitar|guitarist|on guitar)\b/, drums: /\b(play(s|ing)? (the )?drums|drummer|on drums)\b/, bass: /\b(play(s|ing)? (the )?bass|bassist|bass player|on bass)\b/,
   vocals: /\b(i sing|singer|vocalist|on vocals|sing in a)\b/, piano: /\b(play(s|ing)? (the )?(piano|keys)|pianist|keyboardist)\b/,
   sailing_instructor: /\b(teach(es|ing)? sailing|sailing instructor|i can teach (you |people )?to sail)\b/,
@@ -525,10 +526,13 @@ const SKILL_LEX: Record<string, RegExp> = {
   tennis_coach: /\b(tennis coach|strong tennis player|ntrp [4-5](\.\d)?|played (college|d1|varsity) tennis)\b/, hardware_eng: /\b(electrical engineer|hardware engineer|embedded engineer|ee by training)\b/,
   climate_policy: /\b(climate policy|work in climate|energy policy|climate nonprofit)\b/, writing_editor: /\b(i'?m an? editor|i edit|edits writing|professional editor|copy ?editor)\b/,
   chess_strong: /\b((fide|uscf|lichess|chess\.com) (rated|rating)|rated \d{4}|elo (of )?\d{4}|chess coach|\d{4} rated)\b/,
-};
+}).map(([tag, pattern]): [string, RegExp] => [tag, new RegExp(pattern.source, "g")]);
 /** The sender's own skill is said in the first person; "looking for a bassist" is a want, not a skill. */
 const FIRST_PERSON = /\b(i|i'm|im|i've|ive|i am|my|me)\b/;
-const SEEKING = /\b(looking for|need|needs|want|wants|find|seeking|searching|someone who|anyone who|somebody who|a person who)\b/;
+const SEEKING = /\b(looking for|need|needs|want|wants|find|seeking|searching|someone who|anyone who|somebody who|a person who)\b/g;
+const DIRECT_SKILL_CLAIM = /(?:^|[,:]\s*(?:and\s+)?|\b(?:and|but|though|although|however|except)\s+)\s*(?:i(?:'m|m|\s+am|\s+have\s+been|'ve\s+been)\s+an?\b|i\s+(?:(?:can|also|currently)\s+)*(?:play|sing|teach|work|do|make|build|train|write|code|paint|cook|dance|perform|host|edit|run|belay)\b|my\s+(?:work|job|role|career|profession)\s+as\b)/g;
+const SKILL_TITLE_PREFIX = /^(?:\s+(?:as|the|an?|senior|junior|staff|lead|principal|experienced|professional))*\s*$/;
+const OTHER_SKILL_SUBJECT = /\b(?:(?:my|our|your|their|his|her)\s+(?:friend|colleague|coworker|partner|roommate|sibling|parent|teacher|mentor|boss)|he|she|they|i\s+(?:know|met|work with)\s+(?:an?|the|someone|somebody))\b/g;
 
 /** Aliases people use for the neighborhoods the Network knows (geo.ts names are canonical). */
 const AREA_ALIASES: [RegExp, string][] = [
@@ -591,8 +595,23 @@ export function extractProfile(body: string): Profile {
   const kept: string[] = [];
   for (const s of sentencesOf(t)) {
     const x = s.text;
+    const quotedAt = (at: number) => quoteStillOpen(t.slice(0, s.at + at));
+    const cues = (pattern: RegExp) => [...x.matchAll(pattern)].filter(m => !quotedAt(m.index));
+    const seeks = cues(SEEKING);
+    const selfClaims = cues(DIRECT_SKILL_CLAIM);
+    const otherSubjects = cues(OTHER_SKILL_SUBJECT);
+    const learnableSkillAt = (at: number) => {
+      const seeking = seeks.findLast(m => m.index < at)?.index ?? -1;
+      const selfClaim = selfClaims.findLast(m => m.index <= at
+        && SKILL_TITLE_PREFIX.test(x.slice(m.index + m[0].length, at)))?.index ?? -1;
+      const otherSubject = otherSubjects.findLast(m => m.index < at)?.index ?? -1;
+      return profileSkillMayLearn(quotedAt(at), otherSubject > selfClaim, seeking >= 0, selfClaim > seeking);
+    };
+    let nextPartOffset = 0;
     // A negation scopes over what comes after it in its sentence ("I like jazz but don't want a band" splits at "but").
     for (const part of x.split(/\b(?:but|though|although|however|except)\b|,\s*(?=(?:and )?(?:i|i'm|im)\b)/)) {
+      const partOffset = x.indexOf(part, nextPartOffset);
+      nextPartOffset = partOffset + part.length;
       const neg = NEG_WANT.exec(part);
       const negAt = neg ? neg.index : Infinity;
       const wantCtx = WANT_CTX.test(part);
@@ -612,17 +631,23 @@ export function extractProfile(body: string): Profile {
         const m = rx.exec(part);
         if (m && !(m.index > negAt)) interests.add(tag);
       }
-      if (FIRST_PERSON.test(part)) for (const [tag, rx] of Object.entries(SKILL_LEX)) {
-        const m = rx.exec(part);
-        if (!m || m.index > negAt) continue;
-        const before = part.slice(0, m.index);
-        if (SEEKING.test(before.slice(-40))) continue;
-        skills.add(tag);
+      if (FIRST_PERSON.test(part)) for (const [tag, rx] of SKILL_LEX) {
+        for (const m of part.matchAll(rx)) {
+          if (m.index <= negAt && learnableSkillAt(partOffset + m.index)) {
+            skills.add(tag);
+            break;
+          }
+        }
       }
       // Taxonomy labels also occur in short profile answers such as "Senior product designer."
       for (const k of SKILLS) {
-        const at = part.indexOf(k.label.toLowerCase());
-        if (at >= 0 && at < negAt && !SEEKING.test(part.slice(Math.max(0, at - 40), at))) skills.add(k.tag);
+        const label = k.label.toLowerCase();
+        for (let at = part.indexOf(label); at >= 0 && at < negAt; at = part.indexOf(label, at + label.length)) {
+          if (learnableSkillAt(partOffset + at)) {
+            skills.add(k.tag);
+            break;
+          }
+        }
       }
     }
   }
