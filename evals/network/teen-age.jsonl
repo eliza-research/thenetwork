@@ -250,3 +250,5 @@
 {"text":"In 9th grade. I did competitive swimming then.","teen":false}
 {"text":"12th grade teacher, here.","teen":false}
 {"text":"Hey, turned 16, hbu?","teen":true,"age":16}
+{"text":"turning 16 next month","teen":true,"age":15}
+{"text":"I'm 12.5 minutes away","teen":false}
