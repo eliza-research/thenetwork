@@ -8,6 +8,14 @@ export const metricsFreshMs = M.metricsFreshMs;
 export const initial = M.initial;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export function inv(current) { return M.inv(current); }
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export function reportedSmsTotal(exactTotalAvailable, exactTotal, legacyTotal) { return M.reportedSmsTotal(exactTotalAvailable, exactTotal, legacyTotal); }
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export function countSendOutcome(waiting) { return M.countSendOutcome(waiting); }
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export function lawPendingDeliveryHasNoOutcome(waiting) { return M.lawPendingDeliveryHasNoOutcome(waiting); }
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export function lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal) { return M.lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal); }
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) @throws {never} */
 export function chooseFiringPlan(e) { return M.chooseFiringPlan(e); }
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) @throws {never} */

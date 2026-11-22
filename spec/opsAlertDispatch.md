@@ -6,6 +6,30 @@ The [runtime operations model](models/runtime_ops.md) includes alert dispatch al
 
 > As an operator, I want one batch of new, worse, repeated, or resolved notices in each eligible operations round.
 
+### Pending delivery does not affect the failure rate
+
+Keep queued, collected and unresolved delivery states outside the send
+outcome counts. Use the existing failure counts once the final outcome is
+available. Count each accepted SMS on its acceptance day and once in the
+app's rolling window. A legacy fallback can supply SMS evidence when the
+queue has no accepted receipt with a known transport. An accepted receipt
+supplies the acceptance time. The app-scoped Postgres query aggregates these
+facts. A runtime that reports an exact SMS total takes precedence over the
+older status-only total.
+
+```quint
+pure def countSendOutcome(waiting: bool): bool = not(waiting)
+
+pure def reportedSmsTotal(exactTotalAvailable: bool, exactTotal: int, legacyTotal: int): int =
+  if (exactTotalAvailable) exactTotal else legacyTotal
+
+pure def lawPendingDeliveryHasNoOutcome(waiting: bool): bool =
+  waiting implies not(countSendOutcome(waiting))
+
+pure def lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal: int): bool =
+  reportedSmsTotal(true, 0, legacyTotal) == 0
+```
+
 ### An alert sends when it starts, gets worse, or reaches its repeat time
 
 A closed or new key starts a fresh episode. While an episode is open, update the current level, count, and detail. Prepare a notice if it has never posted, if its latest level rose from warn to bad, if a bump-enabled count exceeds the last posted count, or if the repeat time has passed. Keep the last successful post as the comparison baseline.

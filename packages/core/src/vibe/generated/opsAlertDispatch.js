@@ -12,6 +12,28 @@ export const initial = { phase: "AwaitingNotices" };
 export function inv(current) {
     return true;
 }
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function reportedSmsTotal(exactTotalAvailable, exactTotal, legacyTotal) {
+    return exactTotalAvailable ? exactTotal : legacyTotal;
+}
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function countSendOutcome(waiting) {
+    return !waiting;
+}
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawPendingDeliveryHasNoOutcome(waiting) {
+    //@ ensures \result === true
+    return !waiting || !countSendOutcome(waiting);
+}
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal) {
+    //@ ensures \result === true
+    return reportedSmsTotal(true, 0, legacyTotal) === 0;
+}
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
 //@ pure
 export function chooseFiringPlan(e) {

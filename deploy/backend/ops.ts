@@ -17,12 +17,13 @@
 // The webhook body is JSON: { text, source, env, build, alerts: [{ key, level, count, text, state }] }.
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { cachedOpsMetricsFresh, opsRoundDue, roundReport } from "../../packages/core/src/generated/opsAlertDispatch.ts";
+import { cachedOpsMetricsFresh, countSendOutcome, opsRoundDue, reportedSmsTotal, roundReport } from "../../packages/core/src/generated/opsAlertDispatch.ts";
 import {
   dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
 } from "../../packages/core/src/vibe/opsAlertShell.js";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
+import { WAITING_STATUSES } from "../../packages/network/service/channel.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 
@@ -113,7 +114,7 @@ export interface NetworkMetrics {
   /** Review items that expired unsent in the last 24 h (the SLA was missed). */
   reviewExpired24h: number;
   safety24h: { reports: number; urgentReports: number; minorAfterContact: number; holds: number; bans: number };
-  /** Outbound messages stored as fell_back (sent by SMS) on this UTC day and the day before. */
+  /** Accepted SMS sends, including legacy fallback records, on this UTC day and the day before. */
   smsByDay: { today: number; yesterday: number };
   /** Agent safety_concern signals (POST /internal/signals) waiting for a person in GET /signals: the safety alert. */
   safetySignalsWaiting?: number;
@@ -169,7 +170,7 @@ export interface NetworkProbe {
    * Rows since a time: outbound statuses, event counts (type and action), report rows from the stored
    * state, and the SMS fallbacks of the UTC day that starts at `dayStart` and of the day before (the cost accruals).
    */
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number; last24h?: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
 }
 
 /** Below this many person decisions in 7 days the precision is not alerted on (too few to read). */
@@ -180,15 +181,15 @@ export const PRECISION_TARGET = 0.8;
 /** Final outcomes of a send that reached (or tried to reach) the provider. */
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
-const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled"]);
+const WAITING = new Set([...WAITING_STATUSES, "collected", "send_unknown"]);
 
 export function sendOutcomes(statuses: Record<string, number>): NetworkMetrics["sends24h"] {
   const out = { attempted: 0, failed: 0, refused: 0, dryRun: 0, smsFallback: 0 };
   for (const [s, n] of Object.entries(statuses)) {
+    if (!countSendOutcome(WAITING.has(s))) continue;
     if (s === "dry_run") out.dryRun += n;
     else if (FAILED.test(s)) { out.failed += n; out.attempted += n; }
     else if (REFUSED.test(s)) out.refused += n;
-    else if (WAITING.has(s)) continue;
     else { out.attempted += n; if (s === "fell_back") out.smsFallback += n; }
   }
   return out;
@@ -205,17 +206,19 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
     // spec/models/runtime_ops.md, tickLateSeen: staff and inbound saves do not advance the matcher heartbeat.
     const last = h.lastTick.stored ?? -Infinity;
     const ev = (type: string, action?: string) => s.events.filter(e => e.type === type && (action === undefined || e.action === action)).reduce((x, e) => x + e.n, 0);
+    const sends24h = sendOutcomes(s.statuses);
+    sends24h.smsFallback = reportedSmsTotal(s.sms.last24h !== undefined, s.sms.last24h ?? 0, sends24h.smsFallback);
     return {
       ...empty,
       lastTickAgoMs: Number.isFinite(last) ? Math.max(0, now - last) : null,
       backlog: { review: h.backlog.review, reviewOverdue: h.backlog.reviewOverdue, deferred: h.backlog.deferred, outboundWaiting: h.backlog.outboundWaiting },
-      sends24h: sendOutcomes(s.statuses),
+      sends24h,
       reviewExpired24h: ev("review_expired"),
       safety24h: {
         reports: s.reports.length, urgentReports: s.reports.filter(r => URGENT_REPORTS.has(r.kind as never)).length,
         minorAfterContact: ev("minor_after_contact"), holds: ev("safety_action", "hold"), bans: ev("safety_action", "ban"),
       },
-      smsByDay: s.sms,
+      smsByDay: { today: s.sms.today, yesterday: s.sms.yesterday },
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
       ...(s.precision7d ? { precision7d: s.precision7d } : {}),
@@ -243,8 +246,21 @@ export function runtimeProbe(rt: {
       // Reports live in the stored state (ids and a kind only); `at` is epoch ms.
       const reports = (await tx`select r->>'kind' as kind from network.network_state s, jsonb_array_elements(coalesce(s.state->'reports', '[]'::jsonb)) r
         where s.id = ${rt.id} and (r->>'at')::float8 > ${t}`) as { kind: string }[];
-      const [sms] = (await tx`select count(*) filter (where ts >= ${new Date(dayStart)})::int as today, count(*) filter (where ts < ${new Date(dayStart)})::int as yesterday
-        from network.messages where app_id = ${rt.app.id} and direction = 'outbound' and status = 'fell_back' and ts >= ${new Date(dayStart - DAY)}`) as { today: number; yesterday: number }[];
+      const costWindow = new Date(dayStart - DAY);
+      const [sms] = (await tx`with sms as (
+          select o.sent_at as accepted_at
+          from platform.outbound o join network.messages m on m.app_id = o.app_id and m.id = o.id
+          where o.app_id = ${rt.app.id} and o.transport = 'sms' and o.sent_at >= ${costWindow}
+            and m.direction = 'outbound'
+          union all
+          select coalesce(o.sent_at, m.ts) as accepted_at
+          from network.messages m left join platform.outbound o on o.app_id = m.app_id and o.id = m.id
+          where m.app_id = ${rt.app.id} and m.direction = 'outbound' and m.status = 'fell_back'
+            and (o.sent_at is null or o.transport is null) and coalesce(o.sent_at, m.ts) >= ${costWindow}
+        ) select count(*) filter (where accepted_at >= ${new Date(dayStart)})::int as today,
+          count(*) filter (where accepted_at < ${new Date(dayStart)})::int as yesterday,
+          count(*) filter (where accepted_at > ${at})::int as last24h
+        from sms`) as { today: number; yesterday: number; last24h: number }[];
       // Counts only: a signal's evidence and a report's groups never leave the database here.
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
@@ -257,7 +273,7 @@ export function runtimeProbe(rt: {
         from network.review_items r join network.opportunities o on o.app_id = r.app_id and o.id = r.opportunity_id
         where r.app_id = ${rt.app.id} and o.source = 'engine' and r.decision in ('approve', 'reject') and r.decided_at > ${new Date(t - 6 * DAY)}
           and r.reviewer is not null and r.reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
-      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
+      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0, last24h: sms?.last24h ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
         precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
     }),
   };

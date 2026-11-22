@@ -1,5 +1,5 @@
 // Generated from spec/opsAlertDispatch.md via Vibestack and VibeLang. Run pnpm run spec:sync.
-import type { FiringEvidence, FiringPlan, MissingPlan, AlertDispatch, RoundReport, Event } from "./opsAlertDispatch.ts";
+import type { FiringPlan, FiringEvidence, MissingPlan, AlertDispatch, RoundReport, Event } from "./opsAlertDispatch.ts";
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
 export declare const alertPostWindowMs: number;
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) @throws {never} */
@@ -8,6 +8,14 @@ export declare const metricsFreshMs: number;
 export declare const initial: AlertDispatch;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export declare function inv(current: AlertDispatch): boolean;
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function reportedSmsTotal(exactTotalAvailable: boolean, exactTotal: number, legacyTotal: number): number;
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function countSendOutcome(waiting: boolean): boolean;
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawPendingDeliveryHasNoOutcome(waiting: boolean): boolean;
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal: number): boolean;
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) @throws {never} */
 export declare function chooseFiringPlan(e: FiringEvidence): FiringPlan;
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) @throws {never} */
