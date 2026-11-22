@@ -8,7 +8,7 @@
 
 ### Only the canonical member can list or manage the app's own intents
 
-Use a member turn with current membership and consent. A refused command never creates a membership. A matching replay requires that the same member still owns the app binding. A list shows only owned standing intents, with a stable reference and current status. Job postings use their own flow.
+Use a member turn with current membership and consent. A refused command never creates a membership. A matching replay requires that the same member still owns the app binding. A list shows only owned standing intents, with a stable letter-only reference and current status. The reference alphabet keeps generated references from matching the phone-number check. Job postings use their own flow.
 
 ```quint
 type IntentCommand = ListIntents | PauseIntent | CloseIntent
@@ -30,7 +30,7 @@ pure def standingIntentReplayAllowed(canonicalMember: bool): bool = canonicalMem
 
 ### Change only the single matching reference the member supplied
 
-Pause a live intent. Close a live or paused intent. A missing or ambiguous reference leaves every intent unchanged. An already paused, closed, or expired intent stays as it is when the requested action has already taken effect. Store the selected change before acknowledging it. A stored close takes priority over a pause.
+Resolve the old hexadecimal reference and the current letter-only reference to the same owned intent. Pause a live intent. Close a live or paused intent. A missing or ambiguous reference leaves every intent unchanged. An already paused, closed, or expired intent stays as it is when the requested action has already taken effect. Store the selected change before acknowledging it. A stored close takes priority over a pause.
 
 ```quint
 pure def canChooseOwnedIntent(s: IntentManagement): bool = s.phase == SelectIntent

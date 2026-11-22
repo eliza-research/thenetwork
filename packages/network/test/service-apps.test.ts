@@ -855,7 +855,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await rows()).toEqual([first]);
 
     const listed = await command(turn("cofounder-peon-list", "List my intents"));
-    const reference = /I-[A-F0-9]{12}/.exec(listed.body.replies.join("\n"))?.[0];
+    const reference = /INT-[A-P]{12}/.exec(listed.body.replies.join("\n"))?.[0];
     if (!reference) throw new Error("The cofounder intent was not listed");
     await command(turn("cofounder-peon-pause", `Pause intent ${reference}`));
     const repeatPaused = await command(turn("cofounder-peon-paused-repeat", affirmative));
