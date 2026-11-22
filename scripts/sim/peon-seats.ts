@@ -421,7 +421,7 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     const step = readPostingText(POST, { postings: [], newId: "p-new", storedPosting })!;
     expect(step.ready).toBe(true);
     expect(step.text).toMatch(/Reply yes to post it/);
-    const noPay = readPostingText("We're hiring a barista, 1 opening", { postings: [], newId: "p-2", storedPosting })!;
+    const noPay = readPostingText("We're hiring a barista, 1 opening, onsite in Queens", { postings: [], newId: "p-2", storedPosting })!;
     expect(noPay.ready).toBe(false);
     expect(noPay.text).toBe(POSTING_COPY.askPay);
     const fixed = readPostingText("$40k-$50k", { draft: noPay.draft!, postings: [], newId: "p-3", storedPosting })!;

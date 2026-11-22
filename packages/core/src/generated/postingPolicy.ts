@@ -11,6 +11,19 @@ export function missingPostingFields(isClose: boolean, hasTitle: boolean, hasPay
   return isClose ? ([] as string[]) : (hasTitle ? (hasPay ? ([] as string[]) : (["pay"] as string[])) : (hasPay ? (["title"] as string[]) : (["title", "pay"] as string[])));
 }
 
+/** Story: Publish a job with a clear pay range / A post with a workplace needs a supported area (spec/postingPolicy.md) */
+//@ pure
+export function postingNeedsArea(isClose: boolean, remote: boolean, hasArea: boolean): boolean {
+  return !(isClose || remote || hasArea);
+}
+
+/** Story: Publish a job with a clear pay range / A post with a workplace needs a supported area (spec/postingPolicy.md) */
+//@ pure
+export function lawOnsiteDraftWithoutAreaNeedsAnswer(isClose: boolean, remote: boolean): boolean {
+  //@ ensures \result === true
+  return postingNeedsArea(isClose, remote, false) === !(isClose || remote);
+}
+
 /** Story: Publish a job with a clear pay range / A posting has between one and fifty openings (spec/postingPolicy.md) */
 //@ pure
 export function openingsInRange(openings: number): boolean {

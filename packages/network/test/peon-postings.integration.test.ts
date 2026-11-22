@@ -71,6 +71,42 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
 
+  test("an in-person job needs its own supported worksite before posting", async () => {
+    const clock = new SimClock(START);
+    const s = service(clock);
+    await s.start();
+    try {
+      const manager = "+12125550173";
+      await text(s, clock, manager, "peon");
+      await text(s, clock, manager, "Mina, 32");
+      const id = (await memberId(manager))!;
+      const request = "We're hiring a data analyst, 2 openings, $90k-$120k";
+      for (const site of ["onsite", "hybrid in forest hills", "hybrid in Jersey City, but I live in Brooklyn"]) {
+        await text(s, clock, manager, `${request}, ${site}`);
+        expect(await last(id)).toBe(POSTING_COPY.askArea);
+        expect(await postings(id)).toHaveLength(0);
+      }
+      await text(s, clock, manager, "yes");
+      expect(await last(id)).toBe(POSTING_COPY.askArea);
+      expect(await postings(id)).toHaveLength(0);
+      await text(s, clock, manager, "Williamsburg");
+      expect(await last(id)).toMatch(/hybrid in Williamsburg/);
+      await text(s, clock, manager, "yes");
+      const [job] = await postings(id);
+      expect(job).toMatchObject({ status: "active", objective: "Hire: data analyst" });
+      const tags = async () => (await sql`select tags from network.facets where app_id='peon' and member_id=${id} and ${`peon:posting:${job.id}`} = any(tags)`).flatMap(row => row.tags);
+      expect(await tags()).toContain("peon:area:williamsburg");
+      await text(s, clock, manager, "Update my data analyst post: hybrid in Newark");
+      expect(await last(id)).toBe(POSTING_COPY.askArea);
+      expect(await tags()).toContain("peon:area:williamsburg");
+      await text(s, clock, manager, "remote");
+      expect(await last(id)).toMatch(/remote/);
+      await text(s, clock, manager, "yes");
+      expect(await tags()).toContain("peon:mode:remote");
+      expect(await tags()).not.toContain("peon:area:williamsburg");
+    } finally { await s.close(); }
+  }, T);
+
   test("a job post by text is read back, saved on the yes, kept across a restart, and closed by staff", async () => {
     const clock = new SimClock(START);
     let s = svc = service(clock);
@@ -164,6 +200,8 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await text(s, clock, ROWAN, "Job posting: $65k-$75k");
     expect(await last(rowan)).toBe(POSTING_COPY.askTitle);
     await text(s, clock, ROWAN, "Data analyst");
+    expect(await last(rowan)).toBe(POSTING_COPY.askArea);
+    await text(s, clock, ROWAN, "Brooklyn");
     expect(await last(rowan)).toMatch(/Data analyst, 1 opening, \$65k-\$75k/);
     await text(s, clock, ROWAN, "yes");
     expect(await last(rowan)).toMatch(/^Posted: data analyst\./);

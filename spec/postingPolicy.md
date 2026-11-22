@@ -16,6 +16,18 @@ pure def missingPostingFields(isClose: bool, hasTitle: bool, hasPay: bool): List
   else List("title", "pay")
 ```
 
+### A post with a workplace needs a supported area
+
+Ask for the job's neighborhood before the manager confirms a new or updated onsite or hybrid post. The default mode is onsite. A named worksite that the reader cannot place also needs an answer. Keep a known area during an unrelated edit, and ask again if the manager changes it to an unsupported site. A remote post and a close request need no area. Apply the same check before saving a text draft saved before this rule.
+
+```quint
+pure def postingNeedsArea(isClose: bool, remote: bool, hasArea: bool): bool =
+  not(isClose or remote or hasArea)
+
+pure def lawOnsiteDraftWithoutAreaNeedsAnswer(isClose: bool, remote: bool): bool =
+  postingNeedsArea(isClose, remote, false) == not(isClose or remote)
+```
+
 ### A posting has between one and fifty openings
 
 The opening count is an integer. The shell validates the numeric type before calling this rule.

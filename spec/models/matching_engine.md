@@ -25,6 +25,8 @@ evidence, judgment views, probe order, and cached matching profiles. The [repeat
 
 The [profile skill rule](../profileSkillLearning.md) applies to the offline reader. The Network adds eligible skills to the member's matching facets and retains previously learned skills. The model takes the reader's clause evidence as input. The optional model reader has its own prompt and validator and is outside this transition.
 
+[Job posting policy](../postingPolicy.md#a-post-with-a-workplace-needs-a-supported-area) makes a supported site a condition of in-person read-back and publication. The Peon model below covers onsite and hybrid posts. A direct area answer can complete an unconfirmed draft, and an early yes leaves it open. The signed integration also covers an update to remote mode, which does not require a site.
+
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -529,8 +531,13 @@ module matching_engine {
   }
   action mgrDraftUpdate(id: str, openings: int): bool = all {
     peon.draft.kind == "none", peon.posting.get(id).status == "active", not(peon.mgrHeld),
-    peon' = { ...peon, draft: { ...noDraft, kind: "update", id: id, openings: openings } },
+    peon' = { ...peon, draft: { ...noDraft, kind: "update", id: id, openings: openings, areaOk: peon.posting.get(id).areaOk } },
     ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "mgrDraftUpdate",
+  }
+  action mgrAreaReply: bool = all {
+    Set("new", "update").contains(peon.draft.kind), not(peon.draft.areaOk),
+    peon' = { ...peon, draft: { ...peon.draft, areaOk: true } },
+    ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "mgrAreaReply",
   }
   // "Close my data analyst post" or "we filled it" (jobs.ts readPostingText; FILLED_COMMAND sets `filled`).
   action mgrDraftClose(id: str, said: str): bool = all {
@@ -566,12 +573,13 @@ module matching_engine {
       if (isClose) { ...prev, status: "closed", reason: if (d.said == "filled") "filled" else "closed", version: prev.version + 1 }
       else { status: "active", openings: openings, stated: stated, reason: "",
              createdAt: if (prev.status == "none") now else prev.createdAt, version: prev.version + 1,
-             seniority: if (d.kind == "new") d.seniority else prev.seniority, areaOk: if (d.kind == "new") d.areaOk else prev.areaOk }
-    val refused = not(isClose) and peon.mgrHeld                        // managerProblem
+             seniority: if (d.kind == "new") d.seniority else prev.seniority, areaOk: d.areaOk }
+    val needsSite = not(isClose or d.areaOk)
+    val refused = not(isClose) and (peon.mgrHeld or needsSite)                        // managerProblem
     val saves = src == "sms" and not(isFinal) and not(refused)
     val postings = if (saves) peon.posting.set(d.id, saved) else peon.posting
     all {
-      peon' = if (src == "mcp") peon else { ...peon, draft: noDraft, posting: postings,
+      peon' = if (src == "mcp" or needsSite) peon else { ...peon, draft: noDraft, posting: postings,
         seat: if (isClose and saves) peon.seat.setBy(d.id, endSeat) else peon.seat },
       ph' = { ...ph,
         mcpConfirmed: ph.mcpConfirmed or (src == "mcp" and postings != peon.posting),
@@ -768,7 +776,7 @@ module matching_engine {
     nondet src = Set("sms", "mcp").oneOf()
     nondet said = Set("filled", "closed").oneOf()
     any {
-      any { all { n > 0, mgrDraftNew(id, n, b1, b2, b3) }, mgrDraftUpdate(id, n), mgrDraftClose(id, said), mgrNo, mgrYes(src) },
+      any { all { n > 0, mgrDraftNew(id, n, b1, b2, b3) }, mgrDraftUpdate(id, n), mgrDraftClose(id, said), mgrAreaReply, mgrNo, mgrYes(src) },
       any { staffClose(id, said), staffSave(id, n), staffVerify, harnessCandidate, all { safetyEvents, setMgrHold(b1) } },
       any { candidateDraft(b1), candidateConfirm(b2) },
       if (ph.seatFilled) {
@@ -1110,6 +1118,12 @@ module matching_engine {
     .then(hardFields("a")).expect(not(PAIRS.exists(p => has(p, "k") and enginePairs.contains(p))))
 
   // SD-042 fixed (peon-posting-lifecycle.integration.test.ts): the assistant's "yes" does not post.
+  run inPersonPostingNeedsSiteTest = initWith("prod", false, "peon")
+    .then(mgrDraftNew("A", 1, true, false, false)).then(mgrYes("sms"))
+    .expect(peon.posting.get("A").status == "none" and peon.draft.kind == "new")
+    .then(mgrAreaReply).then(mgrYes("sms"))
+    .expect(peon.posting.get("A").status == "active" and peon.posting.get("A").areaOk and safety)
+
   run mcpPostingTest = initWith("prod", false, "peon")
     .then(mgrDraftNew("A", 2, true, true, false)).then(mgrYes("mcp"))
     .expect(peon.posting.get("A").status == "none" and peon.draft.kind == "new" and confirmedInOwnThread)
