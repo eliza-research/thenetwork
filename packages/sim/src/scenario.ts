@@ -72,6 +72,7 @@ export interface Scenario {
 export interface ExpectationResult { expectation: Expectation; status: "pass" | "fail" | "skipped"; detail: string }
 /** `vacuous`: every expectation was skipped for this network, so nothing was checked and the run does not pass. */
 export interface ScenarioResult { name: string; seed: number; pass: boolean; vacuous: boolean; results: ExpectationResult[]; world: WorldResult }
+type MeetingOutcome = Extract<RunRecord, { type: "outcome" }>;
 
 export async function loadScenario(path: string): Promise<Scenario> {
   return (await fileAt(path).json()) as Scenario;
@@ -187,7 +188,7 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
       case "meeting_held": {
         const need = e.min ?? e.personas.length;
         const named = [...new Set(e.personas)];
-        const hit = recs.find(r => r.type === "outcome"
+        const hit = recs.find((r): r is MeetingOutcome => r.type === "outcome"
           && observatoryMeetingHeld(Object.values(r.attendance).filter(a => a.showed).length)
           && named.filter(id => r.attendance[id]?.showed).length >= need);
         return ok(!!hit, hit ? `meeting ${hit.meetingId}` : `no held meeting with >= ${need} of them attending`);
@@ -197,7 +198,7 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         return ok(!!hit, hit ? "cancelled with notice" : "no flake notice recorded");
       }
       case "others_notified_of_drop": {
-        const outcome = recs.find(r => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice);
+        const outcome = recs.find((r): r is MeetingOutcome => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice === true);
         if (!outcome) return ok(false, "no drop happened");
         const others = Object.entries(outcome.attendance)
           .filter(([id, attendance]) => id !== e.persona && (attendance.showed || !attendance.cancelledWithNotice));
