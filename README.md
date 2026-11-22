@@ -135,7 +135,11 @@ from The Network root.
 | | `pnpm run typecheck`, `pnpm run test:integration`, `pnpm run test:e2e`, `pnpm run sim` | Check the application and the live-code seams. |
 
 The spec checker uses an executable projection of `spec/` and the
-conformance inputs under `test/`. The
+conformance inputs under `test/`. Normal checks, generation, and focused
+conformance reuse completed Quint, LemmaScript, and Dafny actions in
+`.spec-cache/formal`, keyed by the installed tools and their inputs. Each
+projection recomputes stage results and runs the application journeys. Acceptance and
+nightly checks start with an empty cache. The
 [shared-line consent](spec/sharedLineConsentJourney.md),
 [saved profile](spec/savedProfileJourney.md), and
 [gateway turn receipt](spec/turnReceiptJourney.md) journeys run through
