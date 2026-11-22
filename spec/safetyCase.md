@@ -118,6 +118,21 @@ pure def lawConditionalSafetyRequestCannotResolveTarget(directCommand: bool): bo
   not(safetyRequestMayResolveTarget(directCommand, true))
 ```
 
+### Report language distinguishes physical harm from casual contact
+
+A direct affirmative statement that the counterpart choked the reporter is unsafe report evidence. Treat “hit me up” as a casual contact idiom. Disregard that idiom and denied evidence when classifying the report. The established counterpart and check-in receipt rules still apply.
+
+```quint
+pure def acceptsReportEvidence(affirmative: bool, casualContact: bool): bool =
+  affirmative and not(casualContact)
+
+pure def lawCasualContactDoesNotEstablishHarm(affirmative: bool): bool =
+  not(acceptsReportEvidence(affirmative, true))
+
+pure def lawDeniedEvidenceDoesNotEstablishHarm(casualContact: bool): bool =
+  not(acceptsReportEvidence(false, casualContact))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.

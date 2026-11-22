@@ -183,6 +183,26 @@ export function lawConditionalSafetyRequestCannotResolveTarget(directCommand: bo
   return !safetyRequestMayResolveTarget(directCommand, true);
 }
 
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function acceptsReportEvidence(affirmative: boolean, casualContact: boolean): boolean {
+  return affirmative && !casualContact;
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function lawCasualContactDoesNotEstablishHarm(affirmative: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsReportEvidence(affirmative, true);
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function lawDeniedEvidenceDoesNotEstablishHarm(casualContact: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsReportEvidence(false, casualContact);
+}
+
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
 export function reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision, sameMember: boolean, reportMatches: boolean): ReportPhase {
