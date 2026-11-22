@@ -271,7 +271,7 @@ pure def lawWeekdayMeetingSlotNeedsEvening(localWeekday: int, localHour: int): b
 
 ### Count one attendance outcome per person and booked date
 
-Slop counts each booked date once in a member's history, even when both people reply. It keeps each reply and learns the booked slot once per attendee. Count an absence only for a participant with direct attribution. An exact self-reported absence takes precedence over completed-date evidence for that participant and booking. For an older reply, use the saved opportunity, feedback author and self-reported attendance when they are available. An absence with no attribution does not affect either member. A standalone interaction without an opportunity ID uses its own record ID.
+Slop counts each booked date once in a member's history, even when both people reply. It keeps each reply and learns the booked slot once per attendee. Count an absence only for a participant with direct attribution. An exact self-reported absence takes precedence over completed-date evidence for that participant and booking. For an older reply, use the saved opportunity, feedback author and self-reported attendance when they are available. An absence with no attribution does not affect either member. A simulated attendance outcome without the member's own evidence also leaves absence unattributed in the engine input. A standalone interaction without an opportunity ID uses its own record ID.
 
 ```quint
 pure def slopCompletedDateCounts(completed: bool, exactAbsence: bool): bool =

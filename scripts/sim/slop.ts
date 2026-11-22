@@ -150,6 +150,12 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       expect(r.flows.every(f => !f.declaredMinor)).toBe(true);
     }
   });
+  await b.run("world: a no-show without a member's check-in remains unattributed", () => {
+    const run = runSlopWorld({ seed: 5, perCity: 120, weeks: 3, matcher: BASELINES.random as never });
+    const absent = run.world.state.interactions.filter(interaction => interaction.outcome === "no_show");
+    expect(absent.length).toBeGreaterThan(0);
+    expect(absent.every(interaction => interaction.noShowBy === undefined)).toBe(true);
+  });
   await b.run("world: a check-in report holds the offender (no new harassment victim after the first report)", () => {
     const r = runSlopWorld({ seed: 5, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
     const firstReport = new Map<string, number>();
