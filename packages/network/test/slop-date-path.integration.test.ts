@@ -491,7 +491,11 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     { scenario: "with a casual contact idiom", answer: "He hit me up after dinner.", safety: true, missing: false, report: undefined },
     { scenario: "with direct disclosure of physical harm", answer: "My date choked me.", safety: true, missing: false, report: "unsafe" },
     { scenario: "with a denial of physical harm", answer: "My date never choked me.", safety: true, missing: false, report: undefined },
-  ])("a signed check-in is feedback about the finished date $scenario", async ({ scenario, answer, missing, report, safety }) => {
+    { scenario: "with positive sentiment about the finished date", answer: "We hit it off.", missing: false, report: undefined, sentiment: "positive" },
+    { scenario: "with neutral sentiment about the finished date", answer: "It was okay.", missing: false, report: undefined, sentiment: "neutral" },
+    { scenario: "with quoted sentiment about the finished date", answer: "'We hit it off.'", missing: false, report: undefined, sentiment: "neutral" },
+    { scenario: "with negated sentiment about the finished date", answer: "We didn't hit it off.", missing: false, report: undefined, sentiment: "neutral" },
+  ])("a signed check-in is feedback about the finished date $scenario", async ({ scenario, answer, missing, report, safety, sentiment }) => {
     // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
     // spec/meetingSettlement.md, "Classify each attendee from the available reports"
     // spec/safetyCase.md, "Report language distinguishes physical harm from casual contact"
@@ -575,6 +579,14 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       ? [{ reporterId: sam, subjectId: rae, kind: report, opportunityId: id, source: "check_in" }]
       : []);
     expect(afterOther.blocks).toHaveLength(report ? 1 : 0);
+    if (sentiment) {
+      const feedback = afterOther.feedback.find(item => item.from === sam && item.opportunityId === id);
+      expect(feedback).toMatchObject({ sentiment, wouldMeetAgain: false });
+      expect(feedback?.repeatConsent).toBeUndefined();
+      const ownExperience = afterOther.opps.find(opp => opp.id === id)?.post?.[sam];
+      expect(ownExperience?.worthwhile === true).toBe(sentiment === "positive");
+      expect(ownExperience?.confirmedRoster).toBeUndefined();
+    }
     if (safety) {
       await service.close(); svc = undefined;
       return;

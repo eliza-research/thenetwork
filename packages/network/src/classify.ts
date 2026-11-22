@@ -665,7 +665,8 @@ export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | 
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const { self: selfNoShow, other: otherNoShow } = attendanceAbsences(t);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
-  const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
+  const positive = /great|clicked|loved|amazing|nice|easy to talk/.test(t) || /^we hit it off[.!]*$/.test(t.trim());
+  const sentiment = negative ? "negative" : positive ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
   return { sentiment, selfNoShow, otherNoShow, again };
 }
