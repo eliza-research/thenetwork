@@ -1,5 +1,3 @@
-// Generic match profiles: one per lane membership of a matchable member or entity (a member, or a
-// peon job seat owned by a manager). Packs supply the vectors; the engine owns the rest.
 import type { Category, City, MemberId } from "@thenetwork/core";
 import {
   laneOffered, laneShape, laneSidesCompatible, standingCeiling, standingUncertaintyCeiling,
@@ -14,16 +12,13 @@ import { standingObservations } from "./standing.ts";
 export type EntityId = string & { readonly __brand: "EntityId" };
 export const isEntityId = (value: string): value is EntityId => value.length > 0;
 
-/** Interned tag ids, sorted ascending, no duplicates. */
 export type TagSet = readonly number[];
 
-/** One lane membership as a pack reports it. */
 export interface Membership {
   readonly id: string;
   readonly lane: MatchLane;
   readonly side: LaneSide;
   readonly market: City;
-  /** Introductions this entity can still take this week; discovery requires a positive value. */
   readonly capacity: number;
 }
 export interface MatchEntity extends Membership { readonly memberId: MemberId }
@@ -32,26 +27,19 @@ export interface EntityTags {
   readonly seeks: readonly string[];
   readonly interests: readonly string[];
 }
-/** Whole numbers from the generated memberStanding helpers; the engine clamps them to their ranges. */
 export interface EntityStanding {
   readonly standing: number;
   readonly uncertainty: number;
-  /** Exact source identities used for the estimate. Kept out of public match profiles and logs. */
   readonly evidenceIds?: readonly string[];
 }
-/**
- * A hard-constraint segment of one membership (spec/candidateSearch.md, "Segment blocking never drops
- * a pair the pair gate admits"): its own segment and the segments it can pair with. A pack gives
- * segments only as a superset of its own pair rules.
- */
 export interface EntitySegment { readonly own: string; readonly partners: readonly string[] }
-export interface EntityMask { readonly own: number; readonly accepts: number }
-export interface MatchSegment { readonly own: string; readonly partners: ReadonlySet<string> }
-export interface PackTraits {
+interface EntityMask { readonly own: number; readonly accepts: number }
+interface MatchSegment { readonly own: string; readonly partners: ReadonlySet<string> }
+interface PackTraits {
   readonly costs: readonly number[];
   of(w: World, entity: MatchEntity): readonly number[];
 }
-export interface PackClasses {
+interface PackClasses {
   of(w: World, entity: MatchEntity): number;
   cap(w: World, a: MatchProfile, packClass: number, untouched: boolean): number;
 }
@@ -87,14 +75,12 @@ export interface MatchProfile {
   readonly packClass?: number;
 }
 
-/** The legacy category whose opt-in, cooldowns and pack pair rules apply to a lane. */
 const LANE_CATEGORY: Readonly<Record<MatchLane, Category>> = {
   Friend: "social", Date: "romance", Cofounder: "professional", Intro: "professional",
   Hire: "professional", Mentor: "professional", Invest: "professional",
 };
 export const laneCategory = (lane: MatchLane): Category => LANE_CATEGORY[lane];
 
-/** The side a partner holds: the same side in a Peers lane, the other side in a TwoSided lane. */
 export function partnerSide(lane: MatchLane, side: LaneSide): LaneSide {
   if (laneShape(lane) === "Peers") return side;
   switch (side) {
@@ -114,9 +100,8 @@ export function wholeNumber(value: number, what: string): number {
 }
 const clamp = (value: number, ceiling: number): number => (value < 0 ? 0 : value > ceiling ? ceiling : value);
 
-export interface TagInterner { readonly size: number; tagSet(tags: readonly string[]): TagSet }
-/** Ids follow the sorted order of the distinct tags, so one run always interns the same way. */
-export function internTags(tags: Iterable<string>): TagInterner {
+interface TagInterner { readonly size: number; tagSet(tags: readonly string[]): TagSet }
+function internTags(tags: Iterable<string>): TagInterner {
   const sorted = [...new Set(tags)].sort(compareText);
   const ids = new Map(sorted.map((tag, id) => [tag, id] as const));
   return {

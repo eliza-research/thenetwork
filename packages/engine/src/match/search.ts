@@ -10,8 +10,8 @@ import { partnerBlock, type CandidateBlock, type CandidateIndex, type Postings, 
 import { gatePair, masksAdmit, packValueOf, pairArithmetic, pairValueOf, vectorsOf, weightedTerms, type PairCheck } from "./pair.ts";
 import { compareText, wholeNumber, type EntityId, type MatchProfile, type TagSet } from "./profile.ts";
 
-export interface RankedProfile { readonly profile: MatchProfile; readonly value: number }
-export interface SearchCounters {
+interface RankedProfile { readonly profile: MatchProfile; readonly value: number }
+interface SearchCounters {
   bounds: number; checksAfterSettled: number; boundViolations: number; packBoundViolations: number; memoHits: number;
   readonly refusals: Record<string, number>;
 }

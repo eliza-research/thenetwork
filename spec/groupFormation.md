@@ -8,7 +8,7 @@ The [candidate pool model](models/candidate_pool.md) follows groups into the Net
 
 ### Only eligible adults enter the group search
 
-A forced participant who fails the adult check makes the whole request ineligible. Other candidates who fail it stay outside the search. The Network applies the same check to each invitee and host of a plan at the moment it submits the plan for review, whoever built it: a plan with one who is not an adult then is not submitted. The planner's view of the members can be older than the member records. Changed 2026-11-17 (age safety review): the Network now checks each invitee and host again at submit, because the planner's view can be older than the records. A candidate already in the partial group, or incompatible with any of its members, cannot extend that group.
+A forced participant who fails the adult check makes the whole request ineligible. Other candidates who fail it stay outside the search. The Network applies the same check to each invitee and host of a plan at the moment it submits the plan for review, whoever built it: a plan with one who is not an adult then is not submitted. The planner's view of the members can be older than the member records. Changed 2026-11-17 (age safety review): the Network now checks each invitee and host again at submit, because the planner's view can be older than the records. The circle builder grows a partial group only by a candidate outside it that has a pair value at or above the circle pair floor with each of its members, and `circleCoherent` decides whether the grown circle is admitted. This changed 2026-11-22: the rule had an `extensionAllowed` predicate that no code called, so it was removed and the rule now names the check that the builder makes.
 
 ```quint
 type FormationPhase = AwaitingPool | Forming | PrimaryChosen | RankingAlternates | Finished
@@ -31,21 +31,17 @@ pure def startSearch(g: Formation, forcedEligible: bool, hostRequired: bool): Fo
   { ...g, phase: Forming, hostRequired: hostRequired }
 
 pure def poolEligible(adult: bool): bool = adult
-pure def extensionAllowed(alreadyIncluded: bool, compatible: bool): bool = not(alreadyIncluded) and compatible
 ```
 
 ### A primary group has a common place and meets its requirements
 
-The scoring shell checks whether the participants have a common city in their windows and whether it is the required city, if one was set. The search keeps groups whose members meet the minimum pairwise fit. A final primary group must meet the configured minimum size. If a host is required, it must contain a host. A configured maximum bounds the search. The shell also supplies the circle evidence for the chosen members and the circle limits. The group is chosen only when the evidence counts exactly these members and the circle is coherent.
+The scoring shell checks whether the participants have a common city in their windows and whether it is the required city, if one was set. The search keeps groups whose members meet the minimum pairwise fit: `circleCoherent` refuses a circle with a pair below the pair floor or without a pair value. This changed 2026-11-22: a separate `groupFitAllowed` predicate that no code called was removed, because `circleCoherent` already makes this decision. A final primary group must meet the configured minimum size. If a host is required, it must contain a host. A configured maximum bounds the search. The shell also supplies the circle evidence for the chosen members and the circle limits. The group is chosen only when the evidence counts exactly these members and the circle is coherent.
 
 ```quint
 pure val membersValues = Set(List("a", "b", "c"), List("a", "b"))
 
 pure def groupLocationAllowed(hasOverlap: bool, requiresCity: bool, matchingCity: bool): bool =
   hasOverlap and (not(requiresCity) or matchingCity)
-
-pure def groupFitAllowed(hasPairs: bool, belowPairFloor: bool): bool =
-  not(hasPairs) or not(belowPairFloor)
 
 pure def primaryAllowed(g: Formation, meetsMinimum: bool, hasHost: bool): bool =
   g.phase == Forming and meetsMinimum and (not(g.hostRequired) or hasHost)

@@ -1,7 +1,3 @@
-// slopPack on the match core: one Date-lane membership per dating market of a member who can be matched, the dating
-// profile as tags, the private appearance rating as standing, and the directed compatibility
-// estimate as the pack value. The one generator turns the lane's searched edges into candidates:
-// no pair outside the bounded candidate search is ever checked.
 import type { City, MemberId } from "@thenetwork/core";
 import { DAY, withinMutualRadius } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
@@ -26,7 +22,6 @@ export const SLOP_GENERATOR = "slop_reciprocal";
 const DATING: MemberCheck = { category: SLOP_LANE, role: "peer", format: "one_to_one", timeSensitive: false };
 const profilesOf = (w: World) => slopProfiles(w.input, w.canonical);
 
-/** The member probed first: the one with the live want (asked most recently), then the more responsive one. */
 export function firstOf(a: SlopProfile, b: SlopProfile, now: number): [SlopProfile, SlopProfile] {
   const fresh = (p: SlopProfile) => (p.history.lastAskAt !== undefined && now - p.history.lastAskAt < 7 * DAY ? p.history.lastAskAt : -Infinity);
   const fa = fresh(a), fb = fresh(b);
@@ -36,28 +31,16 @@ export function firstOf(a: SlopProfile, b: SlopProfile, now: number): [SlopProfi
   return a.id < b.id ? [a, b] : [b, a];
 }
 
-/**
- * The markets of a member's Date memberships: every market they date in this week (scope and
- * visits, PRD 40.5) that the pack serves, home first. The home membership's entity id is the member
- * id; the others are `<member>@<market>`.
- */
 function datingMemberships(memberId: MemberId, p: SlopProfile, markets: readonly City[]): { id: string; market: City }[] {
   const open = datingMarkets(p).filter(m => markets.includes(m));
   const ordered = open.includes(p.homeMarket) ? [p.homeMarket, ...open.filter(m => m !== p.homeMarket)] : open;
   return ordered.map((market, i) => ({ id: i === 0 ? memberId : `${memberId}@${market}`, market }));
 }
 
-/** A stated type dimension (a unit vector over 5 dimensions) counts when its weight reaches this. */
 const TYPE_SIGNAL = 0.3;
 const typeTags = (dims: readonly number[] | undefined): string[] =>
   (dims ?? []).flatMap((x, i) => (x >= TYPE_SIGNAL ? [`type:${i}:high`] : x <= -TYPE_SIGNAL ? [`type:${i}:low`] : []));
 
-/**
- * One vocabulary for both directions: offers say who the member is (goal, lifestyle, self-described
- * type, interests, date ideas, free slots); seeks say what they stated they want in the same words
- * (the same goal, the same plans for kids when not casual, their type, their date ideas and slots);
- * interests are the things two people could share.
- */
 export function dateTags(p: SlopProfile): EntityTags {
   const v = p.values;
   const known = (key: string, value: string | number | undefined): string[] => (value === undefined ? [] : [`${key}:${value}`]);
@@ -77,9 +60,7 @@ export function dateTags(p: SlopProfile): EntityTags {
   };
 }
 
-/** Every cell a member can be placed on: profiles place members only on cells of table zips (cellIn). */
 const ZIP_CELLS: readonly Cell[] = [...new Map(ZIPS.flatMap(z => { const c = cellOfZip(z.zip); return c ? [[c.id, c] as const] : []; })).values()];
-/** Per run: the cells within each (cell, limit) and the partner list of each (seeks, cell, limit). */
 interface SegmentMemo { readonly cells: Map<string, readonly string[]>; readonly partners: Map<string, readonly string[]> }
 const segmentMemo = new WeakMap<World, SegmentMemo>();
 function segmentMemoOf(w: World): SegmentMemo {
@@ -88,7 +69,6 @@ function segmentMemoOf(w: World): SegmentMemo {
   return memo;
 }
 
-/** The cells within one member's own limit: their half of withinMutualRadius (geo.ts mutualMarkets). */
 function reachableCells(memo: SegmentMemo, cell: Cell, limit: number, margin: number): readonly string[] {
   const key = `${cell.id}|${limit}|${margin}`;
   let cells = memo.cells.get(key);
@@ -174,10 +154,6 @@ export function slopVectors(o: SlopPackOptions): PackVectors {
   };
 }
 
-/**
- * How many partners the member's bounded searches kept this run, over all their Date markets
- * (Infinity without a Date profile, as for a member with no market or no capacity left this week).
- */
 export function dateCandidateCount(w: World, id: MemberId): number {
   const profiles = w.match.profilesOf(id).filter(p => p.lane === SLOP_MATCH_LANE);
   return profiles.length ? profiles.reduce((n, p) => n + w.match.candidates(p).kept.length, 0) : Infinity;
@@ -198,8 +174,6 @@ export function slopGenerators(o: SlopPackOptions): GeneratorSpec[] {
         if (reason) countExclusion(ctx, reason);
       }
       const markets = w.pack.geo.markets(w.cfg);
-      // One candidate per member pair: a pair that meets in several shared markets keeps the edge of
-      // the highest value whose market fits both radii, then the one in more home markets, then by market.
       const homes = (x: MatchProfile, y: MatchProfile) => Number(x.id === x.memberId) + Number(y.id === y.memberId);
       const best = new Map<string, { x: MatchProfile; y: MatchProfile; px: SlopProfile; py: SlopProfile; value: number }>();
       for (const edge of w.match.edges(SLOP_MATCH_LANE)) {

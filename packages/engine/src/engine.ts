@@ -291,7 +291,10 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
   }
   const search = w.match.tally();
-  if (search.members > 0) runLog.search = search;
+  if (search.members > 0) {
+    runLog.search = search;
+    runLog.searchOutcomes = w.match.searchOutcomes();
+  }
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.

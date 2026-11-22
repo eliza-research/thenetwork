@@ -1,9 +1,3 @@
-// friends.help on the generic match core: one Friend membership (Peers) per adult member who passes
-// the pack's member rules and has a home neighborhood. Interests are activity tags, seeks are the
-// member's specific wants, offers are what the member brings. Closeness compares home position,
-// schedule lean and social energy. Friend has no vertical dimension: everyone stands in the middle.
-// The segment is the home neighborhood and the tolerance class, so a search reads only the
-// neighborhoods within transit tolerance.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { friendAdmits, friendOpennessUnanswered, type FriendStatement, type StatedGender } from "../../../../core/src/generated/mutualOpenness.ts";
@@ -15,7 +9,6 @@ import { ACTIVITIES } from "../network/activities.ts";
 import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, NEIGHBORHOODS, transitMinutes, withinTransitTolerance, type Neighborhood } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
 
-/** The activity tags friends.help plans around. */
 export const FRIENDS_ACTIVITY_TAGS: ReadonlySet<string> = new Set(ACTIVITIES.filter(a => !FRIENDS_EXCLUDED_ACTIVITIES.has(a.id)).flatMap(a => a.tags));
 
 const SEEK_KINDS = new Set(["desire", "goal"]);
@@ -25,7 +18,6 @@ const MIDDLE_ENERGY = 1;
 const KM_PER_DEGREE_NORTH = 111;
 const KM_PER_DEGREE_EAST = 84;
 
-/** Weekend share of the member's usual free slots, permille (500 when none are stated). */
 function weekendLean(w: World, id: MemberId): number {
   const days = (friendsInfo(w).get(id)?.standing ?? []).flatMap(s => s.byDay);
   if (days.length === 0) return 500;
@@ -34,7 +26,6 @@ function weekendLean(w: World, id: MemberId): number {
 
 const homeOf = (w: World, id: MemberId) => friendsInfo(w).get(id)?.home;
 
-/** Upper bounds (minutes) of the tolerance classes; a tolerance above the last is in an unbounded class. */
 const TOLERANCE_CLASSES = [10, 15, 20, 30, 40, 60, 90, 120] as const;
 const toleranceClass = (tolerance: number): number => {
   const k = TOLERANCE_CLASSES.findIndex(bound => tolerance <= bound);
@@ -43,7 +34,6 @@ const toleranceClass = (tolerance: number): number => {
 const classBound = (k: number): number => TOLERANCE_CLASSES[k] ?? Infinity;
 const homeSegment = (home: Neighborhood, k: number, gender: StatedGender): string => `${home.id}|${k}|${gender}`;
 const FRIEND_GENDERS: readonly StatedGender[] = ["GenderWoman", "GenderMan", "GenderNonbinary", "GenderUnstated"];
-/** Per run: the segment of each (home, tolerance) pair, so members with equal values share one partner list. */
 const reachableByRun = new WeakMap<World, Map<string, EntitySegment>>();
 
 function friendsSegment(w: World, home: Neighborhood, tolerance: number, friend: FriendStatement): EntitySegment {
@@ -78,8 +68,6 @@ export const friendsVectors: PackVectors = {
     return {
       interests,
       seeks: match.filter(f => SEEK_KINDS.has(f.kind)).flatMap(f => f.tags),
-      // A member who does an activity brings it to whoever seeks a partner for it (coverage), apart
-      // from the shared-interest term.
       offers: [...interests, ...match.filter(f => OFFER_KINDS.has(f.kind)).flatMap(f => f.tags)],
     };
   },
@@ -89,11 +77,9 @@ export const friendsVectors: PackVectors = {
   },
   standing: () => ({ standing: standingMiddle, uncertainty: 0 }),
   traits: {
-    // Per unit: 50 per km north or east (0 at 20 km), 1 per permille of weekend lean, 250 per energy step.
     costs: [50, 50, 1, 250],
     of(w, entity) {
       const id = entity.memberId;
-      // memberships() gives no Friend entity without a home.
       const home = homeOf(w, id)!;
       return [
         Math.round(home.lat * KM_PER_DEGREE_NORTH),

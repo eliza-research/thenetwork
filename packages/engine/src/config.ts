@@ -53,7 +53,7 @@ export interface EngineConfig {
   };
   floors: { fit: number; mutualBenefit: number; confidence: number; maxSocialRisk: number; judgeDimension: number };
   weights: Weights;
-  retrieval: { topK: number; exposureFloorK: number; lowExposureMax: number; minSim: number; warmMinSim: number; poolSim: number };
+  retrieval: { lowExposureMax: number; minSim: number };
   generators: Record<GeneratorName, boolean>;
   /**
    * v1.2 dispatch awareness. `skipOpenOpportunities`: members in an opportunity that was sent and
@@ -146,7 +146,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
     fit: 1.0, mutualBenefit: 0.8, warmPath: 0.2, novelty: 0.2, timingFit: 0.3,
     activationCost: 0.25, interruptionCost: 0.2, load: 0.4, repetition: 0.4, socialRisk: 0.4,
   },
-  retrieval: { topK: 50, exposureFloorK: 10, lowExposureMax: 1, minSim: 0.2, warmMinSim: 0.15, poolSim: 0.4 },
+  retrieval: { lowExposureMax: 1, minSim: 0.2 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, true])) as Record<GeneratorName, boolean>,
   // v1.2 defaults (docs/results/2026-10-07-engine-v1.2.md, 8 sim seeds, history fed). On: dispatch
   // awareness (met + worthwhile +5.1 per seed on the v1.2 snapshot), personal growth as hobby

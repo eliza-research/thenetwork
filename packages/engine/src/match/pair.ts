@@ -1,4 +1,3 @@
-// The one pair gate and the integer pair value of two profiles.
 import {
   closenessValue, coverageValue, directedUtility, noPairValue, pairValueScale, type PairSide, type UtilityTerm,
 } from "../../../core/src/generated/pairValue.ts";
@@ -8,8 +7,7 @@ import { pairReason } from "../filters.ts";
 import type { World } from "../world.ts";
 import { laneCategory, wholeNumber, type MatchProfile, type PackVectors, type TagSet } from "./profile.ts";
 
-/** |a ∩ b| for two sorted tag sets (linear merge). */
-export function intersectCount(a: TagSet, b: TagSet): number {
+function intersectCount(a: TagSet, b: TagSet): number {
   let i = 0, j = 0, count = 0;
   while (i < a.length && j < b.length) {
     const x = a[i], y = b[j];
@@ -18,9 +16,8 @@ export function intersectCount(a: TagSet, b: TagSet): number {
   return count;
 }
 
-export interface TermValues { readonly complement: number; readonly affinity: number; readonly closeness: number; readonly pack: number }
+interface TermValues { readonly complement: number; readonly affinity: number; readonly closeness: number; readonly pack: number }
 
-/** The four generic terms. A term the pack does not supply (no traits, no pack value) weighs 0. */
 export function weightedTerms(weights: LaneWeights, hasTraits: boolean, hasPackValue: boolean, values: TermValues): UtilityTerm[] {
   return [
     { weight: weights.complement, value: values.complement },
@@ -30,18 +27,16 @@ export function weightedTerms(weights: LaneWeights, hasTraits: boolean, hasPackV
   ];
 }
 
-/** Mean closeness over trait dimensions (floor). `distances[d]` pairs with `costs[d]`. */
-export function meanCloseness(distances: readonly number[], costs: readonly number[]): number {
+function meanCloseness(distances: readonly number[], costs: readonly number[]): number {
   if (costs.length === 0) return pairValueScale;
   let total = 0;
   for (let d = 0; d < costs.length; d++) total += closenessValue(distances[d], costs[d]);
   return Math.floor(total / costs.length);
 }
 
-/** The value `a` receives from `b`: coverage of a's seeks by b's offers. */
 const complementOf = (a: MatchProfile, b: MatchProfile): number => coverageValue(intersectCount(a.seeks, b.offers), a.seeks.length);
 
-export function utilityTerms(
+function utilityTerms(
   a: MatchProfile, b: MatchProfile, weights: LaneWeights, traitCosts: readonly number[], packValue: number | undefined,
 ): UtilityTerm[] {
   return weightedTerms(weights, traitCosts.length > 0, packValue !== undefined, {
@@ -52,7 +47,6 @@ export function utilityTerms(
   });
 }
 
-/** a's side of the pair (a, b). */
 export function pairSideOf(a: MatchProfile, b: MatchProfile, traitCosts: readonly number[], packValue: number | undefined): PairSide {
   return {
     utility: directedUtility(utilityTerms(a, b, laneWeights(a.lane), traitCosts, packValue)),
@@ -60,7 +54,6 @@ export function pairSideOf(a: MatchProfile, b: MatchProfile, traitCosts: readonl
   };
 }
 
-/** `a` reaches `b`: either has no segment, or b's segment is one a can pair with. */
 export const segmentReaches = (a: MatchProfile, b: MatchProfile): boolean =>
   a.segment === undefined || b.segment === undefined || a.segment.partners.has(b.segment.own);
 
@@ -89,7 +82,6 @@ export function vectorsOf(w: World): PackVectors {
   return vectors;
 }
 
-/** The pack's directed value of `b` for `a` (a whole number), or undefined when the pack supplies none. */
 export const packValueOf = (w: World, vectors: PackVectors, a: MatchProfile, b: MatchProfile): number | undefined =>
   vectors.packValue ? wholeNumber(vectors.packValue(w, a, b), "pack value") : undefined;
 

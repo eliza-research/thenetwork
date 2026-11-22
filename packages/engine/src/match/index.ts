@@ -3,7 +3,7 @@ import { blockKey, compareText, partnerSide, type MatchProfile } from "./profile
 export type Postings = ReadonlyMap<number, readonly number[]>;
 
 export interface Span { readonly start: number; readonly end: number }
-export interface SegmentSpan extends Span { readonly segment: string | undefined; readonly packClasses: readonly number[] }
+interface SegmentSpan extends Span { readonly segment: string | undefined; readonly packClasses: readonly number[] }
 
 export interface CandidateBlock {
   readonly profiles: readonly MatchProfile[];

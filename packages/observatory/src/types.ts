@@ -6,7 +6,7 @@ import type {
   ParticipationState, Presence, ScoreComponents,
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
-import type { SearchTally } from "@thenetwork/engine";
+import type { SearchOutcome, SearchTally } from "@thenetwork/engine";
 import type { ReviewPlanPreview } from "../../network/src/network.ts";
 
 export type StaffPlanPreview = ReviewPlanPreview & { app: string };
@@ -206,6 +206,7 @@ export interface EngineRunSummary {
   emptyStatesByReason: Record<string, number>;
   /** The bounded candidate search totals (spec/candidateSearch.md); zero when no search ran. */
   search: SearchTally;
+  searchOutcomes: SearchOutcome[];
   timingsMs: Record<string, number>;
   /** Highest-scoring configurations considered (selected or not), for "why did the alternatives lose". */
   top: { key: string; generator: string; participants: MemberId[]; score: number; eligible: boolean; reason?: string; selected: boolean; components: ScoreComponents }[];

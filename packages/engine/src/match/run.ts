@@ -1,9 +1,7 @@
-// One matching run over a World: the profiles, the index, and memoized searches, edges and circles.
-// Every candidate path reads pairs from here, so one pair gate and one search decide them all.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits, type MatchLane } from "../../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../../core/src/generated/pairValue.ts";
-import type { MemberStandingRow, SearchTally } from "../types.ts";
+import type { MemberStandingRow, SearchOutcome, SearchTally } from "../types.ts";
 import type { World } from "../world.ts";
 import { buildCircles, type Circle } from "./circles.ts";
 import { buildCandidateIndex, type CandidateIndex } from "./index.ts";
@@ -12,9 +10,10 @@ import { buildProfiles, compareText, type EntityId, type MatchProfile } from "./
 import { emptySearchTally, mutualEdges, PairMemo, searchCandidates, tallySearch, type MatchEdge, type SearchResult } from "./search.ts";
 import { standingKey } from "./standing.ts";
 
+const SEARCH_OUTCOME_LOG_LIMIT = 500;
+
 const existingFriendPlanProfiles = new WeakMap<World, ReadonlyMap<MemberId, MatchProfile>>();
 
-/** Pair values for a reviewed plan. Build all profiles with one interner and no discovery index. */
 export function existingFriendPlanPairValues(w: World, memberId: MemberId, peers: readonly MemberId[]): number[] | undefined {
   let profiles = existingFriendPlanProfiles.get(w);
   if (!profiles) {
@@ -54,16 +53,13 @@ export class MatchRun {
 
   profile(id: EntityId): MatchProfile | undefined { return this.byId.get(id); }
 
-  /** A member's profiles, one per lane membership (and per owned entity, such as a job seat). */
   profilesOf(memberId: MemberId): readonly MatchProfile[] { return this.byMember.get(memberId) ?? []; }
 
-  /** The member's profile in a lane, when the member has exactly that membership. */
   profileIn(memberId: MemberId, lane: MatchLane): MatchProfile | undefined {
     return this.profilesOf(memberId).find(profile => profile.lane === lane && profile.id === memberId)
       ?? this.profilesOf(memberId).find(profile => profile.lane === lane);
   }
 
-  // spec/candidateSearch.md, "Story: Keep the best candidates within a fixed number of pair checks"
   candidates(profile: MatchProfile): SearchResult {
     const done = this.searches.get(profile.id);
     if (done) return done;
@@ -72,10 +68,8 @@ export class MatchRun {
     return result;
   }
 
-  /** The pair value of two profiles through the one pair gate (noPairValue when there is none). */
   value(a: MatchProfile, b: MatchProfile): number { return pairValueOf(this.w, a, b); }
 
-  /** Every edge of a lane: one search per profile, at most the lane's search budget of pair checks each. */
   edges(lane: MatchLane): readonly MatchEdge[] {
     const done = this.laneEdges.get(lane);
     if (done) return done;
@@ -84,7 +78,6 @@ export class MatchRun {
     return edges;
   }
 
-  /** The lane's circles from its edges; a lane whose circle maximum is below 3 forms none. */
   circles(lane: MatchLane): readonly Circle[] {
     const done = this.laneCircles.get(lane);
     if (done) return done;
@@ -93,10 +86,21 @@ export class MatchRun {
     return circles;
   }
 
-  /** The cost of every search this run made (MatchingRunLog.search). */
   tally(): SearchTally {
     let tally = emptySearchTally;
     for (const result of this.searches.values()) tally = tallySearch(tally, result);
     return tally;
+  }
+
+  searchOutcomes(): SearchOutcome[] {
+    const outcomes: SearchOutcome[] = [];
+    for (const [id, result] of this.searches) {
+      const profile = this.byId.get(id);
+      if (!profile || (result.exact && result.kept.length > 0)) continue;
+      outcomes.push({ memberId: profile.memberId, lane: profile.lane, outcome: result.exact ? "empty" : "budgeted", unseenBound: result.unseenBound });
+    }
+    return outcomes
+      .sort((a, b) => b.unseenBound - a.unseenBound || compareText(a.memberId, b.memberId) || compareText(a.lane, b.lane))
+      .slice(0, SEARCH_OUTCOME_LOG_LIMIT);
   }
 }

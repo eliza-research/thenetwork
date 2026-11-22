@@ -32,6 +32,27 @@ test("candidate search can finish exactly with untagged pairs and still checks b
   expect(result.kept.map(candidate => [candidate.profile.memberId, candidate.value])).toEqual([["adult-a", 300], ["adult-b", 300]]);
   expect(world.match.profileIn("minor", "Friend")).toBeUndefined();
   expect(world.match.tally()).toMatchObject({ members: 1, exact: 1, checks: 3, touches: 4, empty: 0 });
+  expect(world.match.searchOutcomes()).toEqual([]);
+});
+
+test("an exact search that keeps no candidate is a recorded empty outcome with its bound", () => {
+  const input = emptyInput();
+  input.members.push(baseMember("owner"), baseMember("blocked"));
+  input.edges.push({ from: "owner", to: "blocked", type: "blocked", strength: 1, explicit: true, createdAt: input.now });
+  const vectors: PackVectors = {
+    memberships: (_w, id) => [{ id, lane: "Friend", side: "Peer", market: "sf", capacity: 3 }],
+    tags: () => ({ interests: [], seeks: [], offers: [] }),
+    standing: () => ({ standing: 50, uncertainty: 0 }),
+    traits: { costs: [10], of: () => [0] },
+    packValue: () => 1000,
+  };
+  const world = new World(input, resolveConfig({}), localEmbed, { ...networkPack, vectors });
+  const profile = world.match.profileIn("owner", "Friend");
+  if (!profile) throw new Error("missing Friend profile");
+
+  const result = world.match.candidates(profile);
+  expect(result).toMatchObject({ exact: true, kept: [] });
+  expect(world.match.searchOutcomes()).toEqual([{ memberId: "owner", lane: "Friend", outcome: "empty", unseenBound: result.unseenBound }]);
 });
 
 test("an unfinished dense posting keeps a sound bound before spending the pair-check budget", () => {
@@ -62,6 +83,7 @@ test("an unfinished dense posting keeps a sound bound before spending the pair-c
     members: 1, checks: 0, touches: touchLimit, exact: 0, budgeted: 1, empty: 1, largestUnseenBound: result.unseenBound,
     bounds: touchLimit, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, touchClosed: 1, checkClosed: 0, memoHits: 0, refusals: {},
   });
+  expect(world.match.searchOutcomes()).toEqual([{ memberId: "owner", lane: "Intro", outcome: "budgeted", unseenBound: result.unseenBound }]);
 });
 
 /** Owner, a best partner with the same interests, and a nearer partner who shares fewer. */

@@ -1,6 +1,3 @@
-// networkPack.vectors: what ntwrk gives the generic match core (packages/engine/src/match). Lane
-// memberships come from what a member wants and offers, tags from the pack's own vocabulary and
-// objective taxonomy, and private standing from stated and verified facts only.
 import type { Category, Facet, FacetKind, Intent, MemberId } from "@thenetwork/core";
 import { cofounderIntentEligible } from "../../../../core/src/generated/cofounderDispatch.ts";
 import { cofounderIntentObjective } from "../../../../core/src/generated/cofounderIntent.ts";
@@ -17,28 +14,24 @@ import { INTERESTS, SKILLS } from "./vocabulary.ts";
 export const MATCH_LANES: readonly MatchLane[] = ["Friend", "Date", "Cofounder", "Intro", "Hire", "Mentor", "Invest"];
 const SIDES: readonly LaneSide[] = ["Peer", "Offering", "Seeking"];
 
-export interface LaneRole { readonly lane: MatchLane; readonly side: LaneSide }
+interface LaneRole { readonly lane: MatchLane; readonly side: LaneSide }
 const INTRO: LaneRole = { lane: "Intro", side: "Peer" };
 const FRIEND: LaneRole = { lane: "Friend", side: "Peer" };
 const COFOUNDER_PEER: LaneRole = { lane: "Cofounder", side: "Peer" };
 
-/** One stated want (a live intent or a goal facet) read through the objective taxonomy. */
 export interface Want {
   readonly roles: readonly LaneRole[];
-  /** What the want asks of a partner: the skills it needs and its shared-want tag. */
   readonly seeks: readonly string[];
   readonly interests: readonly string[];
-  /** Shared-want tags: two members with the same one can satisfy each other. */
   readonly pools: readonly string[];
 }
-export interface MemberTags { readonly offers: ReadonlySet<string>; readonly seeks: ReadonlySet<string>; readonly interests: ReadonlySet<string> }
+interface MemberTags { readonly offers: ReadonlySet<string>; readonly seeks: ReadonlySet<string>; readonly interests: ReadonlySet<string> }
 
 const OFFER_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["skill", "offer", "resource"]);
 const SEEK_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["desire", "goal"]);
 const INTEREST_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["interest", "trait"]);
 const STANDING_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["fact", "skill", "offer", "resource"]);
 
-// A professional ask or offer is one about a tech-cluster interest or a skill that teaches one.
 const TECH_INTERESTS: ReadonlySet<string> = new Set(INTERESTS.filter(i => i.cluster === "tech").map(i => i.tag));
 const PROFESSIONAL_SKILLS: ReadonlySet<string> = new Set(SKILLS.flatMap(s => (s.teaches !== undefined && TECH_INTERESTS.has(s.teaches) ? [s.tag] : [])));
 const isProfessionalTag = (tag: string): boolean => TECH_INTERESTS.has(tag) || PROFESSIONAL_SKILLS.has(tag);
@@ -52,12 +45,10 @@ const INVESTOR_OFFER = /\b(investor|angel invest\w*|vc (fund|firm)|venture capit
 const MENTOR_OFFER = /\bmentor\w*\b/i;
 
 const normal = (tag: string): string => tag.trim().toLowerCase();
-/** Matching tags: lower case, without structural "key:value" tags (lane, side, level, evidence). */
 const plainTags = (tags: readonly string[]): string[] => tags.map(normal).filter(t => t.length > 0 && !t.includes(":"));
 const tagValue = (tags: readonly string[], key: string): string | undefined =>
   tags.map(normal).find(t => t.startsWith(`${key}:`))?.slice(key.length + 1);
 
-/** An explicit "lane:<Lane>" tag (with "side:<Side>", Peer when absent), as the onboarding agent writes it. */
 function taggedRole(tags: readonly string[]): LaneRole | undefined {
   const laneTag = tagValue(tags, "lane"), sideTag = tagValue(tags, "side");
   const lane = MATCH_LANES.find(l => l.toLowerCase() === laneTag);
@@ -71,7 +62,6 @@ const INTENT_ROLES: Readonly<Record<Exclude<NetworkIntentRoute, "NoRoute">, Lane
   InvestOfferRoute: { lane: "Invest", side: "Offering" }, InvestSeekRoute: { lane: "Invest", side: "Seeking" },
 };
 
-/** A specific ask has one lane and side. Only a general professional ask can open Intro. */
 function wantRoles(text: string, category: Category | undefined, tags: readonly string[], asked: readonly string[]): LaneRole[] {
   const tagged = taggedRole(tags);
   if (tagged) return [tagged];
@@ -87,7 +77,6 @@ function wantRoles(text: string, category: Category | undefined, tags: readonly 
   return route === "NoRoute" ? [] : [INTENT_ROLES[route]];
 }
 
-/** Lanes an offer opens: its explicit lane tag; else an investor offers in Invest, a mentor in Mentor; both, and any professional skill, are Peers in Intro. */
 function offerRoles(f: Facet): LaneRole[] {
   const tagged = taggedRole(f.tags);
   if (tagged) return [tagged];
@@ -120,7 +109,6 @@ const cacheOf = (w: World): RunCache => {
   return cache;
 };
 
-/** The want a live intent states. */
 export function intentWant(w: World, intent: Intent): Want {
   const cache = cacheOf(w);
   let want = cache.intents.get(intent.id);
@@ -144,7 +132,6 @@ const memberWants = (w: World, memberId: MemberId): readonly Want[] =>
 
 export const wantHas = (want: Want, role: LaneRole): boolean => want.roles.some(r => r.lane === role.lane && r.side === role.side);
 
-/** The current signed standing intent is the only authority for a Cofounder profile. */
 export function networkCofounderIntentOf(w: World, id: MemberId): Intent | undefined {
   const cache = cacheOf(w).cofounderIntents;
   if (cache.has(id)) return cache.get(id);
@@ -159,9 +146,7 @@ export function networkCofounderIntentOf(w: World, id: MemberId): Intent | undef
   return latest;
 }
 
-/** A member's matching tags from matchable or shareable facets and live wants. */
 export function memberTags(w: World, memberId: MemberId, lane?: MatchLane): MemberTags {
-  // spec/networkIntentLane.md, "One request can open one lane"
   const friend = lane === "Friend";
   const cache = cacheOf(w);
   const tagCache = friend ? cache.friendTags : cache.tags;
@@ -189,7 +174,6 @@ export function memberTags(w: World, memberId: MemberId, lane?: MatchLane): Memb
   return tags;
 }
 
-/** The id of a member's membership in one lane and side. */
 export const membershipId = (memberId: MemberId, role: LaneRole): string => `${memberId}/${role.lane}/${role.side}`;
 
 function memberships(w: World, memberId: MemberId): Membership[] {
@@ -203,8 +187,6 @@ function memberships(w: World, memberId: MemberId): Membership[] {
     if (role.lane !== "Cofounder") roles.set(membershipId(memberId, role), role);
   }
   if (networkCofounderIntentOf(w, memberId)) roles.set(membershipId(memberId, COFOUNDER_PEER), COFOUNDER_PEER);
-  // A host or a member with interests is a Friend peer without a stated social want (the profile
-  // builder still requires the social opt-in).
   if (mi.isHost || mi.match.some(f => INTEREST_KINDS.has(f.kind))) roles.set(membershipId(memberId, FRIEND), FRIEND);
   return [...roles].map(([id, { lane, side }]) => ({
     id, lane, side, market: mi.m.homeCity, capacity: laneLimits(lane).weeklyCapacity - mi.recentProactive,
@@ -233,23 +215,19 @@ function tags(w: World, entity: MatchEntity): EntityTags {
   return { offers: [...offers], seeks: [...seeks], interests: [...interests] };
 }
 
-// spec/memberStanding.md, "Standing adds reviewed facts in full and unreviewed facts at half".
-// Recognized fact tags ("<key>:<value>") and their standing points. Nothing here reads acceptance,
-// replies, warm-graph degree or any other popularity count.
 const ROLE_POINTS: ReadonlyMap<string, number> = new Map([["junior", 10], ["mid", 25], ["senior", 40], ["lead", 50], ["executive", 65], ["partner", 70]]);
 const ROUND_POINTS: ReadonlyMap<string, number> = new Map([["pre_seed", 10], ["seed", 20], ["series_a", 35], ["series_b", 50], ["growth", 65]]);
 const FUND_POINTS: ReadonlyMap<string, number> = new Map([["angel", 20], ["micro", 35], ["institutional", 55], ["large", 75]]);
 const count = (value: string): number => (/^\d{1,6}$/.test(value) ? Number(value) : 0);
 const STANDING_POINTS: ReadonlyMap<string, (value: string) => number> = new Map<string, (value: string) => number>([
-  ["evidence", count],                                   // points a reviewer or the onboarding agent already scored
-  ["role", value => ROLE_POINTS.get(value) ?? 0],        // role level
-  ["years", value => 2 * Math.min(count(value), 20)],    // years of experience
+  ["evidence", count],
+  ["role", value => ROLE_POINTS.get(value) ?? 0],
+  ["years", value => 2 * Math.min(count(value), 20)],
   ["companies_built", value => 15 * Math.min(count(value), 3)],
-  ["raised", value => ROUND_POINTS.get(value) ?? 0],     // largest round raised
-  ["fund", value => FUND_POINTS.get(value) ?? 0],        // fund managed
-  ["vouch", () => 10],                                   // a vouch from a member; counts only when reviewed
+  ["raised", value => ROUND_POINTS.get(value) ?? 0],
+  ["fund", value => FUND_POINTS.get(value) ?? 0],
+  ["vouch", () => 10],
 ]);
-/** A fact counts in full only when a source verified it or a member vouched for it. */
 const isReviewed = (f: Facet): boolean => f.provenance === "vouched" || f.provenance === "connected_source";
 
 function standing(w: World, entity: MatchEntity): EntityStanding {
@@ -271,7 +249,6 @@ function standing(w: World, entity: MatchEntity): EntityStanding {
       if (reviewed) reviewedFacts.add(f.id);
     }
   }
-  // spec/memberStanding.md, "A member with no reviewed facts gets the widest uncertainty": one fact per facet.
   return { standing: standingFromEvidence(evidence), uncertainty: standingUncertainty(reviewedFacts.size), evidenceIds: [...evidenceIds] };
 }
 

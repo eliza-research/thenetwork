@@ -36,10 +36,6 @@ export function repeatTables(w: World, profileIn: (memberId: MemberId) => MatchP
     .filter(ids => ids.length >= 2);
 }
 
-/**
- * The admission evidence of a group (spec/groupFormation.md, CircleEvidence). A pair without a value
- * (`valueOf` undefined) is not counted, so circleCoherent refuses the group (pairCount is short).
- */
 export function circleEvidence(group: readonly MatchProfile[], valueOf: (a: MatchProfile, b: MatchProfile) => number | undefined): CircleEvidence {
   let lowestPairValue = Number.MAX_SAFE_INTEGER, pairValueTotal = 0, pairCount = 0;
   for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) {
@@ -61,7 +57,6 @@ const byStanding = (a: MatchProfile, b: MatchProfile): number => a.standing - b.
 const lowestStanding = (group: readonly MatchProfile[]): MatchProfile => group.reduce((low, p) => (byStanding(p, low) < 0 ? p : low));
 const highestStanding = (group: readonly MatchProfile[]): MatchProfile => group.reduce((high, p) => (byStanding(p, high) > 0 ? p : high));
 
-// spec/groupFormation.md, "A primary circle values every pair and keeps a narrow standing spread"
 const spreadAllowed = (group: readonly MatchProfile[], band: number): boolean => {
   const low = lowestStanding(group);
   const high = highestStanding(group);

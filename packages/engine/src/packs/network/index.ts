@@ -6,6 +6,7 @@
 // for their default `pack` argument (evaluated at call time). Its top level therefore reads only
 // leaf data; function values from non-leaf modules are wrapped in arrows, and `generators` and
 // `vectors` are getters.
+import { canBeMatched } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
 import type { PackVectors } from "../../match/profile.ts";
@@ -61,9 +62,7 @@ export const networkPack: AppPack = {
     config: DEFAULT_ATTENTION,
     shipsAloneLane: "romance",
     noWarmMentionLanes: ["romance"],
-    // Was attention.ts itemGate: romance items only for opted-in adults. A view without
-    // categoriesOptIn has no romance consent: fail closed (engine-attention-plans-7).
-    itemGate: (m, it) => (it.category === "romance" && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? []).includes("romance")) ? "romance_not_allowed" : null),
+    itemGate: (m, it) => (it.category === "romance" && (!canBeMatched(m.age) || !(m.categoriesOptIn ?? []).includes("romance")) ? "romance_not_allowed" : null),
     probeAllowed: (lane, othersCount) => !(lane === "romance" && othersCount !== 1),
     laneActivity: GENERIC_ACTIVITY,
     probeText: (ctx, activity, a, ar) => networkProbeText(ctx, activity, a, ar),

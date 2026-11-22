@@ -1,83 +1,30 @@
-// slopPack options: every policy knob in one place, so ablations are a different options object
-// (makeSlopPack(options)) rather than a code change. Defaults were tuned on slop world seeds 1-4 and
-// reported on held-out seeds 5-8 (docs/results/2026-10-08-slop-pack.md). The pair value, the private
-// appearance parity band and the search bounds are the Date lane of spec/matchLane.md, not options.
-
 export interface SlopPackOptions {
-  /** safety:* cues observed in chat hold the member for human review instead of matching them. */
   safetyGate: boolean;
-  /** Which cues hold (default: all five). */
   safetyCues: readonly string[];
-  /**
-   * Verification before the first intro (PRD 40.5: selfie liveness + age assurance). A failed check
-   * (fact verify:<liveness|age>:fail) always holds the member for review; with `required`, a member
-   * without a passed check is not matched at all (PRD 40.8: 0 intros involving anyone unverified).
-   */
   verification: { required: boolean };
-  /** Behavioural trust holds from the Network's own records (reports, negative feedback, no-shows, blocks). */
-  trust: { enabled: boolean; negativeFrom: number; /** Distinct encounter-backed blocks. */ blockedBy: number; noShows: number; eagerYes: number };
-  /** Ask for an unknown age range, distance or orientation instead of proposing on a guess. */
+  trust: { enabled: boolean; negativeFrom: number; blockedBy: number; noShows: number; eagerYes: number };
   asks: boolean;
-  /** Also ask (without holding proposals back) for goal, dealbreakers and lifestyle basics when unknown. */
   compatAsks: boolean;
-  /** With compatAsks: also ask for their type and self-description (the stated-type signal). */
   typeAsk: boolean;
-  /**
-   * Hold a member's first intro while the basics question (goal, dealbreakers, lifestyle) is open:
-   * propose once they answered, or after 7 days of silence (never a lockout). Onboarding asks these
-   * before the first intro anyway (research A6).
-   */
   holdForBasics: boolean;
-  /** When asks are off: what to assume for unknown fields (the baselines' UNKNOWN_DEFAULTS). */
   unknownDefaults: { ageSpread: number; maxMiles: number };
-  /**
-   * When a hard-filter question went unanswered for 7 days (profile.ts SILENT_AFTER_DAYS): with
-   * `enabled`, propose on a NARROW guess (claimed age +- ageSpread, within maxMiles); without it
-   * (default, the founder's ask-first rule), keep asking weekly and never propose on a guess. The
-   * guess measured 1-3 stated-filter violations per seed (some members' stated range excludes
-   * their own age), so it is off.
-   */
   silentFallback: { enabled: boolean; ageSpread: number; maxMiles: number };
-  /**
-   * Re-probe a pair whose earlier probe ended BEFORE any reveal (a "no" or silence to an anonymous
-   * probe is about the week and the plan, not the person) after this many days; 0 = never. A pair
-   * that was revealed (booked, backed out, met) is never proposed again.
-   */
   reprobeAfterDays: number;
   learned: { enabled: boolean };
-  /** Congestion control and the exposure floor of the weekly assignment (assign.ts). */
   congestion: {
-    /** Proposals per member per tick (1 = one first-date thread at a time; 2 = one backup round). */
     perMemberPerTick: number;
-    /** Lift per unit of carried exposure debt (capped). */
     debtWeight: number; debtCap: number;
-    /**
-     * Scarce pools first: pairs whose scarcer member has at most this many searched partners (the
-     * pair candidates of the bounded search this run, not every eligible partner) are assigned
-     * before everyone else (then by value), so small queer pools are not crowded out by members with
-     * many options. 0 = off.
-     */
     scarceDegree: number;
-    /** A backup proposal (round 2) only for members with at most this many searched partners; 0 = none. */
     backupMaxDegree: number;
   };
-  /** Receptivity pacing: no new probe for this many days after a date the member liked; never while a mutual yes is open. */
   pacing: { likedDateDays: number };
-  /** Mutual radius safety margin in miles (cells are coarse; a pair must be inside both radii by this margin). */
   radiusMargin: number;
-  /** Each question is asked at most this many times (then the agent waits for the member). */
   maxAsksPerField: number;
-  /**
-   * Members with at most `maxDegree` partners kept by their bounded searches this run (over all
-   * their Date markets; a member without a Date profile this week is not counted) whose distance
-   * limit is under `miles` are asked once "would you consider people up to <miles> mi?" (small pools).
-   */
   widen: { enabled: boolean; maxDegree: number; miles: number };
   appearance: {
     minConfidence: number;
     bodyType: { enabled: boolean; revealedShrink: number; minConfidence: number };
   };
-  /** Pairs whose score is below this are not proposed (a dud first date costs both people an evening). */
   minValue: number;
 }
 
@@ -106,7 +53,6 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   widen: { enabled: true, maxDegree: 2, miles: 25 },
 };
 
-/** Deep-merge partial options over the defaults. */
 export function slopOptions(over: DeepPartial<SlopPackOptions> = {}): SlopPackOptions {
   const merge = (b: any, o: any): any => {
     if (o === undefined) return b;

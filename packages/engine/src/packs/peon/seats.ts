@@ -21,7 +21,7 @@
 //
 // The simulated hiring world (packages/sim/src/apps/peon) writes seats directly and never uses
 // these functions, so the pinned peon gates do not move. Pure; reads no hidden truth.
-import type { Edge, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
+import { canBeMatched, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence } from "@thenetwork/core";
 import { initial, remainingOpenings, seatRecordOccupies, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
 import type { EngineInput } from "../../types.ts";
 import { JOB_INTENT, SAFETY, T } from "./schema.ts";
@@ -62,8 +62,7 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
   const edges: Edge[] = [...snap.edges];
   for (const p of [...postings].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
     const owner = byId.get(p.memberId)!;
-    // A job seat is 18+: only a manager with a valid adult age on the record gets one (unknown is not adult).
-    if (typeof owner.age !== "number" || !Number.isInteger(owner.age) || owner.age < 18) continue;
+    if (!canBeMatched(owner.age) || !Number.isInteger(owner.age)) continue;
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
     members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);

@@ -16,7 +16,6 @@ import { intentWant } from "../network/vectors.ts";
 import { jobOf } from "./profile.ts";
 import { isSeatId } from "./seats.ts";
 
-/** The Peon peer's explicit consent, projected by the app-scoped standing-intent store. */
 export function peonCofounderIntentOf(w: World, id: MemberId): Intent | undefined {
   const member = w.get(id);
   if (!member) return undefined;
@@ -44,7 +43,6 @@ export function peonCofounderPair(w: World, a: MemberId, b: MemberId): boolean {
     && cofounderMustHavesFit(w, a, b, "peon");
 }
 
-/** The express goal describes what a peer seeks. It supplies no offer of skill. */
 export function peonCofounderTags(w: World, id: MemberId): EntityTags {
   const intent = peonCofounderIntentOf(w, id)!;
   const want = intentWant(w, intent);
@@ -61,7 +59,6 @@ export function peonCofounderTags(w: World, id: MemberId): EntityTags {
   return { offers, seeks, interests };
 }
 
-/** The bounded lane search supplies one pair per two peers. Record both exact intents. */
 export const peonCofounderGenerator: GeneratorSpec = {
   name: "peon_cofounder",
   run({ w }) {

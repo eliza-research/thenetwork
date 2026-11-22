@@ -34,7 +34,7 @@ export function summarizeRun(log: MatchingRunLog, proposals: EngineProposal[], o
       gini: fair.gini, top10Share: fair.top10Share, zeroExposureShare: fair.zeroExposureShare, newcomerCoverage: fair.newcomerCoverage,
       viableCoverage: fair.viableCoverage, lorenz: [...fair.lorenz], membersWithProposal: fair.membersWithProposal, eligibleMembers: fair.eligibleMembers,
     },
-    emptyStates: log.emptyStates.length, emptyStatesByReason, search: log.search ?? emptySearchTally, timingsMs: { ...log.timingsMs }, top,
+    emptyStates: log.emptyStates.length, emptyStatesByReason, search: log.search ?? emptySearchTally, searchOutcomes: (log.searchOutcomes ?? []).map(o => ({ ...o })), timingsMs: { ...log.timingsMs }, top,
     proposalIds: proposals.map(p => p.id),
   };
 }

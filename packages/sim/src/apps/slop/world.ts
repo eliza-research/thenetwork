@@ -10,7 +10,7 @@
 //   5. feedback, a possible second date, safety reports.
 // Caps: each member gets at most `capPerWeek` initial invites a week (first probe or partner probe;
 // decision 3) and at most one booked date a week. Proposals past a cap are dropped and counted.
-import { DAY, HOUR, canBeMatched, type MemberId } from "@thenetwork/core";
+import { CITY_TZ, DAY, HOUR, canBeMatched, fromLocal, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
 import { signature } from "../../coins.ts";
@@ -94,8 +94,10 @@ export interface SlopRunResult {
 }
 
 const SLOT_HOUR: Record<string, number> = { day: 14, eve: 19 };
-export const slotTime = (week: number, slot: number) =>
-  SLOP_WORLD_START + (week * 7 + SLOT_DAY[SLOTS[slot]!]) * DAY + SLOT_HOUR[SLOTS[slot]!.endsWith("day") ? "day" : "eve"]! * HOUR;
+const slotTime = (week: number, slot: number, city: SlopCity) => {
+  const day = new Date(SLOP_WORLD_START + (week * 7 + SLOT_DAY[SLOTS[slot]!]) * DAY);
+  return fromLocal(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), SLOT_HOUR[SLOTS[slot]!.endsWith("day") ? "day" : "eve"]!, CITY_TZ[city]);
+};
 
 export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const weeks = o.weeks ?? 4;
@@ -296,7 +298,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const freeA = !!a.hidden.adversary || oracle.free(a.id, week, slot), freeB = !!b.hidden.adversary || oracle.free(b.id, week, slot);
     f.seatsNotFree = (freeA ? 0 : 1) + (freeB ? 0 : 1);
     const showA = behavior.attends(a.id, coin, freeA), showB = behavior.attends(b.id, coin, freeB);
-    const at = slotTime(week, slot);
+    const at = slotTime(week, slot, a.homeCity);
     if (!showA || !showB) {
       f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms, coin); return;
     }

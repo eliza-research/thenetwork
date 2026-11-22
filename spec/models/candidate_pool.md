@@ -8,7 +8,7 @@ A member needs recommendations and groups that respect consent, blocks, and loca
 
 Check pool eligibility, pair exclusions, group sizes, and seat uniqueness. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [candidate exposure floor](../exposureFloor.md) supplies the generated allocation transitions used by the engine’s intent and embedding retrieval paths. The [group formation spec](../groupFormation.md) generates the beam composer’s admission decisions, primary selection, and alternate reservations. This model treats retrieval channels as an oracle and follows groups into the service.
+The [group formation spec](../groupFormation.md) generates the beam composer’s admission decisions, primary selection, and alternate reservations. This model treats retrieval channels as an oracle and follows groups into the service.
 
 The [bounded candidate search spec](../candidateSearch.md) defines the posting and pair-check limits, exact termination, and the certificate for a budgeted result. The model below begins with the candidates returned by retrieval.
 

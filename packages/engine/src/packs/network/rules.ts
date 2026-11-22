@@ -1,8 +1,3 @@
-// The Network's hard-filter rules (networkPack.eligibility), moved verbatim from filters.ts.
-// ORDER IS PART OF THE CONTRACT (byte-identity rule 3): the funnel counts the FIRST failing reason.
-// The core runs its own prefix first (filters.ts: unknown_member, underage, safety_hold, state_paused;
-// pairs: duplicate_participant, underage, blocked; configurations: duplicate_participant, then these
-// pre-rules, then minors / via / member / pair, then these post-rules, then the geo overlap).
 import { budgetReached, DAY, inCooldown, pairInteractionCooling } from "@thenetwork/core";
 import { homeHelperSetAllowed } from "../../../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../filters.ts";
@@ -21,7 +16,6 @@ export const NETWORK_MEMBER_RULES: readonly MemberRule[] = [
       return (mi.m.prefs.onlyWhenAsked || mi.m.unansweredProactive >= 2) && !askedRecently ? "only_when_asked" : null;
     },
   },
-  // spec/matchingBudgets.md, "The limit includes use already reserved for the decision"
   {
     id: "interruption_budget", check: (w, _id, mi, c) => {
       const budget = w.cfg.budgets[mi.m.state];
@@ -35,7 +29,6 @@ export const NETWORK_MEMBER_RULES: readonly MemberRule[] = [
       return quota !== undefined && budgetReached(mi.categoryCount30.get(c.category) ?? 0, 0, quota) ? "category_quota" : null;
     },
   },
-  // spec/matchingBudgets.md, "An applicable event blocks proposals until its cooldown ends"
   {
     id: "category_cooldown", check: (w, id, _mi, c) => {
       const declinedAt = w.memberCategoryDeclines.get(id)?.get(c.category);
@@ -50,10 +43,9 @@ export const NETWORK_MEMBER_RULES: readonly MemberRule[] = [
   },
 ];
 
-/** Romance: each side's stated orientation / age range admits the other (unchanged from filters.ts). */
 export function romanceCompatible(seeker: MemberIndex, other: MemberIndex): boolean {
   const r = seeker.romance;
-  if (!r) return true; // opted in with no stated constraints
+  if (!r) return true;
   if (other.m.age < r.ageMin || other.m.age > r.ageMax) return false;
   if (r.seeks.length && !r.seeks.some(s => other.romance?.is.includes(s))) return false;
   return true;
@@ -66,7 +58,6 @@ export const NETWORK_PAIR_RULES: readonly PairRule[] = [
       return inCooldown(w.now, neg !== undefined, neg ?? 0, w.cfg.cooldowns.negativeFeedbackDays * DAY) ? "negative_feedback_cooldown" : null;
     },
   },
-  // spec/matchingBudgets.md, "A recent decline, expiry, or cancellation blocks another pair proposal"
   {
     id: "pair_cooldown", check: (w, a, b) => {
       for (const r of w.pairInteractions.get(pairKey(a, b)) ?? []) {
@@ -81,8 +72,6 @@ export const NETWORK_PAIR_RULES: readonly PairRule[] = [
     id: "romance_incompatible", check: (w, _a, _b, lane, ma, mb) => {
       if (lane !== "romance") return null;
       if (!ma.m.prefs.romanceOptIn || !mb.m.prefs.romanceOptIn) return "romance_incompatible";
-      // config.romance.requireStatedPrefs holds for EVERY romance configuration (event pairs,
-      // groups, second encounters...), not only the romance-intro generator (engine-pipeline-15).
       if (w.cfg.romance.requireStatedPrefs && (!ma.romance?.seeks.length || !mb.romance?.seeks.length)) return "romance_incompatible";
       if (!romanceCompatible(ma, mb) || !romanceCompatible(mb, ma)) return "romance_incompatible";
       return null;
@@ -101,14 +90,12 @@ export const NETWORK_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [
       return null;
     },
   },
-  // Romance is pairs-only (engine-pipeline-15): a romance-category event or theme never becomes a romance group.
   { id: "romance_group", check: (_w, c) => (c.category === "romance" && c.participants.length !== 2 ? "romance_group" : null) },
   { id: "high_risk", check: (w, c) => (c.riskFlags?.length || riskTerms(w.cfg, c.riskText).length ? "high_risk" : null) },
 ];
 
 export const NETWORK_CANDIDATE_POST_RULES: readonly CandidateRule[] = [
   {
-    // F14: help that enters a home needs 2+ helpers or helpers who already met the requester.
     id: "home_entry_rule", check: (w, c) => {
       if (c.kind === "help" && isHomeEntry(w.cfg, c.riskText)) {
         const requester = c.participants[0]!;
@@ -126,7 +113,6 @@ export const NETWORK_CANDIDATE_POST_RULES: readonly CandidateRule[] = [
   },
 ];
 
-/** Pass-3 hard gate, pack part (was judgeDeep.ts hardGate after the core checks). */
 export function networkHardGate(w: { get(id: string): MemberIndex | undefined }, c: { participants: string[]; category: string }): string | null {
   for (const id of c.participants) {
     const m = w.get(id)!.m;
