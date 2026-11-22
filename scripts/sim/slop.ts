@@ -365,7 +365,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     const visitAt = input.now + 2 * DAY;
     const alias = `trip:${member.id}`;
     const trip: Presence = { memberId: alias, city: "sf", type: "temporary", from: visitAt, to: visitAt + DAY, areas: [] };
-    const snapshot = {
+    const snapshot: EngineInput = {
       ...input,
       idAliases: { ...input.idAliases, [alias]: member.id },
       presence: [

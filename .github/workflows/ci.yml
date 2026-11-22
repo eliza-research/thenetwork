@@ -84,12 +84,25 @@ jobs:
       - name: Generate design and connector CSS
         run: pnpm run connector:css
         timeout-minutes: 5
+      - name: Restore TypeScript incremental state
+        id: type-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/typecheck
+          key: typecheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json') }}-${{ github.sha }}
+          restore-keys: typecheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json') }}-
       - name: Typecheck (packages, deploy, tests, scripts/sim)
         run: pnpm exec tsc --noEmit -p .
         timeout-minutes: 5
       - name: Typecheck (sites, scripts)
         run: pnpm exec tsc --noEmit -p sites/tsconfig.json
         timeout-minutes: 5
+      - name: Save TypeScript incremental state
+        if: steps.type-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/typecheck
+          key: ${{ steps.type-cache.outputs.cache-primary-key }}
       - name: Simulations other than matching
         # Run the in-memory NYC world alongside the other blocks on the same runner.
         shell: bash
