@@ -1,8 +1,9 @@
 // spec/authorizationPages.md, "Every page shows the brand mark and the legal links"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile, optimize } from "@tailwindcss/node";
+import { writeTextIfChanged } from "../../../../tools/vibestack/vibestack/design/project.ts";
 import { allSamples } from "./samples.ts";
 import { connectorCssFile } from "./styles.ts";
 
@@ -26,5 +27,5 @@ const css = optimize(compiler.build(candidates), { file: entry, minify: true }).
 if (!candidates.length || !css.trim()) throw new Error("the connector pages have no classes or the CSS is empty; run `pnpm run design:build` first");
 
 mkdirSync(dirname(fileURLToPath(connectorCssFile)), { recursive: true });
-writeFileSync(connectorCssFile, css);
+writeTextIfChanged(fileURLToPath(connectorCssFile), css);
 console.log(`${fileURLToPath(connectorCssFile)}: ${css.length} bytes, ${candidates.length} classes`);
