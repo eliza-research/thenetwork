@@ -154,7 +154,7 @@ export interface RuntimeHost {
   instance: string;
   log: (line: string) => void;
   conversationNetworkId?(app: AppId, homeCity: string): string | undefined;
-  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
+  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash" | "projectRecordedAge">;
   photoRelay?: PhotoRelayService;
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;

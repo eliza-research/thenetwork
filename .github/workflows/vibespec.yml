@@ -85,9 +85,11 @@ jobs:
       - run: pnpm run spec:explore
 
   full-check:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'vibestack')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      REQUIRE_PG: "1"
     services:
       postgres:
         image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
