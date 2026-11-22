@@ -7,6 +7,7 @@ import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
+import { bookedCancellationPrefix } from "../../packages/core/src/generated/outboundAdmission.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -19,6 +20,8 @@ import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
 import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, evaluateExpectations, loadScenario, runScenario as runSimScenario, runScenarioPassK, runWorld, scenarioWorldOptions, type Scenario } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
+import { Projector } from "../../packages/observatory/src/projector.ts";
+import { Store } from "../../packages/observatory/src/store.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
@@ -30,6 +33,11 @@ type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
 const logs = (records: RunRecord[], kind: string) => records.filter((r): r is Log => r.type === "network_log" && r.kind === kind);
 const outbound = (records: RunRecord[]) => records.filter((r): r is Msg => r.type === "message" && r.msg.direction === "outbound" && !r.msg.system);
+
+class MessageFixtureNetwork extends StubNetwork {
+  channelContext!: NetworkContext;
+  override init(ctx: NetworkContext) { super.init(ctx); this.channelContext = ctx; }
+}
 
 /** Regression floors (audit P2-20), not targets: pooled over seeds 1-3 at the CI lower bound (docs/results/2026-10-08-network-hardening.md). */
 const ALL_YES_MIN = 0.73;
@@ -148,13 +156,114 @@ export async function scenarioAttendanceEvidenceGates(b: Block): Promise<void> {
       expect(grade?.detail).toBe(`${recipients.length - (failureRate ? 1 : 0)}/${recipients.length} notified`);
     }
   });
+
+  await b.run("participant cancellation counts only when the notice reaches the channel before the meeting", async () => {
+    for (const mode of ["early", "late", "stopped"] as const) {
+      const scenario = structuredClone(template);
+      scenario.days = 9;
+      scenario.actions = scenario.actions.filter(a => a.do !== "force_flake");
+      const persona = scenario.personas.find(p => p.ref === "dinner-4")!;
+      persona.flakiness = 1;
+      persona.responsiveness = { latencyMedianMin: mode === "early" ? 20 : 600, latencySigma: 0, ignoreProb: 0 };
+      if (mode === "stopped") scenario.actions.push({ at: { day: 3, hour: 16 }, do: "opt_out", persona: persona.ref });
+      scenario.expectations = [{ check: "flake_notice", persona: persona.ref }];
+      const run = await runSimScenario(scenario, { seed: 2, network });
+      const outcome = run.world.records.find(r => r.type === "outcome")!;
+      const decision = run.world.records.find(r => r.type === "decision" && r.memberId === persona.ref && r.intent === "flake_notice");
+      const notice = run.world.channel.all().find(m => m.direction === "inbound" && m.memberId === persona.ref && /can't make it/.test(m.body));
+      expect(decision?.t).toBeLessThan(outcome.at);
+      expect(notice?.status ?? null).toBe(mode === "stopped" ? null : "delivered");
+      expect(notice ? notice.ts < outcome.at : null).toBe(mode === "stopped" ? null : mode === "early");
+      expect(outcome.attendance[persona.ref]).toMatchObject({ showed: false, cancelledWithNotice: mode === "early" });
+      expect(run.world.metrics.meetings.noShowRate).toBe(mode === "early" ? 0 : 0.167);
+      expect(run.results[0]?.status).toBe(mode === "early" ? "pass" : "fail");
+    }
+  });
+
+  await b.run("only timely delivery of an exact booking cancellation changes a recipient's attendance", async () => {
+    const cases = [
+      { size: 2, seed: 21, how: "notice", failureRate: 0, present: 0, ownNotice: true, terminal: true, noShowRate: 0, notified: "pass" },
+      { size: 6, seed: 21, how: "notice", failureRate: 0, present: 5, ownNotice: true, terminal: false, noShowRate: 0, notified: "pass" },
+      { size: 2, seed: 21, how: "no_show", failureRate: 0, present: 1, ownNotice: false, terminal: false, noShowRate: 0.5, notified: "fail" },
+      { size: 2, seed: 35, how: "notice", failureRate: 0.1, present: 1, ownNotice: true, terminal: false, noShowRate: 0, notified: "fail" },
+      { size: 2, seed: 21, how: "none", failureRate: 0, present: 2, ownNotice: false, terminal: false, noShowRate: 0, notified: "fail" },
+    ] as const;
+    for (const check of cases) {
+      const scenario = structuredClone(template);
+      scenario.days = 8;
+      scenario.personas = scenario.personas.slice(0, check.size);
+      if (check.size === 2) for (const person of scenario.personas) person.preferredGroupSize = 2;
+      scenario.actions = scenario.actions.filter(a => a.do !== "force_flake" || check.how !== "none");
+      for (const action of scenario.actions) {
+        if (action.do === "force_flake" && check.how !== "none") { action.persona = "dinner-1"; action.how = check.how; }
+        if (action.do === "propose") {
+          action.participants = scenario.personas.map(p => p.ref);
+          if (check.size === 2) action.kind = "intro";
+        }
+      }
+      scenario.expectations = [{ check: "others_notified_of_drop", persona: "dinner-1" }];
+      const network = new MessageFixtureNetwork({ randomIntros: false });
+      const options = scenarioWorldOptions(scenario, { seed: check.seed, network: () => network });
+      const store = new Store({ mode: "game", label: "Synthetic", dataset: "Synthetic",
+        capabilities: { canStep: true, canIntervene: false, hiddenTruth: true, readOnly: false },
+      }, { now: options.start!, start: options.start!, day: 1, playing: false, speed: 0, waitingForPlayer: false });
+      const projector = new Projector(store);
+      let stateAtOutcome: string | undefined;
+      const sim = new World({ ...options, failureRate: check.failureRate, onRecord: r => {
+        projector.apply(r);
+        if (r.type === "outcome") stateAtOutcome = store.opps.get(r.proposalId)?.state;
+      } });
+      await sim.begin();
+      if (check.how === "none") {
+        await sim.advanceTo(sim.clock.now() + 2 * DAY + 10 * HOUR);
+        const booking = sim.channel.all().find(m => m.meta?.type === "scheduling" && m.memberId === "dinner-2")!;
+        expect(booking.meta?.meetingAt).toBeGreaterThan(sim.clock.now());
+        const textOnly = network.channelContext.send("dinner-2", "I'm calling this one off.", {
+          meta: { type: "cancellation", proposalId: booking.meta?.proposalId },
+        });
+        expect(textOnly.status).toBe("delivered");
+        expect(store.opps.get(booking.meta!.proposalId!)?.state).toBe("SCHEDULED");
+      }
+      await sim.advanceTo(sim.end - HOUR);
+      if (check.failureRate) {
+        const failed = sim.channel.all().find(m => m.meta?.type === "cancellation")!;
+        expect(failed.status).toBe("failed");
+        const late = network.channelContext.send(failed.memberId, failed.body, { meta: failed.meta });
+        expect(late.status).toBe("delivered");
+      }
+      if (check.how === "none") {
+        const booking = sim.channel.all().find(m => m.meta?.type === "scheduling" && m.memberId === "dinner-2")!;
+        const late = network.channelContext.send("dinner-2", "I'm calling this one off.", {
+          meta: { type: "cancellation", proposalId: booking.meta!.proposalId, meetingAt: booking.meta!.meetingAt },
+          idempotencyKey: `${bookedCancellationPrefix}${booking.meta!.proposalId}:dinner-2`,
+        });
+        expect(late.status).toBe("delivered");
+        expect(late.ts).toBeGreaterThan(booking.meta!.meetingAt!);
+      }
+      await sim.advanceTo(sim.end);
+      const world = await sim.complete();
+      const outcome = world.records.find(r => r.type === "outcome")!;
+      const present = Object.values(outcome.attendance).filter(a => a.showed).length;
+      expect(present).toBe(check.present);
+      expect(outcome.attendance["dinner-1"]?.cancelledWithNotice).toBe(check.ownNotice);
+      expect(outcome.attendance["dinner-2"]).toMatchObject({ cancelledWithNotice: false });
+      expect(outcome.attendance["dinner-2"]?.cancelledByNetwork === true).toBe(check.terminal);
+      const acceptedCancellation = world.records.filter(r => r.type === "message" && r.msg.direction === "outbound" && r.bookingNoticeMeetingId === outcome.meetingId);
+      expect(acceptedCancellation.length).toBe(check.terminal ? 1 : 0);
+      const projected = store.opps.get(outcome.proposalId)!;
+      expect(stateAtOutcome).toBe(check.terminal ? "CANCELLED" : check.present >= 2 ? "COMPLETED" : "ABANDONED");
+      expect(projected.status["dinner-1"]).toBe(check.ownNotice ? "cancelled_with_notice" : check.how === "no_show" ? "no_show" : "attended");
+      expect(projected.status["dinner-2"]).toBe(check.terminal ? "confirmed" : "attended");
+      expect(store.counts.attended).toBe(check.present);
+      expect(store.counts.noShows).toBe(check.how === "no_show" ? 1 : 0);
+      expect(store.counts.cancelledWithNotice).toBe(check.ownNotice ? 1 : 0);
+      expect(world.metrics.meetings.noShowRate).toBe(check.noShowRate);
+      expect(evaluateExpectations(scenario, world, network.name)[0]?.status).toBe(check.notified);
+    }
+  });
 }
 
 export async function scenarioContactEvidenceGates(b: Block): Promise<void> {
-  class MessageFixtureNetwork extends StubNetwork {
-    channelContext!: NetworkContext;
-    override init(ctx: NetworkContext) { super.init(ctx); this.channelContext = ctx; }
-  }
   const seed = 3;
   const scenario: Scenario = {
     name: "contact-evidence", description: "Grade received messages and inferred simulated counterparts.",

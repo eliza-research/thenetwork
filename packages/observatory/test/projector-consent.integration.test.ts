@@ -41,14 +41,18 @@ function simulatedOpportunity(participants: string[]) {
   const book = (roster: string[]) => apply({
     type: "meeting_scheduled", proposalId, meetingId: "meeting-1", participants: roster, at: start + 86_400_000, city: "nyc",
   });
+  const giveNotice = (memberId: string) => apply({
+    type: "message", bookingNoticeMeetingId: "meeting-1",
+    msg: { id: `notice-${memberId}`, direction: "inbound", ts: time, memberId, body: "I can't make it", status: "delivered" },
+  });
   const counts = () => ({
     total: store.counts.accepts, members: participants.map(id => store.member(id)!.counters.accepted),
   });
-  return { store, opportunity: store.opps.get(proposalId)!, reply, book, counts };
+  return { store, opportunity: store.opps.get(proposalId)!, reply, book, giveNotice, counts };
 }
 
 test("a late addition to a scheduled group counts each confirmed member once", () => {
-  const { store, opportunity, reply, book, counts } = simulatedOpportunity(["a", "b", "c", "d"]);
+  const { store, opportunity, reply, book, giveNotice, counts } = simulatedOpportunity(["a", "b", "c", "d"]);
   for (const id of ["a", "b", "c"]) reply(id, "accept");
   book(["a", "b", "c"]);
   expect(counts()).toEqual({ total: 3, members: [1, 1, 1, 0] });
@@ -61,6 +65,8 @@ test("a late addition to a scheduled group counts each confirmed member once", (
   expect(counts()).toEqual({ total: 4, members: [1, 1, 1, 1] });
 
   reply("b", "flake_notice", "reminder");
+  expect(opportunity.status.b).toBe("confirmed");
+  giveNotice("b");
   book(["a", "b", "c", "d"]);
   expect(opportunity.status.b).toBe("cancelled_with_notice");
   expect(counts()).toEqual({ total: 4, members: [1, 1, 1, 1] });

@@ -40,7 +40,7 @@ export interface ProjectorOptions {
 
 export class Projector {
   private stoppedParticipation = new Map<MemberId, MemberStatus>();
-  private meetings = new Map<string, string>(); // meetingId -> proposalId
+  private meetings = new Map<string, { proposalId: string; at: number }>();
   /** The member who last received the under-13 decline (join_declined itself carries no member id). */
   private declineTo?: MemberId;
   /** Opportunities already counted in their participants' proposal counters. */
@@ -113,6 +113,7 @@ export class Projector {
         const msg = r.msg;
         if (msg.system) return;
         c.messages++;
+        if (r.bookingNoticeMeetingId) this.bookingNotice(r);
         const k = this.counters(msg.memberId);
         if (msg.direction === "inbound") { c.inbound++; if (k) k.msgsIn++; return; }
         c.outbound++;
@@ -128,10 +129,6 @@ export class Projector {
           if (o.status[msg.memberId] === "pending") o.status[msg.memberId] = "invited";
           if (o.state === "PROPOSED") this.setState(o, "INVITING");
           this.changed(o, r);
-        } else if (msg.meta?.type === "cancellation" && /calling this one off/i.test(msg.body) && !isTerminal(o.state)) {
-          this.setState(o, "CANCELLED", "participant dropped");
-          this.changed(o, r);
-          s.pushFeed({ t: r.t, kind: "skip", text: `${this.names(o.participants)}: called off after a drop`, members: o.participants, opportunityId: o.id, severity: "warn" });
         }
         return;
       }
@@ -159,20 +156,16 @@ export class Projector {
         const o = r.proposalId ? s.opps.get(r.proposalId) : undefined;
         if (!o || !(r.memberId in o.status)) return;
         let st: ParticipantStatus | undefined;
-        // A booked plan (the reveal with an opt-out) is a yes when it arrives (below); only a typed no or "can't" changes it.
-        const bookedMsg = this.booked.has(r.messageId);
-        if (bookedMsg && r.intent !== "decline" && r.intent !== "booked_cancel") return;
-        const said = bookedMsg ? "decline" : r.intent;
+        // A response to an already booked plan changes attendance only when its notice arrives.
+        if (this.booked.has(r.messageId)) return;
+        const said = r.intent;
         if (r.messageType === "proposal") {
           if (said === "accept") st = "accepted";
           else if (said === "decline") st = "declined";
           else if (said === "counter") st = "countered";
           else if (said === "ignore" || said === "ack" || said === "none") st = "ignored";
-        } else if (r.intent === "flake_notice" && YES_BEFORE_FLAKE.has(o.status[r.memberId]!)) {
-          // A cancellation with notice preserves credit for an earlier yes.
-          st = "cancelled_with_notice";
         }
-        if (!st || isTerminal(o.state) && st !== "cancelled_with_notice") return;
+        if (!st || isTerminal(o.state)) return;
         if (o.status[r.memberId] === st) return;
         this.setParticipantStatus(o, r.memberId, st);
         if (st === "declined") c.declines++;
@@ -185,7 +178,7 @@ export class Projector {
       }
       case "meeting_scheduled": {
         const o = s.opps.get(r.proposalId);
-        if (!this.meetings.has(r.meetingId)) { c.meetingsScheduled++; this.meetings.set(r.meetingId, r.proposalId); }
+        if (!this.meetings.has(r.meetingId)) { c.meetingsScheduled++; this.meetings.set(r.meetingId, { proposalId: r.proposalId, at: r.at }); }
         if (!o) return;
         this.setState(o, "SCHEDULED");
         if (o.booked && o.booked.at !== r.at) {
@@ -207,7 +200,7 @@ export class Projector {
         const held = observatoryMeetingHeld(showed.length);
         for (const [id, a] of Object.entries(r.attendance)) {
           // A member who said no to a booked plan was not expected: not a no-show (the plan is booked first).
-          if (!a.showed && o?.status[id] === "declined") continue;
+          if (!a.showed && (o?.status[id] === "declined" || a.cancelledByNetwork && !a.cancelledWithNotice)) continue;
           if (a.showed) c.attended++; else if (a.cancelledWithNotice) c.cancelledWithNotice++; else c.noShows++;
           if (o) {
             this.setParticipantStatus(o, id, a.showed ? "attended" : a.cancelledWithNotice ? "cancelled_with_notice" : "no_show");
@@ -223,12 +216,16 @@ export class Projector {
           for (const id of showed) { c.enjoymentSum += r.attendance[id]!.enjoyment; c.enjoymentN++; }
           this.learnEdges(showed, r.attendance, r.t);
         }
-        if (o) { this.setState(o, held ? "COMPLETED" : "ABANDONED", held ? undefined : "not enough people showed"); this.changed(o, r); }
+        if (o) {
+          if (!isTerminal(o.state)) this.setState(o, held ? "COMPLETED" : "ABANDONED", held ? undefined : "not enough people showed");
+          this.changed(o, r);
+        }
         const mean = held ? showed.reduce((a, id) => a + r.attendance[id]!.enjoyment, 0) / showed.length : 0;
         const ids = Object.keys(r.attendance);
         s.pushFeed({
           t: r.t, kind: "outcome", members: ids, opportunityId: r.proposalId,
-          text: held ? `${this.names(showed)} met · enjoyment ${(mean * 100).toFixed(0)}%` : `${this.names(ids)}: meeting fell through`,
+          text: held ? `${this.names(showed)} met · enjoyment ${(mean * 100).toFixed(0)}%`
+            : o?.state === "CANCELLED" ? `${this.names(ids)}: meeting cancelled` : `${this.names(ids)}: meeting fell through`,
           severity: !held ? "warn" : mean >= ENJOYED ? "good" : mean < AVOID ? "bad" : "info",
         });
         return;
@@ -533,6 +530,25 @@ export class Projector {
       case "learned": case "feedback": return r.kind === "learned";
       default: return false;
     }
+  }
+
+  private bookingNotice(record: Extract<RunRecord, { type: "message" }>) {
+    const { msg, bookingNoticeMeetingId } = record;
+    const booking = bookingNoticeMeetingId ? this.meetings.get(bookingNoticeMeetingId) : undefined;
+    if (!booking) return;
+    const o = this.store.opps.get(booking.proposalId);
+    if (!o || o.meetingAt !== booking.at || msg.status !== "delivered" || msg.ts >= booking.at
+      || !(msg.memberId in o.status)) return;
+    if (msg.direction === "inbound") {
+      if (!YES_BEFORE_FLAKE.has(o.status[msg.memberId]!)) return;
+      this.setParticipantStatus(o, msg.memberId, "cancelled_with_notice");
+    } else {
+      if (isTerminal(o.state)) return;
+      this.setState(o, "CANCELLED", "participant dropped");
+      this.store.pushFeed({ t: record.t, kind: "skip", text: `${this.names(o.participants)}: called off after a drop`,
+        members: o.participants, opportunityId: o.id, severity: "warn" });
+    }
+    this.changed(o, record);
   }
 
   /**

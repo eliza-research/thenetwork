@@ -227,7 +227,7 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         if (!outcome) return ok(false, "no drop happened");
         const others = Object.entries(outcome.attendance)
           .filter(([id, attendance]) => id !== e.persona && (attendance.showed || !attendance.cancelledWithNotice));
-        const notified = others.filter(([id]) => msgs.some(x => x.direction === "outbound" && x.status === "delivered"
+        const notified = others.filter(([id]) => msgs.some(x => x.direction === "outbound" && x.status === "delivered" && x.ts < outcome.at
           && x.memberId === id && x.meta?.proposalId === outcome.proposalId && x.meta?.type === "cancellation"));
         return ok(others.length > 0 && notified.length === others.length, `${notified.length}/${others.length} notified`);
       }
