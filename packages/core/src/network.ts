@@ -31,6 +31,8 @@ export interface SimMeta {
     /** "Want to make this a weekly thing?" after a plan (SimMeta.crew). */
     | "crew_offer";
   proposalId?: string;
+  /** The delivered prompt for an inbound reply in a simulation log. */
+  inReplyTo?: string;
   participants?: MemberId[];
   /** Counts toward the interruption budget / two-unanswered rule. */
   proactive?: boolean;

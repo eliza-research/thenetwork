@@ -253,11 +253,12 @@ export class World {
   }
 
   /** Persona sends a message to the Network (via the channel, so keywords apply). */
-  private personaSend(p: Persona, text: string, reaction?: Reaction, noticeMeetingId?: string): SimMessage | undefined {
+  private personaSend(p: Persona, text: string, options: { reaction?: Reaction; noticeMeetingId?: string; inReplyTo?: string } = {}): SimMessage | undefined {
+    const { reaction, noticeMeetingId } = options;
     const mem = this.memories.get(p.id)!;
     if (mem.optedOut && (reaction !== undefined || detectKeyword(text) !== "START")) return undefined;
     // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
-    const m = this.channel.receive(p.id, text, reaction ? { reaction } : {});
+    const m = this.channel.receive(p.id, text, options);
     const meeting = noticeMeetingId ? this.meetings.get(noticeMeetingId) : undefined;
     const noticeReceived = !reaction && !m.keyword && m.status === "delivered"
       && meeting && m.ts < meeting.at && meeting.participants.includes(p.id);
@@ -324,9 +325,9 @@ export class World {
 
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
-    s.on<{ personaId: MemberId; text: string; reaction?: Reaction; noticeMeetingId?: string }>("persona_send", ev => {
+    s.on<{ personaId: MemberId; text: string; reaction?: Reaction; noticeMeetingId?: string; inReplyTo?: string }>("persona_send", ev => {
       if (this.hasGoneSilent(this.memories.get(ev.data.personaId))) return;
-      this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction, ev.data.noticeMeetingId);
+      this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data);
     });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
@@ -351,7 +352,7 @@ export class World {
 
     this.rec({ type: "run_start", runId: this.runId, seed: this.opts.seed, start: this.start, config: {
       days, personas: this.opts.personas.length, network: network.name, engine: this.opts.engine?.name ?? null,
-      agent: this.agent.mode, mode: this.opts.mode ?? "discrete", tickMinutes: this.opts.tickMinutes ?? 60,
+      agent: this.agent.mode, mode: this.opts.mode ?? "discrete", tickMinutes: this.opts.tickMinutes ?? 60, replyTracking: true,
     } });
     for (const p of this.opts.personas) {
       this.rec({ type: "persona", persona: {
@@ -436,7 +437,7 @@ export class World {
       const preferredStart = msg.meta?.booked?.at ?? msg.meta?.meetingAt;
       const notice = (reply.intent === "flake_notice" || reply.intent === "booked_cancel") && reply.proposalId
         ? this.upcomingBooking(reply.proposalId, p.id, msg.ts, preferredStart) : undefined;
-      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text,
+      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, inReplyTo: msg.id,
         ...(reply.reaction ? { reaction: reply.reaction } : {}), ...(notice ? { noticeMeetingId: notice.id } : {}) });
       if (reply.block?.length) {
         for (const b of reply.block) {
@@ -481,7 +482,7 @@ export class World {
     const r = this.rng.fork("flake", meetingId, personaId);
     if (mem.forceFlake === "notice" || (!mem.forceFlake && r.bool(clash ? 0.8 : 0.45))) {
       const text = templateText(this.personaCtx(p, `flake${meetingId}`), { intent: "flake_notice", messageType: "reminder", decision: "none", delayMs: 0 });
-      this.personaSend(p, text, undefined, m.id);
+      this.personaSend(p, text, { noticeMeetingId: m.id });
     }
     if (mem.forceFlake) mem.forceFlake = undefined; // one-shot
   }
