@@ -179,7 +179,6 @@ export const PRESETS: Record<string, [string, object][]> = {
     ["x backup round", { congestion: { perMemberPerTick: 2 } }],
     ["x minValue 0.4", { minValue: 0.4 }],
     ["x hold for basics", { holdForBasics: true }],
-    ["x typeWeight 0.3", { compat: { typeWeight: 0.3 } }],
     ["x scarce 4", { congestion: { scarceDegree: 4 } }],
     ["x guess after a silent ask", { silentFallback: { enabled: true } }],
   ],
@@ -190,7 +189,6 @@ export const PRESETS: Record<string, [string, object][]> = {
     ["- no asks (guess)", { asks: false, compatAsks: false }],
     ["- no compat asks", { compatAsks: false }],
     ["- no learned", { learned: { enabled: false } }],
-    ["- no compat model", { compat: { goalClash: 1, goalUnsure: 1, goalUnknown: 1, lifestyleMismatch: 1, politicsClash: 1, religionGap: 1, kidsClash: 1, unknownField: 1, hiddenDealbreaker: 0, sharedInterest: [1, 1, 1], activityMiss: 1, typeWeight: 0 } }],
   ],
   // Iteration 2 (held-out seeds 9-12). W = the safety stack: verification, relay classifier, 3-day review, widen answers.
   it2: [
