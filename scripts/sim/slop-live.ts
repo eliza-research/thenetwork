@@ -45,6 +45,28 @@ type Log = Extract<RunRecord, { type: "network_log" }>;
 const logs = (records: RunRecord[], kind: string) => records.filter((r): r is Log => r.type === "network_log" && r.kind === kind);
 const outbound = (records: RunRecord[]) => records.filter((r): r is Msg => r.type === "message" && r.msg.direction === "outbound" && !r.msg.system);
 
+export function secondBookings(records: readonly RunRecord[]): string[] {
+  const ends = new Map<string, number[]>();
+  const end = (key: string, t: number) => ends.set(key, [...(ends.get(key) ?? []), t]);
+  for (const x of records) {
+    if (x.type !== "network_log") continue;
+    if (x.kind === "opportunity_closed" && typeof x.detail.proposalId === "string") end(x.detail.proposalId, x.t);
+    if (x.kind === "booked_cancelled" && typeof x.detail.oppId === "string" && typeof x.detail.memberId === "string") end(`${x.detail.oppId}|${x.detail.memberId}`, x.t);
+  }
+  const firstEnd = (key: string, from: number) => Math.min(...(ends.get(key) ?? []).filter(t => t >= from));
+  const byMember = new Map<MemberId, { t: number; until: number; proposalId: string }[]>();
+  for (const x of records) if (x.type === "meeting_scheduled") for (const id of x.participants) {
+    const until = Math.min(x.at, firstEnd(x.proposalId, x.t), firstEnd(`${x.proposalId}|${id}`, x.t));
+    byMember.set(id, [...(byMember.get(id) ?? []), { t: x.t, until, proposalId: x.proposalId }]);
+  }
+  const out: string[] = [];
+  for (const [id, bookings] of byMember) {
+    const s = [...bookings].sort((a, c) => a.t - c.t);
+    for (let i = 1; i < s.length; i++) if (s.slice(0, i).some(earlier => s[i]!.t < earlier.until)) out.push(`${id} ${s[i]!.proposalId}`);
+  }
+  return out;
+}
+
 /**
  * The live slop network behind a human review queue with a reviewer who approves every item at the
  * next tick (after the Network's own tick, so an approval always comes before any probe it allows).
@@ -93,6 +115,8 @@ export function slopAnswer(p: Persona, reason: string): string {
     case "slop_location": case "slop_zip": return zip ? `My zip is ${zip}.` : "Not sure, somewhere in Brooklyn.";
     case "slop_basics": case "slop_goal": return "Something long-term, and no smokers.";
     case "slop_widen": return "Sure, that's fine.";
+    case "slop_trans_openness": return "Rather not say.";
+    case "slop_shown_to": return "Neither.";
     case "slop_activities": return "Coffee or a walk.";
     case "slop_free": return "Thursday evenings and Saturday afternoons.";
     default: return `I'm a ${p.gender} looking for ${seeks}, ${lo}-${hi}, within 10 miles${zip ? ` of ${zip}` : ""}.`;
@@ -181,6 +205,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I love cooking and reading, and no smokers. For a first date I want a hike. Usually free Saturday afternoons.`);
     }
     await w.say("a", "Yes, that's right.");
+    await w.say("a", "Rather not say.");
     const opp = w.propose(["a", "b"], { category: "romance", objective: "hike" });
     expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
     expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
@@ -189,6 +214,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
     w.restart();
     expect(w.net.memberList().find(m => m.id === "b")?.awaiting?.ask?.reason).toBe(SLOP_READBACK);
     await w.say("b", "Yes, that's right.");
+    await w.say("b", "Rather not say.");
     expect(w.log("probe_answer").some(r => r.detail.oppId === opp && r.detail.memberId === "b")).toBe(false);
     expect(w.meetings).toEqual([]);
     expect(await w.runUntil(() => w.probed("b"))).toBe(true);
@@ -219,6 +245,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
         await w.say(id, "Hi");
         await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I love cooking and reading, and no smokers. For a first date I want ${c.activity}. ${c.free}`);
         await w.say(id, "Yes, that's right.");
+        await w.say(id, "Rather not say.");
       }
       w.restart();
       const input = w.net.packInput(w.clock.now());
@@ -344,13 +371,19 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
     for (const m of outbound(r.records).filter(m => m.msg.meta?.type === "feedback_request")) expect(m.msg.body).toMatch(/(^|[.!] )How did your date with .+ go\? If anything felt wrong/);
   });
 
-  await each("one date at a time: no member is booked for a second date before the first one has happened", r => {
-    const byMember = new Map<MemberId, { t: number; at: number }[]>();
-    for (const x of r.records) if (x.type === "meeting_scheduled") for (const id of x.participants) byMember.set(id, [...(byMember.get(id) ?? []), { t: x.t, at: x.at }]);
-    for (const [id, ms] of byMember) {
-      const s = ms.sort((a, c) => a.t - c.t);
-      for (let i = 1; i < s.length; i++) expect([id, s[i]!.t >= s[i - 1]!.at]).toEqual([id, true]);
-    }
+  await b.run("slop-live: the one-date check holds a pending booking and releases one the network called off", () => {
+    const meet = (t: number, at: number, proposalId: string, participants: MemberId[]): RunRecord => ({ t, type: "meeting_scheduled", meetingId: `m-${proposalId}`, proposalId, participants, at, city: "nyc" });
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), meet(50, 200, "p2", ["a", "c"])])).toEqual(["a p2"]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), meet(150, 200, "p2", ["a", "c"])])).toEqual([]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), log(40, "booked_cancelled", { oppId: "p1", memberId: "a" }), meet(50, 200, "p2", ["a", "c"])])).toEqual([]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), log(40, "booked_cancelled", { oppId: "p1", memberId: "b" }), meet(50, 200, "p2", ["a", "c"])])).toEqual(["a p2"]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), log(40, "opportunity_closed", { proposalId: "p1" }), meet(50, 200, "p2", ["b", "c"])])).toEqual([]);
+    expect(secondBookings([log(0, "opportunity_closed", { proposalId: "p1" }), meet(1, 100, "p1", ["a", "b"]), meet(50, 200, "p2", ["a", "c"])])).toEqual(["a p2"]);
+    expect(secondBookings([meet(1, 300, "p1", ["a", "b"]), meet(50, 400, "p2", ["c", "d"]), meet(60, 500, "p3", ["a", "d"])])).toEqual(["a p3", "d p3"]);
+  });
+  await each("one date at a time: no member is booked for a second date before the first one has happened or the network called it off", r => {
+    expect(secondBookings(r.records)).toEqual([]);
   });
 
   await each(`the person cap: at most ${PERSON_DAILY_CAP} proactive texts reach a member in any 24 hours`, r => {

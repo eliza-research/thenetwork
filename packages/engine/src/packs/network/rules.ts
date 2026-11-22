@@ -9,6 +9,7 @@ import { isHomeEntry, riskTerms } from "../../filters.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { CONTRIBUTOR_ROLES } from "../../types.ts";
 import { pairKey, type MemberIndex } from "../../world.ts";
+import { cofounderMustHavesFit } from "./cofounderFacts.ts";
 
 export const NETWORK_MEMBER_RULES: readonly MemberRule[] = [
   { id: "state_receiving_contributor", check: (_w, _id, mi, c) => (mi.m.state === "receiving" && CONTRIBUTOR_ROLES.has(c.role) ? "state_receiving_contributor" : null) },
@@ -88,6 +89,7 @@ export const NETWORK_PAIR_RULES: readonly PairRule[] = [
     },
   },
   { id: "dealbreaker", check: (_w, _a, _b, _lane, ma, mb) => (ma.dealbreakers.some(d => mb.tags.has(d)) || mb.dealbreakers.some(d => ma.tags.has(d)) ? "dealbreaker" : null) },
+  { id: "cofounder_must_have", check: (w, a, b, _category, _ma, _mb, lane) => (lane === "Cofounder" && !cofounderMustHavesFit(w, a, b, "ntwrk") ? "cofounder_must_have" : null) },
 ];
 
 export const NETWORK_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [

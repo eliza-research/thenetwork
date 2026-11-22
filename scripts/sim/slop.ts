@@ -24,6 +24,7 @@ import { privateVocabulary } from "../../packages/engine/src/explain.ts";
 import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { cellIn } from "../../packages/engine/src/packs/slop/profile.ts";
+import { mutuallyOpen } from "../../packages/core/src/generated/mutualOpenness.ts";
 import { limitMiles } from "../../packages/engine/src/packs/slop/geo.ts";
 import { makeSlopPack, mutualMarkets, planFromInput, SLOP_ASK_QUESTIONS, SLOP_ENGINE_CONFIG, slopPack, slopProfiles } from "../../packages/engine/src/packs/slop/index.ts";
 import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
@@ -36,8 +37,9 @@ import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
+import { statedOpenness } from "../../packages/sim/src/planted.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { extraOf, gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { extraOf, gates3, identityRatios, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
@@ -57,7 +59,7 @@ const WORLD: WorldSpec = { verification: true, relay: { engine: true }, review: 
 // the AI only rates photos. The sim matches the product: the rater is on, the probe photo is off.
 const PACK_WORLD: WorldSpec = { rater: true };
 /** Gates that fail in every photos arm on held-out seeds today (docs/results/2026-10-08-slop-pack.md I5.4): tracked, not blocking. */
-const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
+const TRACKED = [/^Dates per member-month vs random/, /^Lowest stated identity group/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
   // Not in the founder's tracked list, but it does not pass on the pinned seeds (86.9%; I5.4 reports 87% on seeds 13-16 at 4 weeks).
   /^Harm events cut \(not counting/,
   // Founder decision 2026-10-11 (#22): no photo in the probe. Without it the sim's members accept on fit and the
@@ -65,13 +67,13 @@ const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age lia
   // 3.47x, 2.78x, 4.7%; without: 1.73x, 1.68x, 12.2%; dates per member-month rose from 0.82x to 1.01x). These
   // are known costs of the decision in the sim's model, tracked and not blocking (PRD 28.5: waived in writing).
   /^Second-date rate vs random/, /^Second dates per seed vs random/, /^Back-outs at reveal/];
-const SAFETY = [/^Declared-minor contacts/, /^Stated-filter violations/, /^Scammer median reach/];
+const SAFETY = [/^Declared-minor contacts/, /^Stated-filter violations/, /^Stated-openness violations/, /^Scammer median reach/];
 
 const emptySlopState = (): SlopNetworkState => ({ now: SLOP_WORLD_START + 12 * 3_600_000, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map() });
 
 /** A slop engine input for the conformance rules: personas in sf / nyc / la, 15% minors, plus canary facets, blocks, holds and an id alias. */
 export function slopWorld(seed: number, o: { perCity?: number; minorShare?: number; personas?: SlopPersona[] } = {}): EngineInput {
-  const personas = o.personas ?? generateSlopPersonas({ seed, perCity: o.perCity ?? 40, minorShare: o.minorShare ?? 0.15 });
+  const personas = o.personas ?? generateSlopPersonas({ seed, perCity: o.perCity ?? 40, minorShare: o.minorShare ?? 0.15, statedOpenness: true });
   const input = slopEngineInput(buildSlopSnapshot(personas, emptySlopState()));
   const r = new Rng(seed * 7919 + 13);
   const ids = input.members.map(m => m.id);
@@ -91,12 +93,20 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const random = await runArm("random", spec.seeds, spec.weeks, spec.perCity, undefined, POPULATION);
   const pack = await runArm("slop", spec.seeds, spec.weeks, spec.perCity, { $world: PACK_WORLD }, { ...POPULATION, ...WORLD });
   b.track("fingerprint: random and slop arms", true, digest([random, pack]));
+  const gateValue = (g: { name: string; value: number }) => (g.name.includes("cut") ? `${(g.value * 100).toFixed(1)}%` : g.value.toFixed(3));
   for (const g of gates3(pack, random)) {
-    const value = g.name.includes("cut") ? `${(g.value * 100).toFixed(1)}%` : g.value.toFixed(3);
     const safety = SAFETY.some(r => r.test(g.name));
     const blocking = safety || (!o.quick && !TRACKED.some(r => r.test(g.name)));
-    b.gate(`gate ${g.name} (${g.target})`, g.pass, value, blocking);
+    b.gate(`gate ${g.name} (${g.target})`, g.pass, gateValue(g), blocking);
   }
+
+  const openWorld: WorldSpec = { ...POPULATION, statedOpenness: true };
+  const openRandom = await runArm("random", spec.seeds, spec.weeks, spec.perCity, undefined, openWorld);
+  const openPack = await runArm("slop", spec.seeds, spec.weeks, spec.perCity, { $world: PACK_WORLD }, { ...openWorld, ...WORLD });
+  b.track("stated openness world: fingerprint of the random and slop arms", true, digest([openRandom, openPack]));
+  b.track("stated openness world: real members per seed, proposals and dates per member by stated identity group", true,
+    Object.entries(identityRatios(openPack).byGroup).map(([g, x]) => `${g} n ${x.n.toFixed(1)}, ${x.proposals.toFixed(2)} proposals (${x.ratio.toFixed(2)}x), ${x.dates.toFixed(2)} dates`).join("; "));
+  for (const g of gates3(openPack, openRandom)) b.gate(`stated openness world: gate ${g.name} (${g.target})`, g.pass, gateValue(g), SAFETY.some(r => r.test(g.name)));
 
   // ---- the relay in the world (critical path item 7): adversary personas after the reveal ----------
   const rs = mergeRelayStats(pack.extra.map(e => e.relay?.engine).filter(x => !!x) as never);
@@ -221,6 +231,8 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const results = new Map<number, Promise<EngineResult>>();
   const result = (s: number) => { if (!results.has(s)) results.set(s, run(inputs.get(s)!, s)); return results.get(s)!; };
 
+  const stated = new Map(SEEDS.map(s => [s, statedOpenness(inputs.get(s)!).dating]));
+  const statedOpen = (s: number, a: MemberId, c: MemberId) => { const D = stated.get(s)!; return mutuallyOpen(D.get(a)!, D.get(c)!); };
   await b.run("conformance slop: stated filters respected both ways (orientation, age ranges, dealbreakers, mutual radius)", async () => {
     for (const s of SEEDS) {
       const input = inputs.get(s)!, P = slopProfiles(input);
@@ -228,7 +240,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       expect(ps.length).toBeGreaterThan(5);
       for (const p of ps) {
         const [a, c] = p.participants.map(id => P.get(id)!) as [NonNullable<ReturnType<typeof P.get>>, NonNullable<ReturnType<typeof P.get>>];
-        expect(a.seeks).toContain(c.is!); expect(c.seeks).toContain(a.is!);
+        expect([a.id, c.id, statedOpen(s, a.id, c.id)]).toEqual([a.id, c.id, true]);
         const ra = ageRangeOf(a, slopPack.options)!, rc = ageRangeOf(c, slopPack.options)!;
         expect(c.age >= ra[0] && c.age <= ra[1] && a.age >= rc[0] && a.age <= rc[1]).toBe(true);
         expect(statedDealbreaker(a, c)).toBeUndefined(); expect(statedDealbreaker(c, a)).toBeUndefined();
@@ -246,7 +258,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       ...(base.vectors ? { vectors: { ...base.vectors, segment: undefined } } : {}),
     };
     const P = slopProfiles(inputs.get(1)!);
-    const bad = (await run(inputs.get(1)!, 1, broken)).proposals.filter(p => { const [a, c] = p.participants.map(id => P.get(id)!); return !a!.seeks.includes(c!.is!) || !c!.seeks.includes(a!.is!); });
+    const bad = (await run(inputs.get(1)!, 1, broken)).proposals.filter(p => { const [a, c] = p.participants.map(id => P.get(id)!); return !statedOpen(1, a!.id, c!.id); });
     expect(bad.length).toBeGreaterThan(0);
   });
 

@@ -23,7 +23,7 @@
 import type { MemberId } from "@thenetwork/core";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { hood, transitMinutes } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { h01, hoodOf, type AdversaryKind, type FriendsPersona } from "./persona.ts";
+import { friendsStatedOpen, h01, hoodOf, type AdversaryKind, type FriendsPersona } from "./persona.ts";
 
 export const ORACLE_PARAMS = {
   c0: 0.35, wA: 2.0, chemSd: 0.55, sideSd: 0.35, wBal: 1.0, wF: 0.9, wTravel: 1.0,
@@ -191,7 +191,8 @@ export class FriendsOracle {
       }
     }
     const realE = real.map(id => enjoy[id]!);
-    const good = realE.length >= 2 && Math.min(...realE) >= P.good;
+    const open = ids.every((a, k) => ids.slice(k + 1).every(b => friendsStatedOpen(this.p(a), this.p(b))));
+    const good = open && realE.length >= 2 && Math.min(...realE) >= P.good;
     return { enjoy, seeAgain, positive: ids.filter(id => enjoy[id]! >= P.positive), good, harms };
   }
 

@@ -11,7 +11,7 @@ import {
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
 import {
-  extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
+  extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, seeksAnswerOf, transStatusOf, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
 } from "./extract.ts";
 export { MAX_ASKS_PER_QUESTION, readbackReason as SLOP_READBACK };
 
@@ -40,8 +40,9 @@ export function readBackFacts(p: SlopOnboarding): ReadBackFact[] {
   if (p.minor || p.declined) return out;
   const ok = (f?: { confidence: number }) => !!f && f.confidence >= MIN_CONF;
   if (ok(p.gender)) out.push({ field: "gender", text: p.gender!.value === "nonbinary" ? "you're nonbinary" : `you're a ${p.gender!.value}` });
-  if (ok(p.seeks)) {
-    const s = p.seeks!.value;
+  const seeks = seeksAnswerOf(p);
+  if (ok(p.seeks) && seeks) {
+    const s = seeks;
     const who = s.length === 3 ? "people of any gender" : list(s.map(g => PLURAL[g]));
     out.push({ field: "seeks", text: `looking for ${who}` });
   }
@@ -118,11 +119,14 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
   slop_age: { field: "age", text: "First, how old are you?" },
   slop_orientation: { field: "orientation", text: SLOP_ASK_QUESTIONS.slop_orientation! },
   slop_seeks: { field: "seeks", text: "Who are you hoping to meet: women, men, nonbinary people, or a mix? Name them so I get it right." },
+  slop_seeks_genders: { field: "seeks", text: "Which genders are you open to dating: women, men, nonbinary people? You can name more than one." },
   slop_gender: { field: "gender", text: "And how do you describe yourself: a woman, a man, nonbinary, or something else?" },
   slop_age_range: { field: "ageRange", text: SLOP_ASK_QUESTIONS.slop_age_range! },
   slop_distance: { field: "distance", text: SLOP_ASK_QUESTIONS.slop_distance! },
   slop_location: { field: "location", text: "What's your zip code or neighborhood? It's only used to work out rough distances." },
   slop_zip: { field: "location", text: SLOP_ASK_QUESTIONS.slop_zip! },
+  slop_trans_openness: { field: "transOpenness", text: "Some members share that they are trans. Are you open to dating trans people? Yes, no, or skip: if you skip, I read it as no." },
+  slop_shown_to: { field: "shownTo", text: "Do you also want to be shown to people who are looking for women, for men, both, or neither?" },
   slop_basics: { field: "dealbreakers", text: SLOP_ASK_QUESTIONS.slop_basics! },
   slop_goal: { field: "goal", text: "And what are you looking for right now: something casual, something long-term, or not sure yet?" },
   slop_interests: { field: "interests", text: "What are you into? A few things you love doing is plenty." },
@@ -130,11 +134,17 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
   slop_free: { field: "free", text: "Which evenings or weekend times are usually free for you?" },
 };
 
+const TRANS_QUESTION_FOR_TRANS_MEMBER = "Are you open to dating other trans people, or only trans people? Or skip: if you skip, I only suggest people who are not trans.";
+function questionText(p: SlopOnboarding, reason: string): string {
+  return reason === "slop_trans_openness" && transStatusOf(p.identity?.value) === "yes" ? TRANS_QUESTION_FOR_TRANS_MEMBER : SLOP_ONBOARD_QUESTIONS[reason]!.text;
+}
+
 function questionFacts(p: SlopOnboarding) {
   return {
-    ageMissing: !hasField(p, "age"), genderMissing: !hasField(p, "gender"), seeksMissing: !hasField(p, "seeks"),
+    ageMissing: !hasField(p, "age"), genderMissing: !hasField(p, "gender"), seeksMissing: !hasField(p, "seeks"), orientationStated: !!p.orientation,
     ageRangeMissing: !hasField(p, "ageRange"), distanceMissing: !hasField(p, "distance"),
     locationMissing: !hasField(p, "location"), unknownZip: !!p.location?.value.zip && !p.location.value.known,
+    transOpennessMissing: !hasField(p, "transOpenness"), shownToMissing: p.gender?.value === "nonbinary" && !hasField(p, "shownTo"),
     dealbreakersMissing: !hasField(p, "dealbreakers"), goalMissing: !hasField(p, "goal"),
     interestsMissing: !hasField(p, "interests"), activitiesMissing: !hasField(p, "activities"), freeMissing: !hasField(p, "free"),
   };
@@ -148,7 +158,7 @@ function unavailableQuestions(p: SlopOnboarding, skip: readonly string[]) {
 export function nextQuestion(p: SlopOnboarding): { reason: string; field: OnboardField; text: string } | undefined {
   if (p.declined || p.minor) return undefined;
   const reason = nextQuestionReason(questionFacts(p), unavailableQuestions(p, []));
-  return reason ? { reason, ...SLOP_ONBOARD_QUESTIONS[reason]! } : undefined;
+  return reason ? { reason, field: SLOP_ONBOARD_QUESTIONS[reason]!.field, text: questionText(p, reason) } : undefined;
 }
 
 /** Route one service prompt from the current profile and its previous prompts. */
@@ -167,7 +177,7 @@ export function nextOnboardingPrompt(p: SlopOnboarding, skip: readonly string[] 
   if (prompt.phase !== "QuestionSearch") return undefined;
   // spec/slopOnboarding.md, "Ask the first missing field that can still be requested"
   prompt = step(prompt, { type: "chooseQuestion", facts: questionFacts(p), unavailable: unavailableQuestions(p, skip) });
-  return prompt.phase === "QuestionReady" ? { reason: prompt.reason, text: SLOP_ONBOARD_QUESTIONS[prompt.reason]!.text } : undefined;
+  return prompt.phase === "QuestionReady" ? { reason: prompt.reason, text: questionText(p, prompt.reason) } : undefined;
 }
 
 /** Record that a question was sent (the re-ask cap). */

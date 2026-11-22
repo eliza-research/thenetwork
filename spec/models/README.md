@@ -39,7 +39,7 @@ entire imported model.
 | [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants | [Cloud callback and session issuance](../cloudSignIn.md), [session and grant validation](../cloudAuthority.md) |
 | [console_privacy](console_privacy.md) | Staff console data visibility | [Staff permissions and view scope](../staffPermissions.md) |
 | [console_views](console_views.md) | Staff member views | [Member inspector and photo reads](../consoleMemberView.md) |
-| [engine_rules](engine_rules.md) | Matching rules and outreach budgets | [Matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
+| [engine_rules](engine_rules.md) | Matching rules and outreach budgets | [Matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md), [mutual openness](../mutualOpenness.md) |
 | [identity_sagas](identity_sagas.md) | Phone ownership and account changes | [Phone change lifecycle](../phoneChange.md), [account privacy](../accountPrivacy.md) |
 | [join_age](join_age.md) | Membership and age | [Shared-line enrollment](../textEnrollment.md), [member age](../memberAge.md) |
 | [join_flow](join_flow.md) | Browser signup | [Current site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |

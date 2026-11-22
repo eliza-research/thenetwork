@@ -10,6 +10,7 @@ import { networkIntentRoute, type NetworkIntentRoute } from "../../../../core/sr
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EntityStanding, EntityTags, MatchEntity, Membership, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
+import { cofounderFactsOf, cofounderFactTags } from "./cofounderFacts.ts";
 import { detailProse, objectivesFor } from "./taxonomy.ts";
 import { INTERESTS, SKILLS } from "./vocabulary.ts";
 
@@ -213,7 +214,8 @@ function memberships(w: World, memberId: MemberId): Membership[] {
 function cofounderTags(w: World, id: MemberId): EntityTags {
   const intent = networkCofounderIntentOf(w, id)!;
   const want = intentWant(w, intent);
-  const offers: string[] = [], seeks = want.seeks.filter(tag => !want.pools.includes(tag)), interests = [...want.interests];
+  const facts = cofounderFactTags(cofounderFactsOf(w, id, "ntwrk"));
+  const offers: string[] = [...facts.offers], seeks = [...want.seeks.filter(tag => !want.pools.includes(tag)), ...facts.seeks], interests = [...want.interests];
   for (const f of w.get(id)?.match ?? []) {
     if ((f.app ?? "ntwrk") !== "ntwrk"
       || !standingFacetReadable(f.scope, f.provenance, f.confirmedByMember === true, f.sensitive !== undefined, f.inferred === true)) continue;

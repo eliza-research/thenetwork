@@ -8,6 +8,7 @@ import { FIRST_NAMES, LAST_NAMES, INTERESTS } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
 import { CITY_ANCHOR_ZIP, SLOP_CITIES, zipInfo, zipsIn, type SlopCity } from "./geo.ts";
 import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
+import type { DatingStatement } from "../../../../core/src/generated/mutualOpenness.ts";
 
 export type { RichnessTier };
 
@@ -15,6 +16,7 @@ export type { RichnessTier };
 export type MatchGender = "woman" | "man" | "nonbinary";
 export type GenderIdentity = "cis_woman" | "trans_woman" | "cis_man" | "trans_man" | "nonbinary" | "genderqueer" | "agender";
 export type Orientation = "straight" | "gay" | "lesbian" | "bisexual" | "pansexual" | "queer";
+export type TransAnswer = "open" | "not_open" | "only";
 export type Goal = "casual" | "long_term" | "unsure";
 export type Smoking = "never" | "sometimes" | "regular";
 export type Drinking = "never" | "social" | "regular";
@@ -93,6 +95,9 @@ export interface StatedProfile {
   claimedAge: number;
   matchGender: MatchGender; identity: GenderIdentity; orientation: Orientation;
   seeks: MatchGender[]; ageRange: [number, number];
+  transDisclosed: boolean;
+  transOpenness?: TransAnswer;
+  shownTo: MatchGender[];
   homeZip: string; scope: LocationScope; maxMiles: number;
   goal: Goal; values: Values; dealbreakers: Dealbreaker[];
   /** Self-description on the trait dimensions (noisy). */
@@ -135,6 +140,7 @@ export interface SlopGenOptions {
    * worlds are unchanged. The truth is on `hidden.planted`.
    */
   planted?: PlantedSpec;
+  statedOpenness?: boolean;
 }
 
 export const SLOP_DEFAULTS = {
@@ -174,6 +180,29 @@ function drawGender(r: Rng): { g: MatchGender; id: GenderIdentity; o: Orientatio
   const o = r.weighted<Orientation>([["queer", 0.5], ["pansexual", 0.2], ["lesbian", 0.15], ["gay", 0.15]]);
   return { g, id, o, seeks: o === "lesbian" ? ["woman", "nonbinary"] : o === "gay" ? ["man", "nonbinary"] : all };
 }
+
+const TRANS_OPENNESS_SHARES = {
+  disclose: 0.76, unanswered: 0.1,
+  open: { straight: 0.125, gay: 0.3, lesbian: 0.3, bisexual: 0.5, pansexual: 0.7, queer: 0.7, nonbinary: 0.7 },
+  transMember: { open: 0.7, only: 0.2 },
+  nonbinaryShownTo: { woman: 0.15, man: 0.1, both: 0.15 },
+};
+function drawOpenness(r: Rng, g: MatchGender, id: GenderIdentity, o: Orientation): Pick<StatedProfile, "transDisclosed" | "transOpenness" | "shownTo"> {
+  const S = TRANS_OPENNESS_SHARES;
+  const trans = id === "trans_woman" || id === "trans_man";
+  const transDisclosed = trans && r.bool(S.disclose);
+  const shownTo: MatchGender[] = g !== "nonbinary" ? []
+    : r.weighted<MatchGender[]>([[["woman"], S.nonbinaryShownTo.woman], [["man"], S.nonbinaryShownTo.man], [["man", "woman"], S.nonbinaryShownTo.both],
+      [[], 1 - S.nonbinaryShownTo.woman - S.nonbinaryShownTo.man - S.nonbinaryShownTo.both]]);
+  if (r.bool(S.unanswered)) return { transDisclosed, shownTo };
+  if (transDisclosed) {
+    const answer = r.weighted<TransAnswer>([["open", S.transMember.open], ["only", S.transMember.only], ["not_open", 1 - S.transMember.open - S.transMember.only]]);
+    return { transDisclosed, transOpenness: answer, shownTo };
+  }
+  const open = g === "nonbinary" ? S.open.nonbinary : S.open[o];
+  return { transDisclosed, transOpenness: r.bool(open) ? "open" : "not_open", shownTo };
+}
+const seeksOnlyOpenness = (): Pick<StatedProfile, "transDisclosed" | "transOpenness" | "shownTo"> => ({ transDisclosed: false, transOpenness: "open", shownTo: [] });
 
 /** Bruch & Newman (2018): desirability falls with age for women from about 18, peaks near 40-50 for men. */
 function ageDesirability(g: MatchGender, age: number): number {
@@ -289,6 +318,7 @@ function makePersona(id: string, city: SlopCity, r: Rng, role: AdversaryKind | "
   const claimedAge = role === "age_liar" ? r.int(18, 20) : trueAge;
   const ageForPrefs = claimedAge;
   const { g, id: identity, o, seeks } = drawGender(r);
+  const openness = opts.statedOpenness ? drawOpenness(r.fork("openness"), g, identity, o) : seeksOnlyOpenness();
   const home = r.pick(zipsIn(city));
   const statedRange = statedAgeRange(g, ageForPrefs, r);
   // Revealed range: the stated one, a little wider for less desirable people (they date outside it).
@@ -348,7 +378,7 @@ function makePersona(id: string, city: SlopCity, r: Rng, role: AdversaryKind | "
     ...(planted ? { planted } : {}),
   };
   const stated: StatedProfile = {
-    claimedAge, matchGender: g, identity, orientation: o, seeks: [...seeks], ageRange: statedRange,
+    claimedAge, matchGender: g, identity, orientation: o, seeks: [...seeks], ageRange: statedRange, ...openness,
     homeZip: home.zip, scope, maxMiles, goal: adversary === "romance_scammer" ? "long_term" : statedGoal, values: { ...values },
     dealbreakers: statedDealbreakers, selfTraits, wantsTraits, interests: [...interests], activities: [...activities],
     usuallyFree, relationshipStatus: "single", occupation,
@@ -377,3 +407,17 @@ export function zipIn(p: SlopPersona, city: SlopCity, stated = true): string {
 
 /** Fairness group label: matching gender and orientation (e.g. "woman:bisexual"). */
 export const groupOf = (p: SlopPersona): string => `${p.stated.matchGender}:${p.stated.orientation}`;
+export const identityGroupOf = (p: SlopPersona): string =>
+  p.stated.transDisclosed ? "trans (stated)" : p.stated.matchGender === "nonbinary" ? "nonbinary" : p.stated.matchGender;
+
+export function statedDating(p: SlopPersona): DatingStatement {
+  const S = p.stated;
+  const G = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" } as const;
+  const O = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans" } as const;
+  return {
+    gender: G[S.matchGender], trans: S.transDisclosed ? "StatedTrans" : "TransNotStated",
+    seeksWomen: S.seeks.includes("woman"), seeksMen: S.seeks.includes("man"), seeksNonbinary: S.seeks.includes("nonbinary"),
+    shownToWomenSeekers: S.shownTo.includes("woman"), shownToMenSeekers: S.shownTo.includes("man"),
+    transOpenness: S.transOpenness ? O[S.transOpenness] : "TransUnanswered",
+  };
+}

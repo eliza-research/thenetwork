@@ -62,7 +62,11 @@ Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md
 //     expired, cancelled; network.ts closes an item with at = the close time). A send decline stands for a
 //     declined or an expired item (world.ts memberCategoryDeclines keeps the latest `at`).
 //   - `admits` is romanceCompatible (stated age range and orientation, with
-//     config.romance.requireStatedPrefs) as one fixed fact per direction.
+//     config.romance.requireStatedPrefs) as one fixed fact per direction. In slop the same per-direction
+//     fact is datingOneWayOpen (packs/slop/rules.ts orientation_mismatch -> mutuallyOpen, spec/mutualOpenness.md:
+//     stated gender, seeking set, trans status and trans answer); in friends it is friendAdmits
+//     (packs/friends/rules.ts friend_openness -> friendsMutuallyOpen). Each is a pure function of stated
+//     facts that do not change within a run, so one fixed fact per direction covers it.
 //
 // OUTSIDE THE MODEL
 //   - Quotas, the contribution budget, only-when-asked, the reliability holdout, the negative feedback

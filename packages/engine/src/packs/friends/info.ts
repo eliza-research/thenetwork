@@ -6,12 +6,13 @@
 import type { Facet, MemberId } from "@thenetwork/core";
 import type { StandingAvailability } from "../../attention.ts";
 import type { World } from "../../world.ts";
+import { friendOpennessUnanswered, type FriendOpenness, type FriendStatement, type StatedGender } from "../../../../core/src/generated/mutualOpenness.ts";
 import { FRIENDS_CITY, hood, type Neighborhood } from "./geo.ts";
 
 /** Facet tag vocabulary friends.help writes at onboarding (the simulator's snapshot uses the same). */
 export const FT = {
   maxTravel: "friends:max_travel:", free: "friends:free:", groupPref: "friends:group_pref:", energy: "friends:energy:",
-  lifeStage: "friends:life_stage:", newToCity: "friends:new_to_city", liveness: "verify:liveness:", age: "verify:age:", safety: "safety:", reviewCleared: "review:cleared",
+  lifeStage: "friends:life_stage:", newToCity: "friends:new_to_city", gender: "friends:gender:", openGender: "friends:open_gender:", liveness: "verify:liveness:", age: "verify:age:", safety: "safety:", reviewCleared: "review:cleared",
 } as const;
 
 /** Weekly slots friends.help asks about ("usually free Tue evenings, Saturday mornings"): local start hour per slot. */
@@ -32,7 +33,14 @@ export interface FriendsInfo {
   /** A safety cue the agent observed that a human reviewer has not cleared (held from matching). */
   safetyCue: boolean;
   groupPref?: string; energy?: string; lifeStage?: string;
+  friend: FriendStatement;
   standing: StandingAvailability[];
+}
+
+const FRIEND_GENDER: Readonly<Record<string, StatedGender>> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
+const FRIEND_OPENNESS: Readonly<Record<string, FriendOpenness>> = { women: "FriendsWithWomen", men: "FriendsWithMen", anyone: "FriendsWithAnyone" };
+export function friendStatementOf(gender: string | undefined, openGender: string | undefined): FriendStatement {
+  return { friendGender: FRIEND_GENDER[gender ?? ""] ?? "GenderUnstated", friendOpenness: FRIEND_OPENNESS[openGender ?? ""] ?? friendOpennessUnanswered };
 }
 
 /**
@@ -90,6 +98,7 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
       verified: val(FT.liveness) === VERIFY_PASS && val(FT.age) === VERIFY_PASS,
       safetyCue: ts.some(t => t.startsWith(FT.safety)) && !ts.includes(FT.reviewCleared),
       groupPref: val(FT.groupPref), energy: val(FT.energy), lifeStage: val(FT.lifeStage),
+      friend: friendStatementOf(val(FT.gender), val(FT.openGender)),
       standing: fs.flatMap(f => standingFromTags(f.tags, f.observedAt ?? f.validFrom ?? mi.m.joinedAt)),
     });
   }

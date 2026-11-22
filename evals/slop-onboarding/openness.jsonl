@@ -1,0 +1,46 @@
+{"text":"i'm a guy looking for women but not trans women","expect":{"gender":"man","seeks":["woman"],"transOpenness":"not_open"}}
+{"text":"looking for women, no trans women","expect":{"seeks":["woman"],"transOpenness":"not_open"}}
+{"text":"women only. no trans women please","expect":{"seeks":["woman"],"transOpenness":"not_open"}}
+{"text":"im a man into trans women","expect":{"gender":"man","seeks":["woman"],"transOpenness":"open"}}
+{"text":"into women, trans women included","expect":{"seeks":["woman"],"transOpenness":"open"}}
+{"text":"i'm a trans woman looking for only trans women","expect":{"gender":"woman","seeks":["woman"],"transOpenness":"only"}}
+{"text":"i'm not into trans women, just cis women","expect":{"seeks":["woman"],"transOpenness":"not_open"}}
+{"text":"woman looking for men, trans men welcome, trans-friendly","expect":{"gender":"woman","seeks":["man"],"transOpenness":"open"}}
+{"text":"looking for men except trans men","expect":{"seeks":["man"],"transOpenness":"not_open"}}
+{"text":"cis men only","expect":{"seeks":["man"],"transOpenness":"not_open"}}
+{"text":"looking for women and nonbinary people, open to trans people","expect":{"seeks":["nonbinary","woman"],"transOpenness":"open"}}
+{"text":"anyone but trans people","expect":{"seeks":["man","nonbinary","woman"],"transOpenness":"not_open"}}
+{"text":"yes","asked":"transOpenness","expect":{"transOpenness":"open"}}
+{"text":"nah","asked":"transOpenness","expect":{"transOpenness":"not_open"}}
+{"text":"rather not say","asked":"transOpenness","expect":{"transOpenness":"declined"}}
+{"text":"only trans people","asked":"transOpenness","unset":["transOpenness"]}
+{"text":"looking for women","expect":{"seeks":["woman"]},"unset":["transOpenness"]}
+{"text":"i love my job in transit planning, looking for men","expect":{"seeks":["man"]},"unset":["transOpenness"]}
+{"messages":["I'm a woman, bi","idk tbh","depends lol"],"asks":{"slop_seeks":2},"expect":{"gender":"woman"},"unset":["seeks"]}
+{"messages":["guy here, pan","not sure","hard to say"],"asks":{"slop_seeks":2},"expect":{"gender":"man"},"unset":["seeks"]}
+{"messages":["woman, queer","hmm","depends"],"asks":{"slop_seeks":2},"expect":{"gender":"woman"},"unset":["seeks"]}
+{"messages":["I'm a woman","idk","depends lol"],"asks":{"slop_seeks":2},"expect":{"gender":"woman","seeks":["man"]}}
+{"text":"both","asked":"shownTo","expect":{"shownTo":["man","woman"]}}
+{"text":"neither, just nonbinary folks","asked":"shownTo","expect":{"shownTo":[]}}
+{"text":"women","asked":"shownTo","expect":{"shownTo":["woman"]}}
+{"text":"I am not open to that","asked":"transOpenness","expect":{"transOpenness":"not_open"}}
+{"text":"I am not","asked":"transOpenness","expect":{"transOpenness":"not_open"}}
+{"text":"i am not really into that","asked":"transOpenness","expect":{"transOpenness":"not_open"}}
+{"text":"i'm not, sorry","asked":"transOpenness","expect":{"transOpenness":"not_open"}}
+{"text":"No preference","asked":"transOpenness","expect":{"transOpenness":"open"}}
+{"text":"yes but only cis","asked":"transOpenness","expect":{"transOpenness":"not_open"}}
+{"text":"i'm a woman looking for men, i'm a trans ally","expect":{"gender":"woman","seeks":["man"]},"unset":["transStatus"]}
+{"text":"i'm trans-friendly, looking for women","expect":{"seeks":["woman"]},"unset":["transStatus"]}
+{"text":"i'm a trans rights supporter, looking for men","expect":{"seeks":["man"]},"unset":["transStatus"]}
+{"text":"i'm trans, looking for men","expect":{"seeks":["man"],"transStatus":"yes"}}
+{"text":"i'm a woman looking for women and trans men","expect":{"gender":"woman","transOpenness":"open"},"unset":["seeks"]}
+{"text":"i'm a man looking for trans women only","expect":{"gender":"man"},"unset":["transOpenness","seeks"]}
+{"messages":[{"text":"i'm a 30 year old man looking for women, 11211, 5 miles, 25-35"},{"text":"only trans","asked":"transOpenness"}],"expect":{"gender":"man"},"unset":["transOpenness","seeks"]}
+{"messages":[{"text":"i'm a trans woman looking for men"},{"text":"only trans people","asked":"transOpenness"}],"expect":{"transStatus":"yes","transOpenness":"only"}}
+{"messages":[{"text":"i'm 29, nonbinary, looking for women, brooklyn 11211, within 5 miles, ages 25-35"},{"text":"men","asked":"shownTo"}],"expect":{"gender":"nonbinary","seeks":["woman"],"shownTo":["man"]}}
+{"messages":[{"text":"i'm 29, nonbinary, looking for women, brooklyn 11211, within 5 miles, ages 25-35"},{"text":"no, men","asked":"shownTo"}],"expect":{"seeks":["woman"],"shownTo":["man"]}}
+{"messages":[{"text":"i'm 29, nonbinary, looking for women, brooklyn 11211, within 5 miles, ages 25-35"},{"text":"not men, women is fine","asked":"shownTo"}],"expect":{"seeks":["woman"],"shownTo":["woman"]}}
+{"messages":[{"text":"i'm 29, nonbinary, looking for women, brooklyn 11211, within 5 miles, ages 25-35"},{"text":"both","asked":"shownTo"}],"expect":{"seeks":["woman"],"shownTo":["man","woman"]}}
+{"text":"looking for women, not into trans","expect":{"seeks":["woman"],"transOpenness":"not_open"}}
+{"text":"i'd rather not date trans people","asked":"transOpenness","expect":{"transOpenness":"not_open"}}
+{"text":"I'd rather not","asked":"transOpenness","expect":{"transOpenness":"declined"}}

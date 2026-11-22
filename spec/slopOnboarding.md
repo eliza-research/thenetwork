@@ -39,22 +39,27 @@ pure def resolveReadback(p: PromptRun, textAvailable: bool): PromptRun =
 
 The router considers hard fields before soft preferences. It skips a field if it is already known, if its reason was skipped for this turn, or if the reason reached its ask limit. The router asks for the dealbreakers only together with the goal (slop_basics), when both are missing; when only the dealbreakers are missing, it does not ask for them. If no field applies, the router has no question. The shell provides the field facts and looks up the final reason's text.
 
+Orientation is never inferred ([mutual openness](mutualOpenness.md)). A member who stated an orientation label (bi, pan, queer, gay, lesbian, asexual) and is still unclear about who they seek after the seeking question reached its ask limit gets no default: the router asks them plainly which genders they are open to (slop_seeks_genders). After the hard fields, the router asks every member once whether they are open to trans partners (slop_trans_openness), and asks a nonbinary member whether to also appear to people who seek women or men (slop_shown_to). Each is one question in plain words, and the member may decline to answer: a declined or unanswered trans question is read as not open. An answer of "only trans partners" from a member who did not state trans counts as not given, so the trans question stays missing and is asked again until its ask limit ([mutual openness](mutualOpenness.md), "Only trans partners is available only to a member who stated trans"); while that answer stands the seeking set also counts as not given, so the seeking question is asked again and the member is not matchable. The answer to the shown-to question names only the pools the nonbinary member appears to; the shell never reads it as a new seeking set. The shell reads these answers in packages/engine/src/packs/slop/extract.ts: the words "trans" and "cis" qualify the gender after them and are never filler, so "women but not trans women" seeks women and is not open to trans partners; a list that puts "trans" before only some of its genders gives no seeking set; "no preference" and "doesn't matter" read as open; the shown-to answer is read only when that question was asked. This rule changed with the stated signifiers work (2026-11-22): it adds the plain seeking question, the trans question and the shown-to question, and it takes the straight default away from a member who stated an orientation label, because orientation and openness must be stated by the member and never inferred.
+
 ```quint
 type QuestionFacts = {
-  ageMissing: bool, genderMissing: bool, seeksMissing: bool, ageRangeMissing: bool, distanceMissing: bool,
-  locationMissing: bool, unknownZip: bool, dealbreakersMissing: bool, goalMissing: bool,
+  ageMissing: bool, genderMissing: bool, seeksMissing: bool, orientationStated: bool, ageRangeMissing: bool, distanceMissing: bool,
+  locationMissing: bool, unknownZip: bool, transOpennessMissing: bool, shownToMissing: bool, dealbreakersMissing: bool, goalMissing: bool,
   interestsMissing: bool, activitiesMissing: bool, freeMissing: bool,
 }
 
 pure val factsValues = Set(
-  { ageMissing: true, genderMissing: true, seeksMissing: true, ageRangeMissing: true, distanceMissing: true,
-    locationMissing: true, unknownZip: false, dealbreakersMissing: true, goalMissing: true,
+  { ageMissing: true, genderMissing: true, seeksMissing: true, orientationStated: false, ageRangeMissing: true, distanceMissing: true,
+    locationMissing: true, unknownZip: false, transOpennessMissing: true, shownToMissing: true, dealbreakersMissing: true, goalMissing: true,
     interestsMissing: true, activitiesMissing: true, freeMissing: true },
-  { ageMissing: false, genderMissing: false, seeksMissing: false, ageRangeMissing: false, distanceMissing: false,
-    locationMissing: true, unknownZip: true, dealbreakersMissing: false, goalMissing: false,
+  { ageMissing: false, genderMissing: false, seeksMissing: true, orientationStated: true, ageRangeMissing: false, distanceMissing: false,
+    locationMissing: false, unknownZip: false, transOpennessMissing: true, shownToMissing: false, dealbreakersMissing: false, goalMissing: false,
     interestsMissing: false, activitiesMissing: false, freeMissing: false },
-  { ageMissing: false, genderMissing: false, seeksMissing: false, ageRangeMissing: false, distanceMissing: false,
-    locationMissing: false, unknownZip: false, dealbreakersMissing: false, goalMissing: false,
+  { ageMissing: false, genderMissing: false, seeksMissing: false, orientationStated: false, ageRangeMissing: false, distanceMissing: false,
+    locationMissing: true, unknownZip: true, transOpennessMissing: true, shownToMissing: true, dealbreakersMissing: false, goalMissing: false,
+    interestsMissing: false, activitiesMissing: false, freeMissing: false },
+  { ageMissing: false, genderMissing: false, seeksMissing: false, orientationStated: false, ageRangeMissing: false, distanceMissing: false,
+    locationMissing: false, unknownZip: false, transOpennessMissing: false, shownToMissing: false, dealbreakersMissing: false, goalMissing: false,
     interestsMissing: false, activitiesMissing: false, freeMissing: false },
 )
 
@@ -62,11 +67,14 @@ pure def nextQuestionReason(facts: QuestionFacts, unavailable: List[str]): str =
   if (facts.ageMissing and not(unavailable.includes("slop_age"))) "slop_age"
   else if (facts.genderMissing and facts.seeksMissing and not(unavailable.includes("slop_orientation"))) "slop_orientation"
   else if (facts.seeksMissing and not(unavailable.includes("slop_seeks"))) "slop_seeks"
+  else if (facts.seeksMissing and facts.orientationStated and not(unavailable.includes("slop_seeks_genders"))) "slop_seeks_genders"
   else if (facts.genderMissing and not(unavailable.includes("slop_gender"))) "slop_gender"
   else if (facts.ageRangeMissing and not(unavailable.includes("slop_age_range"))) "slop_age_range"
   else if (facts.distanceMissing and not(unavailable.includes("slop_distance"))) "slop_distance"
   else if (facts.locationMissing and facts.unknownZip and not(unavailable.includes("slop_zip"))) "slop_zip"
   else if (facts.locationMissing and not(unavailable.includes("slop_location"))) "slop_location"
+  else if (facts.transOpennessMissing and not(unavailable.includes("slop_trans_openness"))) "slop_trans_openness"
+  else if (facts.shownToMissing and not(unavailable.includes("slop_shown_to"))) "slop_shown_to"
   else if (facts.dealbreakersMissing and facts.goalMissing and not(unavailable.includes("slop_basics"))) "slop_basics"
   else if (facts.goalMissing and not(unavailable.includes("slop_goal"))) "slop_goal"
   else if (facts.interestsMissing and not(unavailable.includes("slop_interests"))) "slop_interests"
@@ -85,6 +93,10 @@ pure def alwaysReadyHasReason(p: PromptRun): bool =
 
 pure def stepRestrictedStaysWithheld(before: PromptRun, after: PromptRun): bool =
   before.phase == Withheld implies after.phase == Withheld
+
+pure def lawStatedLabelIsAskedPlainlyNotDefaulted(facts: QuestionFacts): bool =
+  (facts.seeksMissing and facts.orientationStated and not(facts.ageMissing) and not(facts.genderMissing))
+    implies nextQuestionReason(facts, List("slop_seeks")) == "slop_seeks_genders"
 
 pure def sometimesReadback(p: PromptRun): bool = p.phase == ReadbackReady
 pure def sometimesQuestion(p: PromptRun): bool = p.phase == QuestionReady

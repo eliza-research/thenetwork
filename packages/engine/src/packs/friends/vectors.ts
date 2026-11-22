@@ -6,6 +6,7 @@
 // neighborhoods within transit tolerance.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
+import { friendAdmits, friendOpennessUnanswered, type FriendStatement, type StatedGender } from "../../../../core/src/generated/mutualOpenness.ts";
 import { standingFromRating, standingRatingScale } from "../../../../core/src/generated/memberStanding.ts";
 import { memberReason } from "../../filters.ts";
 import type { EntitySegment, MatchEntity, PackVectors } from "../../match/profile.ts";
@@ -40,30 +41,26 @@ const toleranceClass = (tolerance: number): number => {
   return k < 0 ? TOLERANCE_CLASSES.length : k;
 };
 const classBound = (k: number): number => TOLERANCE_CLASSES[k] ?? Infinity;
-const homeSegment = (home: Neighborhood, k: number): string => `${home.id}|${k}`;
+const homeSegment = (home: Neighborhood, k: number, gender: StatedGender): string => `${home.id}|${k}|${gender}`;
+const FRIEND_GENDERS: readonly StatedGender[] = ["GenderWoman", "GenderMan", "GenderNonbinary", "GenderUnstated"];
 /** Per run: the segment of each (home, tolerance) pair, so members with equal values share one partner list. */
 const reachableByRun = new WeakMap<World, Map<string, EntitySegment>>();
 
-/**
- * Superset of the pair rule `withinTransitTolerance(transitMinutes(home, other), tolerance, otherTolerance)`:
- * an admitted partner's tolerance t is at most the bound of its class and the rule never gets worse
- * as a tolerance grows, so the rule with that bound in place of t holds for the partner's home, and
- * the partner's segment (home, class) is listed here.
- */
-function friendsSegment(w: World, home: Neighborhood, tolerance: number): EntitySegment {
+function friendsSegment(w: World, home: Neighborhood, tolerance: number, friend: FriendStatement): EntitySegment {
   let reachable = reachableByRun.get(w);
   if (!reachable) { reachable = new Map(); reachableByRun.set(w, reachable); }
-  const key = `${home.id}|${tolerance}`;
+  const key = `${home.id}|${tolerance}|${friend.friendGender}|${friend.friendOpenness}`;
   const known = reachable.get(key);
   if (known) return known;
+  const genders = FRIEND_GENDERS.filter(g => friendAdmits(friend, { friendGender: g, friendOpenness: friendOpennessUnanswered }));
   const partners = new Set<string>();
   for (const other of NEIGHBORHOODS) {
     const minutes = transitMinutes(home, other);
     for (let k = 0; k <= TOLERANCE_CLASSES.length; k++) {
-      if (withinTransitTolerance(minutes, tolerance, classBound(k))) partners.add(homeSegment(other, k));
+      if (withinTransitTolerance(minutes, tolerance, classBound(k))) for (const g of genders) partners.add(homeSegment(other, k, g));
     }
   }
-  const segment = { own: homeSegment(home, toleranceClass(tolerance)), partners: [...partners].sort() };
+  const segment = { own: homeSegment(home, toleranceClass(tolerance), friend.friendGender), partners: [...partners].sort() };
   reachable.set(key, segment);
   return segment;
 }
@@ -88,7 +85,7 @@ export const friendsVectors: PackVectors = {
   },
   segment(w, entity) {
     const info = friendsInfo(w).get(entity.memberId);
-    return info?.home ? friendsSegment(w, info.home, info.tolerance) : undefined;
+    return info?.home ? friendsSegment(w, info.home, info.tolerance, info.friend) : undefined;
   },
   // spec/memberStanding.md: Friend has no vertical dimension, so every member sits in the middle.
   standing: () => ({ standing: standingFromRating(standingRatingScale / 2), uncertainty: 0 }),
