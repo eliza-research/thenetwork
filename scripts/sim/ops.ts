@@ -101,7 +101,7 @@ export async function opsBlock(b: Block): Promise<void> {
       }),
     };
     const m = await collectNetwork(probe, T0);
-    expect(m.lastTickAgoMs).toBe(20_000);
+    expect(m.lastTickAgoMs).toBe(30_000);
     expect(m.sends24h).toEqual({ attempted: 105, failed: 6, refused: 8, dryRun: 50, smsFallback: 5 });
     expect([m.reviewExpired24h, m.safety24h.bans, m.safety24h.holds, m.safety24h.reports, m.safety24h.urgentReports]).toEqual([2, 1, 0, 2, 1]);
     const broken = await collectNetwork({ ...probe, health: async () => { throw new Error("connection refused"); } }, T0);
@@ -333,6 +333,44 @@ export async function opsBlock(b: Block): Promise<void> {
   try {
     const { migrate } = await import("../../packages/observatory/db/migrate.ts");
     await migrate(srcUrl, { lockTimeout: "60s" });
+    // spec/models/runtime_ops.md, tickLateMaskedTest
+    await b.run("matcher heartbeat on Postgres: a staff save cannot mask a stalled or missing tick", async () => {
+      const { SimClock } = await import("../../packages/core/src/index.ts");
+      const { NetworkService } = await import("../../packages/network/service/service.ts");
+      const now = Date.now();
+      const clock = new SimClock(now - 16 * MIN);
+      const service = new NetworkService({
+        url: srcUrl, clock, networks: [{ id: "ntwrk:nyc" }, { id: "friends:nyc" }],
+        env: { PLATFORM_ENV: "dev" }, notify: false, log: () => {},
+      });
+      const sql = new SQL({ url: srcUrl, max: 1 });
+      try {
+        const stalled = service.runtimes.get("ntwrk:nyc")!;
+        const never = service.runtimes.get("friends:nyc")!;
+        const runtimes = [stalled, never];
+        const ops = createOps({
+          config: CFG, probes: () => runtimes.map(runtimeProbe), store: new PgAlertStore(sql),
+          now: () => clock.now(), log: jsonLogger(() => {}),
+        });
+        expect(await stalled.tick()).toBe(true);
+        clock.set(now);
+        for (const rt of runtimes) await rt.unitOfWork(n => n.setMatchingEnabled(false, "ops-sim"));
+        for (const rt of runtimes) expect((await rt.health()).lastTick.savedAt).toBeGreaterThan(now - MIN);
+
+        const late = await ops.tick();
+        expect({ ages: (await ops.metrics()).networks.map(n => n.lastTickAgoMs), notices: late?.notices.map(n => [n.key, n.state]) })
+          .toEqual({ ages: [16 * MIN, null], notices: [["tick_late:ntwrk:nyc", "firing"], ["tick_late:friends:nyc", "firing"]] });
+
+        clock.set(now + MIN);
+        for (const rt of runtimes) expect(await rt.tick()).toBe(true);
+        const recovered = await ops.tick();
+        expect(recovered?.notices.map(n => [n.key, n.state]).sort())
+          .toEqual([["tick_late:friends:nyc", "resolved"], ["tick_late:ntwrk:nyc", "resolved"]]);
+      } finally {
+        await service.close();
+        await sql.close();
+      }
+    }, pgBlocking);
     await b.run("ops tables on Postgres: service writes, per-app console reads, alert dedupe across a restart, the probe's reads under row-level security", async () => {
       const sql = new SQL({ url: srcUrl, max: 2 });
       try {

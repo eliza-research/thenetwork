@@ -227,10 +227,20 @@ export class NetworkRuntime {
   private committed: Outbound[] = [];
   /** Committed observations waiting for their follow-up projection. */
   private recordedAges: (RecordedMemberAge & { memberId: MemberId })[] = [];
-  takeRecordedAges(memberId: MemberId): RecordedMemberAge[] {
-    const mine = this.recordedAges.filter(a => a.memberId === memberId);
+  async projectRecordedAges(memberId: MemberId): Promise<void> {
+    const accounts = this.host.accounts;
+    if (!accounts) return;
+    const observations = this.recordedAges.filter(a => a.memberId === memberId);
     this.recordedAges = this.recordedAges.filter(a => a.memberId !== memberId);
-    return mine;
+    for (const [index, observation] of observations.entries()) {
+      try {
+        await accounts.projectRecordedAge(observation);
+      } catch (error) {
+        this.recordedAges.unshift(...observations.slice(index));
+        this.host.log("Age projection failed for " + this.id);
+        throw error;
+      }
+    }
   }
   /** Who the inbound message being handled came from: sends to them are direct replies. */
   replyingTo?: MemberId;

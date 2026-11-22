@@ -204,7 +204,10 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   } catch { return json({ error: "membership_unavailable", retryable: false }, 403); }
   if (replay instanceof Response) return replay;
   // A replay classifies and sends nothing: it reads the stored decision and the outbound row again.
-  if (replay) return json(await answer(d.sql, app, replay, true));
+  if (replay) {
+    await rt.projectRecordedAges(memberId).catch(() => undefined);
+    return json(await answer(d.sql, app, replay, true));
+  }
 
   try {
     const request = parseRelayRequest(text);
@@ -253,6 +256,7 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
         return r;
       });
     }
+    if (request.kind === "text") await rt.projectRecordedAges(memberId).catch(() => undefined);
     return json(await answer(d.sql, app, result, false));
   } catch {
     await d.sql`update platform.inbound set action_receipts=jsonb_set(action_receipts,array[${receipt}],${{ requestHash: digest, state: "unresolved" }}::jsonb)

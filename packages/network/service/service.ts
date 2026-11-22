@@ -1959,7 +1959,7 @@ export class NetworkService implements RuntimeHost {
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
       if (!kw && e164 && !controls && !calendar && !surveyAnswer && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
-      if (e164) await this.projectStatedAge(rt, memberId);
+      if (e164) await rt.projectRecordedAges(memberId);
       return out;
     }
 
@@ -2050,7 +2050,7 @@ export class NetworkService implements RuntimeHost {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
     await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
-    await this.projectStatedAge(rt, m.memberId as MemberId);
+    await rt.projectRecordedAges(m.memberId as MemberId);
     return "accepted";
   }
 
@@ -2495,11 +2495,6 @@ export class NetworkService implements RuntimeHost {
     const result = await store.respond(tx, { ...key, actor, decision: command.decision, receivedAt });
     if (result) rt.unit.atomicReply = "bounded_home_help";
     rt.collectedMemberReply(actor.memberId, responseId, boundedHomeHelpConsentReply(result), "bounded_home_help");
-  }
-
-  /** Apply the saved age to matching, photos, and memberships owned by the same person. */
-  private async projectStatedAge(rt: NetworkRuntime, memberId: MemberId) {
-    for (const recorded of rt.takeRecordedAges(memberId)) await this.accounts.projectRecordedAge(recorded);
   }
 
   /**

@@ -219,6 +219,8 @@ const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|${AGE_LOOSE_TAIL}|tu
 const IDENTITY_WORD = "person|guy|girl|boy|man|woman|kid|teen";
 /** "15f", "16 m", "15/f": an age and a sex, the way teens introduce themselves. Never "15m away" or "raised 15m". */
 const AGE_SEX_END = "(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))";
+const AGE_SEX_ETA = "(?!\\s+(?:from\\s+(?:the|a|an|our|your|there|here)|in\\s+(?:a|an|the|traffic))\\b)";
+const AGE_SEX_MARKER = `(?:\\/\\s*[fmx]|[fx]|m${AGE_SEX_ETA})`;
 const joinAgeOnly = (age: number): number => canJoin(age) ? age : NaN;
 /** Ages the loose forms may read: a teen or an adult. Under 13 needs a strict form. */
 const teenOrAdult = (n: number) => (n >= 10 && n < 100 ? n : NaN);
@@ -255,8 +257,8 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\bi turn\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
   { rx: /\bwhen i turn\s+(1[4-8]|sixteen|seventeen|eighteen)\b/, age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1, estimated: true },
   // "15f here", "16 m", "15/f", "im 15f", "f15".
-  { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:${ME}\\s+)?(1\\d|\\d)\\s*\\/?\\s*[fmx](?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
-  { rx: new RegExp(`\\b${ME}\\s+(1\\d|\\d)\\s*\\/?\\s*[fm](?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
+  { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:${ME}\\s+)?(1\\d|\\d)\\s*${AGE_SEX_MARKER}(?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
+  { rx: new RegExp(`\\b${ME}\\s+(1\\d|\\d)\\s*${AGE_SEX_MARKER}(?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?[fm]\\s*\\/?\\s*(1\\d)${AGE_SEX_END}`), age: m => Number(m[1]) },
   // "15 here", "16 lol" as the whole opening.
   { rx: /^\W*(1[0-7])\s+(?:here|lol)\b/, age: m => Number(m[1]) },
