@@ -8,10 +8,12 @@ ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a38
 
 FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
-COPY packages ./packages
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN npm install --global corepack@0.35.0 \
-    && corepack pnpm install --frozen-lockfile --prod --ignore-scripts
+    && corepack pnpm fetch --prod --ignore-scripts
+COPY tsconfig.json ./
+COPY packages ./packages
+RUN corepack pnpm install --offline --frozen-lockfile --prod --ignore-scripts
 
 FROM postgres:${PG_MAJOR}-bookworm
 ARG PG_MAJOR
