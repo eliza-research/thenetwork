@@ -275,7 +275,7 @@ const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|dej
 
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
 const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
-const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b/i;
+const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b|\band\b/i;
 
 function optOutClauses(text: string, norm: (value: string) => string): string[] {
   const t = norm(text);

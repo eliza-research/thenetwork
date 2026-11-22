@@ -154,3 +154,11 @@
 {"text":"I said stop by at 7","label":"not_stop","lang":"en"}
 {"text":"I said cancel","label":"not_stop","lang":"en"}
 {"text":"stop slop stop slop","label":"not_stop","lang":"en"}
+{"text":"Don't stop calling and stop texting me","label":"stop","lang":"en"}
+{"text":"Don't stop calling and unsubscribe me","label":"stop","lang":"en"}
+{"text":"stop texting me and don't stop calling","label":"stop","lang":"en"}
+{"text":"Don't stop calling and stop by at 7","label":"not_stop","lang":"en"}
+{"text":"Don't stop texting me and don't stop calling","label":"not_stop","lang":"en"}
+{"text":"stop and go","label":"not_stop","lang":"en"}
+{"text":"stop and unsubscribe","label":"stop","lang":"en"}
+{"text":"Don't stop calling and leave me alone","label":"stop","lang":"en"}
