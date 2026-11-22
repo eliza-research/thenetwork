@@ -24,9 +24,11 @@ import {
   applyCorrection, extractSlopProfile, extractSlopProfileLLM, hardComplete, hasField, HARD_FIELDS, llmSlopReader, markAsked, nextQuestion, readBack, readBackFacts,
   type OnboardField, type SlopOnboarding, type SlopReader,
 } from "../../packages/engine/src/packs/slop/index.ts";
+import { agesStated } from "../../packages/network/src/classify.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { zipInfo } from "../../packages/sim/src/apps/slop/geo.ts";
-import { Block } from "./gate.ts";
+import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dirname}/../../evals/slop-onboarding`;
 const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
@@ -477,7 +479,61 @@ async function llmMergeGate(b: Block): Promise<void> {
   });
 }
 
+export async function currentAgeEvidenceGate(b: Block): Promise<void> {
+  await b.run("onboarding keeps the lowest current age through birthday, punctuation and read-back", async () => {
+    const texts = [
+      { text: "I'm 18 in two weeks", age: 17 },
+      { text: "I'm 18 y.o. in two weeks", age: 17 },
+      { text: "I'm eighteen next month", age: 17 },
+      { text: "I'm 18, in two weeks", age: 17 },
+      { text: "I'm 18 (on Friday)", age: 17 },
+      { text: "I'm still 17", age: 17, direct: 17 },
+      { text: "I'm currently seventeen", age: 17, direct: 17 },
+      { text: "I'm now 16", age: 16, direct: 16 },
+      { text: "I'm 15 y.o.", age: 15, direct: 15 },
+      { text: "I'm 18 in high school", age: 18, direct: 18 },
+      { text: "I'm still 5 minutes away" },
+      { text: "I'm currently 18 in the queue" },
+      { text: "I'm 18 in two weeks pregnant" },
+      { text: "I'm 18 for two weeks" },
+      { text: "I'm 18 years sober" },
+      { text: "She said, ‘I'm 18 in two weeks’" },
+      { text: "She said, ‘I'm still 17’" },
+      { text: "She wrote, ‘Hey. I'm 15 y.o.’" },
+      { text: "My child is 15 y.o." },
+    ];
+    for (const { text, age, direct } of texts) {
+      const world = new Mini([{ id: "member", name: "Tara Example", age: 30 }]);
+      await world.onboard("member");
+      await world.say("member", text);
+      const profile = extractSlopProfile([text]);
+      const member = world.net.memberList().find(m => m.id === "member")!;
+      const minor = age !== undefined && age < 18;
+      expect({ text, network: member.statedAge, slop: profile.age?.value, direct: agesStated(text, { directOnly: true }).age,
+        networkMinor: member.minor, slopMinor: profile.minor }).toEqual({ text, network: age, slop: age, direct, networkMinor: minor, slopMinor: minor });
+      if (profile.age) {
+        const { start, end, text: quote } = profile.age.evidence;
+        expect(quote).toBe(text.slice(start, end));
+      }
+    }
+    const world = new Mini([{ id: "member", name: "Tara Example", age: 30 }]);
+    await world.onboard("member");
+    const starting = extractSlopProfile(["I'm 30, a woman looking for men 28-38 within 5 mi of 11211"]);
+    expect(starting.age?.value).toBe(30);
+    expect(Boolean(readBack(starting))).toBe(true);
+    let profile = starting;
+    for (const [text, floor] of [["I'm 18 in two weeks", 17], ["Actually I'm 20", 17], ["I'm 15 y.o.", 15], ["I'm 30 now", 15]] as const) {
+      profile = applyCorrection(profile, text);
+      await world.say("member", text);
+      expect(profile.age?.value).toBe(floor);
+      expect(world.net.memberList().find(m => m.id === "member")?.statedAge).toBe(profile.age?.value);
+      expect([profile.matchable, readBack(profile), nextQuestion(profile)]).toEqual([false, undefined, undefined]);
+    }
+  });
+}
+
 export async function onboardBlock(b: Block, o: { quick: boolean; llm?: boolean }): Promise<void> {
+  await currentAgeEvidenceGate(b);
   await corpusGates(b, async msgs => extractSlopProfile(msgs));
   await llmMergeGate(b);
   await simGates(b, o, async (text, asked, p, market) => extractSlopProfile([{ text, asked }], p, { market: market as "nyc" }));
