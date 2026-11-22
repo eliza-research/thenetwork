@@ -48,6 +48,18 @@ pure def lawOneAttendeeIsNotAHeldMeeting(attendees: int): bool =
   attendees <= 1 implies not(observatoryMeetingHeld(attendees))
 ```
 
+### Reviewed offers contribute to a member's proposal activity after approval
+
+Count a participant's opportunity once after approval. Pending, rejected, expired, and invalidated reviews supply no proposal activity. Keep an earlier published offer if the exact app, opportunity and member have positive evidence of an outbound probe or invitation. It must belong to a recorded approval. Keep existing proposal activity for historical opportunities without a review record. The opportunity inventory is separate from member proposal activity.
+
+```quint
+pure def observatoryProposalCounts(reviewed: bool, approved: bool, invalidated: bool, published: bool): bool =
+  not(reviewed) or (approved and (not(invalidated) or published))
+
+pure def lawPendingReviewCannotAddProposal(approved: bool, invalidated: bool, published: bool): bool =
+  not(approved) implies not(observatoryProposalCounts(true, approved, invalidated, published))
+```
+
 ### A due cancelled booking remains in completion
 
 The completion rate uses bookings whose meeting start has arrived. A scheduled, completed, feedback-collected, abandoned, or cancelled booking with a recorded start can enter that count. A cancellation before booking or before the recorded start supplies no completion evidence. Only a held meeting counts as completed.

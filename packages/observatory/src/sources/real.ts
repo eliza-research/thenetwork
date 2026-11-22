@@ -9,7 +9,7 @@
 // build a WorldSnapshot from the database and run engine-v1 on it in memory; proposals are shown as
 // ghosts and never written (PRD 34.6).
 import { SQL } from "../../../core/src/runtime/postgres.ts";
-import { heldMeetingMinimum, observatoryMeetingHeld } from "../../../core/src/generated/observatoryRoster.ts";
+import { heldMeetingMinimum, observatoryMeetingHeld, observatoryProposalCounts } from "../../../core/src/generated/observatoryRoster.ts";
 import { consoleBookingReceiptCurrent, consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
 import { confirmationWindowHours } from "../../../core/src/generated/meetingSettlement.ts";
 import {
@@ -67,6 +67,10 @@ interface DeliveryEvidence {
 }
 interface BookingReceiptView {
   app_id: AppId; opportunity_id: string; member_id: string; booking_at: Date; received_at: Date;
+}
+interface ParticipationRow {
+  opportunity_id: string; member_id: string; role: string; status: ParticipantStatus; enjoyment: number | null;
+  reviewed: boolean; approved: boolean; invalidated: boolean; published: boolean;
 }
 const guardLabel: Record<ConsoleDeliveryGuard, ObsMessage["guard"]> = {
   DeliveryGuardUnrecorded: undefined, DeliveryGuardBlocked: "blocked", DeliveryGuardReleased: "released", DeliveryGuardChecked: "passed",
@@ -314,7 +318,7 @@ export class RealSource implements DataSource {
               and a.role = 'participant' and a.status = 'attended'
             group by o.id having count(*) >= ${heldMeetingMinimum}
           )
-          select p.member_id, count(*)::int as proposals,
+          select p.member_id,
             count(*) filter (where p.status = any(${`{${ACCEPTED_PARTICIPATION_STATUSES.join(",")}}`}::text[]))::int as accepted,
             count(*) filter (where p.status = 'attended' and h.id is not null)::int as meetings,
             coalesce(sum(p.enjoyment) filter (where p.status = 'attended' and h.id is not null), 0)::float8 as enjoyment_sum,
@@ -323,7 +327,19 @@ export class RealSource implements DataSource {
           where p.app_id = ${app} and p.role = 'participant' group by p.member_id`,
       sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app}`,
       sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`,
-      sql`select opportunity_id, member_id, role, status, enjoyment::text::float8 as enjoyment from network.participations where app_id = ${app}`,
+      sql<ParticipationRow[]>`select p.opportunity_id,p.member_id,p.role,p.status,p.enjoyment::text::float8 as enjoyment,
+        rv.opportunity_id is not null as reviewed, coalesce(rv.decision='approve',false) as approved, rv.invalidated is not null as invalidated,
+        case when p.role='participant' and rv.decision='approve' and rv.invalidated is not null then exists (
+          select 1 from network.messages m
+          left join network.${sql(`outbound_evidence_${app}`)} e on e.app_id=m.app_id and e.member_id=m.member_id and e.message_id=m.id
+          where m.app_id=p.app_id and m.opportunity_id=p.opportunity_id and m.member_id=p.member_id
+            and m.direction='outbound' and not m.system and m.type in ('probe','plan_probe','proposal')
+            and (e.reason='accepted_by_provider' or e.status in ('delivered','read')
+              or (e.message_id is null and m.status='delivered'))
+        ) else false end as published
+        from network.participations p
+        left join network.review_items rv on rv.app_id=p.app_id and rv.opportunity_id=p.opportunity_id
+        where p.app_id=${app}`,
       sql`select summary from network.matching_runs where app_id = ${app} order by at desc, id desc limit 40`,
       // Only types the feed shows: probes and refusals would push everything else out of the last 300.
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${app} and type = any(${`{${FEED_TYPES.join(",")}}`}::text[]) order by at desc, id desc limit 300`,
@@ -358,6 +374,15 @@ export class RealSource implements DataSource {
 
     const msgBy = new Map(msgAgg.map((r: any) => [r.member_id, r]));
     const partBy = new Map(partAgg.map((r: any) => [r.member_id, r]));
+    const proposals = new Map<string, number>(), partsBy = new Map<string, ParticipationRow[]>();
+    for (const p of parts) {
+      const group = partsBy.get(p.opportunity_id) ?? [];
+      group.push(p);
+      partsBy.set(p.opportunity_id, group);
+      if (p.role === "participant" && observatoryProposalCounts(p.reviewed, p.approved, p.invalidated, p.published)) {
+        proposals.set(p.member_id, (proposals.get(p.member_id) ?? 0) + 1);
+      }
+    }
     this.recordAges = new Map((members as any[]).map(r => [r.id as string, r.age as number | null]));
     for (const r of members as any[]) {
       const mm = msgBy.get(r.id) as any, pp = partBy.get(r.id) as any;
@@ -375,7 +400,7 @@ export class RealSource implements DataSource {
         ...(opt?.calendar ? { calendar: true } : {}), ...(opt?.weekly ? { weekly: true } : {}),
         counters: {
           ...emptyCounters(), msgsIn: mm?.msgs_in ?? 0, msgsOut: mm?.msgs_out ?? 0, proactive: mm?.proactive ?? 0,
-          proposals: pp?.proposals ?? 0, accepted: pp?.accepted ?? 0, meetings: pp?.meetings ?? 0,
+          proposals: proposals.get(r.id) ?? 0, accepted: pp?.accepted ?? 0, meetings: pp?.meetings ?? 0,
           enjoymentSum: pp?.enjoyment_sum ?? 0, enjoymentN: pp?.enjoyment_n ?? 0,
         },
       };
@@ -386,8 +411,6 @@ export class RealSource implements DataSource {
       const e = { from: r.from_id, to: r.to_id, type: r.type as EdgeType, strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: (r.explicit ? "graph" : "learned") as ObsEdge["origin"] };
       s.addEdge(e);
     }
-    const partsBy = new Map<string, any[]>();
-    for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
     const receipts = new Map<string, BookingReceiptView[]>();
     for (const receipt of bookedMsgs) {
       const group = receipts.get(receipt.opportunity_id) ?? [];
@@ -410,8 +433,8 @@ export class RealSource implements DataSource {
         explanations: Object.fromEntries(Object.entries(r.explanations ?? {}).map(([k, v]) => [k, scrubText(String(v), this.reveal)])),
         exploration: r.exploration, participants, alternates: ps.filter(p => p.role === "alternate").map(p => p.member_id),
         state: r.state, reason: r.reason ?? undefined,
-        status: Object.fromEntries(ps.filter(p => p.role === "participant").map(p => [p.member_id, p.status as ParticipantStatus])),
-        enjoyment: Object.fromEntries(ps.filter(p => p.enjoyment !== null && p.status === "attended").map(p => [p.member_id, p.enjoyment])),
+        status: Object.fromEntries(ps.filter(p => p.role === "participant").map(p => [p.member_id, p.status])),
+        enjoyment: Object.fromEntries(ps.flatMap(p => p.status === "attended" && p.enjoyment !== null ? [[p.member_id, p.enjoyment] as const] : [])),
         createdAt: ms(r.created_at) ?? 0, updatedAt: ms(r.updated_at) ?? 0, meetingAt: ms(r.meeting_at), runId: r.run_id ?? undefined,
       };
       const rv = reviewBy.get(r.id);
