@@ -1,4 +1,4 @@
-import { coordinatedStopClause, matchesSpokenAppDomain, stopWordAllowsCourtesy, textRefusalStops, type StopConjunct } from "./generated/carrierConsent.ts";
+import { coordinatedStopClause, matchesSpokenAppDomain, sharedLineStopStatementStops, stopWordAllowsCourtesy, textRefusalStops, type StopConjunct } from "./generated/carrierConsent.ts";
 
 // Member reply understanding (audit 2026-10-08 network-consent-2, plugin-prototypes-12).
 // Deterministic, no model. One shared parser for "did the member say yes?" and "does the member
@@ -390,6 +390,8 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   const courtesyLang = stopCourtesyLanguage(keywordKey(text ?? ""));
   const lang = courtesyLang ?? (LIKELY_ES.test(t) || EXACT_ES.test(t) ? "es" : "en");
   if (EXACT_EN.test(t) || EXACT_ES.test(t)) return { match: "exact", scope: "all", lang };
+  const stopStatement = readSharedLineStopStatement(text ?? "");
+  if (stopStatement !== undefined) return { match: stopStatement ? "likely" : "none", scope: "all", lang };
   // Reported speech and how-to questions do not opt out.
   if (REPORTED_OR_INSTRUCTIONAL_STOP.test(t)) return { match: "none", scope: "all", lang };
   if (/^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
@@ -463,6 +465,27 @@ export const keywordKey = (text: string) => foldKeywordText(text).replace(/[^\p{
 // ("cancel the date", "can you stop by at 7", "don't stop texting me") is not. This is the strict
 // reading the consent ledger acts on; `parseOptOut` above is the conversational reading (it also
 // reports "likely" for looser phrasings the agent should confirm).
+const REPEATED_STOP_STATEMENT = /^(?:stop[!.,;]+\s*)?i (?:(?:already|just) )?(?:said|told you to) (?:stop|["']stop["'])(?:[, ]+(?:please|pls|thanks|thank you))?$/;
+const PERMANENT_STOP_STATEMENT = /^(?:(?:please|pls)[, ]+)?(?:i (?:(?:already|just) )?said )?i (?:never(?: ever)? want to hear (?:anything )?from you(?: again)?|(?:don't|do not|dont) want to hear (?:anything )?from you (?:again|anymore|any more|ever))(?:[, ]+(?:please|pls|thanks|thank you))?$/;
+
+export function stopStatementIsDirect(text: string): boolean {
+  return !/^\s*["'“”«»]|\?/.test(foldKeywordText(text));
+}
+
+function readSharedLineStopStatement(text: string): boolean | undefined {
+  const folded = foldKeywordText(text).toLowerCase().replace(/\s+/g, " ").trim();
+  // Keep the raw envelope for authority. Remove it only when identifying a rejected candidate.
+  const statement = folded.replace(/[.!?]+$/, "").replace(/^["'“«](.*)["'”»]$/, "$1").trim().replace(/[.!?]+$/, "");
+  const repeated = REPEATED_STOP_STATEMENT.test(statement);
+  const permanent = PERMANENT_STOP_STATEMENT.test(statement);
+  if (!repeated && !permanent) return undefined;
+  return sharedLineStopStatementStops(stopStatementIsDirect(text), repeated, permanent);
+}
+
+export function isDirectSharedLineStop(text: string): boolean {
+  return readSharedLineStopStatement(text) === true;
+}
+
 const ME = "(?:me|us|this number|my number)";
 const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to|emailing|calling) ${ME}\\b`),
@@ -499,6 +522,8 @@ export function optOutPhrase(text: string, isLeave: (text: string) => boolean = 
   const norm = (s: string) => foldKeywordText(s).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
   const t = norm(text);
   if (!t || t.length > 160 || isLeave(text)) return false;
+  const stopStatement = readSharedLineStopStatement(text);
+  if (stopStatement !== undefined) return stopStatement;
   const startsStop = (clause: string) => !isLeave(clause)
     && (readsTextRefusal(clause) || OPT_OUT_EN.some(r => r.exec(clause)?.index === 0) || OPT_OUT_ES.some(r => r.exec(clause)?.index === 0));
   return optOutClauses(text, norm, startsStop).some(clause => {

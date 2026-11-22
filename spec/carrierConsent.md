@@ -31,6 +31,21 @@ pure def lawBareTextRefusalNeedsPermanence(permanentEnding: bool): bool =
   textRefusalStops(false, permanentEnding) == permanentEnding
 ```
 
+### Direct repeated and permanent refusals stop the shared line
+
+Recognize a direct first-person repeat such as “I told you to stop” and an explicitly permanent refusal such as “I never want to hear from you again”. The reader checks the whole message and keeps its quote and question markers. A full quotation, a question, a third-person report, a temporary limit, or a named topic or app supplies no global STOP through this rule.
+
+```quint
+pure def sharedLineStopStatementStops(direct: bool, repeated: bool, permanent: bool): bool =
+  direct and (repeated or permanent)
+
+pure def lawAnIndirectStopStatementCannotStop(repeated: bool, permanent: bool): bool =
+  not(sharedLineStopStatementStops(false, repeated, permanent))
+
+pure def lawARecognizedDirectStopStatementStops(repeated: bool, permanent: bool): bool =
+  (repeated or permanent) implies sharedLineStopStatementStops(true, repeated, permanent)
+```
+
 ### An independent STOP joined to a negation still takes effect
 
 The text reader can recognize a direct global STOP after a complete negative clause, or before a separate negative clause. An incomplete negative clause, such as "I don't want you to stop", does not make a following verb into a separate request. The text reader identifies the clauses. At the inbound boundary, the platform excludes a request that specifies a single app from global STOP.

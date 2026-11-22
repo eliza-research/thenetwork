@@ -5,7 +5,7 @@
 // app. START opts in to one app. The ledger reads the last event per (e164, app) and per (e164, null);
 // a global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it.
 import { appMayText } from "../../core/src/generated/carrierConsent.ts";
-import { appLeaveNamesDomain, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase, readAppLeaveName, stopCourtesyLanguage } from "../../core/src/replies.ts";
+import { appLeaveNamesDomain, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase, readAppLeaveName, stopCourtesyLanguage, stopStatementIsDirect } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";
 
 export type ConsentState = "opted_in" | "opted_out";
@@ -65,8 +65,9 @@ const STOP_TAIL = `(?:${KEYWORDS.stopTail.join("|")})`;
 const STOP_ALL_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP ?ALL(?:(?: ${STOP_TAIL})* STOP ?ALL)*(?: ${STOP_TAIL})*$`);
 const REPEATED_SPANISH_STOP = new RegExp(`^(${KEYWORDS.stopEs.join("|")})(?: \\1)+$`);
 
-function repeatedOrInsistedStop(key: string): "stop" | "stop_all" | undefined {
+function repeatedOrInsistedStop(key: string, text: string): "stop" | "stop_all" | undefined {
   const stop = key.replace(/^I (?:(?:ALREADY|JUST) )?SAID | I SAID$/g, "");
+  if (stop !== key && !stopStatementIsDirect(text)) return undefined;
   if (STOP_ALL_TAIL_RX.test(stop)) return "stop_all";
   if (stopCourtesyLanguage(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
   return undefined;
@@ -76,7 +77,7 @@ export type Keyword = "stop" | "stop_all" | "start" | "help";
 
 export function detectKeyword(text: string): Keyword | undefined {
   const k = keywordKey(text);
-  const repeated = repeatedOrInsistedStop(k);
+  const repeated = repeatedOrInsistedStop(k, text);
   if (repeated) return repeated;
   if (STOP_ALL_WORDS.has(k)) return "stop_all";
   // "STOPP", "STOOOP": a misspelt STOP is still a STOP.
