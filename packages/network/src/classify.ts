@@ -118,8 +118,28 @@ const CATEGORY_WORDS: [RegExp, Category][] = [
 /** Sentences (and clauses after "but"): the scope of a negation or a disclosure. */
 export function sentencesOf(t: string): { text: string; at: number }[] {
   const out: { text: string; at: number }[] = [];
-  const re = /[^.!?;\n]+[.!?;\n]*/g;
-  for (const m of t.matchAll(re)) if (m[0].trim()) out.push({ text: m[0], at: m.index! });
+  const re = /[!?;.\n]/g;
+  let start = 0;
+  let m: RegExpExecArray | null;
+  const hasContent = (s: string) => /[\p{L}\p{Nd}]/u.test(s);
+  const endOfSentence = (i: number) => {
+    if (t[i]! !== ".") return true;
+    const before = i > 0 ? t[i - 1]! : "";
+    const before2 = i > 1 ? t[i - 2]! : "";
+    const after = i + 1 < t.length ? t[i + 1]! : "";
+    const after2 = i + 2 < t.length ? t[i + 2]! : "";
+    const single = (c: string, other: string) => /[a-z]/.test(c) && !/[a-z]/.test(other);
+    return !(single(before, before2) && single(after, after2));
+  };
+  while ((m = re.exec(t)) !== null) {
+    if (!endOfSentence(m.index)) continue;
+    const end = m.index + 1;
+    const text = t.slice(start, end);
+    if (hasContent(text)) out.push({ text, at: start });
+    start = end;
+  }
+  const tail = t.slice(start);
+  if (hasContent(tail)) out.push({ text: tail, at: start });
   return out.length ? out : [{ text: t, at: 0 }];
 }
 

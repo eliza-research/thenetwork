@@ -250,3 +250,10 @@
 {"text":"In 9th grade. I did competitive swimming then.","teen":false}
 {"text":"12th grade teacher, here.","teen":false}
 {"text":"Hey, turned 16, hbu?","teen":true,"age":16}
+{"text":"I'm 15 y.o.","teen":true,"age":15}
+{"text":"im 15 y.o.","teen":true,"age":15}
+{"text":"I'm 15 y.o., nyc","teen":true,"age":15}
+{"text":"I'm 15 y.o. I live in nyc","teen":true,"age":15}
+{"text":"I'm 25 y.o.","teen":false,"age":25}
+{"text":"I'm 30 y.o. I live in Queens","teen":false,"age":30}
+{"text":"my teacher is so mean.i have a math test tomorrow","teen":true}
