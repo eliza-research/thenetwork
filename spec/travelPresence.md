@@ -48,6 +48,20 @@ pure def lawCoveringTripSharesTime(window: PresenceWindow, requested: PresenceWi
   presenceWindowCovers(window, requested) implies presenceWindowsOverlap(window, requested)
 ```
 
+### Shared areas lower cost only during the meeting window
+
+For a proposed meeting in a city-bucket market, lower the activation cost when every participant has recorded presence in the same area for a common interval of positive length inside the proposed window. A valid dated visit replaces home or routine area evidence during that visit, including a visit inside the same city. A temporary presence needs both valid dates to supply area evidence. The end of a visit is excluded. For a candidate without a meeting window, use the listed areas.
+
+```quint
+pure def meetingAreaInterval(presence: PresenceWindow, requested: PresenceWindow): PresenceWindow = {
+  from: if (presence.from > requested.from) presence.from else requested.from,
+  to: if (presence.to < requested.to) presence.to else requested.to,
+}
+
+pure def lawMeetingAreaNeedsStrictOverlap(presence: PresenceWindow, requested: PresenceWindow): bool =
+  presenceWindowValid(meetingAreaInterval(presence, requested)) == presenceWindowsOverlap(presence, requested)
+```
+
 ## Story: Tell the Network my travel dates
 
 > As a member, I want to tell the agent where I will be and see which app saved my travel dates.
