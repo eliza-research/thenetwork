@@ -3,6 +3,7 @@
 // edges the Network learns follow PRD 32.13 (introduced, met, enjoyed, would_interact_again, avoid).
 import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
+import { currentConsentViewChanges } from "../../core/src/generated/observatoryMemberConsent.ts";
 import { closedProbeUpdate, replacementRosterMode } from "../../core/src/generated/observatoryRoster.ts";
 import { requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
@@ -36,6 +37,7 @@ export interface ProjectorOptions {
 }
 
 export class Projector {
+  private stoppedParticipation = new Map<MemberId, MemberStatus>();
   private meetings = new Map<string, string>(); // meetingId -> proposalId
   /** The member who last received the under-13 decline (join_declined itself carries no member id). */
   private declineTo?: MemberId;
@@ -241,11 +243,20 @@ export class Projector {
         s.pushFeed({ t: r.t, kind: "block", text: `${this.name(r.from)} blocked ${this.name(r.to)}`, members: [r.from, r.to], severity: "warn" });
         return;
       }
-      case "opt_out": {
-        c.optOuts++;
-        const m = s.member(r.memberId);
-        if (m) { m.state = "opted_out"; s.touchMember(m.id); }
-        s.pushFeed({ t: r.t, kind: "opt_out", text: `${this.name(r.memberId)} texted STOP`, members: [r.memberId], severity: "warn" });
+      case "opt_in": case "opt_out": {
+        const m = s.member(r.memberId), stopping = r.type === "opt_out";
+        if (!m || !currentConsentViewChanges(m.joined, m.state === "opted_out", stopping)) return;
+        if (stopping) {
+          this.stoppedParticipation.set(m.id, m.state);
+          m.state = "opted_out";
+          c.optOuts++;
+          s.pushFeed({ t: r.t, kind: "opt_out", text: `${this.name(r.memberId)} texted STOP`, members: [r.memberId], severity: "warn" });
+        } else {
+          m.state = this.stoppedParticipation.get(m.id) ?? this.opts.joinState?.(m.id) ?? "normal";
+          this.stoppedParticipation.delete(m.id);
+          c.optOuts--;
+        }
+        s.touchMember(m.id);
         return;
       }
       case "adversarial_attempt":

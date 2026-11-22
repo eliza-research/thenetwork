@@ -254,7 +254,10 @@ export class World {
     this.logMessage(m);
     this.unanswered.set(p.id, 0);
     if (m.keyword === "STOP") { mem.optedOut = true; this.optedOut.add(p.id); this.rec({ type: "opt_out", memberId: p.id }); }
-    if (m.keyword === "START") { mem.optedOut = false; this.optedOut.delete(p.id); }
+    if (m.keyword === "START" && this.optedOut.delete(p.id)) {
+      mem.optedOut = false;
+      this.rec({ type: "opt_in", memberId: p.id });
+    }
     return m;
   }
 
