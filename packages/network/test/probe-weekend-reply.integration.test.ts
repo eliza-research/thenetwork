@@ -53,6 +53,6 @@ test("a past date reference neither books nor replaces the active time choice", 
   expect(world.probed("sam")).toBe(true);
   expect(world.log("probe_answer").filter(item => item.detail.memberId === "sam")).toEqual([]);
 
-  await world.say("sam", "Last Saturday was great, Sunday works.");
+  await world.say("sam", "Last Saturday was great and Sunday works.");
   expect(world.meetings).toMatchObject([{ proposalId: id, participants: ids, at: sunday }]);
 });

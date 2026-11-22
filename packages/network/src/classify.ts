@@ -892,6 +892,14 @@ const PAST_RELATIVE_TIME = /\b(?:yesterday|last\s+(?:week|month|year|mon(?:day)?
 const PROBE_TIME_LABEL = /\boption\s+[abc]\b|^\s*[abc]\s+(?:was|were)\b|\bweekends?\b|\b(?:mon|tues?|weds?|thu|thur|thurs|fri|sat|sun)\s+(?:was|were)\b/;
 
 const PROBE_CLAUSE_BOUNDARY = /([.,;!?\n]|\b(?:but|though|however)\b)/;
+const CURRENT_PROBE_CHOICE = /^\s+(?:works?|(?:will|would) work|(?:is|would be) (?:good|fine|great|best))(?: for me)?(?: (?:please|thanks))?\s*$/;
+const CURRENT_PROBE_REFUSAL = /^(?:no(?: (?:thanks|thank you))?|(?:neither|none of (?:those|these|them)(?: times| options)?) works?(?: for me)?)$/;
+const EXPLICIT_ALTERNATIVE_RANGE = /(?:^|[.,;!]\s*)\s*(?:any day|any ?time|anything|everything|all|whichever)\s+(?:but|except|other than|apart from|aside from|excluding|barring)\b/;
+
+function isIndependentProbeAnswer(clause: string): boolean {
+  return CURRENT_PROBE_REFUSAL.test(clause.trim()) || timeMentions(clause).some(mention =>
+    !clause.slice(0, mention.at).trim() && CURRENT_PROBE_CHOICE.test(clause.slice(mention.end)));
+}
 
 function separatePastProbeTimes(text: string): { current: string; past: boolean } {
   const clauses = text.split(PROBE_CLAUSE_BOUNDARY);
@@ -905,6 +913,12 @@ function separatePastProbeTimes(text: string): { current: string; past: boolean 
       || timeMentions(clause).length > 0 || PROBE_ORDINALS.some(([re]) => clause.search(re) >= 0));
     if (historicalProbeTimeClause(describesPast, mentionsTime)) {
       past = true;
+      if (clauses[i + 1] !== "?") {
+        const conjoined = clause.split(/\s+and\s+/);
+        if (conjoined.length > 1) for (const part of conjoined) {
+          if (isIndependentProbeAnswer(part)) current.push(part + ".");
+        }
+      }
     } else if (clause.trim()) current.push(clause + (clauses[i + 1] ?? ""));
   }
   return { current: past ? current.join(" ").trim() : text, past };
@@ -1029,7 +1043,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return open.length ? explicitYes(open) : { ...unclear, why: "slot" };
   }
   if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
-  if (!explicitTimesOnly && namedExclusion && open.length) return { answer: "yes", keys: open, why: c.why };
+  if (!explicitTimesOnly && namedExclusion && open.length && (!past || EXPLICIT_ALTERNATIVE_RANGE.test(t))) {
+    return { answer: "yes", keys: open, why: c.why };
+  }
   if (past) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
