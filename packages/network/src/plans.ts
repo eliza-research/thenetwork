@@ -8,7 +8,7 @@
 // own way). Volunteer shifts are activities at public parks.
 import { fromLocal, HOUR, localParts, type MemberId } from "@thenetwork/core";
 import { plans, type AttentionLedgerEntry } from "@thenetwork/engine";
-import { weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
+import { weeklyCheckinEvidenceMs, weeklyWindowCandidate } from "../../core/src/generated/planFormation.ts";
 import { VENUES, type Venue as GeoVenue } from "./geo.ts";
 import { NY } from "./outreach.ts";
 
@@ -64,8 +64,7 @@ export function statedWindows(tags: readonly string[], now: number, tz = NY): pl
       if (!h || dd !== day) continue;
       const start = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[0], tz);
       const end = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[1], tz);
-      if (end <= now || start >= until) continue;
-      // Keep the first remaining local occurrence of each stated weekday and part.
+      if (!weeklyWindowCandidate(end, start, now, until)) continue;
       windows.push({ start: Math.max(start, now), end });
       pending.delete(t);
     }
