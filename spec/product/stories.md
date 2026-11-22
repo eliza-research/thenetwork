@@ -410,7 +410,7 @@ Models: [private contribution history](../contributionHistory.md), [notification
 
 Provide app-scoped member history, review, proposal and match evidence, safety, demand, costs, growth, fairness, event, health and simulation views. Show messages, prior decisions, send or suppress reasons and leak results within two clicks from a member. Keep real and simulated environments explicit. Scrub data by default, write the access audit before a sensitive read and use the admin API for actions. Require a reason for a limited reveal.
 
-Models: [staff console](../models/staff_console.md), [console views](../models/console_views.md), [console privacy](../models/console_privacy.md), [Observatory synchronization](../models/observatory_sync.md).
+Models: [staff console](../models/staff_console.md), [console views](../models/console_views.md), [console privacy](../models/console_privacy.md), [Observatory synchronization](../models/observatory_sync.md), [opportunity rosters](../observatoryRoster.md).
 
 ## Story F36 — Recover service without duplicate sends or lost data
 

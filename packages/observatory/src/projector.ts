@@ -3,6 +3,7 @@
 // edges the Network learns follow PRD 32.13 (introduced, met, enjoyed, would_interact_again, avoid).
 import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
+import { closedProbeUpdate, replacementRosterMode } from "../../core/src/generated/observatoryRoster.ts";
 import { requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
 import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus, ReviewInfo, ReviewReason, TimeChoice } from "./types.ts";
@@ -424,16 +425,32 @@ export class Projector {
       case "probe_replaced": {
         const o = s.opps.get(d.oppId);
         if (!o) return true;
-        o.participants = o.participants.map(x => (x === d.out ? d.in : x));
-        delete o.status[d.out]; o.status[d.in] = "checking";
-        // The Network rebuilds every reason after a swap; show the new ones.
-        if (d.proposal?.explanations) o.explanations = { ...d.proposal.explanations };
+        const recorded = d.proposal as Proposal | undefined;
+        const incoming = d.in as MemberId, outgoing = d.out as MemberId | undefined;
+        const mode = replacementRosterMode(recorded !== undefined, outgoing !== undefined, o.participants.includes(incoming));
+        if (mode === "recorded" && recorded) {
+          o.participants = [...recorded.participants];
+          o.alternates = [...(recorded.alternates ?? [])];
+        } else {
+          if (mode === "substitute") o.participants = o.participants.map(id => id === outgoing ? incoming : id);
+          if (mode === "append") o.participants = [...o.participants, incoming];
+          o.alternates = o.alternates.filter(id => id !== incoming);
+        }
+        if (outgoing !== undefined) delete o.status[outgoing];
+        o.status[incoming] = "checking";
+        if (recorded?.explanations) o.explanations = { ...recorded.explanations };
         this.changed(o, r);
         return true;
       }
       case "probe_closed": {
         const o = s.opps.get(d.proposalId);
-        if (o && !isTerminal(o.state)) { this.setState(o, "SKIPPED", String(d.reason ?? "not sent")); this.changed(o, r); }
+        if (!o) return true;
+        const terminal = isTerminal(o.state);
+        const alternates: MemberId[] | undefined = Array.isArray(d.alternates) ? d.alternates : undefined;
+        if (!closedProbeUpdate(terminal, alternates !== undefined)) return true;
+        if (alternates) o.alternates = [...alternates];
+        if (!terminal) this.setState(o, "SKIPPED", String(d.reason ?? "not sent"));
+        this.changed(o, r);
         return true;
       }
       case "venue": {

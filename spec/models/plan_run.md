@@ -12,6 +12,8 @@ The [single-slot planner](../planFormation.md) checks public venue capacity and 
 
 The [Friends partner time-choice spec](../friendsPlanTimeChoice.md) covers reviewed options and exact shared consent for weekly one-to-one plans. This model covers group quorum at a single fixed time.
 
+The [Observatory roster rules](../observatoryRoster.md) consume the recorded participant and alternate lists when this flow backfills or closes a proposal.
+
 The [candidate pool model](candidate_pool.md) covers the formation of a compatible circle and its alternates. This model starts with the resulting roster and follows changes to its eligibility through review, contact and booking.
 
 The [original booking notice rule](../meetingReschedule.md#a-named-booking-notice-still-needs-every-recorded-seat) governs exact accepted seats in a staged notice and re-creation after quiet hours. `planReveal` abstracts the quiet-hours interval by disclosing the current accepted roster when it sends. The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
