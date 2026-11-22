@@ -874,7 +874,8 @@ export class NetworkService implements RuntimeHost {
       where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
     const opportunities = await rt.readState(n => [...n.opps.values()]);
-    const r = biasReport(rt.id, rt.app.id, members, opportunities, now);
+    const dateStanding = await rt.dateStanding();
+    const r = biasReport(rt.id, rt.app.id, members, opportunities, now, dateStanding ? { dateStanding } : {});
     const saved = await rt.scoped(async tx => {
       await tx`select pg_advisory_xact_lock(hashtext(${`bias-report-${rt.id}`}))`;
       const [latest] = await tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`;

@@ -10,6 +10,9 @@
 import type { MemberId } from "@thenetwork/core";
 import { runEngine } from "@thenetwork/engine/src/engine.ts";
 import type { EngineConfigInput } from "@thenetwork/engine/src/config.ts";
+import { DateStandings, type DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
+import type { World } from "@thenetwork/engine/src/world.ts";
+import { standingUncertaintyCeiling } from "../../../../core/src/generated/matchLane.ts";
 import type { AppPack } from "@thenetwork/engine/src/pack.ts";
 import { makeSlopPack, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles, type SlopPackOptions } from "@thenetwork/engine/src/packs/slop/index.ts";
 import type { DeepPartial } from "@thenetwork/engine/src/packs/slop/options.ts";
@@ -30,7 +33,9 @@ export interface SlopEngineMatcherOptions {
   seed?: number;
   /** Diagnostics: the engine's funnel per week. */
   onRun?: (week: number, r: Awaited<ReturnType<typeof runEngine>>) => void;
+  onStanding?: (week: number, s: DateStandingWeek) => void;
 }
+export interface DateStandingWeek { validity: DateStandingValidity; placed: number; narrowed: number }
 
 const FIELD: Record<string, SlopAskField> = { slop_orientation: "orientation", slop_age_range: "age_range", slop_distance: "distance", slop_basics: "basics", slop_type: "type", slop_widen: "widen" };
 const REASON: Record<SlopAskField, string> = { orientation: "slop_orientation", age_range: "slop_age_range", distance: "slop_distance", basics: "slop_basics", type: "slop_type", widen: "slop_widen" };
@@ -52,8 +57,22 @@ export function slopEngineMatcher(o: SlopEngineMatcherOptions = {}): SlopMatcher
     async propose(ctx: MatcherContext) {
       const input = slopEngineInput(ctx.snapshot, debt);
       const cfg: EngineConfigInput = { ...SLOP_ENGINE_CONFIG, ...(o.cfg ?? {}), seed: hash32(o.seed ?? 0, "slop-engine", ctx.week) };
-      const r = await runEngine(input, cfg, { pack });
+      let world: World | undefined;
+      const vectors = pack.vectors;
+      const seen: AppPack = o.onStanding && vectors ? { ...pack, vectors: { ...vectors, standing: (w, e) => { world = w; return vectors.standing(w, e); } } } : pack;
+      const r = await runEngine(input, cfg, { pack: seen });
       o.onRun?.(ctx.week, r);
+      if (o.onStanding && world) {
+        const standings = new DateStandings(world, pack.options);
+        let placed = 0, narrowed = 0;
+        for (const p of slopProfiles(world.input, world.canonical).values()) {
+          const s = standings.standing(p, p.homeMarket);
+          if (s.evidenceIds === undefined) continue;
+          placed++;
+          if (s.uncertainty < standingUncertaintyCeiling) narrowed++;
+        }
+        o.onStanding(ctx.week, { validity: standings.validity, placed, narrowed });
+      }
       debt = r.runLog.exposureDebt;
       const markets = (cfg.cities ?? ["sf", "nyc", "la"]) as SlopCity[];
       const P = slopProfiles(input);

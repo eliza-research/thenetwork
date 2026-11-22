@@ -6,7 +6,7 @@
 // neighborhoods within transit tolerance.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
-import { standingFromRating, standingRatingScale } from "../../../../core/src/generated/memberStanding.ts";
+import { standingMiddle } from "../../../../core/src/generated/memberStanding.ts";
 import { memberReason } from "../../filters.ts";
 import type { EntitySegment, MatchEntity, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
@@ -90,8 +90,7 @@ export const friendsVectors: PackVectors = {
     const info = friendsInfo(w).get(entity.memberId);
     return info?.home ? friendsSegment(w, info.home, info.tolerance) : undefined;
   },
-  // spec/memberStanding.md: Friend has no vertical dimension, so every member sits in the middle.
-  standing: () => ({ standing: standingFromRating(standingRatingScale / 2), uncertainty: 0 }),
+  standing: () => ({ standing: standingMiddle, uncertainty: 0 }),
   traits: {
     // Per unit: 50 per km north or east (0 at 20 km), 1 per permille of weekend lean, 250 per energy step.
     costs: [50, 50, 1, 250],

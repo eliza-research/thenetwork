@@ -37,7 +37,7 @@ import type { EngineInput, EngineProposal } from "../../packages/engine/src/type
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { extraOf, gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { extraOf, gates3, runArm, type Extra, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
@@ -97,6 +97,11 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     const blocking = safety || (!o.quick && !TRACKED.some(r => r.test(g.name)));
     b.gate(`gate ${g.name} (${g.target})`, g.pass, value, blocking);
   }
+
+  const st = pack.extra.flatMap(e => e.standing ? [e.standing] : []);
+  const sum = (f: (x: NonNullable<Extra["standing"]>) => number) => st.reduce((a, x) => a + f(x), 0);
+  b.track("Date standing: weekly snapshots that kept photo standing; last-week outcomes (positive / negative); placed members with a narrowed uncertainty", true,
+    `${sum(x => x.kept)}/${sum(x => x.weeks)} weeks kept; outcomes ${st.map(x => `${x.positives}/${x.negatives}`).join(", ")}; narrowed ${sum(x => x.narrowed)}/${sum(x => x.placed)} (${pct(sum(x => x.narrowed) / Math.max(1, sum(x => x.placed)))})`);
 
   // ---- the relay in the world (critical path item 7): adversary personas after the reveal ----------
   const rs = mergeRelayStats(pack.extra.map(e => e.relay?.engine).filter(x => !!x) as never);

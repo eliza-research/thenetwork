@@ -82,8 +82,7 @@ export interface SlopProfile {
   verification: string[];
   /** Age verification: true = passed, false = failed, undefined = no check recorded. */
   ageVerified?: boolean;
-  /** Appearance rating, read only for adults whose age is not known to be unverified. Internal only. */
-  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number; photos?: number };
+  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number; photos?: number; spread?: number };
   /** The private source facets that supply the current appearance rating. */
   appearanceEvidenceIds?: readonly string[];
   /**
@@ -155,8 +154,8 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       ? parseAppearance(appearanceFacets.flatMap(f => f.tags)) : undefined;
     const appearanceSources = new Map<string, string>();
     if (appearance) for (const facet of appearanceFacets) for (const tag of facet.tags) {
-      const key = /^appearance:(face|body|overall|conf|photos)=/.exec(tag)?.[1];
-      if (key && (key !== "photos" || appearance.photos !== undefined)) appearanceSources.set(key, facet.id);
+      const key = /^appearance:(face|body|overall|conf|photos|spread)=/.exec(tag)?.[1];
+      if (key && (key !== "photos" || appearance.photos !== undefined) && (key !== "spread" || appearance.spread !== undefined)) appearanceSources.set(key, facet.id);
     }
     const has = (prefix: string) => tags.filter(x => x.t.startsWith(prefix)).map(x => x.t.slice(prefix.length));
     const one = (prefix: string) => has(prefix)[0];
