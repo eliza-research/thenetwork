@@ -1,4 +1,4 @@
-/** Real Bun SQL + canonical migrations on an explicitly supplied synthetic database.
+/** Real PostgreSQL + canonical migrations on an explicitly supplied synthetic database.
  * Only Cloud owner/proof/currentness boundaries are controlled. No dev cluster bootstrap.
  * Actual Google revocation/reconnection authority remains the external Cloud proof boundary;
  * these tests do not prove that provider lifecycle, and V2 deliberately needs no OAuth grant. */
@@ -9,8 +9,8 @@ import {
 	describe,
 	expect,
 	test,
-} from "bun:test";
-import { SQL } from "bun";
+} from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { applySchema } from "../../observatory/db/dev-pg.ts";
 import {

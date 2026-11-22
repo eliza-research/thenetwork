@@ -1,4 +1,10 @@
 import { backendBoot, databaseLogin, declaredEnvironment, minimumSecretLength } from "../../packages/core/src/generated/bootPolicy.ts";
+import {
+  backendAcceptsWork, canStartTimer, initial as lifecycleInitial, step as stepBackendLifecycle,
+} from "../../packages/core/src/generated/backendLifecycle.ts";
+import { checkBackendHealth } from "../../packages/core/src/vibe/backendHealthShell.js";
+import { finishBackendShutdown } from "../../packages/core/src/vibe/backendShutdownShell.js";
+import type { HealthStatus } from "../../packages/core/src/generated/backendHealth.ts";
 import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // The shared backend as one deployable process (docs/deploy.md). It wraps the Network service
 // (packages/network/service) for a host that gives the process one public port (Railway):
@@ -31,19 +37,29 @@ import { RELAY_MAX_BODY_BYTES, RELAY_PATH } from "../../packages/network/service
 import { SUGGESTION_PATH } from "../../packages/network/service/profile-suggestion-endpoint.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
+import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFreeBusy.ts";
+import { CALENDAR_SCHEDULING_MAX_BODY } from "../../packages/core/src/svc/calendar-scheduling.ts";
 
 export { PROXY_HEADERS };
 /** The visitor IP the public API reads (ipOf). Present only on a verified request. */
 export const CLIENT_IP = PROXY_HEADERS.ip;
 export const BUILD_HEADER = "x-network-build";
+const HEALTH_FAILURE = {
+  Draining: "draining",
+  DatabaseDown: "database",
+  TickLate: "tick_late",
+} as const satisfies Record<Exclude<HealthStatus, "Ready">, string>;
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 /** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
 const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
-  PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH,
+  PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath,
   ...["preview", "decide", "delete", "collect", "consent-context"].map(action => SUGGESTION_PATH + action)]);
 const MAX_INTERNAL_BODY = 256 * 1024;
-const internalCap = (path: string) => path === PROFILE_REVIEW_DISCONNECT_PATH || path === PROFILE_REVIEW_WITHDRAWAL_PATH
-  ? 4096 : path === RELAY_PATH || path.startsWith(SUGGESTION_PATH) ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY;
+const internalCap = (path: string) => {
+  if (path === PROFILE_REVIEW_DISCONNECT_PATH || path === PROFILE_REVIEW_WITHDRAWAL_PATH) return 4096;
+  if (path === calendarOwnerPath) return CALENDAR_SCHEDULING_MAX_BODY;
+  return path === RELAY_PATH || path.startsWith(SUGGESTION_PATH) ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY;
+};
 
 // ------------------------------------------------------------------ config
 
@@ -275,9 +291,11 @@ export interface ServiceLike {
   fetch(req: Request): Promise<Response>;
   publicFetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response>;
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
+  inboxTick(): Promise<void>;
+  purge(): Promise<unknown>;
   /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
-  close(): Promise<void>;
+  close(force?: boolean): Promise<void>;
 }
 
 export interface BackendDeps {
@@ -318,15 +336,14 @@ function bearerIs(req: Request, token: string): boolean {
 export function createBackend(d: BackendDeps) {
   const { svc, config: c, log } = d;
   const now = () => (d.now ?? Date.now)();
-  let draining = false;
+  let lifecycle = lifecycleInitial;
   /** When each network's tick last finished in this process (ran, or skipped because another instance holds its lock). */
   const tickDone = new Map<string, number>();
-  let ticksFrom: number | undefined;
   /** The networks whose tick has not finished for longer than tickLateMs (only once ticks have started). */
   const lateTicks = () => {
-    if (ticksFrom === undefined) return [];
+    if (!lifecycle.timerStarted) return [];
     const t = now();
-    return [...svc.runtimes.values()].filter(rt => t - (tickDone.get(rt.id) ?? ticksFrom!) > c.tickLateMs).map(rt => rt.id);
+    return [...svc.runtimes.values()].filter(rt => t - (tickDone.get(rt.id) ?? lifecycle.ticksFrom) > c.tickLateMs).map(rt => rt.id);
   };
   const inFlight = new Set<Promise<unknown>>();
   const track = <T>(p: Promise<T>): Promise<T> => { inFlight.add(p); p.finally(() => inFlight.delete(p)).catch(() => {}); return p; };
@@ -345,10 +362,13 @@ export function createBackend(d: BackendDeps) {
     let res: Response;
     try {
       if (path === "/healthz") {
-        if (draining) res = json(503, { ok: false, status: "draining", build: c.build });
-        else if (!(await d.ping().catch(() => false))) res = json(503, { ok: false, status: "database", build: c.build });
         // A hung tick loop is down for the uptime monitor too (the ops alerts run inside the same process).
-        else res = lateTicks().length ? json(503, { ok: false, status: "tick_late", build: c.build }) : json(200, { ok: true, build: c.build, env: c.env });
+        const status = await checkBackendHealth(backendAcceptsWork(lifecycle), {
+          ping: () => d.ping(),
+          hasLateTick: () => lateTicks().length > 0,
+        });
+        res = status === "Ready" ? json(200, { ok: true, build: c.build, env: c.env })
+          : json(503, { ok: false, status: HEALTH_FAILURE[status], build: c.build });
       } else if (path === "/ops/metrics") {
         // Counts and network ids only. Without OPS_METRICS_TOKEN the route does not exist; a wrong token is 401.
         const token = c.ops.metricsToken;
@@ -356,7 +376,7 @@ export function createBackend(d: BackendDeps) {
         else if (!bearerIs(req, token)) res = json(401, { ok: false, error: "unauthorized" });
         else if (req.method !== "GET") res = json(405, { ok: false, error: "method_not_allowed" });
         else res = json(200, await track(d.ops.metrics()));
-      } else if (draining) {
+      } else if (!backendAcceptsWork(lifecycle)) {
         res = json(503, { ok: false, error: "shutting_down" });
       } else if (path === "/api" || path.startsWith("/api/")) {
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
@@ -388,43 +408,52 @@ export function createBackend(d: BackendDeps) {
   const staffFetch = async (req: Request): Promise<Response> => {
     const t0 = performance.now();
     const path = new URL(req.url).pathname;
-    const res = draining ? json(503, { ok: false, error: "shutting_down" }) : await track(svc.fetch(req));
+    const res = backendAcceptsWork(lifecycle) ? await track(svc.fetch(req)) : json(503, { ok: false, error: "shutting_down" });
     log.info("http", { port: "staff", method: req.method, route: routeLabel(path), status: res.status, ms: Math.round(performance.now() - t0) });
     return stamp(res);
   };
 
   // Every network ticks on its own; a running tick is tracked so that shutdown waits for it.
-  const busy = new Set<string>();
   let timer: ReturnType<typeof setInterval> | undefined;
-  const networksThenNotify = () => Promise.all([...svc.runtimes.values()].map(async rt => {
-    if (draining || busy.has(rt.id)) return;
-    busy.add(rt.id);
-    try {
-      if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id });
-      tickDone.set(rt.id, now());
-    }
-    catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
-    finally { busy.delete(rt.id); }
-  })).then(() => notifyTick());
-  // The ops round runs beside the networks, so a network tick that hangs does not stop its alert.
-  const opsTick = async () => {
-    if (draining || !d.ops || busy.has("ops")) return;
-    busy.add("ops");
-    try { await track(d.ops.tick()); }
-    catch (e) { log.error("ops tick failed", { error: (e as Error).message }); }
-    finally { busy.delete("ops"); }
+  const reserveTick = (tickKey: string) => {
+    const reserved = stepBackendLifecycle(lifecycle, { type: "reserveTick", tickKey });
+    if (reserved === lifecycle) return false;
+    lifecycle = reserved;
+    return true;
   };
-  const tickAll = () => Promise.all([networksThenNotify(), opsTick()]).then(() => undefined);
-  // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
-  // (notify.deliveries primary key), so a second replica cancels instead of sending again.
-  const notifyTick = async () => {
-    if (draining || !svc.notifyTick || busy.has("notify")) return;
-    busy.add("notify");
-    try { await track(svc.notifyTick()); }
-    catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
-    finally { busy.delete("notify"); }
+  const releaseTick = (tickKey: string) => { lifecycle = stepBackendLifecycle(lifecycle, { type: "releaseTick", tickKey }); };
+  const serviceTick = async (tickKey: string, work: () => Promise<unknown>) => {
+    if (!reserveTick(tickKey)) return;
+    try { await track(work()); }
+    catch (e) { log.error(`${tickKey} tick failed`, { error: (e as Error).message }); }
+    finally { releaseTick(tickKey); }
   };
-  const startTicks = () => { ticksFrom = now(); const first = tickAll(); timer = setInterval(tickAll, c.tickMs); return first; };
+  const networksThenNotify = async () => {
+    await serviceTick("inbox", () => svc.inboxTick());
+    await Promise.all([...svc.runtimes.values()].map(async rt => {
+      if (!reserveTick(rt.id)) return;
+      try {
+        if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id });
+        tickDone.set(rt.id, now());
+      }
+      catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
+      finally { releaseTick(rt.id); }
+    }));
+    await serviceTick("retention", () => svc.purge());
+    // Notify after the networks record their sends. The delivery ID prevents duplicate sends across replicas.
+    const notify = svc.notifyTick;
+    if (notify) await serviceTick("notify", () => notify.call(svc));
+  };
+  // A hung service worker leaves the health monitor's own round available.
+  const ops = d.ops;
+  const tickAll = () => Promise.all([networksThenNotify(), ops && serviceTick("ops", () => ops.tick())]).then(() => undefined);
+  const startTicks = () => {
+    if (!canStartTimer(lifecycle)) return Promise.resolve(undefined);
+    lifecycle = stepBackendLifecycle(lifecycle, { type: "startTimer", at: now() });
+    const first = tickAll();
+    if (backendAcceptsWork(lifecycle)) timer = setInterval(tickAll, c.tickMs);
+    return first;
+  };
 
   /**
    * Graceful shutdown: /healthz answers 503, new work is refused, the listeners stop accepting, every
@@ -433,21 +462,30 @@ export function createBackend(d: BackendDeps) {
    * sessions and with them any lock they hold.
    */
   let stopping: Promise<{ clean: boolean }> | undefined;
-  const shutdown = (servers: { stop(force?: boolean): unknown }[] = []) => stopping ??= (async () => {
-    draining = true;
+  const shutdown = (servers: { stop(force?: boolean): unknown }[] = []) => {
+    if (stopping) return stopping;
+    lifecycle = stepBackendLifecycle(lifecycle, { type: "beginShutdown" });
     if (timer) clearInterval(timer);
-    for (const s of servers) { try { await s.stop(false); } catch { /* already stopped */ } }
-    let clean = true;
-    const wait = Promise.allSettled([...inFlight]);
-    const grace = new Promise<"timeout">(r => { const t = setTimeout(() => r("timeout"), c.shutdownGraceMs); (t as { unref?: () => void }).unref?.(); });
-    if ((await Promise.race([wait.then(() => "done" as const), grace])) === "timeout") { clean = false; log.warn("shutdown: work still running after the grace period", { inFlight: inFlight.size }); }
-    for (const s of servers) { try { await s.stop(true); } catch { /* already stopped */ } }
-    await svc.close().catch(e => log.error("shutdown: close failed", { error: (e as Error).message }));
-    log.info("shutdown complete", { clean });
-    return { clean };
-  })();
+    stopping = Promise.resolve().then(async () => {
+      const clean = await finishBackendShutdown(c.shutdownGraceMs, {
+        record(event) {
+          lifecycle = stepBackendLifecycle(lifecycle, event);
+          return lifecycle;
+        },
+        async stopListeners(force) {
+          await Promise.allSettled(servers.map(async server => { await server.stop(force); }));
+        },
+        async waitForWork() { await Promise.allSettled([...inFlight]); },
+        reportTimeout: () => log.warn("shutdown: work still running after the grace period", { inFlight: inFlight.size }),
+        closeService: force => svc.close(force).catch(e => log.error("shutdown: close failed", { error: (e as Error).message })),
+      });
+      log.info("shutdown complete", { clean });
+      return { clean };
+    });
+    return stopping;
+  };
 
-  return { publicFetch, staffFetch, tickAll, startTicks, shutdown, get draining() { return draining; }, get inFlight() { return inFlight.size; } };
+  return { publicFetch, staffFetch, tickAll, startTicks, shutdown, get draining() { return !backendAcceptsWork(lifecycle); }, get inFlight() { return inFlight.size; } };
 }
 
 /**

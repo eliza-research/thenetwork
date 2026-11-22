@@ -1,10 +1,10 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Network World Simulator CLI.
-//   bun run packages/sim/src/cli.ts --personas 40 --days 14 --mode discrete --seed 1 --network stub
-//   bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm          (LLM persona agents, default gpt-6-luna)
-//   bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
-//   bun run packages/sim/src/cli.ts --engine ./path/to/engine.ts                   (module exporting createEngine())
-//   bun run packages/sim/src/cli.ts --judge 20                                     (LLM-judge 20 sent messages)
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/cli.ts --personas 40 --days 14 --mode discrete --seed 1 --network stub
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm          (LLM persona agents, default gpt-6-luna)
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/cli.ts --engine ./path/to/engine.ts                   (module exporting createEngine())
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/cli.ts --judge 20                                     (LLM-judge 20 sent messages)
 // Models (founder decision 2026-10-05): persona agents and LLM persona bios use defaultLLM()
 // (DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, default Surplus gpt-6-luna); judging uses judgeLLM()
 // (JUDGE_PROVIDER / JUDGE_MODEL, default Surplus gpt-6-luna).
@@ -52,7 +52,7 @@ const { values: a } = parseArgs({
 });
 
 if (a.help) {
-  console.log(`Usage: bun run packages/sim/src/cli.ts [options]
+  console.log(`Usage: node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/cli.ts [options]
   --personas N        number of personas (default 40)
   --days N            simulated days (default 14)
   --mode M            discrete | accelerated | realtime (default discrete)

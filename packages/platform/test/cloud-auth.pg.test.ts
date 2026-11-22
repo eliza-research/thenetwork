@@ -1,5 +1,6 @@
 // Real PostgreSQL + signed site router + platform account/session owners; Cloud HTTP authority is a controlled fixture.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+// spec/cloudSignIn.md, "A completed callback passed each issuance check"
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi, parseCookies } from "../src/api.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -17,6 +18,7 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     let now = Date.UTC(2026, 9, 9, 15);
     let authorityLive = true, exchangeCount = 0, validations = 0, otpSends = 0, validationStatus = 200;
     let challenge = "";
+    let identityResponse: "present" | "absent" | "expired" = "present";
     let code = `enso_${"a".repeat(64)}`;
     let proofIssuedAt = Math.floor(now/1000)-11*60, sourceExpiresAt = now+60_000;
     const consumed = new Set<string>();
@@ -35,7 +37,9 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       if (body.code !== code || consumed.has(code)) return Response.json({ok: false}, {status: 401});
       consumed.add(code);
       if (hash !== challenge) return Response.json({ok: false}, {status: 401});
-      return Response.json({userId: "cloud-user-fixture", organizationId: "cloud-org-fixture", e164: phone, expiresAt: sourceExpiresAt, stewardUserId: "steward-fixture", issuedAt: proofIssuedAt});
+      if (identityResponse === "absent") return Response.json(null);
+      const expiresAt = identityResponse === "expired" ? now : sourceExpiresAt;
+      return Response.json({userId: "cloud-user-fixture", organizationId: "cloud-org-fixture", e164: phone, expiresAt, stewardUserId: "steward-fixture", issuedAt: proofIssuedAt});
     }) as typeof fetch;
     const proxySecret = "local-proxy-fixture";
     // Validation caching is off here so each request reaches the transport fixture.
@@ -51,10 +55,10 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       {NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:59999"},
     ]) expect(() => createPublicApi({...options, env: {...options.env, ...change}})).toThrow();
     // The real dev router signs the canonical domain while the browser Origin stays loopback.
-    const call = async (app: AppId, method: string, path: string, body?: unknown, cookie?: string) => routerHandle(new Request(`http://${HOST[app]}${path}`, {
+    const call = async (app: AppId, method: string, path: string, body?: unknown, cookie?: string, boundary = api) => routerHandle(new Request(`http://${HOST[app]}${path}`, {
       method, headers: {origin: app === "slop" ? "http://127.0.0.1:5102" : `http://${HOST[app]}`, ...(body ? {"content-type": "application/json"} : {}), ...(cookie ? {cookie} : {})}, ...(body ? {body: JSON.stringify(body)} : {}),
     }), {ASSETS: {fetch: async () => new Response(null, {status: 404})}, BACKEND_ORIGIN: "http://127.0.0.1:8790", APP_ID: app, SITE_HOST: APPS[app].domain, PLATFORM_PROXY_SECRET: proxySecret},
-    (async (url, init) => (await api.fetch(new Request(String(url), init)))!) as typeof fetch, () => now);
+    (async (url, init) => (await boundary.fetch(new Request(String(url), init)))!) as typeof fetch, () => now);
     expect(await (await call("friends", "GET", "/api/auth/mode")).json()).toEqual({mode: "otp"});
     expect((await call("friends", "POST", "/api/auth/otp/start", {phone})).status).toBe(200);
     expect(await (await call("slop", "GET", "/api/auth/mode")).json()).toEqual({mode: "cloud"});
@@ -87,11 +91,33 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     expect((await call("slop", "GET", callback, undefined, pending)).status).toBe(403);
     challenge = correctChallenge;
     expect((await call("slop", "GET", callback, undefined, pending)).status).toBe(403);
+    const previous = await api.sessions.create("slop", phone, person.id);
+    const callbackCookies = `${pending}; sid_slop=${previous.token}`;
+    for (const [mode, key, expected] of [["absent", "d", 503], ["expired", "e", 403]] as const) {
+      identityResponse = mode;
+      code = `enso_${key.repeat(64)}`;
+      const refused = await call("slop", "GET", `/api/auth/cloud/callback?code=${code}&state=${state}`, undefined, callbackCookies);
+      expect(refused.status).toBe(expected);
+      expect(refused.headers.getSetCookie()).toEqual([expect.stringMatching(/^cloud_pending_slop=;.*Max-Age=0/)]);
+      expect(await api.sessions.authenticate("slop", previous.token)).toBeDefined();
+    }
+    identityResponse = "present";
+    const priorIssueTime = proofIssuedAt;
+    for (const [key, issuedAt] of [["f", 0], ["9", Math.floor(now / 1000) + 31]] as const) {
+      proofIssuedAt = issuedAt;
+      code = `enso_${key.repeat(64)}`;
+      const refused = await call("slop", "GET", `/api/auth/cloud/callback?code=${code}&state=${state}`, undefined, callbackCookies);
+      expect(refused.status).toBe(403);
+      expect(refused.headers.getSetCookie()).toEqual([expect.stringMatching(/^cloud_pending_slop=;.*Max-Age=0/)]);
+      expect(await api.sessions.authenticate("slop", previous.token)).toBeDefined();
+    }
+    proofIssuedAt = priorIssueTime;
     code = `enso_${"c".repeat(64)}`;
-    const validCallback = callback.replace(`enso_${"a".repeat(64)}`, code);
-    const signedIn = await call("slop", "GET", validCallback, undefined, pending);
+    const validCallback = `/api/auth/cloud/callback?code=${code}&state=${state}`;
+    const signedIn = await call("slop", "GET", validCallback, undefined, callbackCookies);
     expect(signedIn.status).toBe(303);
     expect(signedIn.headers.get("location")).toBe("/join");
+    expect(await api.sessions.authenticate("slop", previous.token)).toBeUndefined();
     const cookies = signedIn.headers.getSetCookie();
     const sessionCookie = cookies.find(value => value.startsWith("sid_slop="))!;
     expect(sessionCookie).toContain("Max-Age=60");
@@ -121,7 +147,8 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     // A fresh Cloud proof signs in normally; within STEP_UP_MS it is the step-up for delete-all (not exercised
     // here, so the rest of the scenario keeps its data).
     authorityLive = true;
-    proofIssuedAt = Math.floor(now/1000);
+    const freshStartedAt = now;
+    proofIssuedAt = Math.floor(now/1000) + 30;
     sourceExpiresAt = now+3*24*3_600_000;
     code = `enso_${"b".repeat(64)}`;
     const freshStart = await call("slop", "POST", "/api/auth/cloud/start", {returnPath: "/join"});
@@ -134,6 +161,16 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     expect(freshLogin.headers.get("location")).toBe("/join");
     let freshCookie = freshLogin.headers.getSetCookie().filter(value => !value.startsWith("cloud_pending_")).map(value => value.split(";")[0]).join("; ");
     expect((await call("slop", "GET", "/api/me", undefined, freshCookie)).status).toBe(200);
+    // spec/cloudAuthority.md, "Only a positive live Cloud response updates the cache"
+    const cachedApi = createPublicApi({ ...options, cloudValidationTtlMs: 60_000 });
+    const validateFresh = () => call("slop", "GET", "/api/me", undefined, freshCookie, cachedApi);
+    const checksBefore = validations;
+    expect((await validateFresh()).status).toBe(200);
+    expect((await validateFresh()).status).toBe(200);
+    expect(validations).toBe(checksBefore + 1);
+    now += 60_000;
+    expect((await validateFresh()).status).toBe(200);
+    expect(validations).toBe(checksBefore + 2);
     // The source proof is checked against the original cookie, then rotated and resealed together.
     now += 25*3_600_000;
     const rotated = await call("slop", "GET", "/api/me", undefined, freshCookie);
@@ -143,7 +180,7 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     const rotatedToken = parseCookies(freshCookie).get("sid_slop")!;
     const rotatedSession = (await api.sessions.authenticate("slop", rotatedToken))!.session;
     expect(rotatedSession.expiresAt).toBe(sourceExpiresAt);
-    expect(rotatedSession.startedAt).toBe(proofIssuedAt*1000);
+    expect(rotatedSession.startedAt).toBe(freshStartedAt);
     expect((await call("slop", "GET", "/api/me", undefined, freshCookie)).status).toBe(200);
     expect((await call("friends", "GET", "/api/me", undefined, freshCookie)).status).toBe(401);
     expect((await call("slop", "POST", "/api/me/delete", {scope: "all"}, freshCookie)).status).toBe(403);

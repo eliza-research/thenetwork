@@ -9,9 +9,10 @@
 // runNetworkServiceTurn, the receipt it posts after a Cloud-owned delivery). Both sides use the same contract:
 // packages/core/src/svc/{contract,svc-auth}.ts are byte-identical to upstream (contract-mirror.test.ts).
 // Sends are dry-run; nothing may reach the provider or the Cloud deliver endpoint.
-import {afterAll, beforeAll, expect, test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import {afterAll, beforeAll, expect, test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock, MINUTE} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -25,7 +26,7 @@ const url = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:54339/${db}`
 const secret = "synthetic-gateway-fixtures-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
 const ONBOARDING = ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
-let service: NetworkService, server: ReturnType<typeof Bun.serve>, cloud: ReturnType<typeof Bun.serve>;
+let service: NetworkService, server: HttpServer, cloud: HttpServer;
 let escaped = 0, sequence = 0;
 const cloudCalls: string[] = [];
 
@@ -33,7 +34,7 @@ beforeAll(async () => {
   await admin.unsafe(`create database ${db}`);
   console.info(`[owned-db] ${db}`);
   await applySchema(url, {lockTimeout: "5s"});
-  cloud = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: req => { cloudCalls.push(new URL(req.url).pathname); return Response.json({ok: false, error: "rejected", retryable: false}); }});
+  cloud = await serveHttp({hostname: "127.0.0.1", port: 0, fetch: req => { cloudCalls.push(new URL(req.url).pathname); return Response.json({ok: false, error: "rejected", retryable: false}); }});
   service = new NetworkService({url, clock, photoStorage: null, instance: "gateway-fixtures-integration",
     env: {PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret, NETWORK_CLOUD_DELIVERY_ORIGIN: cloud.url.origin},
     networks: [{id: "ntwrk:nyc", matchingEnabled: false}, {id: "slop:nyc", matchingEnabled: false}, {id: "friends:nyc", matchingEnabled: false}],
@@ -41,9 +42,9 @@ beforeAll(async () => {
     adapter: () => { const a = new DryRunAdapter(() => {}); a.direct = async () => { escaped++; return "dry_run"; }; a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({id: r.id, status: "dry_run"})); }; return a; },
   });
   await service.start();
-  server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: req => service.fetch(req)});
+  server = await serveHttp({hostname: "127.0.0.1", port: 0, fetch: req => service.fetch(req)});
 }, 120_000);
-afterAll(async () => { server?.stop(true); cloud?.stop(true); await service?.close(); await admin.close(); });
+afterAll(async () => { await server?.stop(true); await cloud?.stop(true); await service?.close(); await admin.close(); });
 
 /** The gateway's turnRequestFor() for the upstream test's ChatEvent fixture: {platform: "twilio", messageId: "SMtk<n>", senderId, text, no protocol, no channelId}. */
 const gatewayTurn = (from: string, text: string): TurnRequest =>

@@ -4,9 +4,10 @@
 // only offers names of people the member was introduced to. Ported from closed PR #12
 // (mvp/r1-safety-line). Postgres in a database of its own per test process; dry-run sends (the text is
 // read back from network.messages); fictional numbers (+1 212 555 01xx).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -15,7 +16,7 @@ import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_slop_block_test_${process.pid}`;
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
@@ -95,7 +96,7 @@ describe.skipIf(!pgAvailable)("slop.date: block and report resolve the member's 
       item = q.items?.find((x: any) => x.proposal.participants.includes(ivy) && x.proposal.participants.includes(leo));
     }
     expect(item).toBeDefined();
-    expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20 })).json() as any).ok).toBe(true);
+    expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20, revision: item.revision })).json() as any).ok).toBe(true);
     const answered = new Set<string>();
     for (let i = 0; i < 24; i++) {
       await run(s, clock, HOUR);

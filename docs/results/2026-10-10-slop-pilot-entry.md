@@ -1,5 +1,7 @@
 # Slop custom ChatGPT entry correction
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-10-slop-pilot-entry.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 ## Problem and change
 
 The merged custom pilot is off by default and admits only approved adult accounts.
@@ -15,13 +17,13 @@ No runtime, account, permission or deployment setting changed.
 ## Validation
 
 On base main `ba88f4c`, and after the skill correction:
-`bun test --conditions eliza-source --timeout 120000 sites/test/sites.test.ts`
+`pnpm exec vitest run --testTimeout 120000 sites/test/sites.test.ts`
 passes 70 tests, zero failures and 1141 assertions. It builds the four sites and exercises
 their HTTP server, discovery files, exact prompt links and proxy contract.
 `git diff --check` passes. No model, paid provider or real message was used.
 Hosted CI caught a stale Claude skill snapshot after the canonical version change.
 The snapshot was regenerated, the Claude package version advanced to 1.0.2,
-and `bun run plugins/build.ts --check` passes. The OpenAI package still excludes Slop.
+and `node --import tsx --env-file-if-exists=.env plugins/build.ts --check` passes. The OpenAI package still excludes Slop.
 
 A separate ignored harness journey on base `ba88f4c` uses real Postgres and HTTP with fictional OTP.
 Both ordinary-agent and custom-ChatGPT connections retain the same person after number change.

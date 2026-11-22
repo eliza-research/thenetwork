@@ -10,7 +10,7 @@ Check review, consent, claim deadlines, and provider fetch eligibility. The mode
 
 Imported from `quint/photo_relay_item.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
-Production uses [Selected-photo relay delivery](../photoRelayItem.md) for claim, capability binding, and fetch admission. Selection and review remain in this whole-flow model and the service shell.
+Production uses [selected-photo consent and review](../photoRelayReview.md) for selection, review, visibility, and cancellation. It uses [selected-photo relay delivery](../photoRelayItem.md) for claim, capability binding, and fetch admission. This model covers the whole flow.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -37,7 +37,7 @@ Production uses [Selected-photo relay delivery](../photoRelayItem.md) for claim,
 //   15 minutes and 60 seconds; only the order of the values matters).
 //
 // RUN (quint 0.33.1)
-//   bun run quint:check quint/photo_relay_item.qnt
+//   pnpm run quint:check quint/photo_relay_item.qnt
 //
 // OUTSIDE THE MODEL
 //   The photo bytes, the HMAC signature (an oracle: only the issued exp verifies), SQL and the row

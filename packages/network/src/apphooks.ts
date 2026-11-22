@@ -18,6 +18,12 @@ import type { EngineInput } from "@thenetwork/engine";
 /** A profile tag the app learned from a member's words. It is kept in the Network's state and goes to the engine as a facet. */
 export interface AppTag { tag: string; kind: Facet["kind"]; scope: Facet["scope"]; at: number }
 
+/** The same private dating facts feed discovery and the final queued claim. */
+export function appTagFacet(memberId: MemberId, tag: AppTag): Facet {
+  return { id: `${memberId}:app:${tag.tag}`, memberId, kind: tag.kind, value: tag.tag, tags: [tag.tag], scope: tag.scope, provenance: "said",
+    confidence: 0.9, validFrom: tag.at, source: "chat", observedAt: tag.at, inferred: false, confirmedByMember: true };
+}
+
 /**
  * An app's onboarding conversation. Its state is plain JSON the Network keeps on the member
  * (MemberState.onboarding) and passes back on every call; the Network never reads inside it.
@@ -45,11 +51,13 @@ export interface HookOpp {
 }
 
 /** A public meeting place. Never a home. */
-export interface HookVenue { id: string; name: string; neighborhood: string; lat: number; lng: number }
+export interface HookVenue { id: string; name: string; neighborhood: string; lat: number; lng: number; timeZone?: string }
 
 export interface AppHooks {
   /** The pack's input, from the Network's own (minors are already removed). Pure. */
   engineInput?(input: EngineInput): EngineInput;
+  /** Slop's current hard dating constraints for an already reviewed pair. Pure. */
+  hardDatingPairCurrent?(input: EngineInput, participants: readonly MemberId[]): boolean;
   /** The app's onboarding loop; undefined: the Network's own interview and each engine ask's own text. */
   onboarding?: AppOnboarding;
   /** The first member's time options; undefined: the Network's own (attention.chooseTimeOptions). */

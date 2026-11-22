@@ -3,7 +3,7 @@
 // Location unit. NYC has 262 Neighborhood Tabulation Areas (NTAs, 2020; docs/research/
 // 2026-10-08-domain-research.md C2 "NYC specifics"). This table is a hand-entered subset of 93
 // NTA-level neighborhoods (approximate centroids, WGS84) that covers all five boroughs; each carries
-// a planning zone (a cluster of nearby neighborhoods the planner pools within) and a subway access
+// a planning zone (a cluster of nearby neighborhoods; the simulator's baselines pool within it) and a subway access
 // overhead in minutes (walk to a station plus the wait; larger in transit deserts). A production
 // table would be the full NTA list with a precomputed OpenTripPlanner / r5 NTA-to-NTA matrix on the
 // MTA GTFS for weekday-evening and weekend-day windows (domain research C2); prototypes/
@@ -15,17 +15,19 @@
 // ferry, +25). Venues are chosen to minimize the group's LONGEST trip, not the average (fairer to the
 // outer boroughs; domain research C4). Copied in spirit from packages/network/src/geo.ts
 // (travelMinutes, meetingSpot), which the engine cannot import.
-import type { MemberId } from "@thenetwork/core";
+import type { City, MemberId } from "@thenetwork/core";
+import { preferPlanVenue } from "../../../../core/src/generated/planFormation.ts";
 import { km, type Borough } from "@thenetwork/core/src/geo.ts";
 export { km, type Borough };
 import type { Venue } from "../network/activities.ts";
 
-export const BOROUGHS: readonly Borough[] = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"];
+/** friends.help's one market (NYC first). */
+export const FRIENDS_CITY: City = "nyc";
 
 export interface Neighborhood {
   /** Stable slug (an NTA stand-in). */
   id: string; name: string; borough: Borough; lat: number; lng: number;
-  /** Planning zone: nearby neighborhoods pooled together by the planner. */
+  /** Planning zone: a cluster of nearby neighborhoods (the simulator's within-area baselines). */
   zone: string;
   /** Relative weight of adults 18-44 living here (sampling weight in the simulator; not used by matching). */
   weight: number;
@@ -93,7 +95,6 @@ export const NEIGHBORHOODS: readonly Neighborhood[] = [
 ];
 export const NEIGHBORHOOD: ReadonlyMap<string, Neighborhood> = new Map(NEIGHBORHOODS.map(n => [n.id, n]));
 export const NEIGHBORHOOD_BY_NAME: ReadonlyMap<string, Neighborhood> = new Map(NEIGHBORHOODS.map(n => [n.name.toLowerCase(), n]));
-export const ZONES: readonly string[] = [...new Set(NEIGHBORHOODS.map(n => n.zone))];
 
 /** Neighborhood by id or (case-insensitive) name. */
 export function hood(x: string | undefined): Neighborhood | undefined {
@@ -123,14 +124,12 @@ export function transitMinutes(a: Neighborhood, b: Neighborhood): number {
   return Math.round(Math.min(m, d * 13 + 5)); // never worse than walking it
 }
 
-/** Bucketed copy for a trip ("about 20 min"). Never a promise, never an exact distance. */
-export function displayMinutes(min: number): string {
-  if (min <= 10) return "a short walk";
-  if (min <= 20) return "about 15-20 min";
-  if (min <= 30) return "about 25-30 min";
-  if (min <= 45) return "about 40 min";
-  return "over 45 min";
-}
+/**
+ * The friends pair rule (friendsGeo.pairReason): the estimated trip between two homes fits the sum of
+ * both stated tolerances, so some venue can fit both. It never gets worse as either tolerance grows.
+ */
+export const withinTransitTolerance = (minutes: number, tolerance: number, otherTolerance: number): boolean =>
+  minutes <= tolerance + otherTolerance;
 
 // ------------------------------------------------------------------------------------------------
 // Venues (public places only; MVP: never a home, no money through the Network)
@@ -169,21 +168,34 @@ export function nycVenues(activities: readonly { id: string; family: string; lab
 }
 
 /**
- * The venue for a group: among venues offering the activity, minimize the LONGEST estimated trip
- * from members' home neighborhoods (ties: the lower mean, then id). Returns the per-member minutes.
+ * Prefer venues within every member's travel limit. In each class, minimize the longest estimated
+ * trip from members' home neighborhoods (ties: the lower mean, then id).
  */
-export function chooseVenue(venues: readonly Venue[], homes: ReadonlyMap<MemberId, Neighborhood>, ok: (v: Venue) => boolean = () => true):
+export function chooseVenue(venues: readonly Venue[], homes: ReadonlyMap<MemberId, Neighborhood>, ok: (v: Venue) => boolean = () => true,
+  withinLimit: (id: MemberId, minutes: number) => boolean = () => true):
   { venue: Venue; minutes: Record<MemberId, number>; worst: number; mean: number } | undefined {
   let best: { venue: Venue; minutes: Record<MemberId, number>; worst: number; mean: number } | undefined;
+  let bestFitsEveryone = false;
   for (const v of venues) {
     if (!ok(v)) continue;
     const at = hood(v.area);
     if (!at) continue;
     const minutes: Record<MemberId, number> = {};
     let worst = 0, sum = 0;
-    for (const [id, h] of homes) { const m = transitMinutes(h, at); minutes[id] = m; worst = Math.max(worst, m); sum += m; }
+    let fitsEveryone = true;
+    for (const [id, home] of homes) {
+      const travel = transitMinutes(home, at);
+      minutes[id] = travel;
+      worst = Math.max(worst, travel);
+      sum += travel;
+      fitsEveryone &&= withinLimit(id, travel);
+    }
     const mean = homes.size ? sum / homes.size : 0;
-    if (!best || worst < best.worst || (worst === best.worst && (mean < best.mean || (mean === best.mean && v.id < best.venue.id)))) best = { venue: v, minutes, worst, mean };
+    const winsTieBreak = !best || worst < best.worst || (worst === best.worst && (mean < best.mean || (mean === best.mean && v.id < best.venue.id)));
+    if (!best || preferPlanVenue(fitsEveryone, bestFitsEveryone, winsTieBreak)) {
+      best = { venue: v, minutes, worst, mean };
+      bestFitsEveryone = fitsEveryone;
+    }
   }
   return best;
 }

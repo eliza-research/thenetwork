@@ -1,6 +1,6 @@
 # Dating radius
 
-The [engine flow model](models/engine_rules.md) checks `radiusMutual` and `pairDecisionSymmetric` with a small set of locations and whole distances. The runtime calculates distance from coarse cells in miles, including fractional miles, and supplies it to these comparisons without rounding.
+The [engine flow model](models/engine_rules.md) checks `radiusMutual` and `pairDecisionSymmetric` with a small set of locations and whole distances. The runtime calculates distance from coarse cells in miles, including fractional miles, adds the privacy margin, and supplies the adjusted distance to these comparisons without rounding.
 
 ## Story: Find a date within both travel limits
 
@@ -20,14 +20,48 @@ pure def sharedDatingMarket(inFirst: bool, inSecond: bool, listed: bool): bool =
 The engine adds the privacy margin to the distance between the two coarse cells. Equality with either limit is allowed. The engine handles an unknown limit separately and orders eligible markets by distance.
 
 ```quint
-pure def withinMutualRadius(miles: int, margin: int, firstLimit: int, secondLimit: int): bool =
-  miles + margin <= firstLimit and miles + margin <= secondLimit
+pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
+  adjustedMiles <= firstLimit and adjustedMiles <= secondLimit
 
-pure def lawRadiusMutual(miles: int, margin: int, firstLimit: int, secondLimit: int): bool =
-  withinMutualRadius(miles, margin, firstLimit, secondLimit) implies
-    (miles + margin <= firstLimit and miles + margin <= secondLimit)
+pure def lawRadiusMutual(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
+  withinAdjustedRadius(adjustedMiles, firstLimit, secondLimit) implies
+    (adjustedMiles <= firstLimit and adjustedMiles <= secondLimit)
 
-pure def lawPairDecisionSymmetric(miles: int, margin: int, firstLimit: int, secondLimit: int): bool =
-  withinMutualRadius(miles, margin, firstLimit, secondLimit) ==
-    withinMutualRadius(miles, margin, secondLimit, firstLimit)
+pure def lawPairDecisionSymmetric(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
+  withinAdjustedRadius(adjustedMiles, firstLimit, secondLimit) ==
+    withinAdjustedRadius(adjustedMiles, secondLimit, firstLimit)
+```
+
+### Both members' current dating limits apply until reveal
+
+Recheck the exact pair at review approval, before either anonymous probe, before booking, and when the queued probe or reveal is claimed. Both members must still be eligible adults with complete dating settings and no current safety hold. Both must still fit the other's stated seeking, age range, dealbreakers, and travel limits in the app's market. If either person's authority changes, stop the outdated invitation or reveal. Keep the review and each member's consent as separate requirements.
+
+```quint
+type CurrentSlopPair = { adults: bool, optedIn: bool, safetyClear: bool, complete: bool,
+  seeksMutually: bool, agesFit: bool, dealbreakersClear: bool, radiusFits: bool }
+
+pure def slopPairConstraintsCurrent(pair: CurrentSlopPair): bool = and {
+  pair.adults, pair.optedIn, pair.safetyClear, pair.complete,
+  pair.seeksMutually, pair.agesFit, pair.dealbreakersClear, pair.radiusFits,
+}
+
+pure def slopPairContactAllowed(approved: bool, pairCurrent: bool, reveal: bool, bothConsented: bool): bool =
+  approved and pairCurrent and (not(reveal) or bothConsented)
+
+pure def lawSlopPairRevealNeedsCurrentConsent(approved: bool, pairCurrent: bool, bothConsented: bool): bool =
+  slopPairContactAllowed(approved, pairCurrent, true, bothConsented) implies (approved and pairCurrent and bothConsented)
+```
+
+### Only encounter-backed blocks inform a member review
+
+Every block keeps both members apart. A block can inform the separate dating review only when the same two members already shared a recorded completed or no-show encounter in this app. Count each qualifying blocker once. Anonymous proposals and later encounters provide no evidence for the earlier block. Other safety and staff decisions apply independently.
+
+```quint
+pure def slopRecordedBlockContext(encounterResult: str): bool = Set("completed", "no_show").contains(encounterResult)
+
+pure def slopContextualBlockAllowed(encounterAt: int, blockedAt: int, now: int): bool =
+  encounterAt >= 0 and encounterAt <= blockedAt and blockedAt <= now
+
+pure def lawNoBlockContextWithoutAnEncounter(blockedAt: int, now: int): bool =
+  not(slopContextualBlockAllowed(-1, blockedAt, now))
 ```

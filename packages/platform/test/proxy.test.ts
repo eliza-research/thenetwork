@@ -1,8 +1,10 @@
 // The trusted proxy (founder decision 2026-10-08: Cloudflare Worker routers in front of one backend).
 // A site router signs the client IP and its host (proxy.ts); the backend trusts them only with a
 // valid signature under 60 s old, and otherwise uses the socket address and its own Host map
-// (PLAT-18, PLAT-19 in small). End to end: deployed Pages router -> local Bun server -> createPublicApi.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+// (PLAT-18, PLAT-19 in small). End to end: deployed Pages router -> local Node server -> createPublicApi.
+import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createPublicApi } from "../src/api.ts";
 import { PROXY_HEADERS, proxySignature, signProxyHeaders, verifyProxyHeaders } from "../src/proxy.ts";
 import { handle as routeSiteRequest } from "../../../deploy/router.ts";
@@ -36,16 +38,16 @@ describe("signing", () => {
 });
 
 describe("a site router in front of the backend", () => {
-  let server: ReturnType<typeof Bun.serve>;
+  let server: HttpServer;
   let sent = 0;
   const assets = { fetch: async (r: Request) => new Response(`asset ${new URL(r.url).pathname}`) };
-  beforeAll(() => {
+  beforeAll(async () => {
     const api = createPublicApi({
       store: new MemoryPeopleStore(), otp: { name: "fake", send: async () => { sent++; return { code: "123456" }; } },
       env: { PLATFORM_ENV: "staging" }, hashKey: "h".repeat(40), sessionSecret: "s".repeat(40), proxySecret: SECRET,
       turnstile: { verify: async () => true }, minStartMs: 0, minVerifyMs: 0, log: () => {},
     });
-    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (req, srv) => (await api.fetch(req, srv)) ?? new Response("not found", { status: 404 }) });
+    server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: async (req, srv) => (await api.fetch(req, srv)) ?? new Response("not found", { status: 404 }) });
   });
   afterAll(() => server?.stop(true));
   const env = (site: string) => ({ BACKEND_ORIGIN: `http://127.0.0.1:${server.port}`, PLATFORM_PROXY_SECRET: SECRET, ASSETS: assets, SITE_HOST: site, APP_ID: appForHost(site)! });
@@ -90,7 +92,7 @@ describe("a site router in front of the backend", () => {
     const direct: number[] = [];
     for (let i = 0; i < 50; i++) {
       const forged = await signProxyHeaders("wrong-secret-wrong-secret-wrong-secret-xx", { method: "POST", path: "/api/auth/otp/start", host: "slop.date", ip: `10.7.${i}.1` });
-      direct.push((await fetch(`http://127.0.0.1:${server.port}/api/auth/otp/start`, { method: "POST", headers: { host: "slop.date", "content-type": "application/json", ...forged, "x-forwarded-for": `10.6.${i}.1` }, body: JSON.stringify({ phone: phone() }) })).status);
+      direct.push((await fetchWithHost(`http://127.0.0.1:${server.port}/api/auth/otp/start`, { method: "POST", headers: { host: "slop.date", "content-type": "application/json", ...forged, "x-forwarded-for": `10.6.${i}.1` }, body: JSON.stringify({ phone: phone() }) })).status);
     }
     expect(sent).toBeLessThanOrEqual(10);
     expect(direct.filter(s => s === 429).length).toBeGreaterThanOrEqual(40);

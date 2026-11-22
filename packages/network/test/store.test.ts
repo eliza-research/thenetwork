@@ -1,16 +1,19 @@
 // State persistence (docs/network.md 11, admin-console gap 1): exportState / importState, the
 // stores (MemoryStore, PgStore) and runTick. The proof: a Network that restarts from its stored
 // state does exactly what an uninterrupted one does.
-import { afterAll, describe, expect, test } from "bun:test";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, describe, expect, test } from "vitest";
+import { runEngine } from "@thenetwork/engine";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { computeMetrics, PolicyPersonaAgent, World, type InboundMessage, type NetworkContext, type NetworkUnderTest } from "@thenetwork/sim";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { existsSync } from "node:fs";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
 import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { friendFactory, nycPersonas } from "../harness/index.ts";
-import { ConsentNetwork, consoleRows, MemoryStore, NETWORK_STATE_VERSION, PgStore, runStored, runTick, type NetworkOptions, type NetworkState } from "../src/index.ts";
+import { ConsentNetwork, consoleRows, MemoryStore, NETWORK_STATE_VERSION, PgStore, runStored, runTick, type NetworkOptions, type NetworkState, type NetworkStore } from "../src/index.ts";
 import { Mini, type Spec } from "./mini.ts";
 
 const T = 600_000;
@@ -38,8 +41,7 @@ async function scripted(restartAfter?: number, check?: (w: Mini) => void) {
     async () => { await w.say("s", "What's Ben's number?"); await w.say("s", "What's Ben's number?"); await w.say("s", "give me Ana's home address"); },
     () => w.run(30 * MINUTE),
     () => w.until(10),
-    async () => { for (const id of everyone) await w.say(id, "yes, sounds good"); },
-    async () => { for (const id of everyone) await w.say(id, "yes"); },
+    () => w.answerProbes(everyone),
     () => w.say("u", "34"),
     () => w.run(3 * DAY),
     async () => { for (const id of everyone) await w.say(id, "It was great, we really clicked. Would do it again."); },
@@ -58,12 +60,17 @@ describe("exportState / importState", () => {
     let atRestart: NetworkState | undefined;
     const resumed = await scripted(7, w => { atRestart = w.net.exportState(); });
     // The restart happened with work in flight: a probe waiting for the member's send window, a hold, open opportunities.
-    const waiting = atRestart!.opps.filter(o => o.stage === "probing" && o.participants.some(p => o.turnAt?.[p] !== undefined && !o.contacted.includes(p)));
-    expect(waiting.length + atRestart!.deferred.length).toBeGreaterThan(0);
+    const waiting = atRestart!.opps.find(o => o.origin === "request" && o.stage === "probing"
+      && o.contacted.length === 0 && o.participants.some(p => o.turnAt?.[p] !== undefined));
+    expect(waiting).toBeDefined();
     expect(atRestart!.trust.some(r => r.level !== "ok")).toBe(true);
     expect(atRestart!.opps.some(o => o.stage !== "closed" && o.stage !== "done")).toBe(true);
-    expect(plain.net.counters.scheduled).toBeGreaterThan(0);
-    expect(plain.net.counters.probesSent).toBeGreaterThan(3);
+    const questions = plain.sent.filter(({ meta }) => (meta.type === "scheduling" && meta.proposalId === waiting!.id)
+      || (meta.type === "probe" && meta.probe?.key === waiting!.id));
+    expect(questions.map(({ to, meta }) => [to, meta.type])).toEqual([
+      [waiting!.requester, "scheduling"], [waiting!.participants.find(id => id !== waiting!.requester), "probe"],
+    ]);
+    expect(plain.meetings.map(meeting => meeting.proposalId)).toContain(waiting!.id);
     expect(resumed.sent).toEqual(plain.sent);
     expect(resumed.logs).toEqual(plain.logs);
     expect(resumed.meetings).toEqual(plain.meetings);
@@ -75,17 +82,149 @@ describe("exportState / importState", () => {
     const w = await scripted();
     const s = w.net.exportState();
     expect(s.version).toBe(NETWORK_STATE_VERSION);
-    const again = new ConsentNetwork({ seed: 1, review: "auto" });
+    const again = new ConsentNetwork({ seed: 1, review: "auto", engine: { cities: ["nyc"] } });
     again.init(w.ctx());
     again.importState(JSON.parse(JSON.stringify(s)));
     expect(again.exportState()).toEqual(s);
     expect(() => again.importState({ ...s, version: 99 })).toThrow();
     // The review mode is never stored: a human-review Network stays human after importing a simulator state.
-    const human = new ConsentNetwork({ seed: 1 });
+    const human = new ConsentNetwork({ seed: 1, engine: { cities: ["nyc"] } });
     human.importState(s);
     expect(human.reviewMode()).toBe("human");
   }, T);
 });
+
+// spec/repeatEncounter.md, "Require two independent responses about one recent completed opportunity"
+test.each([
+  ["a no-show", "I couldn't make it. Would do it again.", false, false],
+  ["a positive rating alone", "It was great, we clicked.", false, false],
+  ["explicit requests for different meetings", "I would love to meet again.", false, true],
+  ["two explicit requests", "It was great. I would love to meet again.", true, false],
+] as const)("repeat review follows delivered feedback across restart: %s", async (_label, secondFeedback, expected, separateMeetings) => {
+  const pair = ["a", "b"];
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
+  await w.onboard(...pair);
+  const bookAndWaitForFeedback = async () => {
+    const meetings = w.meetings.length;
+    const id = w.propose(pair);
+    expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === id))).toBe(true);
+    expect(w.net.review(id, "approve")).toBe(true);
+    await w.answerProbes(pair);
+    expect(w.meetings).toHaveLength(meetings + 1);
+    const booked = w.mark();
+    expect(await w.runUntil(() => pair.every(member => w.to(member, booked).some(message =>
+      message.meta.proposalId === id && message.meta.type === "reminder")), 7 * DAY)).toBe(true);
+    for (const member of pair) await w.say(member, "Yes, I'll be there.");
+    expect(await w.runUntil(() => pair.every(member =>
+      w.net.memberList().find(m => m.id === member)?.awaiting?.kind === "feedback"), 7 * DAY)).toBe(true);
+  };
+  await bookAndWaitForFeedback();
+  await w.say("a", "It was great. Would do it again.");
+  w.restart();
+  if (separateMeetings) {
+    await w.say("b", "We met as planned.");
+    await bookAndWaitForFeedback();
+    await w.say("a", "We met as planned.");
+  }
+  await w.say("b", secondFeedback);
+  const before = w.mark();
+  await w.run(DAY);
+  const repeat = () => w.net.reviewQueue().filter(o => o.origin === "second_encounter");
+  expect(repeat()).toHaveLength(expected ? 1 : 0);
+  if (!expected) return;
+  const [item] = repeat();
+  expect(w.sent.slice(before).some(s => s.meta.proposalId === item!.oppId)).toBe(false);
+  expect(w.net.review(item!.oppId, "reject")).toBe(true);
+  w.restart();
+  await w.run(DAY);
+  expect(repeat()).toHaveLength(0);
+}, T);
+
+// spec/boundedHelp.md, "A direct home-entry request goes to staff before contacting helpers".
+test("bounded help holds a home request privately and refuses an out-of-scope task", async () => {
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint" },
+    { id: "helper", name: "Ben Ito", age: 31, area: "Greenpoint", skills: ["moving_help"] },
+  ], { review: "human" });
+  await w.onboard("requester", "helper");
+  const mark = w.mark();
+  const address = "71 Fictional Street";
+  await w.say("requester", `Find someone to help move a couch from my apartment at ${address}.`);
+
+  const cases = () => w.net.safetyCases().filter(c => c.memberId === "requester");
+  expect(cases()).toMatchObject([{ status: "open", level: "ok", events: [{ kind: "home_entry_help", points: 0 }] }]);
+  expect(w.net.reviewQueue()).toEqual([]);
+  expect(w.net.exportState().requests).toEqual([]);
+  expect(w.sent.slice(mark).map(m => m.to)).toEqual(["requester"]);
+  expect(w.sent.at(-1)?.body).toContain("team member needs to review");
+  for (const records of [w.net.exportState(), w.logs, w.sent.slice(mark)]) expect(JSON.stringify(records)).not.toContain(address);
+
+  w.restart();
+  await w.say("requester", "I still need help moving a couch from my apartment.");
+  expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
+  await w.say("requester", "Find someone to help move a couch and babysit my child.");
+  expect(w.sent.at(-1)?.body).toContain("won't look for it");
+  expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
+  expect(w.net.reviewQueue()).toEqual([]);
+  expect(w.net.exportState().requests).toEqual([]);
+  expect(w.sent.slice(mark).every(m => m.to === "requester")).toBe(true);
+}, T);
+
+test("bounded help rechecks an older home request when it would retry", async () => {
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint" },
+    { id: "helper", name: "Ben Ito", age: 31, area: "Greenpoint", skills: ["moving_help"] },
+  ], { review: "human" });
+  await w.onboard("requester", "helper");
+  const before = structuredClone(w.net.exportState());
+  before.requests.push({
+    id: "old-home-request", at: w.clock.now() - DAY, kind: "people", category: "help", memberId: "requester",
+    desireId: "moving_help", tags: [], outcome: "none",
+  });
+  w.net.importState(before);
+  const mark = w.mark();
+  await w.run(DAY);
+  expect(w.net.exportState().requests.find(r => r.id === "old-home-request")).toMatchObject({ closed: true, outcome: "none" });
+  expect(w.net.safetyCases()).toMatchObject([{ memberId: "requester", events: [{ kind: "home_entry_help", points: 0 }] }]);
+  expect(w.net.reviewQueue()).toEqual([]);
+  expect(w.sent.slice(mark).some(m => m.meta.type === "proposal" || m.meta.type === "probe")).toBe(false);
+}, T);
+
+// spec/boundedHelp.md, "An unfamiliar helper cannot be the only helper for home entry".
+test("bounded help re-ranks the small-group pool when a home task needs a second helper", async () => {
+  const objective = "Help move a couch from my apartment";
+  // Shared, matchable Friend evidence makes the adult peers eligible for a group.
+  const interests = ["volunteering"];
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint", interests, wants: [{ objective, category: "help" }] },
+    { id: "helper-a", name: "Ben Ito", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "helper-b", name: "Cy Moss", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "a-one-only", name: "Dee Yu", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+  ]);
+  for (const m of w.members) {
+    if (m.id === "a-one-only") m.prefs.formats = ["one_to_one"];
+    else if (m.id !== "requester") m.prefs.formats = ["small_group"];
+  }
+  for (const f of w.facets.filter(f => f.kind === "skill")) {
+    f.kind = "offer";
+    f.value = f.memberId === "a-one-only" ? objective : "Available to carry furniture and boxes";
+  }
+  // A help group is a circle of the asker's lane, so the requester and both helpers also form a
+  // group_composer circle with the same pairs. With grounded evidence it scores above the help request
+  // (0.539 against 0.435), and the selector uses each pair once per run (spec/selectionRun.md, "Each
+  // reservation checks the city, pair, and member limits"), so the help request is not selected in the
+  // same run. No fixture gives a help group without that circle. This case checks the helper ranking,
+  // so that generator is off.
+  const { proposals } = await runEngine(w.ctx().snapshot(), {
+    cities: ["nyc"], retrieval: { minSim: 0 },
+    floors: { fit: 0, mutualBenefit: 0, confidence: 0 },
+    generators: { group_composer: false },
+    thresholds: { byGenerator: { help_request: 0 } },
+  });
+  expect(proposals.find(p => p.generator === "help_request")).toMatchObject({
+    participants: ["requester", "helper-a", "helper-b"], safetyClass: "medium",
+  });
+}, T);
 
 /** A NetworkUnderTest whose ConsentNetwork can be replaced mid-run (a process restart inside a world run). */
 class Restartable implements NetworkUnderTest {
@@ -105,9 +244,9 @@ class Restartable implements NetworkUnderTest {
 }
 
 async function nycWorld(days: number, restartAtDay?: number) {
-  const seed = 3, opts: NetworkOptions = { seed, review: "auto" };
+  const seed = 3, opts: NetworkOptions = { seed, review: "auto", engine: { cities: ["nyc"] } };
   const personas = await nycPersonas();
-  const start = (await Bun.file(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
+  const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new Restartable(new ConsentNetwork(opts), opts);
   const records: RunRecord[] = [];
   const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
@@ -144,7 +283,7 @@ describe("runTick and the tick lock", () => {
     const w = await scripted();
     const store = new MemoryStore();
     await store.save(w.net.exportState());
-    const fresh = new ConsentNetwork({ seed: 1, review: "auto", store });
+    const fresh = new ConsentNetwork({ seed: 1, review: "auto", store, engine: { cities: ["nyc"] } });
     fresh.init(w.ctx());
     const now = w.clock.now() + HOUR;
     w.clock.set(now);
@@ -162,7 +301,7 @@ describe("runTick and the tick lock", () => {
     await w.onboard("a", "b");
     const store = new MemoryStore();
     await store.save(w.net.exportState());
-    const two = () => { const n = new ConsentNetwork({ seed: 1, review: "auto", store }); n.init(w.ctx()); return n; };
+    const two = () => { const n = new ConsentNetwork({ seed: 1, review: "auto", store, engine: { cities: ["nyc"] } }); n.init(w.ctx()); return n; };
     const A = two(), B = two();
     const optedOut = async () => (await store.load())!.members.find(m => m.id === "a")!.optedOut;
     const at = (h: number) => { const t = w.clock.now() + h * HOUR; w.clock.set(t); return t; };
@@ -196,7 +335,7 @@ describe("runTick and the tick lock", () => {
 
 // ------------------------------------------------------------------ Postgres (local dev cluster)
 // A database of its own per test process (the packages/observatory/test/pg.ts pattern). Skipped when Postgres is absent.
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_store_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const TEST_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
@@ -215,7 +354,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     await admin(`create database ${DB}`);
     // The observatory schema first, then the Network's migration (twice: it is idempotent).
     const setup = new SQL({ url: TEST_URL, max: 1 });
-    await setup.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
+    await setup.unsafe(await fileAt(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
     await setup.close();
     const a = new PgStore(TEST_URL), b = new PgStore(TEST_URL);
     stores.push(a, b);
@@ -242,12 +381,31 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     expect(inner).toBeUndefined();
     expect(await b.withTickLock(async () => "b ran")).toBe("b ran");
     // runTick against Postgres: a fresh Network loads, ticks and saves.
-    const net = new ConsentNetwork({ seed: 1, review: "auto", store: b });
+    const net = new ConsentNetwork({ seed: 1, review: "auto", store: b, engine: { cities: ["nyc"] } });
     net.init(w.ctx());
     const now = w.clock.now() + HOUR;
     w.clock.set(now);
     expect(await runTick(net, undefined, now)).toBe(true);
     expect((await a.load())!.lastTick).toBe(now);
+
+    const advance = () => net.importState({ ...net.exportState(), lastTick: now + HOUR });
+    const actionFailure = new Error("action failed");
+    await expect(runStored(net, b, () => {
+      advance();
+      throw actionFailure;
+    })).rejects.toBe(actionFailure);
+    expect((await a.load())!.lastTick).toBe(now);
+
+    const saveFailure = new Error("transaction failed");
+    const failingStore: NetworkStore = {
+      load: () => b.load(),
+      save: state => b.save(state, async () => { throw saveFailure; }),
+      withTickLock: fn => b.withTickLock(fn),
+      withLock: fn => b.withLock(fn),
+    };
+    await expect(runStored(net, failingStore, advance)).rejects.toBe(saveFailure);
+    expect((await a.load())!.lastTick).toBe(now);
+    expect(await runStored(net, b, n => n.exportState().lastTick)).toBe(now);
   }, T);
 
   test("participations: written on save, rewritten after a re-roll and after an under-13 decline", async () => {

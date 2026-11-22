@@ -1,0 +1,5 @@
+# The compiler writes these beside a .vibe file that has a `module node` body.
+*.vibe.node.d.ts
+# `pnpm tokens` and `pnpm stories` write these; `storybook build` the last.
+generated/
+storybook-static/

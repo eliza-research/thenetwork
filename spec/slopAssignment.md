@@ -1,6 +1,6 @@
 # Slop assignment rounds
 
-The [matching engine model](models/matching_engine.md) follows the Slop assignment path through the service. This machine controls the rounds and reservations in `packages/engine/src/packs/slop/assign.ts`. The shell supplies eligible, ranked pairs. It checks exclusions, open opportunities and minimum value, calculates each member’s degree, and uses the configured greedy or stable matcher.
+The [matching engine model](models/matching_engine.md) follows the Slop assignment path through the service. This machine controls the rounds and reservations in `packages/engine/src/packs/slop/assign.ts`. The shell supplies eligible, ranked pairs. It checks exclusions, open opportunities and minimum value, calculates each member’s degree, and orders the edges: pairs whose scarcer member has few searched partners first, then the highest value. Round 1 opens with the exposure floor (`packages/engine/src/policy.ts` `exposureFloor`, the same floor as the [global selection spec](selectionRun.md)): each floor member, highest carried exposure debt first, reserves their best edge that fits, until the floor cap is reached. Then one greedy walk over the ordered edges runs in each round. Every reservation, the floor ones included, goes through `canReservePair` and `reservePair` of this machine. The floor order and the floor cap are shell decisions outside this machine. The machine only checks that each reservation is allowed.
 
 ## Story: Assign a date proposal without filling a member’s inbox
 
@@ -55,10 +55,10 @@ A reservation requires an open round, an unused pair, and room for both members.
 
 ```quint
 pure def isMarked(flags: str -> bool, key: str): bool =
-  if (flags.keys().contains(key)) flags.get(key) else false
+  flags.getOr(key, false)
 
 pure def memberCount(counts: str -> int, member: str): int =
-  if (counts.keys().contains(member)) counts.get(member) else 0
+  counts.getOr(member, 0)
 
 pure def canReservePair(s: AssignmentRun, pairKey: str, memberA: str, memberB: str, withinBackupDegree: bool): bool = and {
   s.phase == InRound,
@@ -87,4 +87,30 @@ pure def stepFinishedStaysFinished(before: AssignmentRun, after: AssignmentRun):
 
 pure def sometimesAssigned(s: AssignmentRun): bool = s.proposed > 0
 pure def sometimesBackupRound(s: AssignmentRun): bool = s.phase == InRound and s.round > s.baseRounds
+```
+
+## Story: Measure how many Slop members scammers reach
+
+> As a pilot reviewer, I want the scammer reach gate to measure distinct real members exposed by a reveal.
+
+### Count each real recipient once after a reveal
+
+For each simulated scammer, count distinct real recipients whose identities became known at reveal. A probe, another synthetic adversary, or another reveal of the same recipient adds no reach. Keep scammers with no reveals in the cohort. Use simulator truth only in the report.
+
+```quint
+pure def slopScammerContactCounts(revealed: bool, realRecipient: bool): bool =
+  revealed and realRecipient
+```
+
+### An even cohort averages its two middle reach counts
+
+Sort the reach counts. The median uses the middle count for an odd cohort and the arithmetic mean of both middle counts for an even cohort. An empty cohort reports zero. Return twice the median so the integer model preserves half-unit values. The existing pilot gate compares the mean of the per-seed medians with its maximum of one.
+
+```quint
+pure def slopScammerMedianReachTwice(orderedReach: List[int]): int =
+  val count = orderedReach.length()
+  if (count == 0) 0 else orderedReach.nthOr((count - 1) / 2, 0) + orderedReach.nthOr(count / 2, 0)
+
+pure def lawSlopSingleScammerKeepsReach(contactCount: int): bool =
+  slopScammerMedianReachTwice(List(contactCount)) == 2 * contactCount
 ```

@@ -2,15 +2,16 @@
 // dev cluster, never the dev `network` database or anything remote, so concurrent test runs do not
 // wipe or lock each other. Each test file drops it in afterAll (dropTestDb). Tests skip when
 // Postgres is not installed.
+import { findExecutable } from "../../core/src/runtime/process.ts";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../db/dev-pg.ts";
 
 const DB = `network_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 export const TEST_PG_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
 
-export const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+export const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 
 async function admin<T>(fn: (sql: SQL) => Promise<T>): Promise<T> {
   const sql = new SQL({ url: ADMIN_URL, max: 1 });

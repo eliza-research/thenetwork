@@ -19,12 +19,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { allowedByRole, globalGrants, mayOpenCrossApp, scopedGrants } from "../../core/src/generated/staffPermissions.ts";
 import { APP_IDS, isAppId, type AppId } from "./apps.ts";
 import { STAFF_ROLES, type AuditEntry, type Mode, type RoleGrant, type StaffRole, type StaffUser } from "./types.ts";
 
-export const REPO = resolve(import.meta.dir, "../../..");
+export const REPO = resolve(import.meta.dirname, "../../..");
 
 /**
  * "role[@app]": a role for one app or for every app ("@*"; no "@" is "@*", the format before the four
@@ -218,6 +218,7 @@ export class PgStaffRoles implements StaffRoleSource {
       }
       this.byEmail = next;
     } catch (e) {
+      this.byEmail.clear();
       if (!this.warned) { this.warned = true; console.warn(`Observatory: platform.staff_roles not read (${(e as Error).message}); OBSERVATORY_ROLES only`); }
     }
   }
@@ -336,7 +337,7 @@ export interface AuditSink {
   /** Newest first. */
   /** `apps`: only rows about these apps (rows with no app are left out too). */
   list(q?: { limit?: number; actor?: string; targetType?: string; targetId?: string; actions?: string[]; apps?: string[] }): Promise<AuditEntry[]>;
-  close(): Promise<void>;
+  close(force?: boolean): Promise<void>;
 }
 
 /** Append-only JSONL file (runs/audit/audit.jsonl by default). */
@@ -411,7 +412,7 @@ export class PgAudit implements AuditSink {
       ...(r.mode ? { mode: r.mode } : {}), ...(r.app ? { app: r.app } : {}), ok: r.ok, ...(r.detail && Object.keys(r.detail).length ? { detail: r.detail } : {}),
     }));
   }
-  async close() { await this.sql.close(); }
+  async close(force = false) { await this.sql.end(force ? { timeout: 0 } : undefined); }
 }
 
 export function createAudit(o: { url?: string; dir?: string } = {}): AuditSink {

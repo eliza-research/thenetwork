@@ -10,7 +10,7 @@ Check queue claims, caps, leak checks, receipt reconciliation, and uncertain del
 
 The [participation budgets](../participationBudgets.md) supply the engine and Network's default state and lane caps. This queue model starts after the attention controller has applied those caps and models its own person-level and provider limits.
 
-Production uses the generated [provider receipt lifecycle](../outboundReceipt.md) to decide retry, receipt recovery and status updates.
+The generated [provider receipt lifecycle](../outboundReceipt.md) drives the compiled send shell. A provider response whose acceptance cannot be saved holds the original key for lookup. The failure write is scoped to the worker and attempt that own the lease.
 
 The [outbound admission spec](../outboundAdmission.md) generates the live pre-claim checks. The database still owns the locked check and lease acquisition.
 
@@ -46,6 +46,8 @@ Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.
 //    the two steps (they are milliseconds apart in the code).
 //  - The leak guard, the quiet-hours clock, the stale hook's errors, Cloud and the gateway are oracles:
 //    the actions take their answers as parameters and `step` chooses them nondeterministically.
+//    At claim, the app also supplies whether this exact peer message has a block in its current roster.
+//    The model does not represent individual seats or the canonical identities in that roster.
 //  - The recipient policy and the stale hook read the runtime's in-memory Network (ch:185-191). Each worker
 //    has its own view and the version of the stored state it last loaded or saved (PgStore.seen, the row's
 //    xmin); `refresh` copies the database into it (a unit of work on that replica). A runtime drain starts only
@@ -502,12 +504,16 @@ module outbound_queue {
 
   // The write of the decision. A wait or an end (no status guard), or the admission transaction.
   // dbErr: the admission transaction throws (deadlock, reset): drain()'s catch lets the row wait (SD-117 fix).
-  action applyDecision(w: str, dbErr: bool): bool = {
+  action applyDecision(w: str, dbErr: bool): bool = applyCurrentDecision(w, dbErr, false, false)
+
+  action applyCurrentDecision(w: str, dbErr: bool, rosterBlocked: bool, rosterRestricted: bool): bool = {
     val wk = work.get(w)
     val r = wk.row
     val row = rows.get(r)
     val compliance = row.kind == "compliance"
     val agent = isAgent(row.kind)
+    val blockedContact = row.member and not(compliance) and rosterBlocked
+    val restrictedContact = row.member and not(compliance) and rosterRestricted
     // Admission: the state fence (lockAdmission: the stored Network state is the one this worker read, SD-020 fix),
     // the member and its binding, the consent ledger for every non-compliance row (Q-outbound_queue-1 fix 1f86525),
     // then the CAS claim.
@@ -516,6 +522,7 @@ module outbound_queue {
       else if (views.get(w).ver != env.ver) "stale_view"
       else if (row.member and env.erased) "dropped_forgotten"
       else if (not(compliance) and codeOptedOut(env.ledger)) "refused_opted_out"
+      else if (blockedContact or restrictedContact) "suppressed_ineligible"
       else if (row.status == wk.readStatus and not(row.lease) and row.hasBody) "admitted"
       else if (row.status != wk.readStatus or row.lease) "busy"
       else "dropped_forgotten"
@@ -525,6 +532,8 @@ module outbound_queue {
       if (not(compliance) and stoppedByRule(env.ledger)) "afterStop" else "",
       if (row.member and agent and env.held) "whileHeld" else "",
       if (row.member and agent and env.closed) "whenClosed" else "",
+      if (blockedContact) "blockedRoster" else "",
+      if (restrictedContact) "restrictedRoster" else "",
       if (row.doubt) "inDoubt" else "",
       if (row.leakBad and not(row.leakReleased)) "leak" else "").exclude(Set(""))
     all {
@@ -789,6 +798,14 @@ module outbound_queue {
   // STOP on the shared line (scope all).
   action stop: bool = consentEvent("all", "opted_out")
 
+  // A legacy transport opt-out writes consent without first calling engaged.
+  // The model abstracts the departed app's later account cleanup.
+  action legacyOptOut(scope: str): bool = all {
+    env.mode == "blooio",
+    Set("all", "app", "other").contains(scope),
+    consentEvent(scope, "opted_out"),
+  }
+
   // A trust hold or pause (staff, the Network) commits on worker w's replica: the unit loads the newest state, saves
   // a new version, and w's view is fresh; others are not.
   action holdToggle(w: str): bool = all {
@@ -912,7 +929,9 @@ module outbound_queue {
       nondet rd = oneOf(ROWS.filter(x => DUE.contains(rows.get(x).status) and rows.get(x).nextAt <= env.now and not(work.get(wk).seen.contains(x))
         and rows.get(x).net == work.get(wk).net))
       decide(wk, rd, b1 and b3, b2) },
-    { nondet wd = oneOf(WORKERS.filter(x => work.get(x).phase == "decided")) applyDecision(wd, b3 and b2) },
+    { nondet wd = oneOf(WORKERS.filter(x => work.get(x).phase == "decided"))
+      // Most rows have no restricted peer roster. The directed traces cover current authority at claim.
+      applyCurrentDecision(wd, b3 and b2, b1 and b2 and not(b3), b1 and b3 and not(b2)) },
     { nondet wc = oneOf(WORKERS.filter(x => work.get(x).phase == "calling")) providerCall(wc, out) },
     { nondet wp = oneOf(WORKERS.filter(x => work.get(x).phase == "responded")) respond(wp, b2 and b3) },
     { nondet wu = oneOf(WORKERS.filter(x => work.get(x).phase == "locked")) unlockLine(wu) },
@@ -992,6 +1011,9 @@ module outbound_queue {
   // (findings file section 0.6).
   // Failed before fix 1f86525: Q-outbound_queue-1 (admission rechecked consent only for member rows).
   val noClaimAfterStop = ROWS.forall(r => not(ghost.get(r).bad.contains("afterStop")))
+  // F23: the claim rechecks the block after a row has waited on the queue.
+  val noClaimWithBlockedRoster = ROWS.forall(r => not(ghost.get(r).bad.contains("blockedRoster")))
+  val noClaimWithRestrictedRoster = ROWS.forall(r => not(ghost.get(r).bad.contains("restrictedRoster")))
   // I1 / oq:113 "The recipient at send time: paused, blocked, held"; oq:14 "each reads the database".
   // Failed before fix 6cc9d1b: SD-020 (the recipient gate reads the replica's in-memory Network; the claim now
   // needs the stored state version to be the one the replica read).
@@ -1132,7 +1154,7 @@ module outbound_queue {
   val sentAtOnlyIfOut = ROWS.forall(r => rows.get(r).sentAt implies admitted.contains(r))
 
   val safety = and {
-    noClaimAfterStop, noClaimWhileHeld, noClaimWhenClosed, leakGate, unknownNeverResends,
+    noClaimAfterStop, noClaimWithBlockedRoster, noClaimWithRestrictedRoster, noClaimWhileHeld, noClaimWhenClosed, leakGate, unknownNeverResends,
     notSentMeansNotOut, capAtMost, slotOnlyForLiveRow, noStatusRegressLive,
     complianceAlwaysGoes, nonMemberBodyClearedAtEnd, guardFailedReachesStaff, collectedResolvable, noHistoryReceiptRecorded,
     heldOnlyWhileUnanswered, ownNetworkDecides, mirrorNotStuckWaiting, sentAtOnlyIfOut,
@@ -1156,6 +1178,24 @@ module outbound_queue {
       .then(unlockLine("w1"))
       .then(flush("w1"))
       .expect(rows.get("r1").status == "accepted" and mirror.get("r1") == "accepted" and slots == Set("r1") and safety)
+
+  // A block commits after filtering and before the provider claim (crossapp.test.ts).
+  run blockedRosterTest =
+    initWith("cloud", true, false)
+      .then(enqueue("r1", "proactive", true, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
+      .then(lockLine("w1")).then(decide("w1", "r1", false, false))
+      .then(applyCurrentDecision("w1", false, true, false))
+      .expect(rows.get("r1").status == "suppressed_ineligible" and rows.get("r1").attempts == 0 and not(admitted.contains("r1")) and safety)
+
+  // A participant's canonical ban or hold is already active while app projection waits.
+  run restrictedRosterTest =
+    initWith("cloud", true, false)
+      .then(enqueue("r1", "transactional", true, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
+      .then(lockLine("w1")).then(decide("w1", "r1", false, false))
+      .then(applyCurrentDecision("w1", false, false, true))
+      .expect(rows.get("r1").status == "suppressed_ineligible" and rows.get("r1").attempts == 0 and not(admitted.contains("r1")) and safety)
 
   // A transactional text in quiet hours waits, then goes after the window.
   run quietHoursTest =
@@ -1645,6 +1685,22 @@ module outbound_queue {
       .then(tick(72)).then(tick(72)).then(tick(72)).then(tick(72)).then(tick(1))
       .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
       .expect(rows.get("r2").status == "expired" and not(slots.contains("r2")) and safety)
+
+  run legacyOptOutKeepsHeldTest =
+    initWith("blooio", true, false)
+      .then(turnStart(true)).then(engaged)
+      .then(enqueue("r1", "transactional", true, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .then(decide("w1", "r1", false, false)).then(applyDecision("w1", false))
+      .then(providerCall("w1", "ok")).then(respond("w1", false))
+      .then(enqueue("r2", "proactive", true, "nyc", false))
+      .then(decide("w1", "r2", false, false)).then(applyDecision("w1", false))
+      .expect(rows.get("r2").status == "held_awaiting_reply")
+      .then(unlockLine("w1")).then(flush("w1"))
+      .then(legacyOptOut("other"))
+      .expect(rows.get("r2").status == "held_awaiting_reply" and env.engSeq == 1 and safety)
+      .then(legacyOptOut("all"))
+      .expect(rows.get("r2").status == "held_awaiting_reply" and env.engSeq == 1 and noClaimAfterStop and safety)
 
   // ------------------------------------------------------------------ witnesses (each must be violated)
   val witness_proactiveAccepted = not(ROWS.exists(r => rows.get(r).kind == "proactive" and rows.get(r).status == "accepted"))

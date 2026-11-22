@@ -1,13 +1,13 @@
-// GENERATED from spec/savedProfileRead.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/savedProfileRead.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md:9) */
+/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export type ReadPhase = "Unclassified" | "AwaitingAuthority" | "UseConversation" | "StaySilent" | "AskWhichApp" | "RefuseOtherProfile" | "DifferentAppLine" | "ShowOwnProfile";
-/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md:9) */
+/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export type ReadIntent = "OrdinaryTurn" | "OwnRead" | "NamedRead" | "UnclearRead" | "OtherProfile";
-/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md:9) */
+/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export interface ReadFacts { readForm: boolean; namesProfile: boolean; asksChange: boolean; ownSubject: boolean; endsWithProfile: boolean; hasAppName: boolean; appKnown: boolean }
-/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md:9) */
+/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export interface ProfileRead { phase: ReadPhase; intent: ReadIntent; sameMember: boolean; optedOut: boolean; requestedAppMatches: boolean }
 
 /** One variant per transition in the spec. */
@@ -15,9 +15,9 @@ export type Event =
   | { type: "classifyRead"; facts: ReadFacts }
   | { type: "resolveRead"; sameMember: boolean; optedOut: boolean; requestedAppMatches: boolean };
 
-/** Story: Read my saved profile / Simulation covers the distinct read forms (spec/savedProfileRead.md:61) */
+/** Story: Read my saved profile / Simulation covers the distinct read forms (spec/savedProfileRead.md) */
 export const ownProfileFacts: ReadFacts = { readForm: true, namesProfile: true, asksChange: false, ownSubject: true, endsWithProfile: true, hasAppName: false, appKnown: false };
-/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md:9) */
+/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export const initial: ProfileRead = { phase: "Unclassified", intent: "OrdinaryTurn", sameMember: false, optedOut: false, requestedAppMatches: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -26,86 +26,86 @@ export function inv(current: ProfileRead): boolean {
   return alwaysOnlyOwnProfileShown(current) && alwaysNoReadReplyWithoutAuthority(current);
 }
 
-/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md:38) */
+/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md) */
 //@ pure
 export function readIntent(facts: ReadFacts): ReadIntent {
   return !facts.readForm || !facts.namesProfile || facts.asksChange ? "OrdinaryTurn" : (!facts.ownSubject ? "OtherProfile" : (!facts.endsWithProfile ? "UnclearRead" : (!facts.hasAppName ? "OwnRead" : (facts.appKnown ? "NamedRead" : "UnclearRead"))));
 }
 
-/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md:38) */
+/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md) */
 //@ pure
 export function canClassifyRead(request: ProfileRead): boolean {
   return request.phase === "Unclassified";
 }
 
-/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md:38) */
+/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md) */
 //@ pure
 export function lawAChangeIsAnOrdinaryTurn(facts: ReadFacts): boolean {
   //@ ensures \result === true
   return !facts.asksChange || readIntent(facts) === "OrdinaryTurn";
 }
 
-/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md:38) */
+/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md) */
 //@ pure
 export function classifyRead(request: ProfileRead, facts: ReadFacts): ProfileRead {
   //@ ensures (inv(request) && canClassifyRead(request)) ==> alwaysOnlyOwnProfileShown(\result)
   //@ ensures (inv(request) && canClassifyRead(request)) ==> alwaysNoReadReplyWithoutAuthority(\result)
-  const intent: ReadIntent = readIntent(facts);
-  return { ...request, intent: intent, phase: intent === "OrdinaryTurn" ? "UseConversation" : "AwaitingAuthority" };
+  const local_0: ReadIntent = readIntent(facts);
+  return { ...request, intent: local_0, phase: local_0 === "OrdinaryTurn" ? "UseConversation" : "AwaitingAuthority" };
 }
 
-/** Story: Read my saved profile / Current membership and consent authorize a reply (spec/savedProfileRead.md:82) */
+/** Story: Read my saved profile / Current membership and consent authorize a reply (spec/savedProfileRead.md) */
 //@ pure
 export function canResolveRead(request: ProfileRead): boolean {
   return request.phase === "AwaitingAuthority";
 }
 
-/** Story: Read my saved profile / Current membership and consent authorize a reply (spec/savedProfileRead.md:82) */
+/** Story: Read my saved profile / Current membership and consent authorize a reply (spec/savedProfileRead.md) */
 //@ pure
 export function resolveRead(request: ProfileRead, sameMember: boolean, optedOut: boolean, requestedAppMatches: boolean): ProfileRead {
   //@ ensures (inv(request) && canResolveRead(request)) ==> alwaysOnlyOwnProfileShown(\result)
   //@ ensures (inv(request) && canResolveRead(request)) ==> alwaysNoReadReplyWithoutAuthority(\result)
-  const phase: ReadPhase = !sameMember || optedOut ? "StaySilent" : (request.intent === "OtherProfile" ? "RefuseOtherProfile" : (request.intent === "UnclearRead" ? "AskWhichApp" : (request.intent === "OwnRead" ? "ShowOwnProfile" : (request.intent === "NamedRead" ? (requestedAppMatches ? "ShowOwnProfile" : "DifferentAppLine") : "StaySilent"))));
-  return { ...request, phase: phase, sameMember: sameMember, optedOut: optedOut, requestedAppMatches: requestedAppMatches };
+  const local_1: ReadPhase = !sameMember || optedOut ? "StaySilent" : (request.intent === "OtherProfile" ? "RefuseOtherProfile" : (request.intent === "UnclearRead" ? "AskWhichApp" : (request.intent === "OwnRead" ? "ShowOwnProfile" : (request.intent === "NamedRead" ? (requestedAppMatches ? "ShowOwnProfile" : "DifferentAppLine") : "StaySilent"))));
+  return { ...request, phase: local_1, sameMember: sameMember, optedOut: optedOut, requestedAppMatches: requestedAppMatches };
 }
 
-/** Story: Read my saved profile / Only the sender's saved profile for the routed app is shown (spec/savedProfileRead.md:100) */
+/** Story: Read my saved profile / Only the sender's saved profile for the routed app is shown (spec/savedProfileRead.md) */
 //@ pure
 export function alwaysOnlyOwnProfileShown(request: ProfileRead): boolean {
   return !(request.phase === "ShowOwnProfile") || (request.sameMember && !request.optedOut && (request.intent === "OwnRead" || (request.intent === "NamedRead" && request.requestedAppMatches)));
 }
 
-/** Story: Read my saved profile / Only the sender's saved profile for the routed app is shown (spec/savedProfileRead.md:100) */
+/** Story: Read my saved profile / Only the sender's saved profile for the routed app is shown (spec/savedProfileRead.md) */
 //@ pure
 export function alwaysNoReadReplyWithoutAuthority(request: ProfileRead): boolean {
   return !(request.phase === "ShowOwnProfile" || request.phase === "AskWhichApp" || request.phase === "RefuseOtherProfile" || request.phase === "DifferentAppLine") || (request.sameMember && !request.optedOut);
 }
 
-/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md:116) */
+/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md) */
 //@ pure
 export function sometimesShowsOwnProfile(request: ProfileRead): boolean {
   return request.phase === "ShowOwnProfile";
 }
 
-/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md:116) */
+/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md) */
 //@ pure
 export function sometimesAsksWhichApp(request: ProfileRead): boolean {
   return request.phase === "AskWhichApp";
 }
 
-/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md:116) */
+/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md) */
 //@ pure
 export function sometimesRefusesOtherProfile(request: ProfileRead): boolean {
   return request.phase === "RefuseOtherProfile";
 }
 
-/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md:116) */
+/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md) */
 //@ pure
 export function sometimesIdentifiesDifferentLine(request: ProfileRead): boolean {
   return request.phase === "DifferentAppLine";
 }
 
-/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md:116) */
+/** Story: Read my saved profile / The read can complete, refuse, clarify or remain silent (spec/savedProfileRead.md) */
 //@ pure
 export function sometimesStaysSilent(request: ProfileRead): boolean {
   return request.phase === "StaySilent";
@@ -124,8 +124,8 @@ export function enabled(current: ProfileRead, event: Event): boolean {
 export function step(current: ProfileRead, event: Event): ProfileRead {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "classifyRead" && canClassifyRead(current)) return classifyRead(current, event.facts);
-  if (event.type === "resolveRead" && canResolveRead(current)) return resolveRead(current, event.sameMember, event.optedOut, event.requestedAppMatches);
+  if (event.type === "classifyRead") return canClassifyRead(current) ? classifyRead(current, event.facts) : current;
+  if (event.type === "resolveRead") return canResolveRead(current) ? resolveRead(current, event.sameMember, event.optedOut, event.requestedAppMatches) : current;
   return current;
 }
 
@@ -142,8 +142,9 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_ReadFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.readForm === "boolean" && typeof v.namesProfile === "boolean" && typeof v.asksChange === "boolean" && typeof v.ownSubject === "boolean" && typeof v.endsWithProfile === "boolean" && typeof v.hasAppName === "boolean" && typeof v.appKnown === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "classifyRead" && typeof raw.facts === "object" && raw.facts !== null && !Array.isArray(raw.facts) && typeof raw.facts.readForm === "boolean" && typeof raw.facts.namesProfile === "boolean" && typeof raw.facts.asksChange === "boolean" && typeof raw.facts.ownSubject === "boolean" && typeof raw.facts.endsWithProfile === "boolean" && typeof raw.facts.hasAppName === "boolean" && typeof raw.facts.appKnown === "boolean") return { type: "classifyRead", facts: ({ readForm: raw.facts.readForm, namesProfile: raw.facts.namesProfile, asksChange: raw.facts.asksChange, ownSubject: raw.facts.ownSubject, endsWithProfile: raw.facts.endsWithProfile, hasAppName: raw.facts.hasAppName, appKnown: raw.facts.appKnown }) };
+  if (raw.type === "classifyRead" && is_ReadFacts(raw.facts)) return { type: "classifyRead", facts: ({ readForm: raw.facts.readForm, namesProfile: raw.facts.namesProfile, asksChange: raw.facts.asksChange, ownSubject: raw.facts.ownSubject, endsWithProfile: raw.facts.endsWithProfile, hasAppName: raw.facts.hasAppName, appKnown: raw.facts.appKnown }) };
   if (raw.type === "resolveRead" && typeof raw.sameMember === "boolean" && typeof raw.optedOut === "boolean" && typeof raw.requestedAppMatches === "boolean") return { type: "resolveRead", sameMember: raw.sameMember, optedOut: raw.optedOut, requestedAppMatches: raw.requestedAppMatches };
   return undefined;
 }

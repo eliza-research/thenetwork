@@ -1,7 +1,7 @@
 // Real-world mode against Postgres: reads the network schema correctly, matches what was written
 // (dataset and a full simulated run: game → DB → real parity), never writes, scrubs PII.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
 import { DATA_DIR, readJsonl, type EdgeRecord, type FacetRecord } from "../../../scripts/synthetic/common.ts";
 import { rowsFromDataset, rowsFromGame, writeRows } from "../db/writer.ts";
@@ -90,7 +90,8 @@ describe.skipIf(!pgAvailable)("RealSource (Postgres)", () => {
   });
 
   test("game → Postgres → real parity: the same graph, opportunities, meetings and messages", async () => {
-    const g = new GameSource({ seed: 4, personas: 80, days: 12, pushMs: 3_600_000, tickMs: 3_600_000, network: "stub", city: "all" });
+    // Seed 6 exercises held meetings within this ten-day replay.
+    const g = new GameSource({ seed: 6, personas: 80, days: 12, pushMs: 3_600_000, tickMs: 3_600_000, network: "stub", city: "all" });
     await g.init();
     await g.control({ type: "step", ms: 10 * DAY });
     const game = g.state();
@@ -122,17 +123,17 @@ describe.skipIf(!pgAvailable)("RealSource (Postgres)", () => {
     }
     // What members wrote never leaves the database by default: only its length and time.
     const talker = game.members.filter(m => m.counters.msgsIn > 0 && m.counters.msgsOut > 0)[0]!;
-    const rows = await sql`select direction, body from network.messages where member_id = ${talker.id} and not system order by ts, id`;
+    const rows = await sql<{ direction: string; body: string }[]>`select direction, body from network.messages where member_id = ${talker.id} and not system order by ts, id`;
     const d = (await rs.member(talker.id))!;
     const inbound = d.messages.filter(m => m.direction === "inbound" && !m.system);
     expect(inbound.length).toBe(talker.counters.msgsIn);
     expect(inbound.every(m => m.body === HIDDEN_MESSAGE && (m.hiddenLength ?? 0) > 0 && m.ts > 0)).toBe(true);
     const json = JSON.stringify(d);
-    for (const r of rows as { direction: string; body: string }[]) if (r.direction === "inbound" && r.body.length > 12) expect(json.includes(r.body)).toBe(false);
+    for (const r of rows) if (r.direction === "inbound" && r.body.length > 12) expect(json.includes(r.body)).toBe(false);
     expect(d.messages.some(m => m.direction === "outbound" && m.body.length > 0 && m.body !== HIDDEN_MESSAGE)).toBe(true);
     // OBSERVATORY_REVEAL_PII (local only) shows them.
     const revealed = (await (await open({ revealPii: true })).member(talker.id))!;
-    expect(revealed.messages.filter(m => m.direction === "inbound" && !m.system).map(m => m.body)).toContain((rows as { direction: string; body: string }[]).find(r => r.direction === "inbound")!.body);
+    expect(revealed.messages.filter(m => m.direction === "inbound" && !m.system).map(m => m.body)).toContain(rows.find(r => r.direction === "inbound")!.body);
   }, T);
 
   test("shadow engine run: proposals shown, nothing written", async () => {

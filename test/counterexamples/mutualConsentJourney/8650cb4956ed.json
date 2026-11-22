@@ -1,0 +1,30 @@
+{
+  "origin": "journey \"Story: Book the introduction only after both members agree\" / \"A reply can advance only the probe addressed to that participant\"",
+  "seed": 1,
+  "trace": [
+    [
+      "climbing-introduction",
+      {
+        "type": "replyToProbe",
+        "byMember": "Partner",
+        "answer": "ExplicitYes"
+      }
+    ],
+    [
+      "climbing-introduction",
+      {
+        "type": "replyToProbe",
+        "byMember": "Partner",
+        "answer": "ExplicitYes"
+      }
+    ],
+    [
+      "climbing-introduction",
+      {
+        "type": "replyToProbe",
+        "byMember": "Requester",
+        "answer": "ExplicitYes"
+      }
+    ]
+  ]
+}

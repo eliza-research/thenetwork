@@ -2,7 +2,7 @@
 // MatchingRunLog is summarized for the run inspector (funnel, generators, rejections, fairness,
 // top configurations and why they lost) and each proposal is linked to its run.
 import type { City, MemberId, WorldSnapshot } from "@thenetwork/core";
-import { runEngine, type EngineProposal, type MatchingRunLog } from "@thenetwork/engine";
+import { emptySearchTally, runEngine, type EngineProposal, type MatchingRunLog } from "@thenetwork/engine";
 import type { Engine } from "@thenetwork/core";
 import type { EngineRunSummary } from "./types.ts";
 
@@ -34,7 +34,7 @@ export function summarizeRun(log: MatchingRunLog, proposals: EngineProposal[], o
       gini: fair.gini, top10Share: fair.top10Share, zeroExposureShare: fair.zeroExposureShare, newcomerCoverage: fair.newcomerCoverage,
       viableCoverage: fair.viableCoverage, lorenz: [...fair.lorenz], membersWithProposal: fair.membersWithProposal, eligibleMembers: fair.eligibleMembers,
     },
-    emptyStates: log.emptyStates.length, emptyStatesByReason, timingsMs: { ...log.timingsMs }, top,
+    emptyStates: log.emptyStates.length, emptyStatesByReason, search: log.search ?? emptySearchTally, timingsMs: { ...log.timingsMs }, top,
     proposalIds: proposals.map(p => p.id),
   };
 }

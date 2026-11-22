@@ -1,5 +1,7 @@
 # Isolated staging onboarding authority
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-09-staging-authority.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 ## Problem
 
 At `f4e6797`, an extra staging backend host reaches the public API.
@@ -37,7 +39,7 @@ No dependency, account store, provider, deploy workflow or production setting is
 
 ## Validation
 
-Use Bun 1.4.2 and the owned Postgres on port 54349.
+Use the former runtime 1.4.2 and the owned Postgres on port 54349.
 Set `REQUIRE_PG=1`, `OBSERVATORY_PG_PORT=54349` and the checkout's `OBSERVATORY_PG_DIR=runs/pg`.
 Keep live-provider keys and `LIVE_TESTS` unset.
 

@@ -2,7 +2,8 @@
 // age as a property (PLAT-02), malformed cookies (PLAT-21), the canonical opt-in wording (PLAT-24),
 // the body cap and the production host map (PLAT-27), CSRF and Origin checks, one SMS for parallel
 // starts and the daily cap (PLAT-20, platform-26), and the same answer for known and unknown phones.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi, MAX_API_BODY_BYTES, parseCookies, type PublicApi } from "../src/api.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -24,7 +25,7 @@ function make(store: PeopleStore) {
   const api: PublicApi = createPublicApi({
     store, env: { PLATFORM_ENV: "dev" }, now: () => clock.t, minStartMs: 0, minVerifyMs: 0, log: () => {}, ipOf: req => req.headers.get("x-real-ip") ?? "198.51.100.200",
     otp: { name: "fake", send: async e164 => { sends++; const code = String(100000 + ((sends * 7919) % 900000)); codes.set(e164, code); return { code }; } },
-    onJoin: async ({ app, age, membership }) => { await Bun.sleep(5); joined.push({ app: app.id, age, member: membership.memberId }); },
+    onJoin: async ({ app, age, membership }) => { await sleep(5); joined.push({ app: app.id, age, member: membership.memberId }); },
   });
   const call = async (app: AppId, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = (await api.fetch(new Request(`http://${HOST[app]}${path}`, {
@@ -92,7 +93,7 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
         if (res.status === 200 || res.body?.error === "under_age") lowest = Math.min(lowest, age);
         if (res.body?.error === "under_age") expect(lowest).toBeLessThan(13);
         if (res.status === 200) expect(lowest).toBeGreaterThanOrEqual(13);
-        await c.api.accounts.leave(APPS[app], { e164: phone, personId: null });
+        await c.api.accounts.leave(APPS[app], { e164: phone, personId: (await c.api.accounts.personFor(phone))?.id ?? null });
         c.joined.length = 0;
       }
     }
@@ -113,15 +114,26 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
   test("PLAT-24 only the app's canonical opt-in wording is accepted; the ledger stores that text and its version", async () => {
     const c = make(store), phone = newPhone();
     const cookie = await c.login("peon", phone);
-    const bad = await c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent: { sms: true, wording: "I agree to nothing in particular" } }, { cookie });
+    const joinWith = (consent: { sms: boolean; wording?: unknown; version?: unknown }) =>
+      c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent }, { cookie });
+    const approved = APPS.peon.consent;
+    const bad = await joinWith({ sms: true, wording: "I agree to nothing in particular" });
     expect(bad.body).toEqual({ ok: false, error: "consent_wording" });
-    const otherApp = await c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent: { sms: true, wording: APPS.slop.consent.text } }, { cookie });
+    const otherApp = await joinWith({ sms: true, wording: APPS.slop.consent.text, version: approved.version });
     expect(otherApp.body.error).toBe("consent_wording");
+    for (const submitted of [
+      { sms: true, wording: "   ", version: approved.version },
+      { sms: true, wording: approved.text, version: null },
+    ]) {
+      expect((await joinWith(submitted)).body).toEqual({ ok: false, error: "invalid" });
+    }
     expect(await store.findPhone(phone)).toBeUndefined();
-    const ok = await c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent: { sms: true, wording: `  ${APPS.peon.consent.text.replace(/ /g, "\n ")} ` } }, { cookie });
+    expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBeUndefined();
+    expect(await store.consentEvents(phone, "peon")).toEqual([]);
+    const ok = await joinWith({ sms: true, wording: `  ${approved.text.replace(/ /g, "\n ")} ` });
     expect(ok.status).toBe(200);
-    const [e] = await store.consentEvents(phone, "peon");
-    expect([e!.wording, e!.wordingVersion]).toEqual([APPS.peon.consent.text, APPS.peon.consent.version]);
+    expect((await joinWith({ sms: true, wording: approved.text, version: approved.version })).status).toBe(200);
+    expect((await store.consentEvents(phone, "peon")).map(e => [e.wording, e.wordingVersion])).toEqual([[approved.text, approved.version]]);
   });
 
   test("CSRF: a non-JSON POST, a cross-site Origin and a cross-site fetch are refused; same-site passes", async () => {
@@ -202,66 +214,58 @@ describe("production host map", () => {
   });
 });
 
-test("phone form blocks native GET during mode discovery, then restores OTP/fallback and Cloud handlers", async () => {
-  const { mountAuth } = await import("../../../sites/shared/auth.ts");
-  const { api } = await import("../../../sites/shared/api.ts");
-  const saved = {authMode: api.authMode, otpStart: api.otpStart, cloudAuthStart: api.cloudAuthStart};
-  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
-  const makeButton = () => ({disabled: false, textContent: "Send code", dataset: {busy: "Sending…"}, type: "submit", className: ""});
-  class Form extends EventTarget {
-    button = makeButton();
-    input = {value: "2125550101", disabled: false, setAttribute() {}, removeAttribute() {}, focus() {}};
-    elements = Object.assign([this.input, this.button], {namedItem: () => this.input});
-    attributes = new Map<string, string>();
-    querySelector(selector: string) { return selector.startsWith("button") ? this.button : null; }
-    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
-    removeAttribute(name: string) { this.attributes.delete(name); }
-    replaceChildren(button: ReturnType<typeof makeButton>) { this.button = button; this.elements = Object.assign([button], {namedItem: () => this.input}); }
-  }
+test("the join flow sends no code and opens no cloud sign-in during mode discovery, then uses text codes on otp or a 404, and the cloud sign-in on cloud", async () => {
+  const machine = await import("../../core/src/generated/browserJoin.ts");
+  const { readAuthLookup, startCloud, startCode } = await import("../../ui/src/api/join.ts");
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const realFetch = globalThis.fetch;
+  const send = (page: import("../../core/src/generated/browserJoin.ts").JoinPage, event: import("../../core/src/generated/browserJoin.ts").Event) => {
+    expect([event.type, machine.enabled(page, event)]).toEqual([event.type, true]);
+    return machine.step(page, event);
+  };
   try {
-    Object.defineProperty(globalThis, "document", {configurable: true, value: {querySelector: () => null, createElement: makeButton}});
-    let destination = "";
-    Object.defineProperty(globalThis, "location", {configurable: true, value: {pathname: "/join", assign: (url: string) => {destination = url;}}});
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { href: "https://peon.biz/join" } } });
     for (const mode of ["otp", "404", "cloud"] as const) {
-      const phone = new Form(), code = new Form();
-      const root = {dataset: {} as Record<string, string>, getAttribute: () => null,
-        querySelector: (selector: string) => selector === 'form[data-form="phone"]' ? phone : selector === 'form[data-form="code"]' ? code : null,
-        querySelectorAll: () => []};
-      let resolveMode!: (value: Awaited<ReturnType<typeof api.authMode>>) => void;
-      let otpCalls = 0, cloudCalls = 0;
-      api.authMode = () => new Promise(resolve => {resolveMode = resolve;});
-      api.otpStart = async e164 => {expect(e164).toBe("+12125550101"); otpCalls++; return {ok: true, data: {ok: true}};};
-      api.cloudAuthStart = async path => {expect(path).toBe("/join"); cloudCalls++; return {ok: true, data: {url: "https://cloud-staging.eliza.app/network/sign-in"}};};
-      mountAuth(root as unknown as HTMLElement, () => {});
-      const earlyEnter = new Event("submit", {cancelable: true});
-      expect(phone.dispatchEvent(earlyEnter)).toBe(false);
-      expect(earlyEnter.defaultPrevented).toBe(true);
-      expect(Array.from(phone.elements).every(control => control.disabled)).toBe(true);
-      expect(phone.attributes.get("aria-busy")).toBe("true");
-      expect(phone.button.textContent).toBe("Loading sign-in…");
-      expect(otpCalls + cloudCalls).toBe(0);
-      resolveMode(mode === "404" ? {ok: false, error: "unknown", status: 404} : {ok: true, data: {mode}});
-      await Bun.sleep(0);
-      expect(Array.from(phone.elements).every(control => !control.disabled)).toBe(true);
-      expect(phone.input.disabled).toBe(false);
-      expect(phone.attributes.has("aria-busy")).toBe(false);
-      if (mode !== "cloud") {
-        expect(phone.button.textContent).toBe("Send code");
-        expect(phone.button.dataset.busy).toBe("Sending…");
+      const requests: { path: string; body: unknown }[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+        const path = String(input);
+        requests.push({ path, body: init.body ? JSON.parse(String(init.body)) : undefined });
+        if (path === "/api/auth/mode") return mode === "404" ? Response.json({ ok: false, error: "not_found" }, { status: 404 }) : Response.json({ mode });
+        if (path === "/api/auth/otp/start") return Response.json({ ok: true });
+        if (path === "/api/auth/cloud/start") return Response.json({ url: "https://cloud-staging.eliza.app/network/sign-in" });
+        return Response.json({ ok: false, error: "not_found" }, { status: 404 });
+      }) as typeof fetch;
+      let page = send(machine.initial, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+      page = send(page, { type: "loaded", view: { result: "SignedOut", account: 0, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
+      expect(machine.phoneFormWaiting(page)).toBe(true);
+      expect(machine.enabled(page, { type: "submitPhone", phoneValid: true })).toBe(false);
+      expect(machine.enabled(page, { type: "continueWithPhone" })).toBe(false);
+      expect(machine.canReadAuthMode(page)).toBe(true);
+      const lookup = await readAuthLookup();
+      expect(lookup).toBe(mode === "cloud" ? "ModeCloud" : mode === "otp" ? "ModeOtp" : "LookupFailed");
+      expect(requests.map((r) => r.path)).toEqual(["/api/auth/mode"]);
+      page = send(page, { type: "readAuthMode", lookup, checkOn: false });
+      expect(machine.phoneFormWaiting(page)).toBe(false);
+      if (mode === "cloud") {
+        expect([machine.showsCloudButton(page), machine.enabled(page, { type: "submitPhone", phoneValid: true })]).toEqual([true, false]);
+        page = send(page, { type: "continueWithPhone" });
+        expect(machine.canAnswerCloudStart(page)).toBe(true);
+        const answer = await startCloud("/join");
+        expect(answer).toEqual({ ok: true, url: "https://cloud-staging.eliza.app/network/sign-in" });
+        expect(requests.at(-1)).toEqual({ path: "/api/auth/cloud/start", body: { returnPath: "/join" } });
+        expect(send(page, { type: "answerCloudStart", opened: true }).screen).toBe("LeftForCloud");
+      } else {
+        expect([machine.showsNumberForm(page), machine.enabled(page, { type: "continueWithPhone" })]).toEqual([true, false]);
+        page = send(page, { type: "submitPhone", phoneValid: true });
+        expect(machine.canAnswerCodeStart(page)).toBe(true);
+        expect(await startCode("+12125550101")).toEqual({ result: "CodeSent" });
+        expect(requests.at(-1)).toEqual({ path: "/api/auth/otp/start", body: { phone: "+12125550101" } });
+        expect(send(page, { type: "answerCodeStart", started: "CodeSent" }).screen).toBe("Code");
       }
-      const normalSubmit = new Event("submit", {cancelable: true});
-      expect(phone.dispatchEvent(normalSubmit)).toBe(false);
-      expect(normalSubmit.defaultPrevented).toBe(true);
-      await Bun.sleep(0);
-      expect(otpCalls).toBe(mode === "cloud" ? 0 : 1);
-      expect(cloudCalls).toBe(mode === "cloud" ? 1 : 0);
-      if (mode === "cloud") expect(destination).toBe("https://cloud-staging.eliza.app/network/sign-in");
-      else expect(root.dataset.current).toBe("code");
+      expect(requests.filter((r) => r.path !== "/api/auth/mode")).toHaveLength(1);
     }
   } finally {
-    Object.assign(api, saved);
-    if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor); else Reflect.deleteProperty(globalThis, "document");
-    if (locationDescriptor) Object.defineProperty(globalThis, "location", locationDescriptor); else Reflect.deleteProperty(globalThis, "location");
+    globalThis.fetch = realFetch;
+    if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor); else Reflect.deleteProperty(globalThis, "window");
   }
 });

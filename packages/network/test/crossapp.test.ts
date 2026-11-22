@@ -7,21 +7,25 @@
 //  - a person-to-person block made on one app keeps the two people apart on the other app (the
 //    control run without the block pairs them).
 // Postgres in a database of its own per test process. Nothing is sent (dry-run adapters).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { Mini, START } from "./mini.ts";
 
 const T = 600_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_crossapp_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
@@ -32,15 +36,16 @@ const APPS_RUN: AppId[] = ["ntwrk", FR];
 const SECRET = "whsec_crossapp";
 const CANARY: Record<string, string> = { ntwrk: "zqntwrkcanary", [FR]: "zqfriendscanary" };
 const CLIMB = "find a regular climbing partner";
+const SAIL = "find a regular sailing partner";
 const ONBOARD = ["hi!", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."];
 
 /** Who is in which app, and what they are into there. Ana and Ben are in both apps; in the friends app Ben is the only other climber. */
-interface Person { key: string; name: string; apps: AppId[]; interests: Partial<Record<AppId, string[]>>; wants?: AppId[] }
+interface Person { key: string; name: string; apps: AppId[]; interests: Partial<Record<AppId, string[]>>; networkWant?: string }
 const PEOPLE: Person[] = [
-  { key: "a", name: "Ana Diaz", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "hiking"], [FR]: ["climbing", "hiking"] }, wants: ["ntwrk"] },
-  { key: "b", name: "Ben Ito", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "hiking"], [FR]: ["climbing", "hiking"] }, wants: ["ntwrk"] },
-  { key: "c", name: "Cy Moss", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "hiking"], [FR]: ["board_games", "cooking"] }, wants: ["ntwrk"] },
-  { key: "d", name: "Dee Park", apps: ["ntwrk"], interests: { ntwrk: ["climbing", "hiking"] }, wants: ["ntwrk"] },
+  { key: "a", name: "Ana Diaz", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "climbing_belay"], [FR]: ["climbing", "hiking"] }, networkWant: CLIMB },
+  { key: "b", name: "Ben Ito", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "climbing_belay"], [FR]: ["climbing", "hiking"] }, networkWant: CLIMB },
+  { key: "c", name: "Cy Moss", apps: ["ntwrk", FR], interests: { ntwrk: ["sailing", "running", "cycling", "sailing_instructor"], [FR]: ["board_games", "cooking"] }, networkWant: SAIL },
+  { key: "d", name: "Dee Park", apps: ["ntwrk"], interests: { ntwrk: ["sailing", "running", "cycling", "sailing_instructor"] }, networkWant: SAIL },
   { key: "e", name: "Eve Ruiz", apps: [FR], interests: { [FR]: ["board_games", "cooking"] } },
 ];
 const phone = (key: string) => `+1212555${String(200 + PEOPLE.findIndex(p => p.key === key)).padStart(4, "0")}`;
@@ -72,7 +77,7 @@ async function seed(svc: NetworkService) {
         await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from) values
           (${app}, ${`${memberId}:canary:m`}, ${memberId}, 'interest', ${`${CANARY[app]}${p.key}`}, ${tx.array([`${CANARY[app]}${p.key}`], "TEXT")}, 'matchable', 'said', 'chat', 0.9, 'confirmed', ${joined}),
           (${app}, ${`${memberId}:canary:p`}, ${memberId}, 'note', ${`${CANARY[app]} private ${p.key}`}, ${tx.array(["note"], "TEXT")}, 'agent_private', 'said', 'chat', 0.9, 'confirmed', ${joined})`;
-        if (p.wants?.includes(app)) await tx`insert into network.intents (app_id, id, member_id, objective, category, horizon_days, status, created_at) values (${app}, ${`${memberId}:want`}, ${memberId}, ${CLIMB}, 'hobby', 60, 'active', ${joined})`;
+        if (app === "ntwrk" && p.networkWant) await tx`insert into network.intents (app_id, id, member_id, objective, category, horizon_days, status, created_at) values (${app}, ${`${memberId}:want`}, ${memberId}, ${p.networkWant}, 'hobby', 60, 'active', ${joined})`;
       });
     }
   }
@@ -93,7 +98,7 @@ async function say(svc: NetworkService, clock: SimClock, app: AppId, key: string
 /** Close every service this file opened, each bounded: a close that waits on a stuck query fails the hook in 30 s, not 120 s. */
 async function closeAll() {
   for (const s of open.splice(0)) {
-    await Promise.race([s.close(), Bun.sleep(30_000).then(() => { throw new Error("NetworkService.close() did not finish in 30 s (a query or lock wait is stuck)"); })]);
+    await Promise.race([s.close(), sleep(30_000, undefined, { ref: false }).then(() => { throw new Error("NetworkService.close() did not finish in 30 s (a query or lock wait is stuck)"); })]);
   }
 }
 const staff = (svc: NetworkService, method: string, path: string, body?: unknown) =>
@@ -124,7 +129,7 @@ async function run(block: boolean) {
     for (const app of APPS_RUN) {
       const q = await (await staff(svc, "GET", `/apps/${app}/review`)).json();
       queues[app] = [...(queues[app] ?? []), ...q.items];
-      for (const item of q.items) await staff(svc, "POST", `/apps/${app}/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 5 });
+      for (const item of q.items) await staff(svc, "POST", `/apps/${app}/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 5, revision: item.revision });
     }
     await svc.tick();
   }
@@ -187,6 +192,68 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
     }, T);
   }
 
+  // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
+  test("a committed block suppresses a queued invitation and closes its opportunity in another app", async () => {
+    await closeAll();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const sends: SendRequest[] = [];
+    const friends = new BlooioAdapter({ app: FR, from: "+12125550099", clock, liveGate: () => true, log: () => {}, provider: {
+      kind: "sim", send: async request => {
+        sends.push(request);
+        return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
+      },
+    } });
+    const svc = new NetworkService({ url: URL_, clock, instance: "crossapp-pending", log: () => {}, env: { PLATFORM_ENV: "dev" },
+      adapter: rt => rt.app.id === FR ? friends : new DryRunAdapter(() => {}),
+      networks: APPS_RUN.map(app => ({ id: `${app}:nyc`, matchingEnabled: false })), webhookSecrets: { ntwrk: SECRET },
+    });
+    open.push(svc);
+    try {
+      await svc.start();
+      const ids = await seed(svc);
+      for (const who of ["a", "b"]) for (const text of ONBOARD) await say(svc, clock, "ntwrk", who, text);
+      const w = new Mini(PEOPLE.filter(p => p.apps.includes(FR)).map(p => ({ id: ids[p.key]![FR]!, name: p.name,
+        age: 30, area: "Greenpoint", interests: p.interests[FR] })), { app: FR, review: "human", plans: false, growth: false });
+      const affected = [ids.b![FR]!, ids.a![FR]!];
+      const unaffected = [ids.c![FR]!, ids.e![FR]!];
+      await w.onboard(...affected, ...unaffected);
+      const blockedMatch = w.propose(affected, { category: "hobby" });
+      const activeMatch = w.propose(unaffected, { alternates: affected, category: "hobby" });
+      for (const opp of [blockedMatch, activeMatch]) {
+        expect(await w.runUntil(() => w.net.reviewQueue().some(item => item.oppId === opp), 2 * DAY)).toBe(true);
+        expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+      }
+      const rt = svc.runtimeFor(FR)!;
+      await friends.queue.setLineSafety("review");
+      await rt.unitOfWork(net => {
+        const { members, opps } = w.net.exportState();
+        net.importState({ ...net.exportState(), members, opps });
+        rt.unit.sends.push(
+          { id: "pending-blocked-probe", memberId: affected[0]!, to: phone("b"), oppId: blockedMatch, kind: "proactive", type: "probe",
+            body: "Would you like to meet a climbing partner?", proactive: true, system: false, ts: clock.now() },
+          { id: "pending-unrelated-probe", memberId: unaffected[0]!, to: phone("c"), oppId: activeMatch, kind: "proactive", type: "probe",
+            body: "Would you like to meet someone for a board game?", proactive: true, system: false, ts: clock.now() },
+        );
+      });
+      expect(await friends.queue.statusOf("pending-blocked-probe")).toBe("retry_scheduled");
+      expect(await friends.queue.statusOf("pending-unrelated-probe")).toBe("retry_scheduled");
+      expect(await say(svc, clock, "ntwrk", "a", "block Ben Ito")).toBe("handled");
+      expect(await sql`select origin_app from platform.person_blocks`).toEqual([{ origin_app: "ntwrk" }]);
+      expect(sends).toHaveLength(0);
+      await friends.queue.setLineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      expect(await friends.queue.statusOf("pending-unrelated-probe")).toBe("sent");
+      expect(await friends.queue.statusOf("pending-blocked-probe")).toBe("suppressed_ineligible");
+      expect(sends.map(send => send.idempotencyKey)).toEqual(["tn:pending-unrelated-probe"]);
+      expect(await rt.tick()).toBe(true);
+      const opportunities = rt.net.exportState().opps;
+      expect(opportunities.find(opp => opp.id === blockedMatch)?.stage).toBe("closed");
+      expect(opportunities.find(opp => opp.id === activeMatch)?.stage).toBe("probing");
+    } finally { await closeAll(); }
+  }, T);
+
   async function check(block: boolean, svc: NetworkService, ids: Awaited<ReturnType<typeof run>>["ids"], queues: Awaited<ReturnType<typeof run>>["queues"]) {
     const a = ids.a![FR]!, b = ids.b![FR]!;
     const frOpps = (await sql`select o.id, o.objective, o.explanations, array_agg(p.member_id) as members from network.opportunities o
@@ -206,7 +273,10 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
     for (const app of APPS_RUN) {
       expect((await sql`select count(*)::int as n from network.messages where app_id = ${app} and direction = 'outbound'`)[0].n).toBeGreaterThan(10);
     }
-    expect(queues.ntwrk!.length).toBeGreaterThan(0);
+    // Cy and Dee's independent ntwrk pair keeps the cross-app review and proposal checks exercised.
+    const c = ids.c!.ntwrk!, d = ids.d!.ntwrk!;
+    expect(queues.ntwrk!.some(i => i.proposal.participants.includes(c) && i.proposal.participants.includes(d)),
+      JSON.stringify(svc.runtimeFor("ntwrk")!.net.gateReasons)).toBe(true);
     // The friends app: Ana's request finds Ben (control), or nobody once Ben is blocked (the request stays open, nobody is contacted).
     expect(queues[FR]!.map(i => i.origin)).toEqual(block ? [] : ["request"]);
     expect((await sql`select member_id, outcome from network.requests where app_id = ${FR}`).map((r: any) => [r.member_id, r.outcome])).toEqual([[a, block ? "none" : "probing"]]);

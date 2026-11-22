@@ -2,15 +2,16 @@
 // (:54339). A STOP must not wait behind an earlier message from the same sender that keeps failing
 // (P3, issue 9): compliance keywords go ahead, and a handled STOP cancels the ordinary rows received
 // before it. Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "@thenetwork/core";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import type { InboundMessage } from "../../blooio/src/types.ts";
 import type { TurnRequest, TurnResponse } from "../../core/src/svc/contract.ts";
-import { Inbox } from "../service/inbox.ts";
+import { Inbox, type InboundTurn } from "../service/inbox.ts";
 
 const user = process.env.USER ?? "postgres";
 const db = `network_inbox_${randomUUID().replaceAll("-", "")}`;
@@ -65,6 +66,35 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     clock.advance(1000);
     expect(await box.receive(msg(from, "a3", "hello again"))).toBe("handled");
     expect(handled).toEqual(["STOP", "hello again"]);
+  });
+
+  // spec/webhookInbox.md, "Completing a STOP clears earlier ordinary rows in the same write"
+  test("a failed STOP cancellation keeps both rows pending until an atomic retry", async () => {
+    const from = "+12125557005";
+    const { box, handled } = inbox(new Set(["earlier message"]));
+    expect(await box.receive(msg(from, "atomic-older", "earlier message"))).toBe("retry_later");
+    clock.advance(1000);
+    await sql`alter table platform.inbound add constraint reject_one_cancellation
+      check (id <> 'msg:sim:atomic-older' or outcome is distinct from 'cancelled_by_stop')`;
+    try {
+      expect(await box.receive(msg(from, "atomic-stop", "STOP"))).toBe("retry_later");
+      // The STOP still owns the sender's next attempt after the ordinary retry limit.
+      for (let retry = 0; retry < 5; retry++) expect(await box.drain()).toBe(0);
+      expect(await sql`select id, status, attempts from platform.inbound
+          where id in ('msg:sim:atomic-older', 'msg:sim:atomic-stop') order by id`).toEqual([
+        { id: "msg:sim:atomic-older", status: "pending", attempts: 1 },
+        { id: "msg:sim:atomic-stop", status: "pending", attempts: 6 },
+      ]);
+    } finally {
+      await sql`alter table platform.inbound drop constraint reject_one_cancellation`;
+    }
+    expect(await box.drain()).toBe(2);
+    expect(handled).toEqual(Array.from({ length: 7 }, () => "STOP"));
+    expect(await sql`select id, status, outcome, event from platform.inbound
+        where id in ('msg:sim:atomic-older', 'msg:sim:atomic-stop') order by id`).toEqual([
+      { id: "msg:sim:atomic-older", status: "done", outcome: "cancelled_by_stop", event: null },
+      { id: "msg:sim:atomic-stop", status: "done", outcome: "handled", event: null },
+    ]);
   });
 
   test("HELP and leave go ahead of a failing row; the failing row is not cancelled", async () => {
@@ -135,7 +165,7 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const running = box.signed(turnReq(from, "c1", "tell me more"), "h-c1", async () => { await gate; return handled(); });
-    await Bun.sleep(50);
+    await sleep(50);
     expect(await box.signed(turnReq(from, "c1", "tell me more"), "h-c1", async () => handled())).toEqual({ status: 409, body: { error: "turn_busy", retryable: true } });
     release();
     expect((await running).status).toBe(200);
@@ -148,25 +178,37 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const slow = box.signed(turnReq(from, "l1", "find me a climbing partner"), "h-l1", async () => { await gate; return handled(); });
-    await Bun.sleep(30);
+    await sleep(30);
     // Three minutes pass on the service clock (past the 2-minute lease) while the worker is alive and renewing.
     clock.advance(3 * 60_000);
-    await Bun.sleep(80);
+    await sleep(80);
     expect(await box.signed(turnReq(from, "l2", "also tennis"), "h-l2", async () => handled())).toEqual({ status: 409, body: { error: "turn_busy", retryable: true } });
     release();
     expect((await slow).status).toBe(200);
     expect((await sql`select status from platform.inbound where id = 'msg:blooio:l1'`)[0].status).toBe("done");
   });
 
-  test("work a failed turn committed outside its own transactions is undone (the one-time notice row), so a retry gets it again", async () => {
+  test("the first-contact key and completed reply commit together", async () => {
     const from = "+12125557106";
     const { box } = inbox(new Set());
-    const undone: string[] = [];
-    const r = await box.signed(turnReq(from, "n1", "hi, who is this?"), "h-n1", async t => {
-      (t.onFail ??= []).push(async () => { undone.push("eliza_notice"); });
-      throw new Error("join failed after the notice");
-    });
-    expect(r.status).toBe(409);
-    expect(undone).toEqual(["eliza_notice"]);
+    const phoneHash = "first-contact-fixture";
+    const run = async (turn: InboundTurn) => {
+      const reply = { id: `notice:${turn.id}`, body: "First contact notice", kind: "compliance" as const };
+      turn.firstContactNotice = { phoneHash, replyId: reply.id };
+      await sql.begin(tx => box.collect(tx, [reply]));
+      return handled([reply]);
+    };
+    await sql`alter table platform.eliza_notices add constraint reject_fixture_notice check (phone_hash <> 'first-contact-fixture')`;
+    try {
+      expect((await box.signed(turnReq(from, "n1", "hi, who is this?"), "h-n1", run)).status).toBe(409);
+      expect(await sql`select status,response from platform.inbound where id='msg:blooio:n1'`).toEqual([{ status: "unresolved", response: null }]);
+      expect(await sql`select 1 from platform.eliza_notices where phone_hash=${phoneHash}`).toHaveLength(0);
+    } finally {
+      await sql`alter table platform.eliza_notices drop constraint reject_fixture_notice`;
+    }
+    clock.advance(11 * 60_000);
+    expect((await box.signed(turnReq(from, "n2", "hello again"), "h-n2", run)).status).toBe(200);
+    expect(await sql`select 1 from platform.inbound where id='msg:blooio:n2' and status='done'`).toHaveLength(1);
+    expect(await sql`select 1 from platform.eliza_notices where phone_hash=${phoneHash}`).toHaveLength(1);
   });
 });

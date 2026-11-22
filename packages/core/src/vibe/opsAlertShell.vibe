@@ -1,0 +1,136 @@
+import {
+  alertPostWindowMs, apply, batchWasAccepted, batchWasAttempted, batchWasHeld,
+  chooseFiringPlan, chooseMissingPlan, initial,
+} from "./generated/opsAlertDispatch.effect.js"
+
+export type AlertLevel = "warn" | "bad"
+export interface Alert {
+  key: string
+  level: AlertLevel
+  count: number
+  text: string
+  /** A higher count can send another notice at the same level. */
+  bump?: boolean
+}
+
+export interface AlertState {
+  key: string
+  level: AlertLevel
+  count: number
+  text: string
+  open: boolean
+  firstAt: number
+  lastAt: number
+  lastSentAt?: number
+  lastSentLevel?: AlertLevel
+  lastSentCount?: number
+}
+
+export interface AlertTx {
+  load(): Promise<AlertState[]>
+  save(states: AlertState[]): Promise<void>
+  postsSince(since: number): Promise<number>
+  recordPost(at: number, alerts: number, accepted: boolean): Promise<void>
+}
+
+export interface Notice {
+  key: string
+  level: AlertLevel
+  count: number
+  text: string
+  state: "firing" | "resolved"
+}
+
+export interface DispatchResult {
+  notices: Notice[]
+  posted: boolean
+  ok: boolean
+  held: number
+  open: { key: string; level: AlertLevel; count: number }[]
+  postsLastHour: number
+}
+
+interface DispatchOptions {
+  now: number
+  repeatMs: number
+  maxPostsPerHour: number
+  post(notices: Notice[]): Promise<boolean>
+}
+
+error AlertStoreFailure { message: string, cause: unknown }
+
+function prepareAlerts(alerts: Alert[], stored: AlertState[], now: number, repeatMs: number) {
+  const states = new Map(stored.map(state => [state.key, state]))
+  const notices: Notice[] = []
+  const firing: AlertState[] = []
+  const resolved: AlertState[] = []
+  const seen = new Set<string>()
+
+  for (const alert of alerts) {
+    seen.add(alert.key)
+    const previous = states.get(alert.key)
+    const decision = chooseFiringPlan({
+      episodeOpen: !!previous?.open, postedBefore: previous?.lastSentAt !== undefined,
+      latestLevel: alert.level, sentLevel: previous?.lastSentLevel ?? "warn", bumpOnCount: !!alert.bump,
+      latestCount: alert.count, sentCount: previous?.lastSentCount ?? 0,
+      elapsedMs: now - (previous?.lastSentAt ?? 0), repeatMs,
+    })
+    const state: AlertState = decision !== "StartAlert" && previous
+      ? { ...previous, level: alert.level, count: alert.count, text: alert.text, lastAt: now }
+      : { key: alert.key, level: alert.level, count: alert.count, text: alert.text, open: true, firstAt: now, lastAt: now }
+    states.set(state.key, state)
+    if (decision !== "UpdateOnly") {
+      notices.push({ key: state.key, level: state.level, count: state.count, text: state.text, state: "firing" })
+      firing.push(state)
+    }
+  }
+
+  for (const state of states.values()) {
+    const decision = chooseMissingPlan(state.open, seen.has(state.key), state.lastSentAt !== undefined)
+    if (decision === "CloseQuietly") state.open = false
+    else if (decision === "SendResolution") {
+      resolved.push(state)
+      notices.push({ key: state.key, level: state.level, count: state.count, text: state.text, state: "resolved" })
+    }
+  }
+
+  return { episodes: [...states.values()], notices, firing, resolved }
+}
+
+/** Run inside the adapter's existing exclusive store transaction. */
+export function dispatchOperationsAlerts(alerts: Alert[], tx: AlertTx, options: DispatchOptions): Promise<DispatchResult> {
+  return runPromise(effect {
+    const { now, repeatMs, maxPostsPerHour } = options
+    const history = try tryPromise({
+      try: () => tx.load(), catch: cause => new AlertStoreFailure({ message: "Could not load alert episodes", cause }),
+    })
+    const { episodes, notices, firing, resolved } = prepareAlerts(alerts, history, now, repeatMs)
+    let postsLastHour = try tryPromise({
+      try: () => tx.postsSince(now - alertPostWindowMs), catch: cause => new AlertStoreFailure({ message: "Could not count recent alert posts", cause }),
+    })
+    let batch = try apply(initial, { type: "prepareDispatch", noticeCount: notices.length, postsLastHour, hourlyLimit: maxPostsPerHour })
+    if (batch.phase === "PostingNotices") {
+      const accepted = try promise(() => options.post(notices).catch(() => false))
+      try tryPromise({
+        try: () => tx.recordPost(now, notices.length, accepted), catch: cause => new AlertStoreFailure({ message: "Could not record the alert post", cause }),
+      })
+      postsLastHour++
+      batch = try apply(batch, { type: "recordDelivery", accepted })
+    }
+
+    const ok = batchWasAccepted(batch)
+    if (ok) {
+      for (const state of firing) {
+        state.lastSentAt = now
+        state.lastSentLevel = state.level
+        state.lastSentCount = state.count
+      }
+      for (const state of resolved) state.open = false
+    }
+    try tryPromise({
+      try: () => tx.save(episodes), catch: cause => new AlertStoreFailure({ message: "Could not save alert episodes", cause }),
+    })
+    const open = episodes.filter(state => state.open).map(state => ({ key: state.key, level: state.level, count: state.count }))
+    return { notices, posted: batchWasAttempted(batch), ok, held: batchWasHeld(batch) ? notices.length : 0, open, postsLastHour }
+  })
+}

@@ -1,5 +1,7 @@
 # Return to the original chat after Join
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-15-agent-return.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Attribution: Automated. Codex made this fix under the user's project approval.
 Base: `4ecfd9aa76efbde011da01826669661bbcd02e1a`.
 Scope: PRD 28.3 agent-first onboarding; the broken-flow exception in CONTRIBUTING section 9.
@@ -50,8 +52,8 @@ The browser case checks one message after agent-origin Join, no message after di
 It checks that no unexpected API request occurs.
 The recordings include a short pause so a reviewer can read each completion page.
 
-Local versions: Bun 1.3.14, Playwright 1.62.1 and Chromium 151.0.7922.34.
-Normal Bun 1.4.2 CI remains separate. No dependency was installed or added.
+Local versions: the former runtime 1.3.14, Playwright 1.62.1 and Chromium 151.0.7922.34.
+Normal the former runtime 1.4.2 CI remains separate. No dependency was installed or added.
 Full simulations, Postgres integration and full e2e were not rerun for this page-only fix.
 Real LLM and agent-client testing: not applicable to the sentence-rendering path; zero model calls or cost.
 The active genuine GPT acceptance flow is separate and was not repeated.
@@ -61,9 +63,9 @@ The active genuine GPT acceptance flow is separate and was not repeated.
 Use an existing Playwright installation and browser binaries.
 
 ```sh
-PLAYWRIGHT_MODULE=playwright bun test --conditions eliza-source tests/e2e/agent-return.e2e.test.ts
-bun test --conditions eliza-source sites
-bun run typecheck
+PLAYWRIGHT_MODULE=playwright pnpm exec vitest run --conditions eliza-source tests/e2e/agent-return.e2e.test.ts
+pnpm exec vitest run --conditions eliza-source sites
+pnpm run typecheck
 ```
 
 The browser case skips without `PLAYWRIGHT_MODULE`.

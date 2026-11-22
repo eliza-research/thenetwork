@@ -1,15 +1,18 @@
 // Cloud's RELAY wire end to end on the canonical owner: real signed HTTP (RelaySendRequest, x-ntwrk-svc-id
 // "<messageId>:relay") -> POST /internal/relay -> the ConsentNetwork relay desk -> the durable outbox ->
 // the Cloud deliver path. Classifier and Cloud HTTP are controlled boundaries. Needs the dev Postgres on :54339.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID,createHash} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {DAY,HOUR,MINUTE,SimClock} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {TURN_PATH,RELAY_PATH,DELIVER_PATH,RELAY_PHOTO_RESOLVE_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {loadSnapshot} from "../service/snapshot.ts";
 import {PgAudit} from "../../observatory/src/staff.ts";
 import type {AuditEntry} from "../../observatory/src/types.ts";
 import type {NetworkState} from "../src/network.ts";
@@ -19,7 +22,7 @@ const db=`network_relay_${randomUUID().replaceAll("-","")}`,url=`postgres://${pr
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
 const secret="synthetic-current-relay-signing-secret-20261009",clock=new SimClock(Date.UTC(2026,9,9,16));
 const a="+12125550211",b="+12125550212",c="+12125550213";
-let sql:SQL,service:NetworkService,server:ReturnType<typeof Bun.serve>,cloud:ReturnType<typeof Bun.serve>,fromId:string,toId:string,thirdId:string;
+let sql:SQL,service:NetworkService,server:HttpServer,cloud:HttpServer,fromId:string,toId:string,thirdId:string;
 let classifierFails=false,classifications=0,known=true,posts=0,polls=0,ancillaryPosts=0;
 let classifyGate:Promise<void>|undefined,classifyEntered:(()=>void)|undefined;
 const sent:Array<{id:string;text:string;kind:string;to:string;approvedPhotos?:import("../../core/src/svc/contract.ts").ApprovedRelayPhoto[]}>=[];
@@ -37,9 +40,9 @@ const start=async()=>{
     ...(photoPolicyEnabled?{photoRelayPolicy:{version:"relay-fixture-v1",notice:"Share this selected photo with {{recipient}} only after its designated safety review. Test fixture policy.",authorizeReviewer:async(id:string)=>id===staffId&&reviewerEnabled}}:{}),env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false}],log:()=>{},
     relayClassifier:async()=>{classifications++;if(classifyGate){classifyEntered?.();await classifyGate;}if(classifierFails)throw new Error("synthetic classifier outage");return {flags:[],source:"clef" as const};},
     adapter:(_net,rt)=>new CloudChannelAdapter({app:rt.app.id,clock,city:rt.city,from:"+12125550210",origin:cloud.url.origin,secret,env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1",SLOP_LIVE_APPROVED:"1"}})});
-  await service.start();server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
+  await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
 };
-const restart=async()=>{server.stop(true);await service.close();await start();};
+const restart=async()=>{await server.stop(true);await service.close();await start();};
 // Cloud's client signs every relay with id "<messageId>:relay" (plugin-network client.ts at b763).
 const post=async(path:string,body:object)=>{
   const fields=body as Record<string,unknown>,raw=JSON.stringify(body),id=path===RELAY_PATH?`${fields.messageId}:relay`:String(fields.messageId);
@@ -51,15 +54,15 @@ const open=async(messageId:string,text:string,phone=a):Promise<RelaySendRequest>
   clock.advance(MINUTE);const r=await post(TURN_PATH,turn(phone,messageId,text));expect(r.status).toBe(200);const body=await r.json() as any;expect(body.outcome).toBe("open");
   return {channel:"blooio",messageId,app:"friends",memberId:body.memberId,itemId:null,text:text.trim()};
 };
-const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId,toId])=>service.runtimeFor(app)!.unitOfWork(n=>{
+const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId,toId],matchId="relay-pair")=>service.runtimeFor(app)!.unitOfWork(n=>{
   // Explicit canonical mutual-consent fixture. This case qualifies relay, not engine matching or human review.
-  const state=n.exportState();state.opps=state.opps.filter(op=>op.id!=="relay-pair");
-  const op:NetworkState["opps"][number]={id:"relay-pair",origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:pair,alternates:[],primed:[],status:pair.map(id=>[id,"yes"]),explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:pair,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
+  const state=n.exportState();state.opps=state.opps.filter(op=>op.id!==matchId);
+  const op:NetworkState["opps"][number]={id:matchId,origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:pair,alternates:[],primed:[],status:pair.map(id=>[id,"yes"]),explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:pair,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
   state.opps.push(op);n.importState(state);
 });
 /** The pair as the stored state holds it now (a close commits before its own delivery, which waits for the held dispatch). */
-const pairClosed=async()=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==='string'?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id==='relay-pair')?.stage==='closed';};
-const waitFor=async(cond:()=>Promise<boolean>)=>{for(let i=0;i<400;i++){if(await cond())return true;await Bun.sleep(5);}return false;};
+const pairClosed=async(matchId="relay-pair")=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==='string'?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id===matchId)?.stage==='closed';};
+const waitFor=async(cond:()=>Promise<boolean>)=>{for(let i=0;i<400;i++){if(await cond())return true;await sleep(5);}return false;};
 /** Hold the dispatch of the next relayed row right after its asynchronous gates (the leak check), before admission. */
 const gateDispatch=()=>{
   const rt=service.runtimeFor("friends")!,checks=((rt.adapter as CloudChannelAdapter).queue as unknown as {o:QueueOptions}).o.checks,original=checks.leaks!;
@@ -70,9 +73,9 @@ const gateDispatch=()=>{
 };
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
-  cloud=Bun.serve({hostname:"127.0.0.1",port:0,fetch:async req=>{
+  cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216"]).toContain(input.to);
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){
       posts++;sent.push(input);
       if(input.approvedPhotos){
@@ -97,7 +100,7 @@ beforeAll(async()=>{
   thirdId=(await service.people.getMembership((await service.accounts.personFor(c))!.id,"friends"))!.memberId;
   await fixturePair();
 },120_000);
-afterAll(async()=>{server?.stop(true);await service?.close();cloud?.stop(true);await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
+afterAll(async()=>{await server?.stop(true);await service?.close();await cloud?.stop(true);await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
 
 test("relay binds the original text and pair, sends only rendered wording, swaps numbers only after both ask, and replays accepted receipts",async()=>{
   const request=await open("relay-text","  tell Sam I'm running ten minutes late  ");
@@ -125,16 +128,84 @@ test("relay binds the original text and pair, sends only rendered wording, swaps
   const logs=JSON.stringify(await sql`select * from network.relay_records`);expect(logs).not.toContain(a.slice(2));expect(logs).not.toContain("running ten minutes late");
 },60_000);
 
+test.each(["question", "shares"])("a withdrawal that commits before dispatch suppresses queued swap %s", async stage => {
+  clock.advance(11 * MINUTE);
+  const pair = [fromId, toId];
+  const matchId = `withdraw-queued-${stage}`;
+  await fixturePair(false, "friends", pair, matchId);
+
+  const mine = await open(`${matchId}-ask`, "send Sam my number");
+  if (stage === "shares") {
+    const waiting = await post(RELAY_PATH, mine);
+    expect(await waiting.json()).toMatchObject({ decision: "hold" });
+  }
+  const request = stage === "shares" ? await open(`${matchId}-accept`, "send Ari my number", b) : mine;
+  const before = posts;
+  const dispatch = gateDispatch();
+  const sending = post(RELAY_PATH, request);
+  let withdrawal: Promise<Response> | undefined;
+  try {
+    const first = await Promise.race([dispatch.atGate.then(() => "gate"), sending.then(response => response.clone().text())]);
+    expect(first).toBe("gate");
+
+    clock.advance(MINUTE);
+    const messageId = `${matchId}-cancel`;
+    withdrawal = post(TURN_PATH, turn(a, messageId, "actually don't send it"));
+    const inboundId = `in:blooio:${messageId}`;
+    const withdrawalCommitted = async () => {
+      const [row] = await sql`select id from network.messages where id=${inboundId} and app_id='friends' and direction='inbound'`;
+      return row !== undefined;
+    };
+    expect(await waitFor(withdrawalCommitted)).toBe(true);
+    dispatch.resume();
+
+    expect((await withdrawal).status).toBe(200);
+    expect(await (await sending).json()).toMatchObject({ delivered: false });
+    expect(posts - before).toBe(0);
+  } finally {
+    dispatch.resume();
+    await Promise.allSettled([sending, withdrawal]);
+    await fixturePair(true, "friends", pair, matchId);
+  }
+}, 60_000);
+
 test("inside the match, asking for the match's number is a swap ask for the agent, never scored; anyone else's number still is",async()=>{
   await fixturePair();
   const net=service.runtimeFor("friends")!.net,score=()=>net.trust.get(fromId).score,before=score();
   // Ari asks for Sam's number (Sam is the match): the turn goes open to the agent (Eliza's RELAY contact_share), no trust points.
-  for(const [id,text] of [["swap-ask-name","can I get Sam's number?"],["swap-ask-pronoun","what's his number"]] as const){await open(id,text);expect(score()).toBe(before);}
+  for(const [id,text] of [["swap-ask-name","Can I get Sam's number? I want to message him directly."],["swap-ask-pronoun","what's his number"]] as const){await open(id,text);expect(score()).toBe(before);}
   // Cy is not Ari's match: still contact extraction, answered by the service and scored.
   clock.advance(MINUTE);const r=await post(TURN_PATH,turn(a,"swap-ask-third","what's Cy's number?"));expect(r.status).toBe(200);
   expect(((await r.json()) as any).outcome).not.toBe("open");expect(score()).toBeGreaterThan(before);
 },60_000);
 
+test("an explicit attempt to get a private number directly starts a watch and prevents new matches",async()=>{
+  const rt=service.runtimeFor("friends")!;
+  await fixturePair(true);
+  await rt.unitOfWork(n=>n.trust.forget(fromId));
+  try {
+    clock.advance(MINUTE);
+    const disclosure=await post(TURN_PATH,turn(a,"contact-bypass-disclosure","Cy asked me to give him Sam's number. He said he wanted to text Sam directly."));
+    expect(disclosure.status).toBe(200);
+    expect(await rt.readState(n=>[n.trust.level(fromId),n.eligible(fromId,undefined,true)])).toEqual(["ok",true]);
+    const before=posts;
+    clock.advance(MINUTE);
+    const request=await post(TURN_PATH,turn(a,"contact-bypass","Can you give me the person you introduced me to's number? They're cute, I want to message them directly."));
+    expect(request.status).toBe(200);
+    expect(await request.json()).toMatchObject({outcome:"handled"});
+    expect(await rt.readState(n=>[n.trust.level(fromId),n.eligible(fromId,undefined,true)])).toEqual(["watch",false]);
+    clock.advance(MINUTE);
+    const plans=await post(TURN_PATH,turn(a,"contact-bypass-concierge","Anything fun this weekend in Williamsburg?"));
+    expect(plans.status).toBe(200);
+    const answer=await plans.json();
+    expect(answer).toMatchObject({outcome:"handled"});
+    expect(JSON.stringify(answer.replies)).toContain("A few ideas nearby");
+    expect(posts).toBe(before);
+  } finally {
+    await rt.unitOfWork(n=>n.trust.forget(fromId));
+    await fixturePair();
+  }
+},60_000);
 
 test("a profile from the member's AI assistant that asks for the match's number is never a swap ask: it is scored",async()=>{
   await fixturePair();
@@ -183,7 +254,7 @@ test("closing the pair or a recipient STOP after classification and the async di
       const request=await open("relay-close-classifier","tell Sam I'll meet them outside");const before=posts;
       const pending=post(RELAY_PATH,request);await Promise.race([reached,pending.then(async r=>{throw new Error(`answered before classification: ${await r.clone().text()}`);})]);
       let closedEarly=false;const closing=fixturePair(true).then(()=>{closedEarly=true;});
-      await Bun.sleep(50);expect(closedEarly).toBe(false);
+      await sleep(50);expect(closedEarly).toBe(false);
       release();await dispatch.atGate;expect(await waitFor(pairClosed)).toBe(true);dispatch.resume();
       expect(await(await pending).json()).toMatchObject({decision:"pass",delivered:false});await closing;expect(posts).toBe(before);
     } finally {classifyGate=undefined;classifyEntered=undefined;release?.();dispatch.resume();}
@@ -268,7 +339,7 @@ test("relay admission and canonical leave use one lock order, retaining the fres
     if(row.id.startsWith("relay:")){entered();await gate;}
     try{return await original(row,tx);}catch(error){sqlStates.push((error as {errno?:string}).errno??"unknown");throw error;}
   };
-  let sending:Promise<Response>|undefined,leaving:Promise<void>|undefined;
+  let sending:Promise<Response>|undefined,leaving:Promise<boolean>|undefined;
   try{
     const request=await open("relay-leave-lock-order","tell Dee I'll meet them outside",c),before=posts;
     sending=post(RELAY_PATH,request);
@@ -305,13 +376,14 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   }
   const person=(await service.accounts.personFor(sender))!,other=(await service.accounts.personFor(recipient))!;
   const from=(await service.people.getMembership(person.id,"slop"))!.memberId,to=(await service.people.getMembership(other.id,"slop"))!.memberId;
-  await fixturePair(false,"slop",[from,to]);
+  const matchId="slop.relay-photo-pair";
+  await fixturePair(false,"slop",[from,to],matchId);
   // Synthetic JPEG storage boundary; all ownership, consent, reviews, queue and replay state use real Postgres.
   const upload=await service.photos.upload(person.id,"slop",Uint8Array.from([255,216,255,218,0,2,1,255,217]),PHOTO_CONSENT.version);
   expect(upload.ok).toBe(true);if(!upload.ok)throw Error(JSON.stringify(upload));
-  expect(await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016")).toBeUndefined();
+  expect(await service.photoRelay.select("slop",person.id,matchId,upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016")).toBeUndefined();
   photoPolicyEnabled=true;await restart();
-  const selected=await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016");
+  const selected=await service.photoRelay.select("slop",person.id,matchId,upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016");
   expect(selected?.state).toBe("pending");if(!selected)throw Error("normal selected item refused");
   const beforeAuditRead=storageReads;
   failPreviewAudit=true;
@@ -349,7 +421,7 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   expect(posts).toBe(before+1);const delivered=sent.at(-1)!;expect(delivered.approvedPhotos).toEqual(saved.approved_photos);
   expect(delivered.approvedPhotos![0]).toMatchObject({itemId:selected.itemId,photoId:upload.value.id,senderMemberId:from,recipientMemberId:to});
   expect(JSON.stringify(saved.approved_photos)).not.toContain("https:");
-  await expect(sql.begin(tx=>(service.runtimeFor("slop")!.adapter as CloudChannelAdapter).queue.enqueue(tx as unknown as SQL,[{id:`relay:${selected.itemId}`,memberId:to,to:recipient,kind:"transactional",text:delivered.text,oppId:"relay-pair",city:"nyc",approvedPhotos:[{...saved.approved_photos[0],sha256:"a".repeat(64)}]}]))).rejects.toThrow("outbound id reused");
+  await expect(sql.begin(tx=>(service.runtimeFor("slop")!.adapter as CloudChannelAdapter).queue.enqueue(tx as unknown as SQL,[{id:`relay:${selected.itemId}`,memberId:to,to:recipient,kind:"transactional",text:delivered.text,oppId:matchId,city:"nyc",approvedPhotos:[{...saved.approved_photos[0],sha256:"a".repeat(64)}]}]))).rejects.toThrow("outbound id reused");
   expect((await sql`select approved_photos from platform.outbound where id=${`relay:${selected.itemId}`}`)[0]!.approved_photos).toEqual(saved.approved_photos);
   const review=(await service.photoRelay.item(selected.itemId))!.reviewId;
   await restart();expect((await service.photoRelay.item(selected.itemId))!.reviewId).toBe(review);
@@ -363,7 +435,7 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   clock.advance(MINUTE);
   // Normal recipient engagement resets the real unanswered-send guard; the relay policy stays unchanged.
   expect((await post(TURN_PATH,{...turn(recipient,`photo-recipient-engaged-${refusal}`,"Sounds good, thanks"),app:"slop"})).status).toBe(200);
-  const next=await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,`fixture-select-next-${refusal}-20261016`);expect(next).toBeDefined();if(!next)throw Error("second selection refused");
+  const next=await service.photoRelay.select("slop",person.id,matchId,upload.value.id,"relay-fixture-v1",true,`fixture-select-next-${refusal}-20261016`);expect(next).toBeDefined();if(!next)throw Error("second selection refused");
   const rt=service.runtimeFor("slop")!,checks=((rt.adapter as CloudChannelAdapter).queue as unknown as {o:QueueOptions}).o.checks,original=checks.leaks!;
   let resume!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>{resume=r;}),atGate=new Promise<void>(r=>{entered=r;});
   checks.leaks=async row=>{const result=await original(row);if(row.id===`relay:${next.itemId}`){entered();await gate;}return result;};
@@ -377,3 +449,52 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   }finally{resume?.();checks.leaks=original;if(pending)await pending;known=true;}
   }
 },120_000);
+
+test("a signed relay self-age closes the match and lowers the person's age across apps", async () => {
+  const sender = "+12125550217", recipient = "+12125550218";
+  async function join(app: "friends" | "slop", phone: string, name: string) {
+    const messages = [app === "friends" ? "friends.help" : "slop.date", name + ", 29",
+      "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
+    for (const [index, text] of messages.entries()) {
+      clock.advance(MINUTE);
+      const id = "relay-age-join:" + app + ":" + name + ":" + index;
+      expect((await post(TURN_PATH, { ...turn(phone, id, text), app })).status).toBe(200);
+    }
+    const person = await service.accounts.personFor(phone);
+    if (!person) throw new Error("Missing relay fixture person");
+    const membership = await service.people.getMembership(person.id, app);
+    if (!membership) throw new Error("Missing relay fixture membership");
+    return membership.memberId;
+  }
+  const senderFriends = await join("friends", sender, "Bo");
+  const recipientFriends = await join("friends", recipient, "Jae");
+  const senderSlop = await join("slop", sender, "Bo");
+  const matchId = "friends.relay-age-pair";
+  await fixturePair(false, "friends", [senderFriends, recipientFriends], matchId);
+  const controls = [
+    ["other", "tell them my 15 year old will be with me"],
+    ["quote", "tell them I heard her say, \"I'm 16\""],
+    ["school", "tell them homeroom starts soon"],
+    ["eta", "tell them 15m from the bar"],
+  ] satisfies [string, string][];
+  for (const [suffix, phrase] of controls) {
+    clock.advance(11 * MINUTE);
+    const request = await open("relay-age-" + suffix, phrase, sender);
+    expect((await post(RELAY_PATH, request)).status).toBe(200);
+    expect((await service.accounts.personFor(sender))?.lowestAge).toBe(29);
+  }
+  clock.advance(11 * MINUTE);
+  const request = await open("relay-age-self", "tell them 16f here", sender);
+  const before = posts;
+  const response = await post(RELAY_PATH, request);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false, replayed: false });
+  const replay = await post(RELAY_PATH, request);
+  expect(await replay.json()).toMatchObject({ decision: "block", delivered: false, replayed: true });
+  expect(posts).toBe(before);
+  expect(await pairClosed(matchId)).toBe(true);
+  expect((await service.accounts.personFor(sender))?.lowestAge).toBe(16);
+  const snapshot = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
+  expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
+  expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: 16 }]);
+}, 60_000);

@@ -25,13 +25,61 @@ pure def lawRequestedIsDueAtCreation(createdAt: int, urgentDelay: int, digestDel
 When a digest includes a proactive item and the member has reached the cap, remove proactive items. If that leaves nothing to send, hold the digest until a slot opens. A requested-only digest uses no proactive slot.
 
 ```quint
-pure def removeProactiveItems(recentSends: int, weeklyCap: int, containsProactive: bool): bool =
-  recentSends >= weeklyCap and containsProactive
+type WeeklyDigest = KeepDigest | KeepRequested | HoldDigest
+
+pure def digestUsesProactiveSlot(itemCount: int, requestedCount: int): bool =
+  requestedCount < itemCount
+
+pure def weeklyDigest(recentSends: int, weeklyCap: int, itemCount: int, requestedCount: int): WeeklyDigest =
+  if (recentSends < weeklyCap or not(digestUsesProactiveSlot(itemCount, requestedCount))) KeepDigest
+  else if (requestedCount > 0) KeepRequested
+  else HoldDigest
+
+pure def lawRequestedOnlyDigestUsesNoSlot(itemCount: int): bool =
+  not(digestUsesProactiveSlot(itemCount, itemCount))
+
+pure def lawWeeklyCapPreservesRequestedItems(recentSends: int, weeklyCap: int, itemCount: int, requestedCount: int): bool =
+  (requestedCount > 0 and requestedCount <= itemCount) implies weeklyDigest(recentSends, weeklyCap, itemCount, requestedCount) != HoldDigest
 ```
 
 ## Story: Receive updates on a surface I use
 
 > As a member, I want updates to point to a connected assistant only when I choose it or its recent use makes it a clear choice.
+
+### One app's removal keeps an assistant active while another grant remains
+
+An assistant's activity signal belongs to the person across apps. After connector approval, revocation or erasure, read the person's current grants and update the affected assistant under one serial check. Any unexpired, unrevoked grant for the same assistant with current verified ownership and permission to read updates keeps the signal active. A grant for another person, another assistant or a tool without updates does not count. If ownership cannot be checked for a potentially qualifying grant, keep the existing signal unless another grant proves activity. Each connector still reads only the updates of its own app.
+
+```quint
+type AssistantActivity = AssistantActive | AssistantInactive | AssistantUnchanged
+
+pure def assistantGrantCounts(samePerson: bool, sameAssistant: bool, allowsUpdates: bool, live: bool): bool =
+  samePerson and sameAssistant and allowsUpdates and live
+
+pure def projectAssistantActivity(hasEligibleGrant: bool, checksComplete: bool): AssistantActivity =
+  if (hasEligibleGrant) AssistantActive else if (checksComplete) AssistantInactive else AssistantUnchanged
+
+pure def lawAnotherEligibleGrantKeepsAssistantActive(checksComplete: bool): bool =
+  projectAssistantActivity(true, checksComplete) == AssistantActive
+
+pure def lawUnverifiedGrantCannotDeactivateAssistant(hasEligibleGrant: bool): bool =
+  projectAssistantActivity(hasEligibleGrant, false) != AssistantInactive
+
+pure def lawDifferentPersonOrAssistantCannotCount(samePerson: bool, sameAssistant: bool, allowsUpdates: bool, live: bool): bool =
+  (not(samePerson) or not(sameAssistant)) implies not(assistantGrantCounts(samePerson, sameAssistant, allowsUpdates, live))
+```
+
+### The text thread carries a digest one connector cannot read
+
+One assistant link names one update reference. Its items must all belong to the same app, and each offered assistant must have a current grant for this person that permits reading updates in that app. Rank only those assistants. Use the shared text thread when the digest spans apps, the current grant lookup is unavailable, or none of the assistants can read the whole digest. Keep one digest per person per send. Check coverage again before recording and enqueueing a prepared link. Rebuild through the same rule if a grant ends before that check.
+
+```quint
+pure def assistantDigestCanLink(singleApp: bool, hasReadableAssistant: bool): bool =
+  singleApp and hasReadableAssistant
+
+pure def lawMixedDigestOrMissingGrantNeverLinks(singleApp: bool, hasReadableAssistant: bool): bool =
+  (not(singleApp) or not(hasReadableAssistant)) implies not(assistantDigestCanLink(singleApp, hasReadableAssistant))
+```
 
 ### Ignore inactive assistants and assistants whose links went unused twice
 

@@ -1,9 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Compare Networks on the NYC world (the 250 synthetic NYC members, plus friends they invite):
 //   push baseline : StubNetwork + engine-v1 (what we had)
 //   push v2       : ConsentNetwork with probes and gates off
 //   consent       : ConsentNetwork (probes, selective gates, requests, safety, growth)
-//   bun run packages/network/harness/experiment.ts --days 21 --seed 1 [--only consent] [--live-asks] [--time-aware] [--paraphrase] [--primed-met 0.96 --primed-partial 0.82]
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/network/harness/experiment.ts --days 21 --seed 1 [--only consent] [--live-asks] [--time-aware] [--paraphrase] [--primed-met 0.96 --primed-partial 0.82]
 // --paraphrase: personas say the same things in other words (harness/paraphrase.ts), so the Network's
 // text understanding is not graded on the simulator's own sentences (audit matching-e2e-1).
 // Consent arms use the simulated reviewer (review "auto"): every opportunity is still queued and
@@ -16,6 +16,7 @@
 // (sim WorldOptions.plans); default on when the Network runs plans. --capital: an NC ledger records
 // every event and the Network reads the levers from it (default: events are counted, levers off).
 // Every arm reports the judge's scores (computeMetrics) too, so the Observatory lab can call this.
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { gini } from "@thenetwork/core";
 export { gini };
 import { parseArgs } from "node:util";
@@ -93,12 +94,14 @@ export async function nycPersonas(dir = DATA_DIR): Promise<Persona[]> {
 
 export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
   const personas = await nycPersonas();
-  const manifest = await Bun.file(`${DATA_DIR}/manifest.json`).json();
+  const manifest = await fileAt(`${DATA_DIR}/manifest.json`).json();
   const start = manifest.snapshotNow as number;
   const cap = arm === "consent" && o.capital ? capitalWiring() : undefined;
   const consent = arm === "push_baseline" ? undefined : new ConsentNetwork({
     seed: o.seed, review: "auto", ...(arm === "push_v2" ? { probes: false, selective: false, growth: false, plans: false } : {}), ...o.network,
     ...(cap ? { onLedger: cap.onLedger, capital: cap.capital } : {}),
+    // The NYC world is one market.
+    engine: { cities: ["nyc"], ...o.network?.engine },
   });
   const simPlans = o.simPlans ?? (arm === "consent" && o.network?.plans !== false);
   const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false });

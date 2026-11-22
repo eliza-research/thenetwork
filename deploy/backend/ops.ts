@@ -16,7 +16,11 @@
 //
 // The webhook body is JSON: { text, source, env, build, alerts: [{ key, level, count, text, state }] }.
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
-import type { SQL } from "bun";
+import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
+import { cachedOpsMetricsFresh, opsRoundDue, roundReport } from "../../packages/core/src/generated/opsAlertDispatch.ts";
+import {
+  dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
+} from "../../packages/core/src/vibe/opsAlertShell.js";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
@@ -116,7 +120,7 @@ export interface NetworkMetrics {
   /** Groups under 0.8x in bias monitor reports written in the last 24 h (service.ts afterTick; weekly). */
   biasAlerts24h?: number;
   /**
-   * Shadow precision of the last 7 days (PRD 32.8 precision gate, 34.6 shadow mode): review items a person
+   * Shadow precision of the last 7 days (PRD 32.8 precision gate, 34.6 shadow mode): engine proposals a person
    * decided (approve or reject; the simulated reviewer left out) and those approved without an edit.
    */
   precision7d?: { decided: number; clean: number };
@@ -244,11 +248,14 @@ export function runtimeProbe(rt: {
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
       const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
-      // Shadow precision: person decisions of the last 7 days (an edit before approving is not "without edits").
+      // Shadow precision: person decisions of the last 7 days on engine proposals, the console scorecard's
+      // cohort (an edit before approving is not "without edits"). Member requests and staff-composed
+      // proposals do not measure the engine's precision.
       const [prec] = (await tx`select count(*)::int as decided,
-          count(*) filter (where decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(edits) = 'array' then edits end), 0) = 0)::int as clean
-        from network.review_items where app_id = ${rt.app.id} and decision in ('approve', 'reject') and decided_at > ${new Date(t - 6 * DAY)}
-          and reviewer is not null and reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
+          count(*) filter (where r.decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(r.edits) = 'array' then r.edits end), 0) = 0)::int as clean
+        from network.review_items r join network.opportunities o on o.app_id = r.app_id and o.id = r.opportunity_id
+        where r.app_id = ${rt.app.id} and o.source = 'engine' and r.decision in ('approve', 'reject') and r.decided_at > ${new Date(t - 6 * DAY)}
+          and r.reviewer is not null and r.reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
       return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
         precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
     }),
@@ -257,12 +264,7 @@ export function runtimeProbe(rt: {
 
 // ------------------------------------------------------------------ alerts
 
-export type AlertLevel = "warn" | "bad";
-export interface Alert {
-  key: string; level: AlertLevel; count: number; text: string;
-  /** Post again when the count goes up (new safety events), not only on a level change. */
-  bump?: boolean;
-}
+export type { Alert, AlertLevel, AlertState, AlertTx, DispatchResult, Notice } from "../../packages/core/src/vibe/opsAlertShell.js";
 
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
 
@@ -316,16 +318,6 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
 
 // ------------------------------------------------------------------ the dispatcher
 
-export interface AlertState {
-  key: string; level: AlertLevel; count: number; text: string; open: boolean; firstAt: number; lastAt: number;
-  lastSentAt?: number; lastSentLevel?: AlertLevel; lastSentCount?: number;
-}
-export interface AlertTx {
-  load(): Promise<AlertState[]>;
-  save(states: AlertState[]): Promise<void>;
-  postsSince(t: number): Promise<number>;
-  recordPost(at: number, alerts: number, ok: boolean): Promise<void>;
-}
 export interface AlertStore {
   /** Run `fn` while no other replica runs it; undefined when another one holds the lock. */
   exclusive<T>(fn: (tx: AlertTx) => Promise<T>): Promise<T | undefined>;
@@ -373,11 +365,6 @@ export class PgAlertStore implements AlertStore {
   }
 }
 
-export interface Notice { key: string; level: AlertLevel; count: number; text: string; state: "firing" | "resolved" }
-export interface DispatchResult { notices: Notice[]; posted: boolean; ok: boolean; held: number; open: { key: string; level: AlertLevel; count: number }[]; postsLastHour: number }
-
-const RANK: Record<AlertLevel, number> = { warn: 1, bad: 2 };
-
 export class AlertDispatcher {
   constructor(private o: {
     store: AlertStore;
@@ -393,52 +380,10 @@ export class AlertDispatcher {
 
   /** One round: compare the current alerts with the stored ones, post what is new, worse, due again or resolved. Undefined: another replica runs it. */
   dispatch(current: Alert[]): Promise<DispatchResult | undefined> {
-    return this.o.store.exclusive(async tx => {
-      const now = this.o.now();
-      const states = new Map((await tx.load()).map(s => [s.key, s]));
-      const notices: Notice[] = [];
-      const firing: AlertState[] = [];
-      const seen = new Set<string>();
-      for (const a of current) {
-        seen.add(a.key);
-        const prev = states.get(a.key);
-        const s: AlertState = prev?.open
-          ? { ...prev, level: a.level, count: a.count, text: a.text, lastAt: now }
-          : { key: a.key, level: a.level, count: a.count, text: a.text, open: true, firstAt: now, lastAt: now };
-        const due = s.lastSentAt === undefined
-          || RANK[a.level] > RANK[s.lastSentLevel ?? "warn"]
-          || (!!a.bump && a.count > (s.lastSentCount ?? 0))
-          || now - s.lastSentAt >= this.o.repeatMs;
-        states.set(a.key, s);
-        if (due) { notices.push({ key: a.key, level: a.level, count: a.count, text: a.text, state: "firing" }); firing.push(s); }
-      }
-      const resolved: AlertState[] = [];
-      for (const s of states.values()) {
-        if (!s.open || seen.has(s.key)) continue;
-        // Never posted (it started and ended between rate-limited rounds): close it quietly.
-        if (s.lastSentAt === undefined) { s.open = false; continue; }
-        resolved.push(s);
-        notices.push({ key: s.key, level: s.level, count: s.count, text: s.text, state: "resolved" });
-      }
-      let posted = false, ok = false, held = 0;
-      let postsLastHour = await tx.postsSince(now - HOUR);
-      if (notices.length) {
-        if (postsLastHour >= this.o.maxPostsPerHour) held = notices.length;
-        else {
-          posted = true;
-          ok = await this.o.post(this.body(notices)).catch(() => false);
-          await tx.recordPost(now, notices.length, ok);
-          postsLastHour++;
-          if (ok) {
-            for (const s of firing) { s.lastSentAt = now; s.lastSentLevel = s.level; s.lastSentCount = s.count; }
-            for (const s of resolved) s.open = false;
-          }
-        }
-      }
-      await tx.save([...states.values()]);
-      const open = [...states.values()].filter(s => s.open).map(s => ({ key: s.key, level: s.level, count: s.count }));
-      return { notices, posted, ok, held, open, postsLastHour };
-    });
+    return this.o.store.exclusive(tx => dispatchOperationsAlerts(current, tx, {
+      now: this.o.now(), repeatMs: this.o.repeatMs, maxPostsPerHour: this.o.maxPostsPerHour,
+      post: notices => this.o.post(this.body(notices)),
+    }));
   }
 
   body(notices: Notice[]): Record<string, unknown> {
@@ -521,24 +466,25 @@ export function createOps(d: OpsDeps) {
     dispatcher,
     /** The snapshot for GET /ops/metrics: at most one collection every 15 s. */
     async metrics(): Promise<OpsMetrics> {
-      if (last && d.now() - last.at < 15_000) return last.metrics;
+      if (last && cachedOpsMetricsFresh(d.now() - last.at)) return last.metrics;
       return collect(false);
     },
     /** One round (called from the backend tick; runs at most every OPS_EVERY_MS): collect, alert, heartbeat. */
     async tick(): Promise<DispatchResult | undefined> {
       const now = d.now();
-      if (now - lastRound < c.everyMs) return undefined;
+      if (!opsRoundDue(now - lastRound, c.everyMs)) return undefined;
       lastRound = now;
       const m = await collect(true);
       const alerts = evaluate(m, c);
       const r = await dispatcher.dispatch(alerts);
+      const report = roundReport(!!r?.notices.length, !!r?.posted, !!r?.ok, !!r?.held, !!c.heartbeatUrl);
       if (r) {
         lastAlerts = { open: r.open, postsLastHour: r.postsLastHour };
-        if (r.notices.length) d.log.info("alerts", { notices: r.notices.length, posted: r.posted, ok: r.ok, held: r.held });
-        if (r.posted && !r.ok) d.log.error("alert webhook failed", { notices: r.notices.length });
-        if (r.held) d.log.warn("alerts held by the rate limit", { held: r.held, maxPerHour: c.maxPostsPerHour });
+        if (report.logSummary) d.log.info("alerts", { notices: r.notices.length, posted: r.posted, ok: r.ok, held: r.held });
+        if (report.logFailure) d.log.error("alert webhook failed", { notices: r.notices.length });
+        if (report.logLimit) d.log.warn("alerts held by the rate limit", { held: r.held, maxPerHour: c.maxPostsPerHour });
       }
-      if (c.heartbeatUrl) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
+      if (report.pingHeartbeat && c.heartbeatUrl) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
       return r;
     },
   };

@@ -1,6 +1,15 @@
-# Build context: the repository root. The backup scripts and generated restore policy go in.
+# Build context: the repository root. The build stage installs the locked production workspace.
 *
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.json
 !deploy/backup/
-!packages/core/src/generated/databaseRestore.ts
+!packages/
+**/node_modules
 **/.env
 **/.env.*
+**/*.log
+**/dist
+**/runs
+**/test-results

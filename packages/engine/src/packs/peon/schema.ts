@@ -14,6 +14,8 @@
 //   candidates by participant set and budgets per member, so one member per job gives per-job
 //   dedupe, per-job capacity and per-job congestion control with no engine change
 //   (docs/results/2026-10-08-peon-pack.md 3.1).
+//   In generic matching (match.ts) a seat is a Hire Offering entity whose id is its job intent id;
+//   a candidate is Hire Seeking once per role family they seek.
 //
 // AGE. Hiring must not see age (ADEA 40+), but the core needs it for the minors gate. The snapshot
 // carries Member.age = 18 for every confirmed adult ("18+: yes") and the stated age for declared
@@ -51,6 +53,8 @@ export const T = {
   verified: "peon:verified",       // job: employer verified (domain, registry / EIN, a human call)
   openings: "peon:openings:",      // job: open headcount
   posting: "peon:posting:",        // service: a hiring manager's facet that belongs to one job posting (intent id); seats.ts
+  postingUpdatedAt: "peon:posting_updated_at:", // service: private revision time of a posting (epoch ms)
+  postingClosedReason: "peon:posting_closed_reason:", // service: private close reason of a posting (closed | filled)
   seatCap: "peon:seat_cap:",       // job seat: openings left this run (seats.ts peonSeatCapacity); caps the slate
   urgency: "peon:urgency:",        // job: 1-3
   fillBy: "peon:fill_by:",         // job: the fill-by date the employer stated at intake (epoch day)
@@ -67,6 +71,9 @@ export const SAFETY = {
 
 export const SEARCH_INTENT = "peon:search";
 export const JOB_INTENT = "peon:job";
+
+/** Employers and candidate exclusions use the same key, including existing verified employer rows. */
+export const peonCompanyKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
 
 export type PeonMode = "onsite" | "hybrid" | "remote";
 export const MODES: readonly PeonMode[] = ["onsite", "hybrid", "remote"];

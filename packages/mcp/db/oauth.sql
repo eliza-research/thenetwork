@@ -27,11 +27,21 @@ create table if not exists oauth.auth_requests (
   resource text not null,
   e164 text,
   person_id text,
-  step text not null check (step in ('phone', 'code', 'consent')),
+  step text not null check (step in ('phone', 'code', 'consent', 'enrolling', 'enrolled')),
   created_at timestamptz not null,
   expires_at timestamptz not null
 );
+-- The OAuth schema is applied to both new and existing databases by the service.
+do $$ begin
+  if exists (select 1 from pg_constraint where conrelid = 'oauth.auth_requests'::regclass
+    and conname = 'auth_requests_step_check' and pg_get_constraintdef(oid) not like '%enrolled%') then
+    alter table oauth.auth_requests drop constraint auth_requests_step_check;
+    alter table oauth.auth_requests add constraint auth_requests_step_check
+      check (step in ('phone', 'code', 'consent', 'enrolling', 'enrolled'));
+  end if;
+end $$;
 create index if not exists auth_requests_expires on oauth.auth_requests (expires_at);
+create index if not exists auth_requests_by_person on oauth.auth_requests (person_id, app_id) where person_id is not null;
 
 create table if not exists oauth.grants (
   id text primary key,
@@ -75,6 +85,7 @@ drop trigger if exists keep_cloud_grant_authority on oauth.grants;
 create trigger keep_cloud_grant_authority before update on oauth.grants for each row execute function oauth.keep_cloud_grant_authority();
 drop index if exists oauth.grants_by_phone;
 create index if not exists grants_by_phone_key on oauth.grants (phone_key, app_id) where revoked_at is null;
+create index if not exists grants_by_person on oauth.grants (person_id, app_id) where person_id is not null;
 
 create table if not exists oauth.codes (
   hash text primary key,
@@ -131,6 +142,14 @@ create table if not exists oauth.signup_drafts (
   fields jsonb not null,
   expires_at timestamptz not null,
   consumed_at timestamptz
+);
+
+-- A private at-most-once connector intake claim. The digest is keyed outside this database.
+create table if not exists oauth.profile_submissions (
+  grant_id text not null references oauth.grants(id) on delete cascade,
+  fingerprint text not null check (fingerprint ~ '^[0-9a-f]{64}$'),
+  accepted boolean not null default false,
+  primary key (grant_id, fingerprint)
 );
 
 -- Least privilege (audit: oauth grants hold phone numbers next to app ids). No role but the service

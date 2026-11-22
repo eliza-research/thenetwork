@@ -18,6 +18,45 @@ pure def lawFutureConsentIsStale(consentAt: int, itemAt: int, lifetime: int): bo
   consentAt > itemAt implies relayConsentStale(consentAt, itemAt, lifetime)
 ```
 
+### A refusal or uncertainty cannot authorize a private item
+
+An explicit request for a contact share or photo is valid only when the member does not refuse it or qualify it as uncertain. A contact or photo refusal does not stop an ordinary message that the member explicitly asks the agent to relay. The shell reads the member's text, including refusal phrases such as "will not send" and instructions to proceed such as "will not wait, send it".
+
+```quint
+pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
+  not(refused) and not(uncertain)
+
+pure def lawPrivateRelayRequiresUnqualifiedConsent(refused: bool, uncertain: bool): bool =
+  (refused or uncertain) implies not(privateRelayRequestAllowed(refused, uncertain))
+```
+
+### A member can take back a pending number swap
+
+An instruction to cancel or withhold the member's own contact share withdraws their pending swap. A direct refusal such as "don't send it" also withdraws it while it is pending. A go-ahead such as "don't hesitate" or "no need to wait" leaves the request in place unless the member also refuses it. The shell recognizes these phrases in the member's own message.
+
+```quint
+pure def pendingSwapWithdrawn(namesOwnContact: bool, withholdsContact: bool, declinesPendingSend: bool): bool =
+  declinesPendingSend or (namesOwnContact and withholdsContact)
+
+pure def lawGoAheadKeepsPendingSwap(namesOwnContact: bool): bool =
+  not(pendingSwapWithdrawn(namesOwnContact, false, false))
+
+pure def lawDirectRefusalWithdrawsPendingSwap(namesOwnContact: bool, withholdsContact: bool): bool =
+  pendingSwapWithdrawn(namesOwnContact, withholdsContact, true)
+```
+
+### A phone exchange must still have consent at dispatch
+
+A withdrawal also marks the prepared shares involving that member. An outbound share must still have a passed record and no rejection or withdrawal. A swap question goes only while the matching request is pending within its consent window.
+
+```quint
+pure def relayRecordMayDispatch(passed: bool, rejected: bool, withdrawn: bool): bool =
+  passed and not(rejected) and not(withdrawn)
+
+pure def lawWithdrawnRelayRecordsCannotDispatch(passed: bool, rejected: bool): bool =
+  not(relayRecordMayDispatch(passed, rejected, true))
+```
+
 ## Story: Keep unsafe items from reaching a match
 
 > As a member, I want Eliza to stop or hold items when the relay checks find a reason.

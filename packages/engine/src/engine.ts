@@ -6,17 +6,21 @@ import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
-import { candidateReason, involvesMinor, memberReason } from "./filters.ts";
+import { involvesMinor, memberReason, publicEventPreferencesAllow, screenCandidate } from "./filters.ts";
 import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
-import { deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
-import { screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
+import { gateMemberFacing, hardGate, prepareDeepReview, type DeepVerdict } from "./judgeDeep.ts";
+import { prepareScreen, screenDecision, screenSnapshot, type ScreenVerdict } from "./judgeScreen.ts";
+import { emptyIntentWaitOver } from "../../core/src/generated/emptyIntentFollowup.ts";
+import { initial as initialJudgmentRun, step as stepJudgmentRun } from "../../core/src/generated/judgmentRun.ts";
+import { standingIntentCandidateInScope } from "../../core/src/generated/standingIntent.ts";
+import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
-import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog } from "./types.ts";
+import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog, MemberStandingRow } from "./types.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import { World } from "./world.ts";
@@ -43,9 +47,15 @@ export interface EngineDeps {
  * `asks` (v1.2, config.ask / config.romance.requireStatedPrefs): questions to send instead of, or
  * before, proposals. Empty when both flags are off.
  */
-export interface EngineResult { proposals: EngineProposal[]; asks: EngineAsk[]; runLog: MatchingRunLog }
+export interface EngineResult {
+  proposals: EngineProposal[];
+  asks: EngineAsk[];
+  runLog: MatchingRunLog;
+  /** Private standing inserts and updates. The caller persists them separately from matching logs. */
+  memberStanding?: readonly MemberStandingRow[];
+}
 
-function hashInput(input: EngineInput): string {
+function hashInput({ memberStanding: _privateStanding, ...input }: EngineInput): string {
   const strip = (x: unknown) => JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v)));
   return sha256(stableStringify(strip(input))).slice(0, 16);
 }
@@ -82,10 +92,12 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const pack = deps.pack ?? networkPack;
   const w = new World(input, cfg, embed, pack);
   let t = lap("index", t0);
+  const inputHash = hashInput(input);
+  const configFingerprint = configHash(cfg);
 
   const runLog: MatchingRunLog = {
-    runId: sha256(`${hashInput(input)}|${configHash(cfg)}|${cfg.seed}`).slice(0, 16),
-    seed: cfg.seed, configHash: configHash(cfg), inputHash: hashInput(input), now: w.now,
+    runId: sha256(`${inputHash}|${configFingerprint}|${cfg.seed}`).slice(0, 16),
+    seed: cfg.seed, configHash: configFingerprint, inputHash, now: w.now,
     engineVersion: ENGINE_VERSION, embedModel: deps.embedModel ?? (deps.embed ? "custom" : "local-hash-v1"),
     judgeModel: deps.llm && cfg.judge.enabled ? (deps.judgeModel ?? process.env.RECOMMENDER_MODEL ?? process.env.DEFAULT_LLM_MODEL ?? "gpt-6-luna") : undefined,
     funnel: {
@@ -111,10 +123,21 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // The pack's generators, in the pack's order. A generator the config switches off is skipped
   // (networkPack: the GENERATOR_NAMES flags; a name the config does not know runs).
   const gate = cfg.generators as Record<string, boolean | undefined>;
+  const intentScope = input.standingIntentSearch && new Set(input.standingIntentSearch);
+  const publishedEvents = new Map(w.events.filter(event => event.listing).map(event => [event.id, listedEventMinimumAge(event)]));
   for (const g of pack.generators) {
     if (g.name in gate && !gate[g.name]) continue;
     const ts = performance.now();
-    const got = g.run(ctx);
+    const proposed = g.run(ctx);
+    const generated = publishedEvents.size ? proposed.filter(c => {
+      const minimumAge = c.anchor?.type === "event" ? publishedEvents.get(c.anchor.id) : undefined;
+      return minimumAge === undefined || c.participants.every(id => publicEventPreferencesAllow(w.get(id)?.m, c.category, minimumAge));
+    }) : proposed;
+    const got = intentScope ? generated.filter(c => standingIntentCandidateInScope(true,
+      c.anchor?.type === "intent" && intentScope.has(c.anchor.id),
+      c.anchor?.type === "event" && c.participants.some(id =>
+        w.get(id)?.intents.some(intent => intentScope.has(intent.id) && intent.category === c.category)),
+    )) : generated;
     f.byGenerator[g.name] = got.length;
     cands.push(...got);
     timings[`gen:${g.name}`] = Math.round((performance.now() - ts) * 100) / 100;
@@ -126,8 +149,9 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const anchorReasons = new Map<string, Map<string, number>>();
   const passed: Candidate[] = [];
   for (const c of cands) {
-    const r = candidateReason(w, c);
-    if (r) {
+    const screening = screenCandidate(w, c);
+    if (screening.phase === "Refused") {
+      const r = screening.refusal;
       f.rejectedBy[r] = (f.rejectedBy[r] ?? 0) + 1;
       if (c.anchor?.type === "intent") {
         if (!anchorReasons.has(c.anchor.id)) anchorReasons.set(c.anchor.id, new Map());
@@ -137,6 +161,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       continue;
     }
     if (!pack.geo.markets(cfg).includes(c.city!)) { f.rejectedBy.city_not_in_run = (f.rejectedBy.city_not_in_run ?? 0) + 1; continue; }
+    c.alternates = screening.alternates;
     passed.push(c);
   }
   f.passedHardFilters = passed.length;
@@ -162,43 +187,59 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   //    Pass 3 (deep review, optional): richer context on the best survivors; "no" => deep_reject,
   //    "insufficient_information" => deep_insufficient (with the question to ask), "yes" keeps it.
   const J = pack.judge;
-  if (deps.llm && cfg.judge.enabled && cfg.judge.topK > 0 && J) {
-    const llm = deps.llm;
+  const llm = deps.llm;
+  const screen = J?.screen;
+  let judgment = stepJudgmentRun(initialJudgmentRun, {
+    type: "configureRun",
+    rubricOption: { enabled: cfg.judge.enabled, limit: cfg.judge.topK, supported: Boolean(llm && J) },
+    screenOption: { enabled: cfg.judge.screen.enabled, limit: cfg.judge.screen.topK, supported: Boolean(screen) },
+  });
+  if (judgment.phase !== "Complete" && llm && J) {
     const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
     const pickTop = (xs: Scored[], k: number, gk: number) => [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
-    let pool = byScore(scored.filter(s => !s.reason || s.reason === "below_threshold"));
-    if (cfg.judge.screen.enabled && cfg.judge.screen.topK > 0 && J.screen) {
+    let pool = byScore(scored.filter(s => (!s.reason || s.reason === "below_threshold") && (J.reviewCandidate?.(s.c) ?? true)));
+    if (judgment.phase === "Screening" && screen) {
       const sc = cfg.judge.screen;
       const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
       const screenStats = { calls: 0, cacheHits: 0, failures: 0 };
       const screenLog: { key: string; cacheKey: string; verdict: ScreenVerdict | null; cached: boolean }[] = [];
-      const res = await runCachedPass(w, toScreen, J.screen.version, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
-        screenStats, c => screenOne(w, c, llm, sc.maxTokens).then(r => r.verdict), screenLog);
+      let snapshot: World["input"] | undefined;
+      const res = await runCachedPass(w, toScreen, llm, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
+        screenStats, c => prepareScreen(w, c, sc.maxTokens, snapshot ??= screenSnapshot(w)), screenLog, runLog.judgeModel);
       runLog.judge.screen = { ...screenStats, verdicts: screenLog };
       const rejected = new Set([...res].filter(([, v]) => v && !screenDecision(v)).map(([k]) => k));
       scored = scored.map(s => (rejected.has(s.c.key) ? { ...s, eligible: false, reason: "screen_reject" } : s));
       // Pass 2 only looks at screened survivors (a failed screen call fails open to pass 2).
       pool = pool.filter(s => res.has(s.c.key) && !rejected.has(s.c.key));
       t = lap("judge_screen", t);
+      judgment = stepJudgmentRun(judgment, { type: "finishScreen" });
     }
-    const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
-    const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
-    // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
-    // judge stays ineligible even if the blended score now clears it.
-    scored = scored.map(s => {
-      const v = verdicts.get(s.c.key);
-      if (!v) return s;
-      const r = scoreCandidate(w, s.c, v);
-      return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
-    });
-    t = lap("judge", t);
-    if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0 && J.deep) {
+    if (judgment.phase === "Rubric") {
+      const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
+      const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts, runLog.judgeModel);
+      // Pass 2 can only lower or remove (engine-pipeline-7): a verdict that would raise the score keeps
+      // the pre-judge score and components; a floor the verdict breaks still removes the configuration;
+      // a configuration below its bar before the judge stays ineligible.
+      scored = scored.map(s => {
+        const v = verdicts.get(s.c.key);
+        if (!v) return s;
+        const r = scoreCandidate(w, s.c, v);
+        const judged = r.score > s.score ? { ...s, verdict: v, eligible: r.eligible, reason: r.reason } : r;
+        return s.eligible ? judged : { ...judged, eligible: false, reason: s.reason ?? "below_threshold" };
+      });
+      t = lap("judge", t);
+      judgment = stepJudgmentRun(judgment, {
+        type: "finishRubric",
+        deepOption: { enabled: cfg.judge.deep.enabled, limit: cfg.judge.deep.topK, supported: Boolean(J.deep) },
+      });
+    }
+    if (judgment.phase === "DeepReview" && J.deep) {
       const dc = cfg.judge.deep;
       const survivors = byScore(scored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no")).slice(0, dc.topK);
       const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
       const stats = { calls: 0, cacheHits: 0, failures: 0 };
-      const res = await runCachedPass(w, survivors.map(s => s.c), J.deep.version, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
-        stats, c => deepReviewOne(w, c, llm, dc.maxTokens), deepLog);
+      const res = await runCachedPass(w, survivors.map(s => s.c), llm, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
+        stats, c => prepareDeepReview(w, c, dc.maxTokens), deepLog, runLog.judgeModel);
       runLog.judge.deep = { ...stats, verdicts: [] };
       scored = scored.map(s => {
         const r = res.get(s.c.key);
@@ -220,6 +261,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       });
       runLog.judge.deep.verdicts.sort((a, b) => (a.key < b.key ? -1 : 1));
       t = lap("judge_deep", t);
+      judgment = stepJudgmentRun(judgment, { type: "finishDeepReview" });
     }
   }
   for (const s of scored) {
@@ -235,7 +277,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const askPlan = planAsks(w, input);
   f.asks = askPlan.asks.length;
   f.askFirst = askPlan.exclude.size;
-  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive });
+  const selectionOptions = { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive };
+  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, selectionOptions);
   // Minors policy, last line of defence: hard filters already drop these, so this never fires
   // in a correct build. If it ever does, the configuration is withheld (fail closed), not sent.
   const selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
@@ -249,6 +292,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   if (runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0) {
     runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
   }
+  const search = w.match.tally();
+  if (search.members > 0) runLog.search = search;
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.
@@ -267,6 +312,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       anchor: c.anchor ? { ...c.anchor } : undefined, via: c.via, safetyClass: c.safetyClass, threshold,
       channels: [...c.channels].sort(), judged: !!verdict, selectorRank: sel.rank, selectionProbability: round(sel.probability),
       acceptance: Object.fromEntries(c.participants.map(id => [id, round(w.get(id)?.acceptance ?? cfg.acceptance.prior)])),
+      ...(c.lane ? { lane: c.lane } : {}), ...(c.entities ? { entities: { ...c.entities } } : {}),
+      ...(c.cofounderIntents ? { cofounderIntents: { ...c.cofounderIntents } } : {}),
     };
   });
   for (const p of proposals) runLog.proposalsByGenerator[p.generator] = (runLog.proposalsByGenerator[p.generator] ?? 0) + 1;
@@ -275,16 +322,15 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   runLog.scored = scored.map(s => ({
     key: s.c.key, generator: s.c.generator, participants: s.c.participants, components: roundAll(s.components),
     score: round(s.score), eligible: s.eligible, reason: s.reason, judged: !!s.verdict,
-    ...(s.complementarity !== undefined ? { complementarity: round(s.complementarity) } : {}),
   }));
   runLog.fairness = fairnessMetrics(w, selected, scored);
-  runLog.blockingPairs = blockingPairs(selected, scored);
+  runLog.blockingPairs = blockingPairs(w, selected, scored, selectionOptions);
   runLog.exposureDebt = updateExposureDebt(w, priorDebt, scored, selected);
   const inProposal = new Set(proposals.flatMap(p => p.participants));
   const eligibleByIntent = new Map<string, boolean>();
   for (const s of scored) if (s.c.anchor?.type === "intent") eligibleByIntent.set(s.c.anchor.id, (eligibleByIntent.get(s.c.anchor.id) ?? false) || s.eligible);
   for (const id of w.ids) for (const it of w.get(id)!.intents) {
-    if (w.now - it.createdAt < cfg.emptyStateDays * 86_400_000 || inProposal.has(id)) continue;
+    if (!emptyIntentWaitOver(w.now - it.createdAt, cfg.emptyStateDays) || inProposal.has(id)) continue;
     let reason = "no_candidates";
     const own = memberReason(w, id, { category: it.category, role: "seeker", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: it.createdAt });
     if (own) continue; // the owner is not currently matchable (paused, held, over budget...): not an empty state
@@ -296,7 +342,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   }
   lap("finalize", t);
   timings.total = Math.round((performance.now() - t0) * 100) / 100;
-  return { proposals, asks: askPlan.asks, runLog };
+  const memberStanding = input.memberStanding === undefined ? undefined : w.match.memberStanding;
+  return { proposals, asks: askPlan.asks, runLog, ...(memberStanding === undefined ? {} : { memberStanding }) };
 }
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;

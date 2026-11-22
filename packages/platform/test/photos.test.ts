@@ -4,11 +4,12 @@
 // being one while the rater runs, each rater try a cost row, and every photo deleted on leave, delete
 // everything or a minor age. PgPeopleStore and PgPhotoStore on a database of its own, a temporary
 // folder for the bytes; no network, no R2 (R2PhotoStorage is not exercised here), no Workers AI.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { fileAt, writePath } from "../../core/src/runtime/files.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
 import {
@@ -166,7 +167,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(r.ok).toBe(true);
     const [file] = t.files();
     expect(file).toMatch(/^[a-f0-9]{48}$/);
-    const stored = new Uint8Array(await Bun.file(join(t.dir, file!)).arrayBuffer());
+    const stored = new Uint8Array(await fileAt(join(t.dir, file!)).arrayBuffer());
     expect(has(stored, "GPS")).toBe(false);
     const [row] = await t.meta.list(adult, "slop");
     expect(row).toMatchObject({ personId: adult, app: "slop", consentVersion: PHOTO_CONSENT.version, contentType: "image/jpeg", bytes: stored.length });
@@ -430,10 +431,10 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     const meta = (await t.meta.list(sender, "slop")).find(row => row.id === uploaded.value.id);
     expect(meta?.id).toBe(uploaded.value.id);
     if (!meta) throw new Error("selected photo row missing before tamper check");
-    const file = join(t.dir, meta.storageKey), original = new Uint8Array(await Bun.file(file).arrayBuffer());
-    await Bun.write(file, new Uint8Array(original.length));
+    const file = join(t.dir, meta.storageKey), original = new Uint8Array(await fileAt(file).arrayBuffer());
+    await writePath(file, new Uint8Array(original.length));
     expect(await relay.delivery("slop", selected.itemId, exp, sig)).toBeUndefined();
-    await Bun.write(file, original);
+    await writePath(file, original);
     expect(await relay.delivery("slop", selected.itemId, exp, sig)).toBeDefined();
 
     expect(await relay.delivery("slop", selected.itemId, exp + 1, sig)).toBeUndefined();

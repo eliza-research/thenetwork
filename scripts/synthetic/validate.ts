@@ -1,9 +1,10 @@
 // Validate data/synthetic/v1 against packages/core types and the dataset's privacy/safety rules.
 //
-//   bun scripts/synthetic/validate.ts [--dir data/synthetic/v1] [--out path/to/validation.json]
+//   node --import tsx scripts/synthetic/validate.ts [--dir data/synthetic/v1] [--out path/to/validation.json]
 //
 // Writes <dir>/validation.json and exits 1 if any check fails. Hidden truth is read here only to
 // verify the public/hidden split and ground-truth invariants (adversarial flags, true ages).
+import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
 import { parseArgs } from "node:util";
 import { loadSnapshot } from "./load.ts";
 import { DEFAULT_RICHNESS_MIX, MINOR_ALLOWED_SOURCES, RICHNESS_TIERS } from "../../packages/sim/src/sources.ts";
@@ -31,7 +32,7 @@ const inSet = <T extends string>(set: readonly T[], x: unknown) => set.includes(
 
 // ---- load ------------------------------------------------------------------------------------
 const raw: Record<string, string> = {};
-for (const f of Object.values(FILES)) raw[f] = await Bun.file(`${dir}/${f}`).text();
+for (const f of Object.values(FILES)) raw[f] = await fileAt(`${dir}/${f}`).text();
 const manifest: Manifest = JSON.parse(raw[FILES.manifest]!);
 const members = await readJsonl<MemberRecord>(`${dir}/${FILES.members}`);
 const facets = await readJsonl<FacetRecord>(`${dir}/${FILES.facets}`);
@@ -601,7 +602,7 @@ const isPolicyFacet = (f: FacetRecord) => f.tags.some(t => POLICY_TAGS.includes(
 // ---- report -----------------------------------------------------------------------------------------
 const failed = checks.filter(c => !c.pass);
 const report = { dataset: dir.replace(/.*\/data\//, "data/"), validatedAt: new Date().toISOString(), pass: failed.length === 0, passed: checks.length - failed.length, total: checks.length, checks };
-await Bun.write(cli.out ?? `${dir}/validation.json`, JSON.stringify(report, null, 2) + "\n");
+await writePath(cli.out ?? `${dir}/validation.json`, JSON.stringify(report, null, 2) + "\n");
 for (const c of checks) console.log(`${c.pass ? "PASS" : "FAIL"}  ${c.name}${c.errors ? `\n      ${c.errors.slice(0, 5).join("\n      ")}` : ""}`);
 console.log(`\n${report.passed}/${report.total} checks passed -> ${cli.out ?? `${dir}/validation.json`}`);
 process.exit(failed.length ? 1 : 0);

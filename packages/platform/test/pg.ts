@@ -1,6 +1,6 @@
 // A database of its own per test process (platform_test_<pid>) on the local dev cluster (:54339),
 // as packages/observatory/test/pg.ts does. Never the dev `network` database. Skipped without Postgres.
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { migrate } from "../../observatory/db/migrate.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";

@@ -1,7 +1,7 @@
 // peon.biz judge (pass 2 only): a job-fit rubric on a REDACTED context. Not run in the simulator
 // (no LLM calls); the conformance suite exercises it with a fake model. The context is built from
 // profile.ts fields only, so it carries no name, age, zip, graduation year, gap, photo, pronoun or
-// sealed attribute (bun run sim checks sealed-attribute invariance end to end).
+// sealed attribute (pnpm run sim checks sealed-attribute invariance end to end).
 import type { MemberId } from "@thenetwork/core";
 import type { JudgePack } from "../../pack.ts";
 import type { Candidate } from "../../types.ts";
@@ -10,13 +10,13 @@ import { mustChecks } from "./match.ts";
 import { sides } from "./profile.ts";
 import { peonHardGate } from "./rules.ts";
 
-export const PEON_JUDGE_VERSION = "peon-judge-0.1";
+export const PEON_JUDGE_VERSION = "peon-judge-0.2";
 
 export const PEON_JUDGE_SYSTEM = `You review one proposed introduction between a job candidate (P1) and a job (P2) for peon.biz, an intro and logistics service. A human hiring manager makes every decision; you only check job-related fit.
 Use ONLY the job-related criteria in the context: the job's must-have and nice-to-have skills, seniority, pay range, work model, schedule and work authorization, and the candidate's own stated skills (with their evidence: claimed, demonstrated, interview), seniority, pay floor and preferences.
 Never use, infer or mention: race, colour, ethnicity, national origin, citizenship beyond work authorization, sex, gender identity, sexual orientation, pregnancy or family plans, religion, age or graduation year, disability or health, marital or caregiver status, employment gaps, name, photo, voice, address or zip code, school prestige (unless the job states a credential), criminal history, salary history. If your reasoning starts to touch any of these, stop and set red_flags to 5 and verdict "no".
-Hard rules (pay range present, verified employer, location, authorization, seniority band, credentials, minors) were already enforced by code. Do not reject because of them.
-Score 1-5: fit = must-haves evidenced (cite the candidate's own skills); mutual_value = the candidate's stated wants (pay, kind of work, work model) and the job's needs both served; capacity_realism = logistics (start date, schedule); timing = the job is open and the candidate is searching; social_comfort = candidate-intent fit; red_flags = scam signals on the employer side or misrepresentation signals; certainty = how sure you are.
+Hard rules (pay range present, verified employer, location, authorization, credentials, minors) were already enforced by code. Do not reject because of them. Code refused only seniority gaps wider than about two levels; judge seniority fit yourself.
+Score 1-5: fit = must-haves evidenced (cite the candidate's own skills) and the candidate's seniority against the job's; mutual_value = the candidate's stated wants (pay, kind of work, work model) and the job's needs both served; capacity_realism = logistics (start date, schedule); timing = the job is open and the candidate is searching; social_comfort = candidate-intent fit; red_flags = scam signals on the employer side or misrepresentation signals; certainty = how sure you are.
 Return JSON only: {"reasoning": "...", "cited_facts": [{"ref": "P1", "field": "...", "fact": "..."}], "fit": n, "mutual_value": n, "capacity_realism": n, "timing": n, "social_comfort": n, "red_flags": n, "certainty": n, "dealbreaker": false, "dealbreaker_reason": "", "verdict": "yes" | "no", "match_probability": 0-1, "why": {"P1": "one sentence for the candidate about the role", "P2": "one criteria-based sentence for the employer, no score, no name"}}`;
 
 /** Redacted, pseudonymous judge context: criteria only. */
@@ -45,7 +45,7 @@ export function peonJudgeContext(w: World, c: Candidate): { context: object; ref
 
 export const peonJudge: JudgePack = {
   rubric: { compact: { version: PEON_JUDGE_VERSION, system: PEON_JUDGE_SYSTEM }, matchable: { version: PEON_JUDGE_VERSION, system: PEON_JUDGE_SYSTEM } },
-  rubricKeys: ["fit", "mutual_value", "capacity_realism", "timing", "social_comfort", "red_flags", "certainty"],
+  reviewCandidate: c => c.lane !== "Cofounder",
   buildContext: (w, c) => peonJudgeContext(w, c),
   hardGate: (w, c) => peonHardGate(w, c),
 };

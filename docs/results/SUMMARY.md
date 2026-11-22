@@ -1,5 +1,7 @@
 # Results summary
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/SUMMARY.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This is the one-page index of results that have been folded out of the repository. Each section keeps the headline numbers and the decision. The full original documents are in git history at commit `16cde70`. Read one with `git show 16cde70:<path>`, for example `git show 16cde70:docs/results/2026-10-06-judge-passes.md`.
 
 Original paths folded here:
@@ -32,7 +34,7 @@ The latest per-topic reports stay in `docs/results/`:
 - [2026-10-08-peon-pack.md](2026-10-08-peon-pack.md)
 - [2026-10-08-friends-pack.md](2026-10-08-friends-pack.md)
 
-**How to validate today.** Validation is now `bun run sim` (`scripts/sim.ts`). The commands quoted in the old documents (`bun run packages/evals/src/cli.ts ...`, `bun packages/engine/experiments/*.ts`, `bun run prototypes/...`, the old sim CLI flags) ran code that has since been deleted (`packages/evals`, `packages/engine/experiments`, `prototypes`). They do not run on this tree. The numbers below are historical: they describe the code at the time, not the current tree.
+**How to validate today.** Validation is now `pnpm run sim` (`scripts/sim.ts`). The commands quoted in the old documents (`node --import tsx --env-file-if-exists=.env packages/evals/src/cli.ts ...`, `the former runtime packages/engine/experiments/*.ts`, `pnpm run prototypes/...`, the old sim CLI flags) ran code that has since been deleted (`packages/evals`, `packages/engine/experiments`, `prototypes`). They do not run on this tree. The numbers below are historical: they describe the code at the time, not the current tree.
 
 ## Engine v1 vs random (2026-10-06)
 

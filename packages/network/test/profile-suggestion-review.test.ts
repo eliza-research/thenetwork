@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test, vi } from "vitest";
 import { parseSuggestionReview, renderSuggestionReview, reviewSuggestionMessage, type SuggestionReviewBatch } from "../service/profile-suggestion-review.ts";
 
 const now = 1_800_000_000_000;
@@ -60,8 +60,8 @@ describe("private iMessage suggestion review", () => {
 describe("store-backed review boundary", () => {
   test("owner denial prevents any decision, including wrong Cloud user and organization", async () => {
     for (const untrusted of [{ ...owner, userId: "other" }, { ...owner, organizationId: "other" }]) {
-      const decide = mock(async () => ({ kind: "denied" as const }));
-      const getPendingBatch = mock(async (who: typeof owner) => who.userId === owner.userId && who.organizationId === owner.organizationId ? batch : null);
+      const decide = vi.fn(async () => ({ kind: "denied" as const }));
+      const getPendingBatch = vi.fn(async (who: typeof owner) => who.userId === owner.userId && who.organizationId === owner.organizationId ? batch : null);
       expect(await reviewSuggestionMessage({ getPendingBatch, decide }, untrusted, batch.id, "accept batch-one.2 1 private", now)).toBeNull();
       expect(decide).not.toHaveBeenCalled();
       expect(getPendingBatch).toHaveBeenCalledWith(untrusted, batch.id, now);
@@ -69,14 +69,14 @@ describe("store-backed review boundary", () => {
   });
   test("a canonical scope-change preview is returned, never relabeled as saved", async () => {
     const updated = { ...batch, revision: 3, suggestions: [{ ...batch.suggestions[0]!, scope: "matchable" as const }] };
-    const decide = mock(async () => ({ kind: "preview" as const, batch: updated }));
+    const decide = vi.fn(async () => ({ kind: "preview" as const, batch: updated }));
     const store = { getPendingBatch: async () => batch, decide };
     expect(await reviewSuggestionMessage(store, owner, batch.id, "accept batch-one.2 1 matching", now)).toEqual({ kind: "preview", batch: updated });
     expect(decide).toHaveBeenCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "accept", suggestionId: "interest-one", scope: "matchable" }] }, now);
     expect(parseSuggestionReview("accept batch-one.2 1 matching", updated, owner, now)).toBeNull();
   });
   test("edits and rejection retain the store's atomic decision contract", async () => {
-    const decide = mock(async () => ({ kind: "denied" as const }));
+    const decide = vi.fn(async () => ({ kind: "denied" as const }));
     const store = { getPendingBatch: async () => batch, decide };
     expect(await reviewSuggestionMessage(store, owner, batch.id, "edit batch-one.2 1: indoor climbing", now)).toEqual({ kind: "denied" });
     expect(decide).toHaveBeenLastCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "accept", suggestionId: "interest-one", editedValue: "indoor climbing" }] }, now);

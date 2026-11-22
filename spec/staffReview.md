@@ -34,7 +34,7 @@ pure def bindCard(ctl: ReviewCtl, cardKey: str): ReviewCtl =
 
 ### A mode change applies only to a bound card
 
-A mode button toggles its panel, and a shortcut opens that mode. Leaving a mode clears the prompt for a required note. The shell supplies the selected card's current edit values when entering edit mode.
+A mode button toggles its panel, and a shortcut opens that mode. Each mode change clears the prompt for a required note, also when a shortcut opens the mode that is already open. The shell supplies the selected card's current edit values when entering edit mode.
 
 ```quint
 pure def canChangeReviewMode(ctl: ReviewCtl): bool = ctl.cardKey != ""
@@ -50,7 +50,7 @@ pure def alwaysRequiredNoteBelongsToRejection(ctl: ReviewCtl): bool = ctl.noteNe
 
 ### An old response cannot clear or move a newer selection
 
-Only a response from the same card and draft revision can settle the controller. An accepted decision clears the old draft. The shell moves to a neighbor only for an accepted decision that still belongs to this mounted queue. A refused decision keeps the draft on its own card.
+Only a response from the same card and draft revision can settle the controller. The shell settles the controller only for an accepted decision. Settling clears the old draft, closes the mode panel, and starts a new revision. The shell moves to a neighbor only for an accepted decision that still belongs to this mounted queue. The shell does not settle the controller for a refused decision, so the draft stays on its own card.
 
 ```quint
 pure def ownsReviewResponse(ctl: ReviewCtl, cardKey: str, revision: int): bool =
@@ -64,4 +64,33 @@ pure def settleReview(ctl: ReviewCtl, cardKey: str, revision: int): ReviewCtl =
 
 pure def stepRevisionNeverFalls(before: ReviewCtl, after: ReviewCtl): bool = after.revision >= before.revision
 pure def sometimesReviewDraftOpens(ctl: ReviewCtl): bool = ctl.mode == EditReview
+```
+
+### A plan preview belongs to the open revision under review
+
+For a planner proposal, staff authorized to read the review queue for the app can read the public place, activity window, quorum, seat limit, invitation deadline, and ordered alternates for the specific review revision. A Friends activity partner proposal with several reviewed times shows each complete interval in chronological order at the same venue. The preview uses the invitation deadline that applies to the earliest option. The Network reads these fields from the plan and the current review roster. It returns the preview only while that revision is pending and its review deadline is open. The read records the actor, app, and opportunity before it returns any preview.
+
+```quint
+import reviewDeadline as Deadline from "./reviewDeadline"
+
+pure def reviewPlanPreviewCurrent(pending: bool, hasPlan: bool, seenRevision: int, currentRevision: int, currentTime: int, deadline: int): bool =
+  pending and hasPlan and Deadline::reviewRevisionCurrent(seenRevision, currentRevision) and not(Deadline::reviewLate(currentTime, deadline))
+
+pure def lawPlanPreviewClosesAtDeadline(pending: bool, hasPlan: bool, revision: int, deadline: int): bool =
+  not(reviewPlanPreviewCurrent(pending, hasPlan, revision, revision, deadline, deadline))
+
+pure def lawPlanPreviewRefusesOlderRevision(currentTime: int, deadline: int, revision: int): bool =
+  not(reviewPlanPreviewCurrent(true, true, revision, revision + 1, currentTime, deadline))
+```
+
+### Plan approval in the console waits for the selected preview
+
+The real review card waits for the preview of its selected app, opportunity, revision and deadline before enabling approval or edit-and-approve. A change to the viewer, mode, app, card, or revision drops the old preview. Pending and unavailable previews leave approval disabled. Rejection and re-roll remain available. The existing service rechecks eligibility and the review revision when a reviewer decides.
+
+```quint
+pure def planPreviewMatchesCard(cardApp: str, previewApp: str, cardId: str, previewId: str, cardRevision: int, previewRevision: int, cardDeadline: int, previewDeadline: int): bool =
+  cardApp == previewApp and cardId == previewId and Deadline::reviewRevisionCurrent(cardRevision, previewRevision) and cardDeadline == previewDeadline
+
+pure def lawOlderPlanPreviewCannotEnableApproval(app: str, id: str, revision: int, deadline: int): bool =
+  not(planPreviewMatchesCard(app, app, id, id, revision + 1, revision, deadline, deadline))
 ```

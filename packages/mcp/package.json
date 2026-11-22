@@ -5,9 +5,20 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run src/dev-server.ts"
+    "build:css": "corepack pnpm@10.24.0 --filter @thenetwork/design-system run build && node --import tsx src/pages/build-css.ts",
+    "dev": "corepack pnpm@10.24.0 run build:css && node --import tsx --env-file-if-exists=.env src/dev-server.ts"
   },
   "dependencies": {
-    "@thenetwork/platform": "workspace:*"
+    "@tailwindcss/node": "^4.3.5",
+    "@thenetwork/platform": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "@thenetwork/design-system": "workspace:*",
+    "@thenetwork/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:"
   }
 }

@@ -1,6 +1,6 @@
 import { parseNetworkCollectionCommand, hashNetworkCollectionSelection, networkCollectionDeadline } from "../../core/src/svc/learning-collection-command.ts";
 import { createHash } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { resolveConsent } from "../../platform/src/consent.ts";
 import { svcSign, svcVerify } from "../../core/src/svc/svc-auth.ts";

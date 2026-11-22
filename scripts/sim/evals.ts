@@ -5,8 +5,10 @@
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -15,8 +17,8 @@ import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { Block, expect } from "./gate.ts";
 import { planAgainOf } from "../../packages/network/src/classify.ts";
 
-const ROOT = `${import.meta.dir}/../../evals`;
-const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
+const ROOT = `${import.meta.dirname}/../../evals`;
+const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export async function evalsBlock(b: Block): Promise<void> {
@@ -67,7 +69,24 @@ export async function evalsBlock(b: Block): Promise<void> {
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
   }
 
-  const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
+  // spec/probeReply.md, "A suggested alternative needs a separate yes before asking for new times";
+  // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer"
+  const slots = await jsonl<{ text: string; labels?: string[]; answer: "yes" | "no" | "unclear"; keys: string[] }>("network/probe-offered-slots.jsonl");
+  const wrongSlots = slots.filter(row => {
+    const options = row.labels?.map((label, i) => ({ key: OPTIONS[i]!.key, label, start: i, end: i + 1 })) ?? OPTIONS;
+    const reply = parseProbeReply(row.text, options);
+    if (reply.answer !== row.answer || JSON.stringify(reply.keys) !== JSON.stringify(row.keys)) return true;
+    // An ambiguous, unoffered or counter-offered time stays unclear: a model yes for an offered key cannot replace it.
+    if (row.answer === "unclear") {
+      const merged = mergeConsent(reply, { consent: "yes", times: options.slice(0, 1).map(o => o.key), wants: [], notWanted: [], interests: [], skills: [] }, options);
+      return merged.answer !== "unclear";
+    }
+    return false;
+  });
+  b.gate("probe replies keep accepted, ambiguous and unoffered times distinct", slots.length >= 25 && wrongSlots.length === 0,
+    wrongSlots.map(row => row.text).join(" | "));
+
+  const benign = (await fileAt(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);
   b.gate(`benign adult phrasing: precision >= 99% (n ${benign.length})`, benign.length >= 200 && 1 - flagged.length / benign.length >= 0.99, pct(1 - flagged.length / benign.length));
   const benignMinor = benign.filter(t => classify(t).minorSignal);

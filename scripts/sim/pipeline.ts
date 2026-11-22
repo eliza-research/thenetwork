@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The pipeline block: the real message path end to end (mvp-plan "Still missing in sim"; critical path
 // 3 and 9). A signed Blooio webhook goes into NetworkService.fetch, the service runs the four networks
 // (ntwrk, slop, peon, friends) on a throwaway Postgres database on the dev cluster (:54339), every send
@@ -14,7 +15,7 @@
 // Blocking gates: 0 lost or duplicated outbound messages; 0 sends after STOP; 0 sends to minors about
 // other members (and nothing stored for an under-13); every outbound row ends delivered or failed;
 // keyword routing; restart, crash, outage, dedupe, ordering, Apple line safety and the STOP/HELP owner.
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { NOT_SENT, OutboundQueue, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
 import { BlooioAdapter, liveSendAllowed } from "../../packages/network/service/channel.ts";
@@ -45,7 +46,7 @@ export async function pipelineBlock(b: Block): Promise<void> {
     expect(new BlooioAdapter({ provider: new H.FakeBlooio(clock), clock, from: H.LINE, app: "slop" }).live).toBe(false);
   });
   if (!H.pgInstalled()) {
-    b.track("pipeline: skipped, no Postgres installed (the dev cluster on :54339 is needed)", false, "install postgresql@16 and run bun run sim --only pipeline");
+    b.track("pipeline: skipped, no Postgres installed (the dev cluster on :54339 is needed)", false, "install postgresql@16 and run pnpm run sim --only pipeline");
     return;
   }
   let url: string;
@@ -137,7 +138,7 @@ async function script(w: World) {
   const older = H.messageBody(clock, P.ivy, "Also free on Saturday", { id: "ivy_older", at: clock.now() });
   const newer = H.messageBody(clock, P.ivy, "and Sunday too", { id: "ivy_newer", at: clock.now() + 2000 });
   const both = Promise.all([H.post(w.svc, H.signedRequest(clock, newer)), H.post(w.svc, H.signedRequest(clock, older))]);
-  for (let i = 0; i < 100 && (await w.sql`select count(*)::int as n from platform.inbound where id in ('msg:blooio:ivy_older', 'msg:blooio:ivy_newer')`)[0].n < 2; i++) await Bun.sleep(10);
+  for (let i = 0; i < 100 && (await w.sql`select count(*)::int as n from platform.inbound where id in ('msg:blooio:ivy_older', 'msg:blooio:ivy_newer')`)[0].n < 2; i++) await waitForMs(10);
   await lock`select pg_advisory_unlock(hashtext(${key}))`;
   lock.release();
   await both;
@@ -154,7 +155,7 @@ async function script(w: World) {
   w.notes.reviewItem = !!item;
   w.notes.reviewedBeforeContact = item ? (await w.sql`select count(*)::int as n from network.messages where opportunity_id = ${item.oppId}`)[0].n : -1;
   if (item) {
-    w.notes.approve = (await (await H.staff(w.svc, H.REVIEWER, "POST", `/apps/friends/review/${item.oppId}`, { decision: "approve", secondsSpent: 30 })).json()).ok;
+    w.notes.approve = (await (await H.staff(w.svc, H.REVIEWER, "POST", `/apps/friends/review/${item.oppId}`, { decision: "approve", secondsSpent: 30, revision: item.revision })).json()).ok;
     await H.run(w.svc, clock, fake, 30 * MINUTE);
     await say(w, P.ana, "Either works");
     await H.run(w.svc, clock, fake, 30 * MINUTE);

@@ -1,0 +1,89 @@
+import { Machine, machine, requestIsLive } from "./generated/oauthGrantIssuance.effect.js"
+import type { AuthorityResult } from "./generated/oauthGrantIssuance.effect.js"
+
+interface PendingApproval {
+  e164: string | null
+  personId: string | null
+  expiresAt: number
+}
+
+type AuthorityStatus = "valid" | "invalid" | "unavailable"
+
+interface ConfirmApproval {
+  (approval: PendingApproval): Promise<boolean>
+}
+
+interface PreparedIssuance {
+  code: string
+  commit(at: number, confirm: ConfirmApproval): Promise<boolean>
+}
+
+interface GrantIssuanceEffects<Grant> {
+  now(): number
+  makeGrant(at: number): Grant
+  checkAuthority(grant: Grant): Promise<AuthorityStatus>
+  prepareIssuance(grant: Grant, at: number): PreparedIssuance
+}
+
+type GrantIssuanceResult<Grant> =
+  | { kind: "expired" }
+  | { kind: "retry" }
+  | { kind: "denied" }
+  | { kind: "issued"; grant: Grant; code: string }
+
+const authorityResult = {
+  valid: "AuthorityValid",
+  invalid: "AuthorityInvalid",
+  unavailable: "AuthorityUnavailable",
+} as const satisfies Record<AuthorityStatus, AuthorityResult>
+
+error GrantIssuanceIOFailure { cause: unknown }
+
+function io<A>(work: () => A | Promise<A>) {
+  return tryPromise({ try: async () => work(), catch: cause => new GrantIssuanceIOFailure({ cause }) })
+}
+
+/** Run a new issuance machine for each browser approval. */
+export async function issueConnectorGrant<Grant extends { expiresAt: number }>(
+  request: PendingApproval & { e164: string },
+  effects: GrantIssuanceEffects<Grant>,
+): Promise<GrantIssuanceResult<Grant>> {
+  try {
+    return await runPromise(effect {
+      provide machine() {
+        const issuance = try Machine
+        const at = try io(() => effects.now())
+        const began = try issuance.send({ type: "beginApproval", requestLive: requestIsLive(at, request.expiresAt) })
+        if (began.phase !== "AwaitingAuthority") return { kind: "expired" } as const
+
+        const grant = try io(() => effects.makeGrant(at))
+        const authority = try io(() => effects.checkAuthority(grant))
+        const checked = try issuance.send({ type: "checkGrantAuthority", authority: authorityResult[authority] })
+        if (checked.phase === "RetryAuthority") return { kind: "retry" } as const
+        if (checked.phase !== "AwaitingApproval") return { kind: "denied" } as const
+
+        const prepared = try io(() => effects.prepareIssuance(grant, at))
+        const approvalAt = try io(() => effects.now())
+        const committed = io(() => prepared.commit(approvalAt, approval => runPromise(effect {
+          const checkedAt = try io(() => effects.now())
+          const state = try issuance.send({ type: "checkLockedApproval", approval: {
+            ownerMatches: approval.e164 === request.e164 && approval.personId === request.personId,
+            lockedRequestLive: requestIsLive(checkedAt, approval.expiresAt),
+            pendingGrantLive: requestIsLive(checkedAt, grant.expiresAt),
+          } })
+          return state.phase === "AwaitingCommit"
+        }))) catch () => undefined
+
+        if (committed === undefined) {
+          try issuance.send({ type: "recordStorageFailure" })
+          return { kind: "retry" } as const
+        }
+        const issued = try issuance.send({ type: "recordCommit", committed })
+        return issued.phase === "GrantIssued" ? { kind: "issued", grant, code: prepared.code } as const : { kind: "expired" } as const
+      }
+    })
+  } catch (error) {
+    if (error instanceof GrantIssuanceIOFailure) throw error.cause
+    throw error
+  }
+}

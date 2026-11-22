@@ -1,5 +1,7 @@
 # Private ChatGPT Slop onboarding preparation
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-09-chatgpt-custom-pilot.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 ## Problem and scope
 
 Main `b53bd86` excludes Slop from the public OpenAI plugin and rejects ChatGPT
@@ -36,7 +38,7 @@ default-off mode preserves those boundaries and reuses the existing OAuth owner.
 
 ## Validation
 
-Use Bun 1.4.2, `REQUIRE_PG=1`, owned Postgres port 54349 and this checkout's
+Use the former runtime 1.4.2, `REQUIRE_PG=1`, owned Postgres port 54349 and this checkout's
 `runs/pg`. Providers are fictional and sends are dry-run. No model runs.
 
 The initial four new Postgres E2E scenarios pass with 89 assertions. They cover
@@ -47,11 +49,11 @@ The test harness configures the handler directly; it does not enable fictional
 providers in a real deployed runtime. Final results on this source:
 
 - Focused OAuth/MCP/E2E compatibility: 83 pass, zero failures, 701 assertions.
-- Full `bun run test:integration`: 468 pass, zero failures, 9984 assertions,
+- Full `pnpm run test:integration`: 468 pass, zero failures, 9984 assertions,
   181.70 seconds.
-- Full `bun run test:e2e`: 34 pass, zero failures, 373 assertions, 9.22 seconds.
-- `bun run typecheck` and `bun run plugins/build.ts --check`: exit zero.
-- Full `bun run sim`: 296/296 blocking gates pass, 13 tracked targets off target,
+- Full `pnpm run test:e2e`: 34 pass, zero failures, 373 assertions, 9.22 seconds.
+- `pnpm run typecheck` and `node --import tsx --env-file-if-exists=.env plugins/build.ts --check`: exit zero.
+- Full `pnpm run sim`: 296/296 blocking gates pass, 13 tracked targets off target,
   322.8 seconds. The official script uses its pinned seeds and clears model keys.
 - Retired-domain source guard and `git diff --check`: no matches/errors.
 

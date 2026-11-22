@@ -3,11 +3,12 @@
 // only and never a score; peon roles and applications), and the post-date report queue with hold and
 // ban by phone or person through the Network service (a local fake of the contract in
 // docs/admin-console.md 3.7.1). Skipped without Postgres. Phone numbers are 555-01xx.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createServer, type ObservatoryServer } from "../src/server.ts";
 import { ageView, loginProblem, mergeStateRows, minorAt, RealSource } from "../src/sources/real.ts";
 import type { AppProfile360, AuditEntry, MemberDetail, PeonProfile360, SafetyInfo, SlopProfile360 } from "../src/types.ts";
@@ -52,7 +53,7 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
   let sql: SQL;
   let dir: string;
   let obs: ObservatoryServer;
-  let fake: ReturnType<typeof Bun.serve>;
+  let fake: HttpServer;
   const calls: { method: string; path: string; staff: string | null; reason: string | null; body: any }[] = [];
   const LOGIN = `obs_peon_${process.pid}`;
   const P = { a: crypto.randomUUID(), c: crypto.randomUUID() };
@@ -106,7 +107,7 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     await sql.unsafe(`create role ${LOGIN} login in role network_observatory_peon`);
 
     // A local fake of the Network service's staff API (docs/admin-console.md 3.7.1).
-    fake = Bun.serve({
+    fake = await serveHttp({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
         const u = new URL(req.url);
@@ -131,7 +132,7 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     });
   }, T);
   afterAll(async () => {
-    await obs?.stop(); fake?.stop(true);
+    await obs?.stop(); await fake?.stop(true);
     await sql?.unsafe(`drop role if exists ${LOGIN}`).catch(() => {});
     await sql?.close(); await dropTestDb();
     if (dir) await rm(dir, { recursive: true, force: true });

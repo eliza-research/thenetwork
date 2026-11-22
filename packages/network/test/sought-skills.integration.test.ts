@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Mini } from "./mini.ts";
 
 test("a skill sought during onboarding is not the seeker's own capability", async () => {

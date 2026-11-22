@@ -1,5 +1,7 @@
 # Plain, factual replies from onboarding skills
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-15-agent-reply-guidance.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 ## Problem and scope
 
 In a real, already connected Friends conversation, a simple status/next-step question received a
@@ -68,16 +70,16 @@ and later real response separately; do not explain a failure away merely as cach
 From a clean checkout with the repository's existing dependencies:
 
 ```sh
-bun run plugins/build.ts
-bun run plugins/build.ts --check
-bun test sites
-bun run typecheck
+node --import tsx --env-file-if-exists=.env plugins/build.ts
+node --import tsx --env-file-if-exists=.env plugins/build.ts --check
+pnpm exec vitest run sites
+pnpm run typecheck
 git diff --check
 ```
 
 Local results: 81 site cases / 1,419 assertions pass; root and sites TypeScript checks pass; generated
-plugin snapshots match; whitespace check passes. Local Bun was 1.3.14 and cached TypeScript 5.9.3;
-the normal CI uses the repository-pinned Bun 1.4.2. No installation was performed.
+plugin snapshots match; whitespace check passes. Local the former runtime was 1.3.14 and cached TypeScript 5.9.3;
+the normal CI uses the repository-pinned former runtime 1.4.2. No installation was performed.
 
 The staging entry test now derives its expected prompt version from the built skill, so the landing
 prompt and that skill must agree after a legitimate version bump. This checks generated artifacts,

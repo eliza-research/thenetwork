@@ -21,17 +21,27 @@ A turn commits its claim in `platform.inbound` before it calls the existing inbo
 
 Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app. The existing seven-day purge strips completed signed payloads and retains a minimal replay tombstone; tombstones are deleted 30 days after that.
 
+A member can say `I will be in San Francisco from YYYY-MM-DD until YYYY-MM-DD` in the signed conversation. New York City and Los Angeles also work. Use the destination's calendar dates. The end date is the first day outside the trip. The current app saves the statement and names itself in the confirmation. A trip does not change the person's home or open a new matching market.
+
+For a booked meeting, `calendar invite` returns a private download link in the signed conversation. A member can select the meeting with `calendar invite on YYYY-MM-DD at HH:MM`. The link is valid for up to 15 minutes and contains the current time and public venue when imported. Use New York local time in text commands.
+
+`RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM` asks the current booked roster to approve an exact new time at a venue with known hours. The original time stays booked until each participant accepts their own offer. `RUNNING LATE` sends a neutral update to the eligible participants in one current booked group around the meeting start.
+
+For a solo recommendation, a member can ask `Anything fun this weekend?` or `Show me public events tomorrow.` The current app checks the member's saved interests, availability, location and age against the [published NYC Parks catalog](../../../spec/publicEventCatalog.md). The reply includes up to three eligible listings with a venue, New York time and source link. Minors can receive only explicitly all-ages listings. The request creates no opportunity or booking. The catalog refresh runs separately from the request.
+
 A turn still processing after 2 minutes lost its worker and becomes unresolved. An unresolved turn is never rerun, and it holds the sender's later messages back for 10 minutes at most. STOP, START and HELP are never held back. Staff with `admin@*` can release a stuck turn with `POST /inbound/resolve {"id":"msg:<channel>:<messageId>"}`; the turn stays unresolved and a replay is still refused.
 
 A handled turn with no replies (a quiet acknowledgement, an under-13 decline) takes a receipt with empty `replyIds` and `providerMessageIds`. `accountEligible` is false for an unknown age, so Cloud eligibility never runs ahead of the join age check. An accepted receipt may carry `historyRecorded: false` (no Eliza account yet).
 
 Agent signals never act on their own. `opt_out` and `safety_concern` are stored as proposed private facets, logged as an alert line, and listed for reviewer or safety staff at `GET /signals`. STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
 
-**Contract.** `packages/core/src/svc/contract.ts` and `svc-auth.ts` are byte-identical to elizaos/eliza `plugins/plugin-network/src/backend/{contract,svc-auth}.ts` on `develop` (upstream #34657 and #34661). There is no contract version constant: `packages/core/test/contract-mirror.test.ts` pins the SHA-256 of both files, the same pins as upstream's `contract-mirror.test.ts`, and `bun run check:mirror` compares the files with upstream through `gh` (read-only, never in a test suite). A wire change lands upstream first, then both files are copied here unchanged and the pins are updated.
+**Contract.** The wire contract matches elizaOS/eliza `plugins/plugin-network/src/backend/contract.ts` on `develop` byte for byte. The signing implementation matches the same upstream directory after its runtime-specific introductory comment. `packages/core/test/contract-mirror.test.ts` pins both hashes and `pnpm run check:mirror` compares them with upstream through `gh`. A wire change lands upstream before the local mirror and pins are updated.
 
 Two paths the service uses are not in the mirror:
 - `DELIVER_RECEIPT_PATH = "/api/internal/network/deliver/receipt"` is a local constant in `cloud-channel.ts`. Eliza Cloud serves it (develop: `packages/cloud/api/internal/network/deliver/receipt/route.ts`, the deliver handler in reconcile-only mode): the same signed body and id as the deliver, and it never sends. The service calls it only to learn whether an unknown acceptance was accepted; it never retries an unknown acceptance with a new id. **Proposal for upstream:** add `DELIVER_RECEIPT_PATH` to `contract.ts`, so both sides name it from the contract.
-- `acceptedAt` is required in the upstream DeliverResponse; `cloud-channel.ts` still accepts a receipt without it (the queue then uses its own clock) and does not trust a malformed one.
+- The queued Cloud adapter requires owned history and distinct provider IDs. It keeps the original timestamp when it is within the queue interval and the existing signing clock tolerance. A legacy response can omit the timestamp and use the queue clock. [Cloud receipt rules](../../../spec/cloudDeliveryReceipt.md)
+
+The Cloud dispatch adapter can retry an explicit temporary refusal with the same key. `unavailable` and `delivery_pending` during receipt lookup leave acceptance unknown. The separate gateway path handles first-contact replies.
 
 Signed state, signal and update actions bind the exact completed open turn, channel, app and member. State windows extend the canonical member row; private hypotheses use the existing facet owner. Cloud outbound uses `NETWORK_CHANNEL=eliza_cloud`, `NETWORK_CLOUD_DELIVERY_ORIGIN`, `SERVICE_TURN_SECRET` and the configured `BLOOIO_FROM`, with the same live approval flags as Blooio. The default and `--dry-run` send nothing.
 
@@ -88,7 +98,7 @@ Real-model qualification with fictional adults on a throwaway local Postgres dat
 
 ```bash
 NETWORK_ENGINE_JUDGE=1 NETWORK_ENGINE_JUDGE_BUDGET_USD=0.25 NETWORK_ENGINE_JUDGE_MAX_REQUESTS=12 \
-  bun test --conditions eliza-source --timeout 300000 \
+  pnpm exec vitest run --testTimeout 300000 \
   packages/network/test/slop-date-path.integration.test.ts --test-name-pattern 'join, onboard'
 ```
 
@@ -98,14 +108,14 @@ This uses the configured provider and sends no member texts. It does not prove a
 
 ```bash
 # Once: one tick, then exit.
-PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<db> bun run packages/network/service/main.ts --once --dry-run
+PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<db> node --import tsx --env-file-if-exists=.env packages/network/service/main.ts --once --dry-run
 
 # As a service: each network ticks every minute on its own; staff and webhooks on 127.0.0.1:4848, the public API on 127.0.0.1:8790.
 PLATFORM_ENV=dev NETWORK_DATABASE_URL=... NETWORK_SERVICE_TOKENS="admin:<t>,reviewer:<t>,safety:<t>,analyst:<t>" \
-  BLOOIO_WEBHOOK_SECRET=whsec_... bun run packages/network/service/main.ts
+  BLOOIO_WEBHOOK_SECRET=whsec_... node --import tsx --env-file-if-exists=.env packages/network/service/main.ts
 ```
 
-The database must have the `network` and `platform` schemas (`bun run db:migrate`; runbook-real 1.1). The service checks the tables at start and does not migrate. It reads the networks and the app policy (`platform.networks`, `platform.apps`) at start.
+The database must have the `network` and `platform` schemas (`pnpm run db:migrate`; runbook-real 1.1). The service checks the tables at start and does not migrate. It reads the networks and the app policy (`platform.networks`, `platform.apps`) at start.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -146,7 +156,7 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 | Outbound | `ChannelAdapter` (`channel.ts`). `DryRunAdapter` is the default. `BlooioAdapter` is the persisted queue (`packages/blooio` `OutboundQueue`, `platform.outbound`, migration 0015) with the Network's send-time checks: the consent ledger and bans, the member's opt-out, `blooioRecipientPolicy`, the person cap, `forbiddenProvider`. It refuses without the live flags. Statuses (and Blooio receipts) are copied to `network.messages`. Attachments (photo links) go as `mediaUrls`. |
 | App packs | `packs.ts`. Each network gets its app's engine pack (`appWiring`): The Network keeps networkPack; slop runs `makeSlopPack({ verification: { required: false } })` (founder decision 9: no ID check; a stated adult age is enough) with `SLOP_ENGINE_CONFIG` on nyc; peon runs `peonPack` with `PEON_ENGINE_CONFIG`; friends runs `friendsPack` with `FRIENDS_PLANS`. Members aged 13-17, and anyone who may be a minor, never enter a pack's input (`ConsentNetwork.packInput`). Every item still waits for a human reviewer. slop adds its hooks (`apphooks.ts`): the engine's onboarding loop (`AppHooks.onboarding`: after the welcome answer, each message goes through `extractSlopProfile`, or `applyCorrection` after a read-back, then `slopOnboardTags`; the next message is the read-back once every hard field is set, else `nextQuestion`, one question at a time and each at most twice; the state is kept on the member as `onboarding`, values only, never the member's words). Orientation follows PRD 40.5: "bi", "pan", "queer", "both" and "a mix" leave who they seek unset and the agent asks again; the founder may still choose to read them as a seeking set instead (listed as a founder decision). The pack's own asks use the loop's next question too. Then the date probe with an age band and a distance band, a public place near the midpoint (lit indoor or plaza places after dark), the booked date with the share-my-date tip, and the check-in after the date. A new slop member opts in to dating only when the person is 18 or more. |
 | Reports, holds, bans | A "report X" message and slop's check-in after a date are reports (`reports.ts`): ids and a kind (harassment, lying, no_show, unsafe, scam, minor, other), never the words. An urgent report (harassment, unsafe, scam, minor) by someone who met them, at the check-in or in a "report X" text, keeps the member out of matching until staff decide. Hold reaches the person on every app. A ban (`platform.bans`, migration 0011) by phone or by person restricts every membership, holds every member, suppresses the numbers, and refuses every later join (web or text). Delete everything keeps it. |
-| Photos | `packages/platform/src/photos.ts` on `/api/photos/*` (slop only; the upload form is on `slop.date/settings`): an adult (the person's lowest stated age is 18 or more; an unknown age fails closed), not banned, the photo consent, JPEG/PNG/WebP up to 8 MB and 6 photos, metadata stripped. Photos by text (`photoIntake.ts`): a slop member's attachment is fetched only after the adult and ban checks pass and the photo consent was given by text (asked once; only an explicit "YES PHOTOS" on a message routed to slop counts, so a bare yes to a probe or on another app is never taken as photo consent); a minor's photo is dropped unfetched. Storage: `PHOTO_STORAGE=r2` (`R2_ENDPOINT` or `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`; a private bucket) or `PHOTO_STORAGE=local` (dev only, `PHOTO_DIR`). Unset: photos are off. No public URL: staff get a 5-minute signed link (`PHOTO_VIEW_BASE_URL`, default `https://<app domain>`) after an audited read. The rater (`photoRater`; `server.ts` calls the platform's `photoRaterFromEnv`: on by default, `CLEF_RATINGS=off` turns it off; the engine's `makeClefRaterFromEnv` from `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_MODEL`, with the placeholder Clef weights unless `CLEF_WEIGHTS_PATH` names a fitted file with version and provenance (a file without them is refused), with 3 tries on API errors, each try a cost row) rates the member from up to 4 photos after each upload or delete and stores the engine's `appearanceFacet` (agent_private; never in the console). The score is discarded if the person stopped being a rateable adult member, was banned or lost a rated photo while the rater ran. Without the token or the account id, ratings are off. Leaving the app, delete everything, or an age under 18 deletes the photos and the rating; a ban deletes the rating. |
+| Photos | `packages/platform/src/photos.ts` on `/api/photos/*` (slop only; member photo intake uses the authorized conversation): an adult (the person's lowest stated age is 18 or more; an unknown age fails closed), not banned, the photo consent, JPEG/PNG/WebP up to 8 MB and 6 photos, metadata stripped. Photos by text (`photoIntake.ts`): a slop member's attachment is fetched only after the adult and ban checks pass and the photo consent was given by text (asked once; only an explicit "YES PHOTOS" on a message routed to slop counts, so a bare yes to a probe or on another app is never taken as photo consent); a minor's photo is dropped unfetched. Storage: `PHOTO_STORAGE=r2` (`R2_ENDPOINT` or `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`; a private bucket) or `PHOTO_STORAGE=local` (dev only, `PHOTO_DIR`). Unset: photos are off. No public URL: staff get a 5-minute signed link (`PHOTO_VIEW_BASE_URL`, default `https://<app domain>`) after an audited read. The rater (`photoRater`; `server.ts` calls the platform's `photoRaterFromEnv`: on by default, `CLEF_RATINGS=off` turns it off; the engine's `makeClefRaterFromEnv` from `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_MODEL`, with the placeholder Clef weights unless `CLEF_WEIGHTS_PATH` names a fitted file with version and provenance (a file without them is refused), with 3 tries on API errors, each try a cost row) rates the member from up to 4 photos after each upload or delete and stores the engine's `appearanceFacet` (agent_private; never in the console). The score is written only while the person and the exact selected photos remain eligible. The write pins the person and photo rows. A late change clears only the version written by that attempt. Without the token or the account id, ratings are off. Leaving the app, delete everything, or an age under 18 deletes the photos and the rating; a ban deletes the rating. |
 | Bias monitor | `bias.ts`: once a week per slop network, after a tick, the engine's `biasMonitor` over the last 28 days (proposals, dates, second dates) by photo-rating quintile; stored in `network.bias_reports` (migration 0014), `[alert] bias ...` log lines under 0.8x, shown in the console. |
 | Review SLA alerts | After each tick: one `[alert] review SLA ...` log line per item waiting longer than its app's SLA (slop 6 h, peon 24 h, others 12 h; observatory `DEFAULT_SLA_HOURS`). |
 | Staff API | Below. Every action writes `network.staff_audit` (a "requested" row before the action, a "result" row after) and the Network's own logs (`review_decision`, `safety_action`, `matching_switch` in `network.events`). |
@@ -158,8 +168,8 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | Route | Role | Body |
 |---|---|---|
 | `GET /health` | any role for the app | Last tick, lock holder, backlog (review, overdue, deferred, waiting sends), refusals; with several networks, a `networks` summary |
-| `GET /review` | reviewer, safety | The review queue, oldest first |
-| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. The reviewer of record is the token's staff id, never a field in the body. |
+| `GET /review` | reviewer, safety | The review queue, oldest first, with the current `revision` for each item |
+| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", revision, reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. Send the revision the reviewer saw. A changed revision returns `review_stale`. The token identifies the reviewer. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
 | `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
@@ -177,6 +187,10 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `GET /members/:id/photos` | safety | `X-Network-Reason: <5+ characters>`. Only with an open safety report (open or held) or an open safety case about the member, as the photo consent promises (403 `no_report`, audited as refused); the report or case id goes in the audit row. Verified adults only (403 `adults_only`); the audit row is written before any link |
 | `GET /bias` | admin, analyst | The newest weekly bias monitor reports of the network (aggregates only) |
 | `POST /matching` | admin | `{ on: true \| false }`. Refused (`matching_not_allowed`) for a network the registry keeps off. Migration 0011 allows slop and peon; their stored switch still starts off. |
+| `GET /postings?managerId=` | admin, reviewer | peon only (404 elsewhere). The job postings of one hiring manager, or all (`postings.ts`). Audited as `read_postings`. |
+| `POST /postings` | admin | peon only. Create, update or reopen a posting `{ managerId, id?, title, payMin, payMax, openings?, mode?, area?, must?, nice?, sponsors? }` through the same checks as a text post (an adult, active, opted-in manager). Audited as `save_posting`. |
+| `POST /postings/:id/close` | admin | peon only. `{ reason: "closed" \| "filled" }`; open seat items that are not booked end at once. Audited as `close_posting`. |
+| `POST /employers/:memberId/verify` | admin | peon only. `{ company, note }` (note 5+ characters): the company fact and `peon:verified` on the manager. peonPack proposes no job of an unverified employer. Audited as `verify_employer`. |
 | `/review-mode` | none | Always 404. Production review is "human" only (PRD 32.8). The service refuses any other mode at start. |
 
 A refused action answers 409 with the Network's reason (for example `participant_minor`, `matching_paused`, `not_in_review`). A new stored state starts with matching off (runbook-real 7.4 check 8). An admin turns it on.
@@ -237,7 +251,7 @@ Two parts of the product talk to members. They have different jobs.
 | | This service (`packages/network/service`) | `packages/plugin-network` (the Eliza agent side) |
 |---|---|---|
 | What it is | The Network: matching, review, consent, probes, booked plans, reminders, feedback, safety, outreach limits | An Eliza plugin: the member-context provider, the `SET_STATE` action, the network-signals evaluator and their routing |
-| Who runs it | A Bun process on its own (Railway worker, runbook-real 7.2) | Eliza Cloud, on each agent turn, with Cloud's stores and turn authority |
+| Who runs it | A Node 26 process (Railway worker, runbook-real 7.2) | Eliza Cloud, on each agent turn, with Cloud's stores and turn authority |
 | State | `network.network_state` and the console tables, under the advisory lock | The `NetworkStore` that Cloud injects (availability state, member context) |
 | Messages | Every Network message (probes, booked plans, reminders) goes through its send path, the leak guard and the adapter | Agent replies in a conversation the member started |
 | Review | Every opportunity waits for a person here | Never composes an opportunity |
@@ -246,8 +260,142 @@ Rules for the boundary:
 
 1. **One owner per inbound message.** The service handles every inbound message it gets. This service answers STOP, START and HELP, inside the signed turn; the gateway only mirrors the reported `consent`. The legacy Blooio webhook must not point at the service while the gateway owns the line, or two systems would confirm a STOP.
 2. **Only this service proposes or contacts members about other members.** The plugin must not send probes, introductions or booked plans. It can read what the Network knows through its own store.
-3. **Joining is a membership.** The platform creates members: a web join (`POST /api/join`) or a join by text on an open app makes the person, the membership and the `network.members` row. For The Network, Cloud's invite gate still creates the `network.members` and `network.channel_identities` rows. An `invited` member is not a member here.
+3. **Joining is a membership.** The platform creates members after a verified join (`POST /api/join`) or a join by text on an open app. A new membership through a forwarding link commits with consent, the Network member, and the app-scoped attribution. An `invited` member still has to complete signup.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.
+
+## Founding-cohort invitations
+
+An app admin can issue one batch through `POST /apps/<app>/invite/seed` with a
+UUID `batchId` and `invitations` containing up to 100 rows. Each row supplies
+`phone`, `city` (`nyc` or `sf`) and a private `vouch` of at most 500 UTF-8 bytes.
+Forward the returned links to their intended recipients. An exact replay by
+the same issuer returns the same links until expiry. Changing the rows under
+the same batch ID returns a conflict.
+
+The verified recipient decides whether to join through the existing age and
+consent checks. The first join records the issuer and cohort city separately
+from the member's own profile. Private vouches leave the invitation on
+redemption, signed decline, or expiry. [Seed invitation rules](../../../spec/seedInvitation.md)
+
+## Expected member invitation
+
+A member can take an issued forwarding link and send a private signed turn
+`SEND INVITE <link> TO <phone>`. The service returns a short-lived reference.
+The member replies `CONFIRM EXPECTED INVITE <reference>` only if the recipient
+expects the text. The confirmation reply is the same when the recipient is
+unavailable. The normal vouch review and invitation allowance already apply to
+the link.
+
+The service-send path needs a carrier adapter that admits first contact.
+Eliza Cloud currently requires a Cloud account before it admits a proactive
+delivery. On that adapter or while delivery is disabled, the service returns
+the forwarding option without saving a draft or asking for a confirmation.
+
+The existing outbound queue applies consent, quiet hours, line limits and the
+leak check. A sent invitation names the inviter and gives the recipient
+`DECLINE INVITE` and `STOP`. The queue uses the original key for any provider
+receipt lookup. Once queued, the link requires verification of the exact
+recipient phone, along with the existing age and consent checks. [Expected
+invitation rules](../../../spec/expectedMemberInvitation.md)
+
+## Review saved profile facts
+
+In a signed member conversation, send `SHOW MY FACTS` or `WHAT DO YOU KNOW ABOUT ME?` to list the current app's saved facts with their source and privacy scope. Follow the page prompt to see more. `SHOW MY <APP> PROFILE` still reads back the saved signup profile.
+
+Use a reference from the list with `CORRECT FACT <ref> TO <text>`, `REMOVE FACT <ref>`, or `SET FACT SCOPE <ref> TO <scope>`. The service sends an exact edit code that lasts 15 minutes. Reply with `CONFIRM FACT EDIT <code>` to apply it or `CANCEL FACT EDIT <code>` to discard it.
+
+## Private home-help review
+
+An eligible adult who asks for home entry receives a private intake prompt. The
+signed reply records the confirmed moving task, NYC neighborhood, time window,
+effort and outcome of considering a service. The owner can revise or close the
+plan by ID and revision. Members can express or withdraw willingness with
+`OFFER HOME HELP` and `WITHDRAW HOME HELP OFFER`.
+
+Safety staff on the app use `GET /apps/<app>/safety/home-help` for the queue.
+`POST /apps/<app>/safety/home-help/<id>` takes `nominate`, `approve` or `close`
+as the action, with the current revision and the exact helper IDs for nomination
+and approval. Nomination creates a new revision. Approval rereads age, consent,
+holds, blocks, offers, availability and capacity. A singleton also needs recorded
+prior contact at a shared public plan or a confirmed meeting edge. Approval, the
+exact consent roster and its staff audit commit together. The outbound queue
+sends the requester a coarse plan card, then asks the approved helpers after the
+requester's explicit yes. Each signed response names the plan code and revision
+and requires a send receipt for that member's card.
+
+An existing verified `ntwrk.party` app session can use
+`POST /api/home-help/venue`. Send `action` (`submit`, `reveal` or `revoke`),
+`id` (the plan code) and `revision`. Add `address` for `submit`. Only the
+requester can submit or revoke it. Only current, consenting helpers can retrieve
+it, after everyone on the approved roster agrees. The response is private and
+uncached. Keep the address out of SMS, agent chat and tool logs.
+
+[Review rules](../../../spec/boundedHelp.md) ·
+[Consent rules](../../../spec/homeHelpConsent.md) ·
+[Private address rules](../../../spec/privateHomeHelpVenue.md)
+
+## Monthly NYC gathering
+
+Network admins use `GET /apps/ntwrk/gatherings` to list gatherings, or `POST`
+to create a draft with `month`, `venue`, `startsAt`, `endsAt` and `capacity`.
+Use `YYYY-MM` for the NYC calendar month, Unix milliseconds for the times,
+and a `venue` with `kind` (`curated` or `listing`) and its `id`. Submit the
+draft's `revision` and `decision` (`approve` or `reject`) to
+`POST /apps/ntwrk/gatherings/<id>/review`. Approval records the authenticated
+staff actor and rechecks the selected public venue and time.
+
+Before the gathering starts, `GET /apps/ntwrk/gatherings/<id>/priority?revision=<revision>`
+returns eligible member IDs in suggested invitation order. The order uses
+newcomer, recent participation and pending second encounter evidence.
+Submit `revision` and an ordered `memberIds` selection to
+`POST /apps/ntwrk/gatherings/<id>/invitations/review`. You can omit members
+and preserve the order of the members you select. The first decision fixes
+that revision's list. An identical request returns the saved review.
+
+During the NYC rollout, ordinary service ticks pass each reviewed invitation
+through the proactive outreach and outbound queue checks. A current public
+venue, an available RSVP place and the recipient's current event preference
+are required. The invitation includes a reply command for that gathering.
+
+Eligible adults use the signed text conversation to send
+`RSVP GATHERING <id> <revision> YES`. They can add `WITH GROUPING` to let
+staff consider them for a small group. A later plain `YES` removes that
+permission and keeps the reservation. `WITHDRAW GATHERING <id> <revision>`
+withdraws the RSVP. An admin can read the current roster at
+`GET /apps/ntwrk/gatherings/<id>/roster?revision=<revision>`. The roster uses
+member IDs and the current grouping choice.
+
+Use `GET /apps/ntwrk/gatherings/<id>/grouping?revision=<revision>` to preview
+groups of three to five members with current grouping consent. Approve the
+current `fingerprint` and `revision` with
+`POST /apps/ntwrk/gatherings/<id>/grouping/review`. A change to the current
+grouping requires a fresh review.
+
+Members with an active reservation can receive a day-before reminder, a
+near-start reminder, and a private attendance question through the usual
+outbound controls. Members have seven days after the gathering ends to send
+`GATHERING ATTENDED <id> <revision> YES` or `NO`. From the start of the
+gathering, members in an approved group can send `GATHERING REFERENCE <id>
+<revision>` for their own shareable reference. After confirming attendance,
+use `GATHERING FOLLOW-UP <id> <revision> <peer-reference> YES` to make a
+private choice, or `NO` to withdraw it.
+
+Two current mutual choices can create one second-encounter review for that
+gathering and pair. Staff approve the exact pair. Each member then answers
+their own anonymous probe before either receives the initial meeting details.
+The queue rechecks the exact gathering choices and both members' adult
+eligibility before initial contact or disclosure. A booked meeting uses the
+ordinary logistics and consent rules.
+
+[Staff review rules](../../../spec/monthlyGathering.md) ·
+[Invitation approval](../../../spec/monthlyGatheringInvitationReview.md) ·
+[Invitation delivery](../../../spec/monthlyGatheringDelivery.md) ·
+[RSVP and privacy rules](../../../spec/monthlyGatheringRsvp.md) ·
+[Grouping review](../../../spec/monthlyGatheringGrouping.md) ·
+[Reminders and attendance prompt](../../../spec/monthlyGatheringNotices.md) ·
+[Attendance and follow-up](../../../spec/monthlyGatheringFollowup.md) ·
+[Reviewed second encounter](../../../spec/gatheringRepeat.md) ·
+[Second-encounter delivery checks](../../../spec/gatheringRepeatDelivery.md)
 
 ## Limits
 
@@ -255,13 +403,27 @@ Rules for the boundary:
 - **The queue's caps are placeholders.** 200 agent-started messages and 20 new conversations a day per line until prototype P3 measures the line.
 - Parked leak reviews have staff routes (`/queue/leak-review`, above). Collected replies in signed turns get the same leak guard before they are returned to Cloud; one that fails goes to the queue instead, where it is parked for that review.
 - **The requester's time question has no opportunity id.** The Network sends it with no `proposalId` (network.md 4.1), so its `network.messages` row has no `opportunity_id`. Probes are linked through `meta.probe.key`.
-- **Invites are not built.** The Network's `ctx.invite` is not set, so an invite request logs `invite` with no new member.
+- A direct signed request asks for the relationship, duration and depth. The member confirms the readback before a link is issued. Eligible adults can forward the app-bound, single-use link. It expires 30 days after the request. Reviewers can list and decide unusual vouches through `/apps/<app>/review/member-invitations`. After approval, the inviter asks for the link with `Check invite <code>`. Signup checks the invitee's verified phone, age and consent. The invitee's city owns the welcome, and the inviter's city owns the join notice. [Invitation rules](../../../spec/memberInvitation.md) · [Join projection](../../../spec/invitationJoinProjection.md)
 - **The service imports the Observatory's modules** (`events.ts`, `engineCapture.ts`, `staff.ts`) by path, so the events, run summaries and staff auth are the same in both. The Observatory imports `snapshot.ts` from here.
 - **No JWT check.** Use role tokens only, and keep the port on 127.0.0.1 or behind an access proxy.
 - **No fencing on the save.** Two instances that both believe they hold a network's lock can overwrite each other's state (audit network-service-8).
 - **One network engine for every app.** Each app's ConsentNetwork is The Network's code with that app's brand words and join age. The NYC places, time zone and copy are NYC only. The slop and peon packs are wired (`packs.ts`); their matching is off only by the stored switch (`POST /matching`).
 - **Phones of platform members are in `platform.phone_identities` only.** `network.channel_identities` allows one member per address, so it cannot hold a phone that is a member of two apps. Console views that read phones from `channel_identities` do not see platform members.
 
+
+### Public event catalog
+
+The NYC matcher reads upcoming public listings from the catalog after a successful import. This can recheck a standing intent on the next matching tick. A changed listing requires another approval before anyone is contacted about it. Matching ticks and member turns read Postgres only. [NYC Parks public events dataset](https://data.cityofnewyork.us/City-Government/NYC-Parks-Public-Events-Upcoming-14-Days/w3wp-dpdi)
+
+Migration `0042` creates the catalog and its restricted ingest role. Give the feed runner a separate login with `network_public_event_ingest` and set `NETWORK_PUBLIC_EVENTS_DATABASE_URL` for that runner. Run one refresh explicitly with Node 26.
+
+```sh
+node --import tsx packages/network/service/import-public-events.ts
+```
+
+The command fetches the city dataset once and publishes the normalized scan in one transaction. The daily source expires from matching after two days without a successful refresh. The backend starts with an empty catalog on a new database. [Catalog rules](../../../spec/publicEventCatalog.md)
+
+For a recurring refresh, use a separate Railway cron service with the repository root as its build context. Set `RAILWAY_DOCKERFILE_PATH=/deploy/backend/Dockerfile` and use the command above as its start command. Set `Cron Schedule` to `5 12 * * *` for a daily run at 12:05 UTC, and set the restart policy to `Never`. Apply migration `0042` before the first run and supply the ingest URL to this service. The importer closes its connection and exits after one scan. [Railway cron jobs](https://docs.railway.com/cron-jobs), [Dockerfile settings](https://docs.railway.com/builds/dockerfiles)
 
 ### Isolated signed-route receiver
 

@@ -1,6 +1,8 @@
 # Clef weight fitting for P2: fitter, labelling tool, extraction, bias audit (2026-10-09)
 
-Branch `engine/clef-fit` (from `origin/main` @ `6a55050`). **No Workers AI or LLM calls, $0.** Every number below comes from simulation: synthetic labels drawn from the slop world's hidden appearance. Validation is `bun run sim` (new `clef` block).
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-09-clef-fitting.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
+Branch `engine/clef-fit` (from `origin/main` @ `6a55050`). **No Workers AI or LLM calls, $0.** Every number below comes from simulation: synthetic labels drawn from the slop world's hidden appearance. Validation is `pnpm run sim` (new `clef` block).
 
 **Founder decisions (authoritative):**
 - the Clef attractiveness rater is on;
@@ -31,7 +33,7 @@ This work rebuilds the fitter that was deleted in the dead-code cleanup (`47a46c
   - The label-side check (`fit --groups`) shows the fitted head under-rates the group relative to unbiased raters: +0.054 ± 0.018 on overall.
   - At no bias, nothing is flagged.
   - **A linear head on Clef's answers cannot remove a bias that is already in those answers.** Only the audit finds it.
-- **`bun run sim`:** the new `clef` block has 10 blocking gates and 2 tracked gates, all passing, in about 8 s. `tsc` is clean. The full `bun run sim` did not finish on the loaded machine (see Validation).
+- **`pnpm run sim`:** the new `clef` block has 10 blocking gates and 2 tracked gates, all passing, in about 8 s. `tsc` is clean. The full `pnpm run sim` did not finish on the loaded machine (see Validation).
 
 ## What was built
 
@@ -41,10 +43,10 @@ This work rebuilds the fitter that was deleted in the dead-code cleanup (`47a46c
 | Bias audit (pure, wraps `biasMonitor`) | `packages/engine/src/packs/slop/clef-fit/audit.ts` |
 | Feature-extraction plan and runner (pure, rater injected) | `packages/engine/src/packs/slop/clef-fit/features.ts` |
 | Weights provenance type, fitted files must carry it | `packages/engine/src/packs/slop/clefWeights.ts` |
-| Operator CLI: `bun run clef <fit, calibrate, features, audit, synth>` | `scripts/clef-fit.ts` |
+| Operator CLI: `pnpm run clef <fit, calibrate, features, audit, synth>` | `scripts/clef-fit.ts` |
 | Labelling page (static, local only) and the consent and handling rules | `tools/clef-label/index.html`, `tools/clef-label/README.md` |
 | Synthetic data from the slop world's hidden appearance | `packages/sim/src/apps/slop/clefSynth.ts` |
-| Sim block | `scripts/sim/clef.ts` (in `bun run sim` by default) |
+| Sim block | `scripts/sim/clef.ts` (in `pnpm run sim` by default) |
 
 ## Method
 
@@ -66,7 +68,7 @@ Clef answers a fixed bank of 13 questions per photo (`CLEF_QUESTIONS`, `clef.ts`
   After evaluation, the shipped head is refitted on train plus test (`--no-refit` keeps the train-only head).
 - **Calibration.** The bias cancels in a difference, so the head is b = 0. `calibrateClefWeights` sets the mean and SD of each head's raw output on a population, so the score reads as a z-score:
   - by default on the labelled photos;
-  - then on the live member population with `bun run clef calibrate`.
+  - then on the live member population with `pnpm run clef calibrate`.
 
 ### Report
 
@@ -139,7 +141,7 @@ Clef answers a fixed bank of 13 questions per photo (`CLEF_QUESTIONS`, `clef.ts`
   No careful rater is flagged.
 - **Learned overall head:** rate.face 2.29, rate.overall 2.23, rate.body 1.51, aux.fitness 1.32, aux.grooming 0.65, **aux.photo_quality −1.95**, the rest small.
 
-**Label count vs recovery (overall; pooled seeds 1-5; `bun run clef synth --curve --seeds 1-5`):**
+**Label count vs recovery (overall; pooled seeds 1-5; `pnpm run clef synth --curve --seeds 1-5`):**
 
 | Labels (overall) | Tau on unseen photos | Held-out label accuracy | ECE | Alpha | Careless rater flagged |
 |---|---|---|---|---|---|
@@ -172,7 +174,7 @@ Clef answers a fixed bank of 13 questions per photo (`CLEF_QUESTIONS`, `clef.ts`
 - **Rater bias did not reach the scores here,** because the synthetic features carry no group signal. Real Clef answers may correlate with demographics (skin tone, age cues, body size), and then rater bias can leak through. Audit the labels as well as the scores.
 - **The audit's selection ratio is noisy at about 200 opt-in members per group:** 0.86 with no bias. Groups need about 100 or more members before a 0.8x flag means much.
 
-### Gates in `bun run sim` (block `clef`; pinned seed 1)
+### Gates in `pnpm run sim` (block `clef`; pinned seed 1)
 
 **Blocking:**
 
@@ -242,7 +244,7 @@ In that case P2 answers "do ratings help" with no. The options then are `appeara
 ## Bias-audit procedure
 
 1. **Groups are opt-in self-reports.** A photo subject (for P2) or a member (after launch) may state a demographic group on the consent form. It is never inferred from photos or names. Unreported is the default, and the audit shows the share reporting by rating quintile, so a skew in who opts in is visible.
-2. **Label side (P2, before shipping weights).** Run `bun run clef fit ... --groups groups.jsonl` (`{"photo", "group"}` per line) and read the label-side check:
+2. **Label side (P2, before shipping weights).** Run `pnpm run clef fit ... --groups groups.jsonl` (`{"photo", "group"}` per line) and read the label-side check:
    - a FLAG means the model rates the group differently from the raters;
    - with unbiased raters, that is a Clef bias the head cannot fix.
 
@@ -250,7 +252,7 @@ In that case P2 answers "do ratings help" with no. The options then are `appeara
    - more labels for that group;
    - dropping the biased zero-shot feature from the head (`--exclude-features rate.face`, for example) and refitting;
    - `appearance.mode` off.
-3. **Score side (P2 and weekly after launch).** Run `bun run clef audit --members members.jsonl` with `{"id", "overall" | "photos", "group"?, "memberMonths"?, "proposals"?, "dates"?, "secondDates"?}` per line. Add `--weights` and `--features` to score from photos. Flags:
+3. **Score side (P2 and weekly after launch).** Run `pnpm run clef audit --members members.jsonl` with `{"id", "overall" | "photos", "group"?, "memberMonths"?, "proposals"?, "dates"?, "secondDates"?}` per line. Add `--weights` and `--features` to score from photos. Flags:
    - **selection:** a group's share of the top two rating quintiles is under 0.8x its share of reporters;
    - **SMD:** a group's mean is more than 0.5 SD below the other groups;
    - **outcome:** `biasMonitor` reports proposals, dates or second dates per member-month under 0.8x the overall rate, by group and by rating quintile.
@@ -277,21 +279,21 @@ Legal note (unchanged, iteration 4): face-derived scores may be biometric data u
 2. **Rehearse with synthetic data (no real photos):**
 
    ```bash
-   bun run clef synth --write p2/rehearsal
-   bun run clef fit --features p2/rehearsal/features.jsonl --pairs p2/rehearsal/labels.jsonl --groups p2/rehearsal/groups.jsonl --out p2/rehearsal/w.json
-   bun run clef audit --members p2/rehearsal/members.jsonl --weights p2/rehearsal/w.json --features p2/rehearsal/features.jsonl
+   pnpm run clef synth --write p2/rehearsal
+   pnpm run clef fit --features p2/rehearsal/features.jsonl --pairs p2/rehearsal/labels.jsonl --groups p2/rehearsal/groups.jsonl --out p2/rehearsal/w.json
+   pnpm run clef audit --members p2/rehearsal/members.jsonl --weights p2/rehearsal/w.json --features p2/rehearsal/features.jsonl
    ```
 
 3. **Featurise.** First a dry run: it reads no photo and prints the plan, the skips and the cost.
 
    ```bash
-   bun run clef features --photos p2/photos --manifest p2/consent.jsonl --out p2/features.jsonl
+   pnpm run clef features --photos p2/photos --manifest p2/consent.jsonl --out p2/features.jsonl
    ```
 
    Then the live run. It needs the env, refuses if the estimate is over `--budget-usd` (default $5), and is resumable:
 
    ```bash
-   CLOUDFLARE_AI_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... bun run clef features --photos p2/photos --manifest p2/consent.jsonl --out p2/features.jsonl --live
+   CLOUDFLARE_AI_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... pnpm run clef features --photos p2/photos --manifest p2/consent.jsonl --out p2/features.jsonl --live
    ```
 
    - Photos without a manifest row, under 18, unverified, without a consent reference, flagged, or over 4 MiB are never read.
@@ -304,7 +306,7 @@ Legal note (unchanged, iteration 4): face-derived scores may be biometric data u
 6. **Fit:**
 
    ```bash
-   bun run clef fit --features p2/features.jsonl --pairs p2/labels/a.jsonl,p2/labels/b.jsonl,... --groups p2/groups.jsonl --version p2-2026-11 --out p2/clefWeights.json --report p2/fit-report.json
+   pnpm run clef fit --features p2/features.jsonl --pairs p2/labels/a.jsonl,p2/labels/b.jsonl,... --groups p2/groups.jsonl --version p2-2026-11 --out p2/clefWeights.json --report p2/fit-report.json
    ```
 
    - Review the per-rater table. Re-run with `--exclude-raters` only for a rater whose flags are confirmed on review.
@@ -313,25 +315,25 @@ Legal note (unchanged, iteration 4): face-derived scores may be biometric data u
 8. **Recalibrate on members** once real members have photos rated, so 0 means the member mean:
 
    ```bash
-   bun run clef calibrate --weights p2/clefWeights.json --population member-features.jsonl --out clefWeights.json
+   pnpm run clef calibrate --weights p2/clefWeights.json --population member-features.jsonl --out clefWeights.json
    ```
 
 9. **Deploy.**
    - Set `CLEF_WEIGHTS_PATH` to the file on the backend. **The platform does not read `CLEF_WEIGHTS_PATH` yet:** wiring photo upload and Clef rating into `server.ts` is MVP item 5. Until then, the file is loaded with `loadClefWeights(path)` and passed as `weights` to `makeClefRaterFromEnv`.
    - Re-rate members whose rating came from the placeholder.
-10. **Weekly after launch:** run `bun run clef audit` with outcomes, by group and rating quintile; exit code 3 means flags, so alert on it. Refit when 1,000 or more new labels exist, or after a Clef model change, with a new `--version`.
+10. **Weekly after launch:** run `pnpm run clef audit` with outcomes, by group and rating quintile; exit code 3 means flags, so alert on it. Refit when 1,000 or more new labels exist, or after a Clef model change, with a new `--version`.
 11. **Retention.** When P2 ends, archive the labels, features, manifest and releases encrypted, or delete them. On a subject's withdrawal, delete their photos, labels and feature rows and refit.
 
 ## Validation
 
-**`bun run sim --only clef`:** 10/10 blocking, 2 tracked, about 8 s.
+**`pnpm run sim --only clef`:** 10/10 blocking, 2 tracked, about 8 s.
 
-**Full `bun run sim` on this branch: not completed.** The machine was running about ten other worktrees' sims, with a load average of 200-500. The run passed evals 24/24 and the network gates it reached, then got about 4 CPU-minutes in 85 minutes and was stopped. Two points bear on the other blocks:
+**Full `pnpm run sim` on this branch: not completed.** The machine was running about ten other worktrees' sims, with a load average of 200-500. The run passed evals 24/24 and the network gates it reached, then got about 4 CPU-minutes in 85 minutes and was stopped. Two points bear on the other blocks:
 
 - `peon`, `friends` and `network` import nothing from Clef.
 - `slop` uses the placeholder weights unchanged. The only change on its path is the new `validateClefWeights` check, which applies only to files with `placeholder: false`.
 
-Re-run `bun run sim` on an idle machine before merging.
+Re-run `pnpm run sim` on an idle machine before merging.
 
 **`tsc --noEmit -p .` and `-p sites/tsconfig.json`:** clean. The repo's `typecheck` script also typechecks `packages/plugin-network`. That fails in a fresh worktree whose `eliza` submodule is not checked out (`@elizaos/core` not found); the failure is unrelated to this change, which touches no plugin code.
 

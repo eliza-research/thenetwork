@@ -12,10 +12,10 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "deploy/backend/Dockerfile"
-watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "bun.lock", "tsconfig.json"]
+watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json"]
 
 [deploy]
-startCommand = "bun run packages/observatory/src/server.ts --mode real"
+startCommand = "node --import tsx packages/observatory/src/server.ts --mode real"
 # /healthz answers 200 without auth or data (the console's own liveness; it does not check the database).
 healthcheckPath = "/healthz"
 healthcheckTimeout = 60

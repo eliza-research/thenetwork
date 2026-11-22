@@ -3,8 +3,9 @@
 // (platform.outbound) and the Blooio adapter out to a fake provider that records every request, on a
 // simulated clock. Nothing leaves the machine: the fake has kind "sim", the only provider kind the
 // adapter accepts a live gate for; the real live flags are never set. Phones are +1 212 555 01xx.
+import { findExecutable } from "../../../packages/core/src/runtime/process.ts";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
+import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { MINUTE, SimClock } from "../../../packages/core/src/index.ts";
 import { signBlooioPayload } from "../../../packages/blooio/src/blooio/webhook.ts";
 import { ChannelSendError, type ChannelAdapter, type SendReceipt, type SendRequest } from "../../../packages/blooio/src/types.ts";
@@ -27,7 +28,7 @@ const USER = process.env.USER ?? "postgres";
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 
 /** Whether a dev Postgres can run here (the binaries are installed). */
-export const pgInstalled = () => ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+export const pgInstalled = () => ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 
 async function admin(q: string) {
   const sql = new SQL({ url: ADMIN_URL, max: 1 });

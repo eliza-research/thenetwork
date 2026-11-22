@@ -1,7 +1,7 @@
 // The ONE place peonPack reads member data (the protected-attribute firewall). Typed candidate and
 // job profiles are parsed from facet tags (schema.ts) and intents, once per World.
 //
-// Firewall rules (bun run sim checks sealed-attribute invariance end to end):
+// Firewall rules (pnpm run sim checks sealed-attribute invariance end to end):
 //   - only matchable / shareable facets, plus two kinds of agent_private facet the pack needs:
 //     the candidate's company exclusions (a boundary: never show me to my employer) and the
 //     agent's safety cues (scam, fake identity, discriminatory request);
@@ -13,11 +13,15 @@ import type { World } from "../../world.ts";
 import { JOB_INTENT, SAFETY, SEARCH_INTENT, T, type PeonMode } from "./schema.ts";
 
 export type Evidence = "claimed" | "demonstrated" | "interview";
-export interface SkillClaim { level: number; evidence: Evidence; facetId: string; shareable: boolean }
+/** `reviewedIn`: the facet that reviewed the skill (a trusted source or an interview); none for a claim. */
+export interface SkillClaim { level: number; evidence: Evidence; facetId: string; shareable: boolean; reviewedIn?: string }
 
 export interface CandidateProfile {
   kind: "candidate"; id: MemberId;
   families: string[]; seniority?: number;
+  seniorityFacetId?: string;
+  /** The facet of a trusted source (connected source or vouch) that gave the level; none when only the candidate stated it. */
+  seniorityReviewedIn?: string;
   skills: Map<string, SkillClaim>;
   floor?: number; modes: Set<PeonMode>; areas: Set<string>;
   auth?: boolean; needsSponsor?: boolean; creds: Set<string>; excluded: Set<string>;
@@ -31,7 +35,7 @@ export interface CandidateProfile {
 export interface JobProfile {
   kind: "job"; id: MemberId; intentId?: string; title: string;
   company?: string; companyName?: string; verified: boolean;
-  family?: string; seniority?: number;
+  family?: string; seniority?: number; seniorityFacetId?: string;
   payMin?: number; payMax?: number; payFacetId?: string;
   mode?: PeonMode; market?: City; area?: string;
   must: { skill: string; min: number }[]; nice: string[];
@@ -47,19 +51,17 @@ export interface JobProfile {
 }
 export type PeonProfile = CandidateProfile | JobProfile;
 
+/** A fact from a connected source or a member's vouch: reviewed (spec/memberStanding.md), not only stated. */
+const trustedSource = (f: Facet): boolean => f.provenance === "connected_source" || f.provenance === "vouched";
+
 /** Pipeline state per member, from the Network's own interaction log. */
 export interface PeonHistory {
   /** Intros in flight (pending candidate / employer answer, or interviewing). */
   inFlight: number;
   /** Candidate yeses waiting for the employer's review (job seats). */
   pendingReview: number;
-  /** Applications the employer answered (yes or no) / let expire without an answer (job seats: responsiveness). */
-  answered: number; ghosted: number;
-  /** Candidate yeses received in the last 28 days (job seats). */
-  applications28: number;
-  /** All intros ever proposed to this member (job seats: total exposure so far). */
-  intros: number;
-  hires: number;
+  /** Applications the employer answered, yes or no (job seats: the company's probation ends). */
+  answered: number;
 }
 
 interface Cache { profiles: Map<MemberId, PeonProfile | null>; history: Map<MemberId, PeonHistory>; extra: Map<string, unknown> }
@@ -71,7 +73,7 @@ function cacheOf(w: World): Cache {
   return c;
 }
 
-/** Per-World scratch space for other pack modules (pool sizes etc.). */
+/** Per-World scratch space for other pack modules (company probation, seats per company). */
 export function worldScratch<V>(w: World, key: string, make: () => V): V {
   const c = cacheOf(w);
   if (!c.extra.has(key)) c.extra.set(key, make());
@@ -81,7 +83,7 @@ export function worldScratch<V>(w: World, key: string, make: () => V): V {
 export function profileOf(w: World, id: MemberId): PeonProfile | null { return cacheOf(w).profiles.get(id) ?? null; }
 export function candidateOf(w: World, id: MemberId): CandidateProfile | null { const p = profileOf(w, id); return p?.kind === "candidate" ? p : null; }
 export function jobOf(w: World, id: MemberId): JobProfile | null { const p = profileOf(w, id); return p?.kind === "job" ? p : null; }
-export function historyOf(w: World, id: MemberId): PeonHistory { return cacheOf(w).history.get(id) ?? { inFlight: 0, pendingReview: 0, answered: 0, ghosted: 0, applications28: 0, intros: 0, hires: 0 }; }
+export function historyOf(w: World, id: MemberId): PeonHistory { return cacheOf(w).history.get(id) ?? { inFlight: 0, pendingReview: 0, answered: 0 }; }
 /** All job seats / candidates, sorted by id. */
 export function jobs(w: World): JobProfile[] { return w.ids.map(id => jobOf(w, id)).filter((p): p is JobProfile => !!p); }
 export function candidates(w: World): CandidateProfile[] { return w.ids.map(id => candidateOf(w, id)).filter((p): p is CandidateProfile => !!p); }
@@ -123,12 +125,16 @@ function build(w: World): Cache {
       const demonstrated = new Map<string, { level: number; facetId: string }>();
       for (const f of fs) for (const t of tags(f)) {
         if (t.startsWith(T.family)) { const v = t.slice(T.family.length); if (!p.families.includes(v)) p.families.push(v); }
-        else if (t.startsWith(T.seniority)) p.seniority = Number(t.slice(T.seniority.length));
+        else if (t.startsWith(T.seniority)) {
+          p.seniority = Number(t.slice(T.seniority.length));
+          p.seniorityFacetId = f.id;
+          p.seniorityReviewedIn = trustedSource(f) ? f.id : undefined;
+        }
         else if (t.startsWith(T.skill)) {
           const [skill, lvl] = rest(t, T.skill);
-          const evidence: Evidence = f.provenance === "connected_source" || f.provenance === "vouched" ? "demonstrated" : "claimed";
+          const evidence: Evidence = trustedSource(f) ? "demonstrated" : "claimed";
           const cur = p.skills.get(skill!);
-          if (!cur || (evidence === "demonstrated" && cur.evidence === "claimed")) p.skills.set(skill!, { level: Number(lvl), evidence, facetId: f.id, shareable: f.scope === "shareable" });
+          if (!cur || (evidence === "demonstrated" && cur.evidence === "claimed")) p.skills.set(skill!, { level: Number(lvl), evidence, facetId: f.id, shareable: f.scope === "shareable", reviewedIn: evidence === "demonstrated" ? f.id : undefined });
         } else if (t.startsWith(T.demonstrated)) {
           const [skill, lvl] = rest(t, T.demonstrated);
           const cur = demonstrated.get(skill!);
@@ -146,7 +152,7 @@ function build(w: World): Cache {
       }
       for (const [skill, d] of demonstrated) {
         const cur = p.skills.get(skill);
-        p.skills.set(skill, { level: d.level, evidence: "interview", facetId: cur?.facetId ?? d.facetId, shareable: cur?.shareable ?? false });
+        p.skills.set(skill, { level: d.level, evidence: "interview", facetId: cur?.facetId ?? d.facetId, shareable: cur?.shareable ?? false, reviewedIn: d.facetId });
       }
       const it = mi.intents.find(i => i.category === "professional" && (i.details ?? "").startsWith(SEARCH_INTENT));
       p.searching = !!it; p.searchIntentAt = it?.createdAt;
@@ -164,7 +170,10 @@ function build(w: World): Cache {
           if (t.startsWith(T.company)) { p.company = t.slice(T.company.length); p.companyName = f.value.replace(/^Company:\s*/i, ""); }
           else if (t === T.verified) p.verified = true;
           else if (t.startsWith(T.family)) p.family = t.slice(T.family.length);
-          else if (t.startsWith(T.seniority)) p.seniority = Number(t.slice(T.seniority.length));
+          else if (t.startsWith(T.seniority)) {
+            p.seniority = Number(t.slice(T.seniority.length));
+            p.seniorityFacetId = f.id;
+          }
           else if (t.startsWith(T.pay)) {
             const [lo, hi] = t.slice(T.pay.length).split("-").map(Number);
             if (Number.isFinite(lo) && Number.isFinite(hi) && hi! >= lo! && lo! > 0) { p.payMin = lo; p.payMax = hi; p.payFacetId = f.id; }
@@ -191,23 +200,15 @@ function build(w: World): Cache {
   }
   // Pipeline history from the Network's interaction log.
   const history = new Map<MemberId, PeonHistory>();
-  const h = (id: MemberId) => { let x = history.get(id); if (!x) { x = { inFlight: 0, pendingReview: 0, answered: 0, ghosted: 0, applications28: 0, intros: 0, hires: 0 }; history.set(id, x); } return x; };
+  const h = (id: MemberId) => { let x = history.get(id); if (!x) { x = { inFlight: 0, pendingReview: 0, answered: 0 }; history.set(id, x); } return x; };
   for (const r of w.interactions) {
     if (r.at > now) continue;
-    for (const id of r.participants) {
-      const x = h(id);
-      x.intros++;
-      if ((r.outcome === "pending" || r.outcome === "accepted") && now - r.at <= 28 * DAY) x.inFlight++;
-      if (r.outcome === "completed") x.hires++;
-    }
+    if (r.outcome === "pending" || r.outcome === "accepted") for (const id of r.participants) if (now - r.at <= 28 * DAY) h(id).inFlight++;
     const seat = r.participants.find(id => profiles.get(id)?.kind === "job");
     const cand = r.participants.find(id => profiles.get(id)?.kind === "candidate");
-    if (seat && cand && (r.acceptedBy ?? []).includes(cand) && now - r.at <= 28 * DAY) h(seat).applications28++;
-    if (seat && cand && r.outcome === "pending" && (r.acceptedBy ?? []).includes(cand)) h(seat).pendingReview++;
-    if (seat && cand && (r.acceptedBy ?? []).includes(cand)) {
-      if ((r.acceptedBy ?? []).includes(seat) || (r.declinedBy ?? []).includes(seat)) h(seat).answered++;
-      else if ((r.noResponse ?? []).includes(seat)) h(seat).ghosted++;
-    }
+    if (!seat || !cand || !(r.acceptedBy ?? []).includes(cand)) continue;
+    if (r.outcome === "pending") h(seat).pendingReview++;
+    if ((r.acceptedBy ?? []).includes(seat) || (r.declinedBy ?? []).includes(seat)) h(seat).answered++;
   }
   return { profiles, history, extra: new Map() };
 }

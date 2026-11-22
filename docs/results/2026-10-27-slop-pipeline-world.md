@@ -1,5 +1,7 @@
 # The slop world on the real message path — 27 October 2026
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-27-slop-pipeline-world.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 The simulation covered the real message path for the shared line (`scripts/sim/pipeline.ts`)
 over about five days. It did not cover the slop world for a full month
 (`docs/mvp-gaps.md`, section 4.1). The missing block is now
@@ -49,12 +51,12 @@ the network list only sets whether matching is allowed.
 
 ## Reproduction and verification
 
-Base: `a0ed7bc`. Windows 11, Bun 1.4.2, PostgreSQL 16.10 on the dev cluster
+Base: `a0ed7bc`. Windows 11, the former runtime 1.4.2, PostgreSQL 16.10 on the dev cluster
 (`:54339`), `USER=postgres`.
 
 ```sh
-bun run sim --only pipeline,pipeline-slop
-bun run typecheck
+pnpm run sim --only pipeline,pipeline-slop
+pnpm run typecheck
 ```
 
 `pipeline` uses the shared line. `pipeline-slop` uses its own throwaway database

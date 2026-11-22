@@ -14,7 +14,7 @@ import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/pe
 import { peonTestWorld } from "../../packages/engine/src/packs/peon/testkit.ts";
 import { ARMS } from "../../packages/sim/src/apps/peon/arms.ts";
 import { keywordMatcher, packMatcher } from "../../packages/sim/src/apps/peon/baselines.ts";
-import { officialGates } from "../../packages/sim/src/apps/peon/gates.ts";
+import { officialGates, trackedGates } from "../../packages/sim/src/apps/peon/gates.ts";
 import { peonMetrics, type PeonMetrics } from "../../packages/sim/src/apps/peon/metrics.ts";
 import { generatePeonPopulation, type PeonPopulation } from "../../packages/sim/src/apps/peon/persona.ts";
 import { buildPeonSnapshot, PEON_WORLD_START, type PeonNetworkState } from "../../packages/sim/src/apps/peon/snapshot.ts";
@@ -38,6 +38,7 @@ export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> 
   }
   b.track("fingerprint: pack, keyword and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.keyword, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
+  for (const g of trackedGates(all.pack)) b.track(`gate ${g.gate}`, g.pass, g.value);
   b.gate("positive control: the keyword board reaches unverified, no-range and scam jobs", all.keyword.some(m => m.safety.unverifiedIntros > 0) && all.keyword.some(m => m.safety.noRangeIntros > 0) && all.keyword.some(m => m.safety.scamIntros > 0));
 
   await b.run("world: the snapshot carries no sealed attribute or hidden truth; canaries and proxies only agent_private", () => {

@@ -7,15 +7,17 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { parseReply, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, AGE_MONTHS, AGE_PART_TAIL, ARTICLE_AGE_END, ageBeforeConjunction, canJoin, parseReply, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
+import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
+import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
-  | "people_request" | "plans_request" | "invite_friend" | "cancel" | "block" | "report" | "feedback_like" | "ack" | "other";
+  | "people_request" | "plans_request" | "cofounder_goal" | "invite_friend" | "cancel" | "block" | "report" | "feedback_like" | "ack" | "other";
 
 export interface Classified {
   kind: InboundKind;
@@ -36,6 +38,10 @@ export interface Classified {
   disclosure?: Abuse[];
   /** For requests: what they want. */
   desireId?: string; category?: Category; tags: string[];
+  /** The member asks the Network to find people now, rather than stating a profile preference. */
+  directPeopleAsk?: boolean;
+  /** The whole message is the speaker's own affirmative cofounder goal. */
+  cofounderAffirmed?: boolean;
   /** Wants the member said they do NOT want ("I don't want to meet other founders"). */
   notWanted?: string[];
   /** For invites: the friend's first name. */
@@ -48,6 +54,11 @@ export interface Classified {
 
 /** Lower case, NFKC, straight quotes. */
 export const normText = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, "\"");
+
+const COFOUNDER_WORD = /\bco[- ]?founders?\b/;
+const COFOUNDER_OBJECT = "a co[- ]?founder(?: for my (?:startup|company|business|project))?";
+const COFOUNDER_STATEMENT = new RegExp(`^(?:i (?:want|need)(?: to find)?|i(?:'d| would) (?:like|love)(?: to find)?|i(?:'m| am) (?:looking|searching) for) ${COFOUNDER_OBJECT}[.!]?$`);
+const COFOUNDER_ASK = new RegExp(`^(?:(?:can|could|would) you )?(?:please )?(?:find me|help me find) ${COFOUNDER_OBJECT}[.?!]?$`);
 
 const RX = {
   link: /(https?:\/\/|www\.|bit\.ly|\b[a-z0-9-]+\.(co|com|io|ly|biz|net)\b)/i,
@@ -72,6 +83,7 @@ const RX = {
   report: /^\s*(?:please\s+|i (?:want|need|'d like) to\s+)?report\s+(?!(?:back|on|to|that|this|it|in|for|my|the|when)\b)(.+)$/i,
   plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
   peopleAsk: /\b(anyone (around|who|want|up for)|looking for (a |an |someone|people|other|more)|hoping to|find (me )?(a|an|someone|people)|want to meet|wanna meet|know anyone|still hoping|would love to (meet|find)|i'?d (love|like) to (meet|find)|searching for|in search of)\b/i,
+  directPeopleAsk: /^\s*(?:please\s+)?(?:(?:is there |do you know )?anyone (?:around|who|want|up for)|find me|(?:can|could|would) you (?:please )?(?:find me|help me find|connect me (?:with|to)|introduce me to))\b/i,
   feedback: /\b(it was (great|nice|fine|fun|good|ok|okay)|we (really )?clicked|(not|wasn'?t) great|didn'?t (really )?click|never showed|would (definitely )?(do it|meet|hang out) again|not much in common)\b/i,
   ack: /^(thanks|thank you|got it|ok|okay|👍|see you|sounds good|perfect|works for me|great|cool|nice)\b/i,
 };
@@ -82,6 +94,13 @@ const RX = {
  */
 const DISCLOSURE = /\b(he|she|they|someone|somebody|this (guy|girl|person|dude|man|woman)|[a-z]+) (asked|asks|wanted|wants|told|tells|keeps? asking|kept asking|tried|said|says|is asking|was asking|messaged|texted|dm'?d|demanded|threatened)\b/i;
 const NOT_A_PERSON = /^(i|we|you|it|that|this|which|what|who|mom|dad|the|a|an)$/i;
+const ASK_FOR_NUMBER = /^\s*(?:please\s+)?(?:(?:(?:can|could|would) you\s+)?(?:give|send|pass|get) me|can i (?:get|have))\s+[^.!?]{1,100}\b(?:number|phone|cell)\b/i;
+const INTENT_TO_CONTACT_DIRECTLY = /(?:^|,|\bso\b)\s*(?:i (?:want to|need to|would like to|can|could)|i'd like to) (?:call|text|message|dm|contact) (?:him|her|them) (?:directly|off[- ]platform)\b/i;
+
+function describesAnotherPerson(text: string): boolean {
+  const speaker = DISCLOSURE.exec(text)?.[1];
+  return !!speaker && !NOT_A_PERSON.test(speaker);
+}
 
 /** Teachers, coaches and parents talk about school; that is not a sign the sender is a minor (network-consent-10). */
 const ADULT_SCHOOL_CTX = /\b(teach|teacher|teaching|coach|coaching|tutor|tutoring|professor|my (kid|kids|son|daughter|students?|class|child|children)|our (kids|students)|i work (at|in) a (high |middle )?school|went to (high|middle) school|in high school i|back in (high|middle) school|my high school (days|years|friends))\b/;
@@ -97,9 +116,9 @@ const CATEGORY_WORDS: [RegExp, Category][] = [
 ];
 
 /** Sentences (and clauses after "but"): the scope of a negation or a disclosure. */
-export function sentencesOf(t: string): { text: string; at: number }[] {
+export function sentencesOf(t: string, preserveDecimals = false): { text: string; at: number }[] {
   const out: { text: string; at: number }[] = [];
-  const re = /[^.!?;\n]+[.!?;\n]*/g;
+  const re = preserveDecimals ? /(?:[^.!?;\n]|(?<=\d)\.(?=\d))+[.!?;\n]*/g : /[^.!?;\n]+[.!?;\n]*/g;
   for (const m of t.matchAll(re)) if (m[0].trim()) out.push({ text: m[0], at: m.index! });
   return out.length ? out : [{ text: t, at: 0 }];
 }
@@ -115,7 +134,7 @@ export function classify(body: string): Classified {
   const sents = sentencesOf(t);
   const hit = (rx: RegExp, kind: Abuse, points: number) => {
     let own = false, told = false;
-    for (const s of sents) if (rx.test(s.text)) { if (DISCLOSURE.test(s.text) && !NOT_A_PERSON.test(DISCLOSURE.exec(s.text)![1]!)) told = true; else own = true; }
+    for (const s of sents) if (rx.test(s.text)) { if (describesAnotherPerson(s.text)) told = true; else own = true; }
     if (own) { abuse.push(kind); risk += points; } else if (told) disclosed.push(kind);
   };
   const link = RX.link.test(t);
@@ -123,7 +142,10 @@ export function classify(body: string): Classified {
   hit(RX.blast, "mass_recruit", 3);
   // Money asked for the sender ("send me $100") is the sender's own ask even inside a story about someone else.
   if (RX.scamToMe.test(t)) { abuse.push("scam_money"); risk += 6; } else hit(RX.scam, "scam_money", 6);
-  hit(RX.extraction, "contact_extraction", 2);
+  // spec/trustLevel.md, "An explicit attempt to bypass contact consent triggers watch"
+  const explicitContactBypass = sents.some(({ text }) => ASK_FOR_NUMBER.test(text) && RX.extraction.test(text) && !describesAnotherPerson(text))
+    && sents.some(({ text }) => INTENT_TO_CONTACT_DIRECTLY.test(text) && !describesAnotherPerson(text));
+  hit(RX.extraction, "contact_extraction", contactExtractionRisk(explicitContactBypass));
   if (RX.injection.test(t)) { abuse.push("prompt_injection"); risk += 3; }
   hit(RX.harassment, "harassment", 3);
   if (!abuse.includes("harassment")) hit(RX.sexual, "harassment", 3);
@@ -154,7 +176,15 @@ export function classify(body: string): Classified {
 
   if (abuse.length && !desire) return out;
   if (RX.plans.test(t) && !x.negatedAsk) return { ...out, kind: "plans_request", category: out.category ?? "events" };
-  if (desire || (RX.peopleAsk.test(t) && !x.negatedAsk)) return { ...out, kind: "people_request", category: out.category ?? "social" };
+  if (COFOUNDER_WORD.test(low)) {
+    // A whole-message grammar excludes quoted, negated, hypothetical and third-person claims.
+    // Unclear mentions stay out of the generic people-request path.
+    return { ...out, kind: "cofounder_goal", cofounderAffirmed: COFOUNDER_STATEMENT.test(low) || COFOUNDER_ASK.test(low) };
+  }
+  const directPeopleAsk = !x.negatedAsk && sents.some(s => RX.directPeopleAsk.test(normText(s.text)));
+  if (desire || directPeopleAsk || (RX.peopleAsk.test(t) && !x.negatedAsk)) {
+    return { ...out, kind: "people_request", category: out.category ?? "social", directPeopleAsk };
+  }
   if (RX.ack.test(t) || t.length < 12) return { ...out, kind: "ack" };
   return out;
 }
@@ -180,17 +210,18 @@ const YEARS_OLD = "(?:y(?:ears?|rs?)[\\s-]+old|y\\.?\\/?o\\.?|years of age)(?![a
 // A number is read as an age only when the clause ends right after it, or goes on like an age:
 // "I'm 15.", "I'm 15, live in...", "I'm 15 lol", "I'm 15 years old". "I'm 15 minutes away",
 // "I'm 3 for 3" and "I'm 12 years into my career" are not ages.
-const CLAUSE_END = "$|[.,!?;:)]|but\\b|so\\b|btw\\b|lol\\b|haha\\b|lmao\\b|here\\b|tho(?:ugh)?\\b|y(?:ea)?rs?\\s*(?:$|[.,!?;:)])";
+const CLAUSE_END = "$|\\.(?!\\d)|[,!?;:)]|but\\b|so\\b|btw\\b|lol\\b|haha\\b|lmao\\b|here\\b|tho(?:ugh)?\\b|y(?:ea)?rs?\\s*(?:$|[.,!?;:)])";
 const AGE_END = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}))`;
 // "and", "now" and "too" also end an age, but only for 13 and up: "I'm 3 and 0 this season" or
 // "I'm 2 years in nyc now" must never decline an adult (a decline deletes the member's data).
 // Also "actually", "tbh", "honestly", "fyi" and "last week": "I'm 15 actually", "I turned 13 last week".
-const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|and\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
+const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|${AGE_LOOSE_TAIL}|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
 const IDENTITY_WORD = "person|guy|girl|boy|man|woman|kid|teen";
-const SELF_AGE_TAIL = "here\\b|from\\b|looking for\\b|in (?:high|middle) school\\b";
 /** "15f", "16 m", "15/f": an age and a sex, the way teens introduce themselves. Never "15m away" or "raised 15m". */
 const AGE_SEX_END = "(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))";
-const atLeast13 = (n: number) => (n >= 13 ? n : NaN);
+const AGE_SEX_ETA = "(?!\\s+(?:from\\s+(?:the|a|an|our|your|there|here)|in\\s+(?:a|an|the|traffic))\\b)";
+const AGE_SEX_MARKER = `(?:\\/\\s*[fmx]|[fx]|m${AGE_SEX_ETA})`;
+const joinAgeOnly = (age: number): number => canJoin(age) ? age : NaN;
 /** Ages the loose forms may read: a teen or an adult. Under 13 needs a strict form. */
 const teenOrAdult = (n: number) => (n >= 10 && n < 100 ? n : NaN);
 const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junior: 16, senior: 17 };
@@ -204,67 +235,68 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought)\s*$/;
 /** A clause break. The words before it do not apply to an age after it. */
 const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
-type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean };
+type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean; estimated?: boolean };
+const STATED_AGE = `\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)`;
+const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : AGE_WORDS[value] ?? NaN;
+
 const AGE_RX: AgeRule[] = [
   // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|my age is\\s+)(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]+${YEARS_OLD}`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
-  { rx: new RegExp(`\\b${ME}\\s+${SAME}an?\\s+(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]+(?:year|yr)[\\s-]+old\\b(?:\\s+(?:${IDENTITY_WORD}))?(?=\\s*(?:${CLAUSE_END}|${SELF_AGE_TAIL}))`), age: m => /^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!, explicit: true },
+  { rx: new RegExp(`\\b${ME}\\s+${SAME}an?\\s+(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => ageNumber(m[1] ?? ""), explicit: true },
   { rx: new RegExp(`\\bmy age is\\s+(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(\\d{1,2})\\s*${YEARS_OLD}(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b))`), age: m => Number(m[1]), explicit: true },
-  // "I'm 15", "I'm only 15", "I just turned 12!", "I'm fifteen".
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END}`), age: m => Number(m[1]) },
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END_LOOSE}`), age: m => atLeast13(Number(m[1])) },
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[1]!]! },
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END_LOOSE}`), age: m => atLeast13(AGE_WORDS[m[1]!]!) },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(?:${AGE_HALF}(?:${AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageBeforeConjunction(ageNumber(m[1] ?? ""), m) },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
+  // "I'm 17 and a half and ...", "I'm 16.5 now", "I'm 15 and 3 months": a part of a year, for 13 and up.
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(?:${AGE_HALF}|${AGE_MONTHS})(?=\\s*(?:${AGE_PART_TAIL}|${YEARS_OLD}))`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
-  { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
-  { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
-  { rx: new RegExp(`\\bi turn\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
-  { rx: /\bwhen i turn\s+(1[4-8]|sixteen|seventeen|eighteen)\b/, age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1 },
+  { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
+  { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
+  { rx: new RegExp(`\\bi turn\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
+  { rx: /\bwhen i turn\s+(1[4-8]|sixteen|seventeen|eighteen)\b/, age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1, estimated: true },
   // "15f here", "16 m", "15/f", "im 15f", "f15".
-  { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:${ME}\\s+)?(1\\d|\\d)\\s*\\/?\\s*[fmx](?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
-  { rx: new RegExp(`\\b${ME}\\s+(1\\d|\\d)\\s*\\/?\\s*[fm](?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
+  { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:${ME}\\s+)?(1\\d|\\d)\\s*${AGE_SEX_MARKER}(?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
+  { rx: new RegExp(`\\b${ME}\\s+(1\\d|\\d)\\s*${AGE_SEX_MARKER}(?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?[fm]\\s*\\/?\\s*(1\\d)${AGE_SEX_END}`), age: m => Number(m[1]) },
   // "15 here", "16 lol" as the whole opening.
   { rx: /^\W*(1[0-7])\s+(?:here|lol)\b/, age: m => Number(m[1]) },
   // "I'm a minor", "I'm under 18", "I'm underage": a minor (17 fails closed; never a decline).
-  { rx: new RegExp(`\\b${ME}\\s+(?:a minor|underage|under ?age|under 18|not 18 yet|not (?:an )?adult yet)\\b`), age: () => 17 },
+  { rx: new RegExp(`\\b${ME}\\s+(?:a minor|underage|under ?age|under 18|not 18 yet|not (?:an )?adult yet)\\b`), age: () => 17, estimated: true },
   // School year: "I'm a sophomore in high school", "I'm a high school junior", "junior at Lincoln High", "I'm in 7th grade", "9th grader".
-  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
-  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+[\\w' .-]{1,30}?\\bhigh(?: school)?\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high school|hs)\\s+(freshman|sophomore|junior|senior|student)\\b`), age: m => SCHOOL_YEAR[m[1]!] ?? 15 },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader\\b`), age: m => Number(m[1]) + 5 },
+  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)\\b`), age: m => SCHOOL_YEAR[m[1]!]!, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+[\\w' .-]{1,30}?\\bhigh(?: school)?\\b`), age: m => SCHOOL_YEAR[m[1]!]!, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high school|hs)\\s+(freshman|sophomore|junior|senior|student)\\b`), age: m => SCHOOL_YEAR[m[1]!] ?? 15, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+a\\s+(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader\\b`), age: m => Number(m[1]) + 5, estimated: true },
   // "grade" must end the clause: "I'm in 7th grade classrooms all day as a teacher" is not an age.
-  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => Number(m[1]) + 5 },
-  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => ORDINAL[m[1]!]! + 5 },
+  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => Number(m[1]) + 5, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => ORDINAL[m[1]!]! + 5, estimated: true },
   // Middle school (ages 11-14) alone fails closed to "minor", not to "under 13": a decline deletes the
   // member's data, so it needs an explicit age or grade ("I'm 12", "I'm in 6th grade").
-  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+middle school\\b(?!\\s*(?:teacher|counselor|principal|nurse|coach|librarian|aide|staff))|\\bi'?m a\\s+middle schooler\\b`), age: () => 13 },
-  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+high school\\b`), age: () => 15 },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
+  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+middle school\\b(?!\\s*(?:teacher|counselor|principal|nurse|coach|librarian|aide|staff))|\\bi'?m a\\s+middle schooler\\b`), age: () => 13, estimated: true },
+  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+high school\\b`), age: () => 15, estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15, estimated: true },
 ];
 
 // These messages omit the pronoun. Read the whole message so a quote, question, or an
 // account of school years does not lower the sender's age.
 const SHORT_AGE_START = "^\\s*(?:(?:hi|hey|hello|yo)[\\s,!]+)?";
 const SHORT_AGE_END = "(?:\\s*,?\\s+(?:lol|lmao|haha|here|btw|rn|now|tho|fyi))*(?:\\s*,?\\s+(?:hbu|wbu)\\s*\\??)?\\s*[.!]*\\s*$";
-const shortAge = (s: string) => /^\d/.test(s) ? Number(s) : AGE_WORDS[s]!;
-const shortAgeRule = (form: string, age: AgeRule["age"]): AgeRule => (
-  { rx: new RegExp(`${SHORT_AGE_START}(?:${form})${SHORT_AGE_END}`), age }
+const shortAgeRule = (form: string, age: AgeRule["age"], estimated = false): AgeRule => (
+  { rx: new RegExp(`${SHORT_AGE_START}(?:${form})${SHORT_AGE_END}`), age, estimated }
 );
 const SHORT_AGE_RX = [
-  shortAgeRule(`(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?`, m => atLeast13(shortAge(m[1]!))),
-  shortAgeRule(`(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:${IDENTITY_WORD}|dude|female|male|[fm]))?`, m => atLeast13(shortAge(m[1]!))),
-  shortAgeRule("(1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen)\\s+(?:here|lol|btw|haha|rn)", m => shortAge(m[1]!)),
-  shortAgeRule("(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)", () => 17),
-  shortAgeRule("(?:almost|nearly|turning)\\s+(?:18|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?|(?:18|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))", () => 17),
-  shortAgeRule("(?:still\\s+)?in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade|(?:an?\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader", m => Math.max(13, Number(m[1] ?? m[2]) + 5)),
-  shortAgeRule("(?:an?\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)|(?:an?\\s+)?(?:high school|hs)\\s+(freshman|sophomore|junior|senior)", m => SCHOOL_YEAR[(m[1] ?? m[2])!]!),
-  shortAgeRule("(?:still\\s+)?in (middle|high) school", m => m[1] === "middle" ? 13 : 15),
+  shortAgeRule(`(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?`, m => joinAgeOnly(ageNumber(m[1] ?? ""))),
+  shortAgeRule(`(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:${IDENTITY_WORD}|dude|female|male|[fm]))?`, m => joinAgeOnly(ageNumber(m[1] ?? ""))),
+  shortAgeRule("(1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen)\\s+(?:here|lol|btw|haha|rn)", m => ageNumber(m[1] ?? "")),
+  shortAgeRule("(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)", () => 17, true),
+  shortAgeRule("(?:almost|nearly|turning)\\s+(1[6-8]|sixteen|seventeen|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?|(1[6-8]|sixteen|seventeen|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))", m => joinAgeOnly(ageNumber(m[1] ?? m[2] ?? "") - 1), true),
+  shortAgeRule("(?:still\\s+)?in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade|(?:an?\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader", m => Math.max(13, Number(m[1] ?? m[2]) + 5), true),
+  shortAgeRule("(?:an?\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)|(?:an?\\s+)?(?:high school|hs)\\s+(freshman|sophomore|junior|senior)", m => SCHOOL_YEAR[(m[1] ?? m[2])!]!, true),
+  shortAgeRule("(?:still\\s+)?in (middle|high) school", m => m[1] === "middle" ? 13 : 15, true),
 ];
 
 /** Every match of one rule. A rule can match more than once in one message. */
@@ -327,13 +359,14 @@ function notNowBefore(text: string, at: number): boolean {
  * change the member's age. An age inside a quote that is still open is not theirs; a quote that
  * has closed does not hide the next statement (`he said "hi" I'm 15`).
  */
-export function agesStated(body: string): { age?: number; explicit?: number } {
+export function agesStated(body: string, { directOnly = false } = {}): { age?: number; explicit?: number } {
   const t = normText(body);
   const out: { age?: number; explicit?: number } = {};
   // Rules that start at the beginning of the text ("age: 15", "15 y/o here", "15f", "f15", "15 here")
   // are read on each sentence. On the whole message they would see only the first sentence.
-  for (const s of sentencesOf(t)) {
-    for (const { rx, age, explicit } of AGE_RX) {
+  for (const s of sentencesOf(t, true)) {
+    for (const { rx, age, explicit, estimated } of AGE_RX) {
+      if (directOnly && estimated) continue;
       for (const m of allMatches(rx, s.text)) {
         if (notNowBefore(t, s.at + m.index)) continue;
         const a = age(m);
@@ -343,7 +376,8 @@ export function agesStated(body: string): { age?: number; explicit?: number } {
       }
     }
   }
-  for (const { rx, age } of SHORT_AGE_RX) {
+  for (const { rx, age, estimated } of SHORT_AGE_RX) {
+    if (directOnly && estimated) continue;
     const m = rx.exec(t);
     if (!m) continue;
     const a = age(m);
@@ -589,6 +623,14 @@ export function extractProfile(body: string): Profile {
   };
 }
 
+const EXPLICIT_REPEAT = /^(?:(?:yes|yeah)[, ]+)?(?:(?:i would|i'd|would)(?: definitely| really)?(?: love to| like to)? |(?:i want to|let's) )(?:do (?:it|that)|meet(?: up)?|see (?:you|them|him|her|each other)|hang out|get together) again$/i;
+
+/** Read a first-person follow-up request in its own clause. */
+export function explicitRepeatRequest(body: string): boolean {
+  const text = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
+  return planAgainOf(text) === "yes" && text.split(/[.!?;]/).some(clause => EXPLICIT_REPEAT.test(clause.trim()));
+}
+
 /**
  * Sentiment of a feedback reply (for edges and reliability). Negations are checked first: "not
  * great", "wasn't great" and "didn't click" contain positive words but are bad meetings.
@@ -614,7 +656,7 @@ const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(
 
 export type YesNo = "yes" | "no" | "counter" | "unclear";
 /** Why a reply reads as it does. "mixed": a refusal, then a yes ("no... ok fine yes"): ask again. */
-export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedged" | "counter" | "none";
+export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedged" | "counter" | "slot" | "none";
 export interface Consent { answer: YesNo; why: ConsentWhy }
 
 /** A time word right after a refusal makes it a refusal of that time, not of the offer ("can't do Thursday"). */
@@ -651,15 +693,15 @@ const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|o
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
 const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as|provided(?: that)?|unless|depends on|on (?:the )?condition|assuming|but only|if and only|as long|if (?:it'?s|its|it is|they|she|he|there|the|you|i|we|that|this|someone|nobody|no one|everyone|it|a|an|my|their|his|her))\b/;
-const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
+const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|time|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|(?:can|could) we find (?:a different|another) (?:day|time)|how about|what about|later date|the week after|push it)\b/;
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
 
-/** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
-export function consentOf(body: string): Consent {
+/** A counter is a separate scheduling request. A yes inside that request does not answer the offer. */
+function consentScan(body: string): Consent & { separateYes?: boolean } {
   const t = normText(body).replace(HARMLESS_NO, " ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
-  let refusalAt = Infinity, affirmAt = Infinity, cond = false, hedge = false, counter = false, question = false;
+  let refusalAt = Infinity, affirmAt = Infinity, counterAt = Infinity, cond = false, hedge = false, question = false;
   for (const s of sentencesOf(t)) {
     // A question of the member's own ("Anyone around who'd want to meet someone to date?") is not an
     // answer: a yes elsewhere in the message ("Honestly this is great timing") is not consent to the probe.
@@ -695,17 +737,32 @@ export function consentOf(body: string): Consent {
       }
       if (COND_RX.test(x)) cond = true;
       if (HEDGE_RX.test(x)) hedge = true;
-      if (COUNTER_RX.test(x)) counter = true;
+      const alternative = COUNTER_RX.exec(x);
+      if (alternative) counterAt = Math.min(counterAt, at + alternative.index);
     }
   }
   if (refusalAt < Infinity) return affirmAt > refusalAt && affirmAt < Infinity ? { answer: "unclear", why: "mixed" } : { answer: "no", why: "refusal" };
-  if (counter) return { answer: "counter", why: "counter" };
-  if (cond) return { answer: "unclear", why: "conditional" };
+  const shared = parseReply(body);
+  if (cond || shared.reason === "conditional_yes" || /\b(?:pending (?:the|a|my|our|your) |contingent on |if [^,.!?]{1,45}\b(?:permits?|allows?)\b)/.test(t)) {
+    return { answer: "unclear", why: "conditional" };
+  }
   if (hedge || question) return { answer: "unclear", why: "hedged" };
+  if (counterAt < Infinity) {
+    const lead = t.slice(0, counterAt);
+    const boundary = Math.max(lead.lastIndexOf(","), lead.lastIndexOf("."), lead.lastIndexOf("!"), lead.lastIndexOf(";"));
+    const interest = /^(?:i'?m |i am )?interested[.!]?\s*$/.test(lead.slice(0, boundary));
+    return { answer: "counter", why: "counter", separateYes: (affirmAt < boundary || interest) && shared.answer !== "no" };
+  }
   // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
   // two disagree the member is asked again, never booked.
-  if (affirmAt < Infinity) return parseReply(body).answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  if (affirmAt < Infinity) return shared.answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
   return { answer: "unclear", why: "none" };
+}
+
+/** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
+export function consentOf(body: string): Consent {
+  const { answer, why } = consentScan(body);
+  return { answer, why };
 }
 
 /** A member's free-text yes or no (probes, plan probes, crew offers, the booked plan). */
@@ -728,6 +785,14 @@ const NEITHER = /\b(neither|none of (those|them|these|the times)|none (of those 
 const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|whichever|any ?time|all good)\b/;
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
 const ALL_WEAK = /\b(either|both)\b/;
+const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
+const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
+const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
+const EXPLICIT_KEY_CLAUSE = /(^\s*|[,;.!\n]\s*|\b(?:and|or)\s+)([abc])\s+(?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please)\b/g;
+const EXPLICIT_NO_OFFERED_TIMES = /^\s*none of (?:(?:those|these)(?: times| options)?|them|the (?:times|options)) works?(?: for me)?[.!\s]*$/;
+// A day and clock label cannot establish consent to a relative or separately named date.
+const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
+const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
  * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
@@ -754,6 +819,44 @@ function clauseAt(t: string, i: number, len: number): string {
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
 
+const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\b/g;
+const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
+const NAMED_EXCLUSION = /\b(?:(?:any day|any ?time|anything|everything|all|whichever) but|except|other than|apart from|aside from|excluding|barring)\s+(?:on\s+)?$/;
+const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
+const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
+type TimeMention = { at: number; end: number; day?: string; minute?: number; part?: "morning" | "afternoon" | "evening" };
+
+function clockMinute(m: RegExpMatchArray): number {
+  if (m[4]) return m[4] === "noon" ? 12 * 60 : 0;
+  return ((Number(m[1]) % 12) + (m[3] === "pm" ? 12 : 0)) * 60 + Number(m[2] ?? 0);
+}
+
+function partOf(minute: number): TimeMention["part"] {
+  return minute >= 5 * 60 && minute < 12 * 60 ? "morning" : minute >= 12 * 60 && minute < 17 * 60 ? "afternoon" : "evening";
+}
+
+function timeMentions(text: string): TimeMention[] {
+  const days = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
+  const times: TimeMention[] = [...text.matchAll(CLOCK_MENTION)].map(m => ({ at: m.index!, end: m.index! + m[0].length, minute: clockMinute(m) }));
+  for (const m of text.matchAll(DAYPART_MENTION)) {
+    const part = /^morning/.test(m[0]) ? "morning" : /^(?:afternoon|lunch)/.test(m[0]) ? "afternoon" : "evening";
+    if (m[0] === "after work" && /\b(?:free|off)\s*$/.test(text.slice(0, m.index))) continue;
+    times.push({ at: m.index!, end: m.index! + m[0].length, part });
+  }
+  for (const t of times.sort((a, b) => a.at - b.at)) {
+    const next = days.find(d => t.end <= d.at && CONNECTS_TIME.test(text.slice(t.end, d.at)));
+    const previous = days.find(d => d.end <= t.at && CONNECTS_TIME.test(text.slice(d.end, t.at)));
+    const d = previous ?? next;
+    if (d) {
+      days.splice(days.indexOf(d), 1);
+      t.at = Math.min(d.at, t.at);
+      t.end = Math.max(d.end, t.end);
+      t.day = d.day;
+    }
+  }
+  return [...days, ...times.filter(t => t.day || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
+}
+
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
  * "either", "a or b", "neither", "none of those work", "yes", "no thanks". Returns the answer and,
@@ -766,10 +869,21 @@ function clauseAt(t: string, i: number, len: number): string {
  * works"), a conditional ("sure, but only with a woman") and a hedge ("who is it? thursday maybe")
  * are "unclear": the member is asked again, never booked.
  */
-export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy } {
+interface ProbeReply {
+  answer: "yes" | "no" | "unclear";
+  keys: string[];
+  why: ConsentWhy;
+  explicitTimeSelection?: true;
+}
+
+export function parseProbeReply(body: string, options: readonly TimeOption[] = [], explicitTimesOnly = false): ProbeReply {
   const t = normText(body);
-  const c = consentOf(body);
-  if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
+  const c = consentScan(body);
+  if (!options.length || c.answer === "counter") {
+    // spec/probeReply.md, "A suggested alternative needs a separate yes before asking for new times"
+    const yes = c.answer === "yes" || !explicitTimesOnly && c.answer === "counter" && mayRetryCounter(options.length > 0, c.separateYes === true);
+    return { answer: c.answer === "no" ? "no" : yes ? "yes" : "unclear", keys: [], why: c.why };
+  }
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
@@ -783,10 +897,18 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
-  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
+  if (explicitTimesOnly) {
+    for (const m of t.matchAll(EXPLICIT_KEY_LIST)) {
+      const keys = [...m[0].matchAll(/\b[abc]\b/g)].map(key => key[0]);
+      mark(keys, m.index!, m[0].length);
+    }
+    for (const m of t.matchAll(EXPLICIT_KEY_CLAUSE)) mark([m[2]!], m.index! + m[1]!.length, 1);
+  } else {
+    for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
+  }
   for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length);
-  const alone = /^\s*([abc])[\s.!,)]*$/.exec(t);
-  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); }
+  const alone = (explicitTimesOnly ? EXPLICIT_KEY : /^\s*([abc])[\s.!,)]*$/).exec(t);
+  if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
@@ -795,36 +917,67 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
-  for (const [re, dayName] of DAY_WORDS) {
-    const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+  let namedExclusion = false;
+  const unresolved: TimeMention[] = [];
+  const offered = options.map(o => {
+    const clock = [...o.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
+    return { key: o.key, day: o.label.split(" ")[0], minute: clock ? clockMinute(clock) : undefined };
+  });
+  for (const m of timeMentions(t)) {
+    const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
+      && (!m.part || o.minute !== undefined && partOf(o.minute) === m.part)).map(o => o.key);
+    const exclusion = NAMED_EXCLUSION.test(t.slice(0, m.at));
+    const refused = exclusion || negatedAt(t, m.at, m.end - m.at);
+    if (refused) {
+      namedExclusion ||= exclusion;
+      for (const key of matching) neg.add(key);
+    } else if (!matching.length || matching.length > 1 && (explicitTimesOnly || !m.part)
+      || m.part && !m.day && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
+        && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
+      // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
+      unresolved.push(m);
+    } else mark(matching, m.at, m.end - m.at);
   }
-  for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
-    const label = `${Number(m[1])}${m[2]}`;
-    mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
+  // "Weekends work best" names the weekend: it picks the offered Saturday and Sunday options, and with
+  // none offered it names a time the probe did not offer (asked again, never booked).
+  for (const m of t.matchAll(/\bweekends?\b/g)) {
+    const weekend = offered.filter(o => o.day === "Saturday" || o.day === "Sunday").map(o => o.key);
+    if (negatedAt(t, m.index!, m[0].length)) for (const key of weekend) neg.add(key);
+    else if (weekend.length) mark(weekend, m.index!, m[0].length);
+    else unresolved.push({ at: m.index!, end: m.index! + m[0].length });
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
-  if (!residue) for (const k of pos) strong.add(k);
-  const picked = all.filter(k => pos.has(k));
+  if (!residue && !/\?/.test(t)) for (const k of pos) strong.add(k);
+  const picked = all.filter(k => pos.has(k) && (!explicitTimesOnly || !neg.has(k)));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
+  const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
+    ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  if (explicitTimesOnly) {
+    if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
+    if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
+  }
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
-  if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
+  if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
   if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
-  const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
-  if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
-  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
-  if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
+  const allAt = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t) ?? ALL_WEAK.exec(t);
+  if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
+    && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
+    return open.length ? explicitYes(open) : { ...unclear, why: "slot" };
+  }
+  if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
+  if (explicitTimesOnly) return unclear;
+  if (c.answer === "yes" || namedExclusion && open.length) return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
-  return unclear;
+  return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;
 }
 
 const AVAILABILITY_TIME = new RegExp(`^(?:on\\s+)?(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b(?:weekdays?|weekends?|weeknights?|mornings?|afternoons?|lunch|evenings?|nights?|after work)\\b)`);
@@ -928,5 +1081,8 @@ export function planAgainOf(body: string): "yes" | "no" | "unclear" {
 /** "Nobody else came": the member came and found nobody (a report about the others). */
 export const NOBODY_CAME = /\b(nobody|no one) else (came|showed)\b/i;
 
-/** Stated windows in a check-in answer ("Free Tuesday evening and Saturday afternoon." -> evening:Tue, afternoon:Sat). */
-export const checkinTags = (body: string): string[] => availabilityTags(body);
+/** A clear answer that the member has no availability for the current week. */
+export function explicitlyBusyThisWeek(body: string): boolean {
+  const text = body.trim().toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ");
+  return /^(?:(?:i'm |i am )?(?:busy|not free|(?:pretty |completely )?packed) this week|busy week,? nothing free|this week is full|(?:no free time|nothing free) this week)(?:[,!.]? (?:sorry|thanks))?[.!]?$/.test(text);
+}

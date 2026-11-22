@@ -1,6 +1,6 @@
 // Real MCP HTTP handler and platform/OAuth stores; synthetic phones and fake OTP only.
 // Ajv validates advertised contracts independently of the tool implementation.
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import Ajv from "ajv";
 import { addMember, call, connect, origin, PHONE_A, rpc, setup } from "./harness.ts";
 
@@ -24,7 +24,7 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
       expect(tool.outputSchema.type).toBe("object");
       validators.set(tool.name, ajv.compile(tool.outputSchema));
     }
-    expect([...validators.keys()].sort()).toEqual(["app_info", "check_status", "get_updates", "prepare_signup", "start_signup", "submit_profile"]);
+    expect([...validators.keys()].sort()).toEqual(["app_info", "check_status", "get_updates", "prepare_signup", "read_profile", "start_signup", "submit_profile"]);
     const invoke = async (name: string, args: Record<string, unknown> = {}, token?: string) => {
       const response = await call(env, url, name, args, { token });
       expect(response.res.status).toBe(200);
@@ -46,6 +46,12 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
     }
     const connection = await connect(env, host, PHONE_A, { resource: url });
     let token = connection.token.access_token;
+    // spec/connectorTools.md, "Read saved profile fields only for this app's active member"
+    const missingReadScope = await call(env, url, "read_profile", {}, { token });
+    expect(connection.token.scope).not.toContain("profile:read");
+    const challenge = surface === "openai" ? missingReadScope.body?.result?._meta?.["mcp/www_authenticate"]?.[0]
+      : missingReadScope.res.headers.get("www-authenticate");
+    expect(challenge).toContain('scope="profile:read"');
     expect((await invoke("check_status", {}, token)).status).toBe("not_joined");
     expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(false);
     expect((await invoke("get_updates", {}, token)).updates).toEqual([]);
@@ -56,18 +62,37 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
     expect(repeated.body!.result.isError).toBe(true);
     expect(repeated.body!.result.structuredContent).toBeUndefined();
 
-    const person = await addMember(env, PHONE_A, [{ app, state: "active" }]);
+    const otherApp = app === "friends" ? "ntwrk" : "friends";
+    const person = await addMember(env, PHONE_A, [{ app, state: "active" }, { app: otherApp, state: "active" }]);
     // A grant made before this fixture person existed cannot gain that new identity.
-    token = (await connect(env, host, PHONE_A, { resource: url })).token.access_token;
-    const membership = (await env.people.getMembership(person, app))!;
+    token = (await connect(env, host, PHONE_A, { resource: url, scope: "membership:read profile:write profile:read" })).token.access_token;
+    const membership = {
+      ...(await env.people.getMembership(person, app))!,
+      profile: { about: "I enjoy board games.", interests: ["Climbing", "code 12345"], neighborhood: "Queens", homeCity: "nyc", privateNote: "Private fact" },
+    };
+    const otherMembership = (await env.people.getMembership(person, otherApp))!;
+    await env.people.putMembership({ ...otherMembership, profile: { about: "Different app's private text." } });
+    await env.accounts.recordConsent({ e164: PHONE_A, app, state: "opted_in", source: "keyword:start", at: env.clock.t });
     for (const [state, status] of [["invited", "invited"], ["onboarding", "onboarding"], ["active", "active"], ["paused", "stopped"], ["restricted", "on_hold"]] as const) {
       await env.people.putMembership({ ...membership, state });
       expect((await invoke("check_status", {}, token)).status).toBe(status);
+      const profile = await invoke("read_profile", { app }, token);
+      if (state === "active") {
+        expect(profile).toEqual({ app, profile: { first_name: "Rae", about: "I enjoy board games.", interests: ["Climbing"], neighborhood: "Queens", home_region: "nyc" } });
+      } else expect(profile).toEqual({ app, profile: null });
     }
     await env.people.putMembership(membership);
+    const crossApp = await call(env, url, "read_profile", { app: otherApp }, { token });
+    expect(crossApp.body?.result).toMatchObject({ isError: true });
+    expect(crossApp.body?.result?.structuredContent).toBeUndefined();
+    expect(await env.people.getMembership(person, app)).toEqual(membership);
     expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(true);
     acceptProfile = false;
-    expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(false);
+    expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(true);
+    const correctedProfile = { about: "I enjoy climbing and photography." };
+    expect((await invoke("submit_profile", correctedProfile, token)).submitted).toBe(false);
+    acceptProfile = true;
+    expect((await invoke("submit_profile", correctedProfile, token)).submitted).toBe(true);
     const updates = await invoke("get_updates", {}, token);
     expect(updates.updates).toEqual([{ summary: "Board games on Saturday.", at: "2026-10-08T12:00:00.000Z", kind: "plan_probe" }]);
     expect(validators.get("get_updates")!({ ...updates, updates: [{ summary: "Missing fields" }] })).toBe(false);

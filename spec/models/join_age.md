@@ -8,7 +8,7 @@ A person needs to join by text or web and have their lowest stated age apply acr
 
 Check membership creation, the age floor, under-13 erasure, and single-player access for minors. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions.
+The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and the signed turn journey cover the prepared Peon signup format.
 
 Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -66,8 +66,7 @@ module join_age {
     personExists: bool, personLowest: int, floor: int,
     pendJoin: Pend, pendLF: bool,
     mstate: str -> str, mid: str -> int, net: str -> Net,
-    // noticeStuck: the notice row names a turn whose worker stopped (turn_id, migration 0043, SD-276).
-    noticeRow: bool, noticeStuck: bool, nextId: int,
+    noticeRow: bool, nextId: int,
   }
   type Vol = { app: str, age: int, explicit: bool, declined: bool }
   // One text message as the oracles read it: kw is a whole-message app keyword (keywordApp), age and name
@@ -261,7 +260,7 @@ module join_age {
     db' = {
       personExists: false, personLowest: NONE, floor: NONE, pendJoin: NO_PEND, pendLF: false,
       mstate: APPS.mapBy(a => "none"), mid: APPS.mapBy(a => 0), net: APPS.mapBy(a => NO_NET),
-      noticeRow: false, noticeStuck: false, nextId: 1,
+      noticeRow: false, nextId: 1,
     },
     vol' = Set(),
     turn' = IDLE,
@@ -295,15 +294,14 @@ module join_age {
         .with("kind", if (enroll) "enroll" else if (member) "member" else "text")
         .with("app", app).with("msg", m).with("askOpenAt", g.askOpen).with("minorAt", member and db.net.get(app).minor)
         .with("newAt", member and db.net.get(app).stage == "new"),
-      db' = if (db.noticeStuck) db.with("noticeRow", false).with("noticeStuck", false) else db,
+      db' = db,
       vol' = vol,
       g' = g.with("texts", g.texts + 1).with("flags", if (misrouted) flag("lfMisrouted") else g.flags),
     }
   }
 
   // ------------------------------------------------------------------ text join (non-member)
-  // S:1175-1196 elizaNotice: the row (with its turn id) and the collected reply in one transaction; onFail
-  // takes it back.
+  // elizaNotice collects a reply for the exact turn. Inbox.finish records the durable key.
   action noticeStep = {
     val a = turn.app
     val pend = if (db.pendJoin.has and db.pendJoin.app == a) db.pendJoin else NO_PEND
@@ -313,7 +311,7 @@ module join_age {
     val wrote = not(skip) and not(db.noticeRow)
     all {
       turn.pc == "notice",
-      db' = if (wrote) db.with("noticeRow", true) else db,
+      db' = db,
       turn' = turn.with("pc", "join").with("wroteNotice", wrote),
       vol' = vol, g' = g,
     }
@@ -500,16 +498,27 @@ module join_age {
       g' = if (declined and not(db.personExists)) g.with("declineOpen", false) else g,
     }
   }
-  // S:1302-1309: declined: every membership is forgotten and opted out.
+  // One model action represents the idempotent writes to the opted-out memberships and pending text.
+  pure def cleanedAfterDecline(d: Db): Db =
+    d.with("net", APPS.mapBy(a => if (d.mstate.get(a) != "removed" and d.mstate.get(a) != "none") NO_NET else d.net.get(a)))
+      .with("mstate", APPS.mapBy(a => if (d.mstate.get(a) == "none") "none" else "removed"))
+      .with("pendJoin", NO_PEND).with("pendLF", false)
+
   action flushForgetStep = {
-    val a = turn.app
     all {
       turn.pc == "flushForget",
-      db' = db.with("net", APPS.mapBy(x => if (x != a and db.mstate.get(x) != "removed" and db.mstate.get(x) != "none") NO_NET else db.net.get(x)))
-        .with("mstate", APPS.mapBy(x => if (db.mstate.get(x) == "none") "none" else "removed")),
+      db' = cleanedAfterDecline(db),
       turn' = turn.with("pc", if (turn.kind == "enroll") "e_start" else "done"),
       vol' = vol, g' = g.with("declineOpen", false),
     }
+  }
+
+  action recoverDecline = all {
+    turn.pc == "idle",
+    db.personExists and effLowest(db) >= 0 and effLowest(db) < 13,
+    APPS.exists(a => db.mstate.get(a) != "none" and db.mstate.get(a) != "removed"),
+    db' = cleanedAfterDecline(db),
+    turn' = turn, vol' = vol, g' = g.with("declineOpen", false),
   }
 
   // ------------------------------------------------------------------ looking-for enroll
@@ -668,11 +677,12 @@ module join_age {
     val a = turn.app
     val n = db.net.get(a)
     val text = turn.kind != "web"
+    val sendsNotice = turn.wroteNotice and turn.outcome != "under_age"
     all {
       turn.pc == "done",
-      db' = db, vol' = vol, turn' = IDLE,
+      db' = if (sendsNotice) db.with("noticeRow", true) else db, vol' = vol, turn' = IDLE,
       // The looking-for question is The Network's: a turn of The Network answers it (or asks it).
-      g' = g.with("noticeDelivered", g.noticeDelivered or turn.wroteNotice)
+      g' = g.with("noticeDelivered", g.noticeDelivered or sendsNotice)
         .with("askOpen", if (text and a == "ntwrk") turn.askedLF else g.askOpen)
         .with("last", {
           kind: turn.kind, app: a, replied: turn.replied, outcome: turn.outcome,
@@ -689,19 +699,18 @@ module join_age {
   }
 
   // ------------------------------------------------------------------ other actors and failures
-  // The process dies: memory (statedAges, onFail) is lost; the turn stays processing until the sweep of the
-  // sender's next turn marks it unresolved; the signed retry is refused (inbox.ts:92), so the collected
-  // replies never go out. A notice row it wrote names it (SD-276): the sweep deletes that row.
+  // The process dies before completion. The next admission can sweep the turn to unresolved.
+  // The abandoned turn has no completed reply and cannot spend the notice.
   action crash = all {
     turn.pc != "idle", g.crashes < MAX_CRASHES,
-    db' = if (turn.wroteNotice) db.with("noticeStuck", true) else db, vol' = Set(), turn' = IDLE,
+    db' = db, vol' = Set(), turn' = IDLE,
     g' = g.with("crashes", g.crashes + 1).with("last", NO_LAST.with("kind", "crash")),
   }
-  // A step throws (a database error): the turn's onFail undo runs (S:1195: the notice row goes), no reply
-  // goes out. In `flush`, takeAges already took the ages out of memory (R:133-137).
+  // A step throws before completion. No reply goes out and the notice stays available.
+  // In `flush`, the runtime already took the ages out of memory.
   action stepThrows = all {
     turn.pc != "idle", turn.kind != "web", g.fails < MAX_FAILS,
-    db' = if (turn.wroteNotice) db.with("noticeRow", false) else db,
+    db' = db,
     vol' = if (turn.pc == "flush") vol.filter(v => v.app != turn.app) else vol,
     turn' = IDLE,
     g' = g.with("fails", g.fails + 1).with("last", NO_LAST.with("kind", "fail")),
@@ -755,7 +764,7 @@ module join_age {
     { nondet m = oneOf(MSGS) nondet p = oneOf(APPS) receive(m, p) },
     { nondet a = oneOf(APPS) nondet age = oneOf(WEB_AGES) webJoin(a, age) },
     { nondet a = oneOf(OTHER_APPS) staffInvite(a) },
-    crash, stepThrows, pendingExpire, deleteAll,
+    crash, stepThrows, pendingExpire, deleteAll, recoverDecline,
   }
 
   // ------------------------------------------------------------------ invariants
@@ -777,12 +786,9 @@ module join_age {
   // no live membership, no network member and no pending join row for a phone whose lowest age is under 13.
   pure def under13Clean(d: Db): bool = effLowest(d) >= 0 and effLowest(d) < 13 implies
     (APPS.forall(a => not(live(d, a)) and not(d.net.get(a).exists)) and not(d.pendJoin.has))
-  // Q-join_age-4 (new, not fixed): a unit that declines a member for a stated age under 13 commits the age
-  // and forgets that app's member (SD-011 fix), but the other memberships are forgotten only by the later
-  // statedAge step (S:1302-1309). A crash or a throw between them leaves the other apps' memberships, members
-  // and opt-ins of an under-13 person, and no later step repairs it. The fix needs a design decision (the
-  // forget of every app's member in the unit's own transaction, or a repair on a later turn), so it is not
-  // in this round. This strict form stays out of `safety`; the simulator finds it in 15 steps (seed 0x5eed).
+  // Q-join_age-4: the observing unit commits the canonical age before projecting cleanup across apps.
+  // Other memberships may retain data until the synchronous projection or durable-age recovery finishes.
+  // The canonical age already excludes matching during this window.
   val under13StoresNothingStrict = idle implies under13Clean(db)
   // In `safety`: the same rule outside the Q-join_age-4 window. Failed at ad67275: SD-014, SD-315 (fixed);
   // Q-join_age-3 (fixed on this branch: a web under-13 decline kept the phone's pending text join).
@@ -813,10 +819,8 @@ module join_age {
   // fixed).
   val minorNoAdultQuestion = not(g.flags.contains("adultQToMinor"))
 
-  // S:1167-1174 elizaNotice comment: a failed turn stores nothing, so a spent notice row means the notice
-  // went out (failed at ad67275: SD-276, fixed). A row whose turn lost its worker is not spent: the sweep in
-  // the admission of the sender's next turn deletes it before any later turn reads it (receive).
-  val noticeSpentImpliesDelivered = idle implies (db.noticeRow and not(db.noticeStuck) implies g.noticeDelivered)
+  // The notice row and the completed reply become visible together (SD-276).
+  val noticeSpentImpliesDelivered = db.noticeRow implies g.noticeDelivered
 
   // S:1464-1470 enroll comment: "The Network confirms in one text": an answer to the question gets a reply
   // (SD-126 at ad67275). Since b3f9868 the answer is a member message first: the Network replies, or the
@@ -1028,11 +1032,10 @@ module join_age {
       .expect(db.mstate.get("friends") == "active" and db.mstate.get("ntwrk") == "none" and db.net.get("friends").mid == db.mid.get("friends")
         and inviteReplyJoinsInvitedApp and safety)
 
-  // SD-276 (7b0cd6f): first contact "hi": the notice row commits, the process dies; the admission of the next
-  // text sweeps the stuck turn and deletes its row, so the next turn gets the notice.
+  // SD-276: first contact "hi": the process dies with a collected reply. The next turn can still send the notice.
   run sd276NoticeGivenBackTest =
     init.then(receive(M_HI, "ntwrk")).then(noticeStep).then(joinStep).then(crash)
-      .expect(db.noticeRow and db.noticeStuck and not(g.noticeDelivered) and noticeSpentImpliesDelivered)
+      .expect(not(db.noticeRow) and not(g.noticeDelivered) and noticeSpentImpliesDelivered)
       .then(receive(M_HI, "ntwrk"))
       .expect(not(db.noticeRow))
       .then(noticeStep).then(joinStep).then(doneStep(true))
@@ -1107,14 +1110,14 @@ module join_age {
       .expect(g.last.outcome == "declined" and not(db.pendJoin.has) and db.mstate.get("friends") == "removed"
         and not(g.declineOpen) and under13StoresNothingStrict and safety)
 
-  // Q-join_age-4 (new, not fixed): members of friends and slop at 15; "I am 12 years old" on friends; the unit
-  // commits the decline (the friends member goes, the age 12 is stored); statedAge throws before it forgets
-  // the slop membership. The slop membership, member and opt-in of an under-13 person stay.
+  // Q-join_age-4: the saved age survives the crash and the next recovery finishes both apps.
   run q4DeclineStepFailsTest =
     init.then(webJoinOk("friends", 15)).then(webJoinOk("slop", 15))
       .then(receive(M_AM12, "friends")).then(unitStep).then(stepThrows)
       .expect(db.floor == 12 and not(db.net.get("friends").exists) and live(db, "slop") and db.net.get("slop").exists
         and g.declineOpen and not(under13StoresNothingStrict) and under13StoresNothing)
+      .then(recoverDecline)
+      .expect(db.floor == 12 and under13StoresNothingStrict and not(g.declineOpen) and safety)
 
   // need_home (decisions.ts joinStep): "Sam 25, Boston" keeps the age and asks for the home city; no pending
   // join and no membership. The next "Sam 25" (a valid home) joins at 25.

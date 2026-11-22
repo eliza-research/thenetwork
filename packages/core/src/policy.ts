@@ -27,3 +27,27 @@ export const canBeMatched = (age: unknown): boolean => typeof age === "number" &
 /** The kind decline sent to someone under 13. Never says why in more detail than needed; stores nothing. */
 export const UNDER_MIN_AGE_DECLINE =
   "Thanks for your interest in The Network. You need to be at least 13 to join, so we can't sign you up right now. We'd love to hear from you when you're older.";
+
+const ageAndSpeaker = "\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b";
+export const AGE_AND_CLAUSE = `(?=${ageAndSpeaker})`;
+export const AGE_HALF = "(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\.5(?!\\d)|\\s+1/2\\b)";
+/** "15 and 3 months", "17 and 3/4": a part of a year after the age. */
+export const AGE_MONTHS = "(?:\\s+and\\s+(?:\\d{1,2}|a few|one|two|three|four|five|six|seven|eight|nine|ten|eleven)\\s+months?\\b|\\s+and\\s+(?:3/4|three quarters|a quarter)\\b)";
+/** What may follow "15 and a half", "16.5" or "15 and 3 months" when the age is 13 or more. */
+export const AGE_PART_TAIL = "$|[,!?;:)]|\\.(?!\\d)|and\\b|now\\b|too\\b|but\\b|so\\b|btw\\b|lol\\b|haha\\b|lmao\\b|tho(?:ugh)?\\b|actually\\b|tbh\\b|old\\b|in (?:high|middle) school\\b";
+/** "5.5" and "5 1/2" give a height in feet. */
+const heightInFeet = /(?:\.5|\s1\/2)$/;
+const statedBirthday = /^i (?:just )?turned\s/;
+const statedHalfAge = new RegExp(`${AGE_HALF}$`);
+const sportsCountSuffix = new RegExp(`^${ageAndSpeaker}\\s+(?:undefeated|won|winning)\\b`);
+export function ageBeforeConjunction(age: number, match: RegExpExecArray): number {
+  if (age < 8 && heightInFeet.test(match[0])) return NaN;
+  if (canJoin(age) || statedBirthday.test(match[0]) || statedHalfAge.test(match[0])) return age;
+  const suffix = match.input.slice(match.index + match[0].length);
+  return sportsCountSuffix.test(suffix) ? NaN : age;
+}
+
+export const AGE_LOOSE_TAIL = "and\\b(?!\\s+(?:\\d|(?:a|one)\\s+half\\b))|now\\b|too\\b";
+export const ARTICLE_AGE_END =
+  "(?:\\s+(?:(?:trans|cis|single|straight|gay|bi|queer|lesbian|pan)\\s+)*(?:person|human|guy|girl|boy|man|woman|kid|teen(?:ager)?|student|non[- ]?binary|enby))?" +
+  "(?=\\s*(?:$|[.,!?;:)]|but\\b|so\\b|btw\\b|lol\\b|haha\\b|lmao\\b|here\\b|tho(?:ugh)?\\b|from\\b|looking\\b|in (?:high|middle) school\\b))";

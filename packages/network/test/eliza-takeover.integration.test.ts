@@ -2,9 +2,10 @@
 // (elizaOS/eliza spike/network-plugin, packages/cloud/services/gateway-webhook/__tests__/network-takeover.test.ts),
 // driven against the real service over HTTP with signed requests and a real Postgres (dev-pg, :54339).
 // Sends are dry-run; a fake Cloud deliver endpoint records anything that would leave, and must stay empty.
-import {afterAll, beforeAll, expect, test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import {afterAll, beforeAll, expect, test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock, MINUTE} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
@@ -20,7 +21,7 @@ const url = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:54339/${db}`
 const secret = "synthetic-eliza-takeover-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
 const ONBOARDING = ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
-let sql: SQL, service: NetworkService, server: ReturnType<typeof Bun.serve>, cloud: ReturnType<typeof Bun.serve>;
+let sql: SQL, service: NetworkService, server: HttpServer, cloud: HttpServer;
 let escaped = 0;
 const cloudCalls: string[] = [];
 let seq = 0;
@@ -31,16 +32,16 @@ beforeAll(async () => {
   console.info(`[owned-db] ${db}`);
   await applySchema(url, {lockTimeout: "5s"});
   sql = new SQL({url, max: 2});
-  cloud = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: req => { cloudCalls.push(new URL(req.url).pathname); return Response.json({ok: false, error: "rejected", retryable: false}); }});
+  cloud = await serveHttp({hostname: "127.0.0.1", port: 0, fetch: req => { cloudCalls.push(new URL(req.url).pathname); return Response.json({ok: false, error: "rejected", retryable: false}); }});
   service = new NetworkService({url, clock, photoStorage: null, instance: "eliza-takeover-integration", env: env(),
     networks: [{id: "ntwrk:nyc", matchingEnabled: false}, {id: "slop:nyc", matchingEnabled: false}, {id: "friends:nyc", matchingEnabled: false}],
     network: {seed: 1}, notify: false, log: () => {},
     adapter: () => { const a = new DryRunAdapter(() => {}); a.direct = async () => { escaped++; return "dry_run"; }; a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({id: r.id, status: "dry_run"})); }; return a; },
   });
   await service.start();
-  server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: req => service.fetch(req)});
+  server = await serveHttp({hostname: "127.0.0.1", port: 0, fetch: req => service.fetch(req)});
 }, 120_000);
-afterAll(async () => { server?.stop(true); cloud?.stop(true); await service?.close(); await sql?.close(); await admin.close(); });
+afterAll(async () => { await server?.stop(true); await cloud?.stop(true); await service?.close(); await sql?.close(); await admin.close(); });
 
 const turn = (from: string, text: string, o: {app?: TurnRequest["app"]; receivedAt?: number; id?: string} = {}): TurnRequest =>
   ({messageId: o.id ?? `SMtk${++seq}`, channel: "blooio", from, to: null, text, transport: "imessage", receivedAt: o.receivedAt ?? clock.now(), ...(o.app ? {app: o.app} : {})});
@@ -106,8 +107,41 @@ test("a non-member gets the one-time notice, then the join flow; the number is s
   expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
 }, 60_000);
 
+test("a worker that loses its first-contact claim cannot spend the one-time notice", async () => {
+  const phone = "+12125550209";
+  const staleId = "takeover-notice-abandoned";
+  const realInbound = service.inbound.bind(service);
+  let collected!: () => void;
+  const staged = new Promise<void>(resolve => { collected = resolve; });
+  let continueWorker!: () => void;
+  const waiting = new Promise<void>(resolve => { continueWorker = resolve; });
+  service.inbound = async (event, options) => {
+    const result = await realInbound(event, options);
+    if (event.kind === "message" && event.messageId === staleId) {
+      collected();
+      await waiting;
+    }
+    return result;
+  };
+  const first = post(turn(phone, "hi", { id: staleId }));
+  try {
+    await staged;
+    const [row] = await sql`select replies,status from platform.inbound where id=${`msg:blooio:${staleId}`}`;
+    expect(row).toMatchObject({ status: "processing", replies: expect.arrayContaining([expect.objectContaining({ body: ELIZA_NOTICE })]) });
+    clock.advance(11 * MINUTE);
+    const recovered = await say(phone, "still here?");
+    expect(recovered.replies[0]).toBe(ELIZA_NOTICE);
+  } finally {
+    continueWorker();
+    service.inbound = realInbound;
+    expect((await first).status).toBe(409);
+  }
+  expect((await say(phone, "hello again")).replies).not.toContain(ELIZA_NOTICE);
+}, 15_000);
+
 test("an under-13 first contact gets only the kind decline, and nothing is stored", async () => {
   const phone = "+12125550202";
+  const noticesBefore = (await noticeRows()).length;
   const r = await say(phone, "Sam, 12");
   expect(r.reason).toBe("under_age");
   expect(r.replies).toEqual([APPS.ntwrk.brand.underAge]);
@@ -115,7 +149,10 @@ test("an under-13 first contact gets only the kind decline, and nothing is store
   const again = await say(phone, "hi");
   expect(again.reason).not.toBe("onboarding_asked");
   expect(again.accountEligible).toBe(false);
-  expect((await noticeRows()).length).toBe(1);
+  const restart = await say(phone, "START");
+  expect(restart).toMatchObject({ reason: "under_age", replies: [APPS.ntwrk.brand.underAge], accountEligible: false });
+  expect(await sql`select 1 from platform.consent_events where e164=${phone} and source='keyword:start'`).toEqual([]);
+  expect((await noticeRows()).length).toBe(noticesBefore);
   expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
 }, 60_000);
 

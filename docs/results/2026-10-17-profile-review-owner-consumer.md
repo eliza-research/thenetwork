@@ -1,5 +1,7 @@
 # Network consumer of Cloud's private review-owner proof
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-17-profile-review-owner-consumer.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Source/local scope only. This consumes an existing, currently admitted conversation turn; it does not establish a new account link, fetch Google data, enable a connector, deploy a migration, or activate production. The existing native iMessage → original Cloud account/agent/history requirement remains open.
 
 ## Contract and authority
@@ -18,14 +20,14 @@ Cloud owns the real parent-proof lookup and its primary owner/organization lifec
 
 ## Local verification
 
-Use pinned Bun 1.4.2 and the isolated owned PostgreSQL cluster on port 54428. The consumer tests use a synthetic signed Cloud proof server, not a production account or real Google consent. They verify actual Network SQL, HTTP signatures, nonce correlation and canonical store behavior. A separate paired test against Cloud's actual DO implementation is tracked with its owner; this report does not claim it passed.
+Use the pinned former runtime 1.4.2 and the isolated owned PostgreSQL cluster on port 54428. The consumer tests use a synthetic signed Cloud proof server, not a production account or real Google consent. They verify actual Network SQL, HTTP signatures, nonce correlation and canonical store behavior. A separate paired test against Cloud's actual DO implementation is tracked with its owner; this report does not claim it passed.
 
 Commands:
 
 ```sh
-bun test --conditions eliza-source packages/network/test/profile-suggestions.integration.test.ts packages/network/test/profile-suggestion-review.test.ts
-bun test --conditions eliza-source --timeout 120000 packages/network/test/shared-agent.integration.test.ts deploy/backend/backend.test.ts
-bun run typecheck
+pnpm exec vitest run --conditions eliza-source packages/network/test/profile-suggestions.integration.test.ts packages/network/test/profile-suggestion-review.test.ts
+pnpm exec vitest run --testTimeout 120000 packages/network/test/shared-agent.integration.test.ts deploy/backend/backend.test.ts
+pnpm run typecheck
 ```
 
 The focused run passed 38 tests and 297 assertions; the normal signed Shared-turn/backend regression passed 42 tests and 554 assertions. The final fence-only regression additionally passed eight assertions covering rollback of both acceptance and edit-preview changes after database writes. TypeScript checking passed. Independent review found a proof-expiry timing gap; the fresh transaction fences and post-preview-read checks above close it. No full-pipeline rerun is used to imply deployed acceptance; the earlier 593 integration and 42 end-to-end pass belong to the preceding source qualification.

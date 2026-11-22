@@ -1,23 +1,48 @@
-// Builds the four app sites and checks what carriers, members and agents rely on: titles, legal and
-// support links, the consent wording (equal to the platform's canonical text), the 10DLC sentence, the
-// age rules (equal to the platform registry), STOP copy, the umbrella links, the files Cloudflare serves
-// as they are (_headers, SKILL.md, robots.txt, .well-known), same-origin scripts, and the dev proxy.
-//   bun test sites
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// Builds the four app sites from the one site app (apps/site) and checks what carriers, members and
+// agents rely on: titles, legal and support links, the consent wording (equal to the platform's
+// canonical text), the 10DLC sentence, the age rules (equal to the platform registry), STOP copy, the
+// umbrella links, the files Cloudflare serves as they are (_headers, SKILL.md, robots.txt, .well-known),
+// same-origin scripts, and the dev proxy. What only the page script shows (the Copy button, a copy-only
+// agent tile, the status line, the join steps after the first) is checked on the same components in the
+// state that the generated machines reach.
+//   pnpm run test:integration sites
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, normalize } from "node:path";
 import { createHash } from "node:crypto";
 import { verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { APPS, keywordApp } from "../../packages/platform/src/apps.ts";
-import { AGENTS, keywordFor, joinMessageFor, promptFor } from "../agents.ts";
 import { TEXT_LINE } from "../skills.config.ts";
-import { device } from "../shared/agent.ts";
-import { SITES, buildSite, walk, skillDescription, type Site } from "../sites.ts";
+import { SITES, SKILLS_DIR, TURNSTILE_ORIGIN, buildSite, walk, skillDescription, skillVersion, type Site } from "../sites.ts";
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { serveSite } from "../../scripts/sites-dev.ts";
-import { toE164 } from "../shared/api.ts";
+import { toE164 } from "../../packages/ui/src/api/join.ts";
+import { brandFor } from "../../packages/core/src/generated/brandIdentity.ts";
+import { type JoinPage, initial as joinStart, step as joinStep } from "../../packages/core/src/generated/browserJoin.ts";
+import { preparedPeonTextHeader } from "../../packages/core/src/generated/textEnrollment.ts";
+import {
+  type AgentId,
+  type DeviceKind,
+  agentLinkTemplate,
+  agentName,
+  agentOrder,
+  agentToastText,
+  desktopOnlyAgent,
+  deviceFor,
+  initial as landingStart,
+  joinKeyword,
+  joinMessagePrefix,
+  landingHeadingsAllowed,
+  landingWordsAllowed,
+  messagesOpensHere,
+  step as landingStep,
+  tileKindFor,
+} from "../../packages/core/src/generated/landingEntry.ts";
+import { renderJoin, renderLanding } from "../../apps/site/test/render.tsx";
 
-const REPO = join(import.meta.dir, "../..");
+const REPO = join(import.meta.dirname, "../..");
 
 const TENDLC = "Mobile numbers and opt-in data are not shared with third parties or affiliates for marketing.";
 const tmp = mkdtempSync(join(tmpdir(), "sites-test-"));
@@ -25,13 +50,46 @@ const out = (s: Site) => join(tmp, s.domain);
 const read = (s: Site, f: string) => readFileSync(join(out(s), f), "utf8");
 const htmlFiles = (s: Site) => readdirSync(out(s)).filter((f) => f.endsWith(".html"));
 const OTHER_APP_DOMAINS = (s: Site) => SITES.filter((o) => o.app !== s.app && o.app !== "ntwrk").map((o) => o.domain);
-const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+const decode = (html: string) => html.replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+const text = (html: string) => decode(html.replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 // The text messaging terms are a section of the terms page on every site.
 
+/** The consent wording that the join page shows and sends (the page script reads it from the root element). */
 function consentWording(html: string): string {
-  const m = html.match(/<span data-consent-wording[^>]*>([\s\S]*?)<\/span>/);
-  return m ? text(m[1]!) : "";
+  const m = html.match(/<div id="root"[^>]*\sdata-consent-wording="([^"]*)"/);
+  return m ? decode(m[1]!) : "";
 }
+
+/** The agents of every landing page, pinned (docs/research/2026-10-10-agent-deep-links.md): the generated landing spec must say the same. */
+const AGENTS: { id: AgentId; name: string; href?: string; toast: string; desktopOnly?: boolean }[] = [
+  { id: "ChatGpt", name: "ChatGPT", href: "https://chatgpt.com/?q={q}", toast: "Opening ChatGPT. The prompt is copied too." },
+  { id: "Claude", name: "Claude", href: "https://claude.ai/new?q={q}", toast: "Opening Claude. The prompt is copied too." },
+  { id: "Grok", name: "Grok", href: "https://grok.com/?q={q}", toast: "Opening Grok. The prompt is copied too." },
+  { id: "Muse", name: "Muse", toast: "Copied. Paste it into Muse." },
+  { id: "Gemini", name: "Gemini", href: "https://gemini.google.com/app?q={q}", toast: "Copied. Paste it into Gemini." },
+  { id: "Perplexity", name: "Perplexity", href: "https://www.perplexity.ai/search?q={q}", toast: "Opening Perplexity. The prompt is copied too." },
+  { id: "Cursor", name: "Cursor", href: "https://cursor.com/link/prompt?text={q}", toast: "Opening Cursor. The prompt is copied too.", desktopOnly: true },
+  { id: "OpenClaw", name: "OpenClaw", href: "openclaw://agent?message={q}", toast: "Copied. If OpenClaw did not open, send it the prompt." },
+  { id: "Hermes", name: "Hermes", href: "hermes://skill/install?identifier={skill}", toast: "Copied. If Hermes did not open, send it the prompt." },
+];
+
+/** The first text that joins this app on the shared line (packages/platform/src/apps.ts keywordApp). */
+const keywordFor = (s: Site) => (s.app === "ntwrk" ? "network" : s.app);
+const joinMessageFor = (s: Site) => `join ${keywordFor(s)}`;
+const skillUrlFor = (s: Site, version: string) => `https://${s.domain}/SKILL.md${s.app === "slop" ? "" : `?version=${encodeURIComponent(version)}`}`;
+
+/** The agent row of a landing page, and one tile in it by its accessible name. */
+const agentRow = (html: string) => html.match(/<nav\b[^>]*aria-label="Open your agent"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? "";
+const tileIn = (row: string, label: string) => row.match(new RegExp(`<(?:a|button)\\b[^>]*aria-label="${label}"[^>]*>\\s*<svg`))?.[0] ?? "";
+const mounted = (device: DeviceKind) => landingStep(landingStart, { type: "mount", device });
+
+/** The join page after it read the app and the session, as the generated join machine reaches it. */
+function joinAt(view: "SignedOut" | "MayJoin", checkOn: boolean): JoinPage {
+  const opened = joinStep(joinStart, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+  const loaded = joinStep(opened, { type: "loaded", view: { result: view, account: view === "SignedOut" ? 0 : 1, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
+  return view === "SignedOut" ? joinStep(loaded, { type: "readAuthMode", lookup: "ModeOtp", checkOn }) : loaded;
+}
+const joinOptions = (s: Site) => ({ consentText: APPS[s.app].consent.text, minJoinAge: APPS[s.app].minJoinAge, siteKey: "test-key", homeLabel: `Back to ${s.domain}` });
 
 beforeAll(async () => {
   for (const s of SITES) {
@@ -42,7 +100,8 @@ beforeAll(async () => {
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 describe.each(SITES)("$domain", (s) => {
-  test("every required page is built", () => {
+  test("every required page is built, and the spec's brand record is this site", () => {
+    expect([brandFor(s.key).domain, brandFor(s.key).skillName]).toEqual([s.domain, s.skill]);
     const need = ["index.html", "privacy.html", "terms.html", "404.html", ...(s.app === "peon" ? ["join.html"] : [])];
     if (s.app !== "peon") expect(htmlFiles(s)).not.toContain("join.html");
     expect(htmlFiles(s)).not.toContain("sms-terms.html");
@@ -61,10 +120,8 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of htmlFiles(s)) {
       const html = read(s, f);
       expect(html.match(/<title>([^<]+)<\/title>/)?.[1]?.trim().length ?? 0, f).toBeGreaterThan(3);
-      // The landing page links privacy and terms only.
-      for (const href of ["/privacy", "/terms"]) {
-        expect(html.includes(`href="${href}"`), `${f} links ${href}`).toBe(true);
-      }
+      const footer = html.match(/<footer\b[^>]*>[\s\S]*?<\/footer>/)?.[0] ?? "";
+      expect([...footer.matchAll(/<a\b[^>]+\bhref="([^"]+)"/g)].map(match => match[1]), f).toEqual(["/privacy", "/terms"]);
     }
   });
 
@@ -74,6 +131,8 @@ describe.each(SITES)("$domain", (s) => {
     expect(wording).toContain("HELP");
     expect(wording).toContain("Message and data rates may apply");
     if (s.app !== "ntwrk") expect(text(read(s, "terms.html"))).toContain(wording);
+    // The profile step shows the same wording beside the consent box.
+    if (s.app === "peon") expect(text(renderJoin(joinAt("MayJoin", true), joinOptions(s)))).toContain(wording);
   });
 
   test("privacy and SMS terms carry the 10DLC sentence", () => {
@@ -96,8 +155,10 @@ describe.each(SITES)("$domain", (s) => {
         expect([app.minJoinAge, app.minMatchAge], `${f}: "${m[0]}"`).toContain(Number(m[1]));
       }
     }
-    // Plain words for minors on the join page: they can join, and they are never matched.
-    const ageText = text(read(s, s.app === "peon" ? "join.html" : "SKILL.md"));
+    // Plain words for minors on the join page (its profile step): they can join, and they are never matched.
+    const profile = joinAt("MayJoin", true);
+    expect(profile.screen).toBe("Profile");
+    const ageText = text(s.app === "peon" ? renderJoin(profile, joinOptions(s)) : read(s, "SKILL.md"));
     expect(ageText).toMatch(/13(?: or older|\s*\+)/);
     expect(ageText).toMatch(/18(?: and older|\s*\+)/);
   });
@@ -150,16 +211,26 @@ describe.each(SITES)("$domain", (s) => {
       const skill = read(s, f);
       expect(skill).not.toContain("\r");
       expect(skill).toContain(`confirm its app is ${s.app}`);
-      expect(skill).toContain("never submit across apps");
+      expect(skill).toMatch(/never submit across apps/i);
       if (["friends", "slop", "ntwrk"].includes(s.app)) {
-        expect(skill).toContain("/api/auth/otp/verify");
-        expect(skill).toContain("/api/me/export");
-        expect(skill).toContain("session.cookies");
-        expect(skill).not.toContain("In ChatGPT, add ");
+        expect(skill).toContain(`https://${s.domain}/mcp`);
+        expect(skill).toContain("native connector authorization");
+        expect(skill).toContain("the one link");
+        expect(skill).toContain("**Finish signup**");
+        expect(skill).toContain("**Allow**");
+        expect(skill).toContain("Call `submit_profile` once");
+        expect(skill).toContain("`submitted: true` for this app and this call");
+        expect(skill).not.toMatch(/\/api\/auth\/otp\/|\/api\/me\/export|session\.cookies/);
         expect(skill).not.toContain(`https://${s.domain}/join`);
-        expect(skill).toContain("Signup and sign-in happen only in the person's current agent conversation");
-        expect(skill).toContain("they must never have to send a text to receive a code");
-      } else if (s.app !== "slop") expect(skill).toContain(`In ChatGPT, add https://${s.domain}/mcp/openai instead`);
+        if (s.app === "slop") expect(skill).not.toContain(`https://${s.domain}/mcp/openai`);
+      } else if (s.app === "peon") {
+        expect(skill).toContain(`In ChatGPT, add https://${s.domain}/mcp/openai instead`);
+        expect(skill).toContain(`\`sms:${TEXT_LINE}?&body=\``);
+        expect(skill).toContain(`\`${encodeURIComponent(preparedPeonTextHeader + "\n")}\``);
+        expect(skill.replace(/\s+/g, " ")).toContain(APPS.peon.consent.text);
+        expect(skill).toContain("Only an `onboarding` or `active`");
+        expect(skill).toContain("returns `submitted: true`");
+      }
     }
   });
 
@@ -191,10 +262,15 @@ describe.each(SITES)("$domain", (s) => {
 
   test("scripts call only same-origin /api paths (and load only the Turnstile script)", () => {
     // _worker.js is the server-side router (Cloudflare Pages advanced mode), not a page script: it names the backend.
-    for (const f of readdirSync(out(s)).filter((f) => f.endsWith(".js") && f !== "_worker.js")) {
+    // A page script may name the Turnstile origin (the one script it loads), the agent links a tile opens (a
+    // navigation, never a request), React's error page and the XML namespaces; connect-src 'self' holds the rest.
+    const named = new Set([TURNSTILE_ORIGIN, ...AGENTS.flatMap((a) => (a.href?.startsWith("https://") ? [new URL(a.href).origin] : [])), "https://react.dev", "http://www.w3.org"].map((o) => new URL(o).host));
+    const scripts = readdirSync(out(s)).filter((f) => f.endsWith(".js") && f !== "_worker.js");
+    if (htmlFiles(s).some((f) => /<script\b/.test(read(s, f)))) expect(scripts.length).toBeGreaterThan(0);
+    for (const f of scripts) {
       const js = read(s, f);
-      const urls = [...js.matchAll(/https?:\/\/[^"'`\s)]+/g)].map((m) => m[0]);
-      for (const u of urls) expect(u.startsWith("https://challenges.cloudflare.com"), `${f} has ${u}`).toBe(true);
+      const hosts = [...js.matchAll(/https?:\/\/([^"'`\s)/?#$]+)/g)].map((m) => m[1]!);
+      for (const h of hosts) expect(named.has(h), `${f} names ${h}`).toBe(true);
       for (const m of js.matchAll(/["'`](\/api\/[^"'`]*)["'`]/g)) expect(m[1]!.startsWith("/api/")).toBe(true);
     }
   });
@@ -203,7 +279,13 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of s.app === "peon" ? ["join.html"] : []) {
       const html = read(s, f);
       expect(html, f).toContain('<meta name="turnstile-sitekey" content="">');
-      expect(html.indexOf("data-turnstile"), f).toBeGreaterThan(html.indexOf('data-form="phone"'));
+      const phone = joinAt("SignedOut", true);
+      expect([phone.screen, phone.check]).toEqual(["Phone", "CheckRunning"]);
+      const form = renderJoin(phone, joinOptions(s)).match(/<form\b[\s\S]*?<\/form>/)?.[0] ?? "";
+      expect(form.indexOf("Security check running"), f).toBeGreaterThan(form.indexOf('name="phone"'));
+      expect(form.indexOf('name="phone"'), f).toBeGreaterThan(-1);
+      // Without a site key the phone step shows no check.
+      expect(renderJoin(joinAt("SignedOut", false), joinOptions(s))).not.toContain("Security check");
     }
   });
 });
@@ -212,7 +294,7 @@ test("staging builds keep the served entry, skills and signed router on configur
   const origins = { ntwrk: "https://hub-stage.example.test", slop: "https://slop-stage.example.test", peon: "https://peon-stage.example.test", friends: "https://friends-stage.example.test" };
   const secret = "owned-stage-proxy-contract-secret";
   const received: { host: string; path: string }[] = [];
-  const backend = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+  const backend = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     const signed = await verifyProxyHeaders(req, secret, Math.floor(Date.now() / 1000));
     expect(signed?.host).toBe("slop-stage.example.test");
     received.push({ host: signed!.host, path: new URL(req.url).pathname });
@@ -221,15 +303,13 @@ test("staging builds keep the served entry, skills and signed router on configur
   const env = { PLATFORM_ENV: "staging", STAGING_SITE_ORIGINS: JSON.stringify(origins), BACKEND_ORIGIN: `http://127.0.0.1:${backend.port}` };
   const slop = SITES.find(s => s.app === "slop")!, hub = SITES.find(s => s.app === "ntwrk")!;
   const directory = join(tmp, "staging-slop"), hubDirectory = join(tmp, "staging-hub");
-  let server: ReturnType<typeof Bun.serve> | undefined;
+  let server: Awaited<ReturnType<typeof serveHttp>> | undefined;
   try {
     expect((await buildSite(slop, directory, env)).ok).toBe(true);
     expect((await buildSite(hub, hubDirectory, env)).ok).toBe(true);
     const home = readFileSync(join(directory, "index.html"), "utf8");
-    const builtSkill = readFileSync(join(directory, "SKILL.md"), "utf8");
-    const version = (Bun.YAML.parse(builtSkill.split("---")[1]!) as { metadata: { version: string } }).metadata.version;
     const prompt = `Read ${origins.slop}/SKILL.md and follow it.`;
-    expect(home).toContain(`<code data-prompt>${prompt}</code>`);
+    expect(home).toContain(`>${prompt}</code>`);
     expect(home).toContain(`https://chatgpt.com/?q=${encodeURIComponent(prompt)}`);
     for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
       const href = [...home.matchAll(/href="([^"]+)"/g)].map(m => m[1]!).find(href => href.startsWith(`${origin}?q=`));
@@ -239,17 +319,19 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(home).toContain("slop.date"); // Branding stays canonical.
     expect(home).not.toContain("https://slop.date");
     const worker = (await import(join(directory, "_worker.js"))).default;
-    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+    server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch(req) {
       const local = new URL(req.url);
       return worker.fetch(new Request(`${origins.slop}${local.pathname}${local.search}`, req), {
         PLATFORM_PROXY_SECRET: secret,
-        ASSETS: { fetch: (r: Request) => new Response(Bun.file(join(directory, new URL(r.url).pathname.slice(1) || "index.html"))) },
+        ASSETS: { fetch: async (r: Request) => new Response(await fileAt(join(directory, new URL(r.url).pathname.slice(1) || "index.html")).blob()) },
       });
     } });
     const base = `http://127.0.0.1:${server.port}`;
     const skill = await (await fetch(`${base}/SKILL.md`)).text();
     expect(skill).toContain(`${origins.slop}/`);
-    expect(skill).toContain("/api/auth/otp/verify");
+    expect(skill).toContain(`${origins.slop}/mcp`);
+    expect(skill).toContain("native connector authorization");
+    expect(skill).not.toContain("/api/auth/otp/");
     for (const path of ["privacy", "terms"]) expect(skill).toContain(`${origins.slop}/${path}`);
     expect(skill).toContain("Email: help@ntwrk.party");
     expect(skill).not.toContain("https://slop.date");
@@ -269,40 +351,65 @@ test("staging builds keep the served entry, skills and signed router on configur
     for (const origin of Object.values(origins)) {
       expect((await buildSite(slop, join(tmp, "staging-backend-loop"), { ...env, BACKEND_ORIGIN: origin })).ok).toBe(false);
     }
-  } finally { server?.stop(true); backend.stop(true); }
+  } finally { await server?.stop(true); await backend.stop(true); }
 });
 
-test("landing pages keep agent onboarding and an accessible phone sign-in link", () => {
+test("the generated landing spec keeps the pinned agents, links, names and messages", () => {
+  expect(agentOrder).toEqual(AGENTS.map((a) => a.id));
+  for (const a of AGENTS) {
+    expect([agentName(a.id), agentLinkTemplate(a.id) || undefined, agentToastText(a.id), desktopOnlyAgent(a.id)], a.id).toEqual([a.name, a.href, a.toast, Boolean(a.desktopOnly)]);
+    expect(tileKindFor(a.id) === "CopyOnly", a.id).toBe(!a.href);
+  }
+  for (const s of SITES) expect(`${joinMessagePrefix}${joinKeyword(s.key)}`, s.domain).toBe(joinMessageFor(s));
+});
+
+test("landing pages keep agent onboarding and the Messages entry", () => {
   for (const s of SITES) {
     const home = read(s, "index.html");
-    const version = (Bun.YAML.parse(read(s, "SKILL.md").split("---")[1]!) as { metadata: { version: string } }).metadata.version;
-    const skillUrl = `https://${s.domain}/SKILL.md${s.app === "slop" ? "" : `?version=${encodeURIComponent(version)}`}`;
+    const version = skillVersion(read(s, "SKILL.md"));
+    const skillUrl = skillUrlFor(s, version);
     const prompt = `Read ${skillUrl} and follow it.`;
     const q = encodeURIComponent(prompt);
-    expect(home, s.domain).toContain(`<code data-prompt>${prompt}</code>`);
-    expect(home, s.domain).toMatch(/<button type="button" data-copy[^>]*>Copy<\/button>/);
-    expect(home.match(/<h1>/g)?.length, s.domain).toBe(1);
+    const options = { skillVersion: version, textLine: TEXT_LINE };
+    const desktop = renderLanding(s.key, mounted("OtherDesktop"), options);
+    const phone = renderLanding(s.key, mounted("Phone"), options);
+    // The prompt is selectable text without the page script; the Copy button shows only with it.
+    expect(home, s.domain).toContain(`>${prompt}</code>`);
+    expect(home, s.domain).not.toMatch(/<button\b[^>]*>Copy<\/button>/);
+    expect(desktop, s.domain).toMatch(/<button\b[^>]*>Copy<\/button>/);
+    expect(landingHeadingsAllowed(home.match(/<h1[\s>]/g)?.length ?? 0), s.domain).toBe(true);
+    expect(landingWordsAllowed(text(desktop).split(" ").length), s.domain).toBe(true);
     // Every agent is a logo with an accessible name and no visible name; a link opens it with the prompt.
-    const row = home.match(/<nav class="l-agents"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? "";
+    const row = agentRow(home);
+    expect(row, s.domain).not.toBe("");
     expect(text(row), s.domain).toBe("");
     for (const a of AGENTS) {
-      const tile = row.match(new RegExp(`<(a|button)[^>]*data-agent="${a.id}"[^>]*>\\s*<svg`))?.[0] ?? "";
-      expect(tile, `${s.domain} ${a.id}`).toContain(`aria-label="${a.href ? "Open in" : "Copy the prompt for"} ${a.name}"`);
-      if (a.href) expect(tile, `${s.domain} ${a.id}`).toContain(`href="${a.href.replace("{q}", q).replace("{skill}", encodeURIComponent(skillUrl))}"`);
-      else expect(tile, `${s.domain} ${a.id}`).toMatch(/^<button type="button"[^>]* hidden /);
-      expect(tile.includes('data-only="desktop"'), `${s.domain} ${a.id}`).toBe(Boolean(a.desktopOnly));
+      const label = `${a.href ? "Open in" : "Copy the prompt for"} ${a.name}`;
+      const still = tileIn(row, label), live = tileIn(agentRow(desktop), label), small = tileIn(agentRow(phone), label);
+      if (a.href) {
+        const href = `href="${a.href.replace("{q}", q).replace("{skill}", encodeURIComponent(skillUrl))}"`;
+        expect(still, `${s.domain} ${a.id}`).toMatch(/^<a\b/);
+        expect(still, `${s.domain} ${a.id}`).toContain(href);
+        expect(live, `${s.domain} ${a.id}`).toContain(href);
+      } else {
+        // A copy-only tile cannot copy without the page script, so the static page has none.
+        expect(still, `${s.domain} ${a.id}`).toBe("");
+        expect(live, `${s.domain} ${a.id}`).toMatch(/^<button\b[^>]*type="button"/);
+      }
+      // A desktop-only agent is hidden on a phone, and shown on a desktop and without the page script.
+      expect(small !== "", `${s.domain} ${a.id} on a phone`).toBe(!a.desktopOnly);
+      if (a.href) expect(live !== "", `${s.domain} ${a.id} on a desktop`).toBe(true);
     }
     // Joining by text: the shared line with this app's keyword, which the line routes to this app.
     expect(row, s.domain).not.toContain("sms:");
     expect(home, s.domain).toContain("Use in iMessage");
-    expect(home, s.domain).toContain("data-text-eliza");
-    expect(home, s.domain).not.toContain("data-text-message");
-    expect(home, s.domain).not.toContain("data-copy-message");
     expect(home, s.domain).not.toContain("Text Eliza");
     expect(home, s.domain).toContain(`href="sms:${TEXT_LINE}?body=${encodeURIComponent(joinMessageFor(s))}"`);
     if (s.app === "slop") expect(home).not.toContain("?version=");
     expect(keywordApp(joinMessageFor(s)), s.domain).toBe(s.app);
     expect(keywordApp(keywordFor(s)), s.domain).toBe(s.app);
+    // The status line is there and empty until the page script has something to say.
+    expect(home, s.domain).toMatch(/<p\b[^>]*role="status"[^>]*><\/p>/);
     // No eyebrow, safety notice, explanation, city or sibling brand; legal pages in the footer.
     expect(text(home), s.domain).not.toMatch(/background check|safety notice|How it works|What you get|powered by|New York|San Francisco/i);
     const foot = home.match(/<footer[^>]*>([\s\S]*?)<\/footer>/)?.[1] ?? "";
@@ -313,26 +420,42 @@ test("landing pages keep agent onboarding and an accessible phone sign-in link",
     expect(home, s.domain).not.toMatch(/style="|<script(?![^>]*src=)/);
     for (const f of readdirSync(out(s)).filter((f) => f.endsWith(".css"))) expect(read(s, f), f).not.toContain("data:font");
     expect(existsSync(join(out(s), "fonts/host-grotesk.woff2")), s.domain).toBe(true);
-    // Every site has its logo in the header and as the favicon of every page.
-    expect(home, s.domain).toMatch(/<a class="l-mark" href="\/"><svg /);
-    for (const f of htmlFiles(s)) expect(read(s, f), `${s.domain} ${f}`).toMatch(/<link rel="icon" href="\/favicon-[a-z0-9]+\.svg" type="image\/svg\+xml">/);
+    // Every site has its logo in the header and as the favicon of every page, and its brand on <html>.
+    expect(home, s.domain).toMatch(/<header\b[^>]*>\s*<a href="\/"[^>]*>\s*<svg\b/);
+    for (const f of htmlFiles(s)) {
+      const html = read(s, f);
+      expect(html, `${s.domain} ${f}`).toMatch(/<link rel="icon" href="\/favicon-[a-z0-9]+\.svg" type="image\/svg\+xml">/);
+      expect(html, `${s.domain} ${f}`).toContain(`<html lang="en" data-brand="${{ ntwrk: "network", slop: "slop", peon: "peon", friends: "friends" }[s.app]}">`);
+    }
+    // Only the landing page and the join page ship the page script.
+    for (const f of htmlFiles(s)) expect(/<script\b/.test(read(s, f)), `${s.domain} ${f}`).toBe(f === "index.html" || f === "join.html");
   }
 });
 
 test("Muse copies the prompt without opening an unrelated video-hosting site", () => {
   for (const s of SITES) {
     const home = read(s, "index.html");
-    const tile = home.match(/<button[^>]*data-agent="muse"[^>]*>/)?.[0];
+    const options = { skillVersion: skillVersion(read(s, "SKILL.md")), textLine: TEXT_LINE };
+    const ready = mounted("OtherDesktop");
+    const tile = agentRow(renderLanding(s.key, ready, options)).match(/<button\b[^>]*aria-label="Copy the prompt for Muse"[^>]*>/)?.[0];
     expect(tile, s.domain).toBeDefined();
-    expect(tile, s.domain).toContain('aria-label="Copy the prompt for Muse"');
-    expect(tile, s.domain).toContain('data-toast="Copied. Paste it into Muse."');
-    expect(home, s.domain).not.toMatch(/<a[^>]*data-agent="muse"/);
+    const chosen = landingStep(ready, { type: "chooseAgent", agent: "Muse", copied: true });
+    expect(chosen.agentFollowed, s.domain).toBe(false);
+    expect(chosen.statusAgent, s.domain).toBe("Muse");
+    expect(renderLanding(s.key, chosen, options), s.domain).toMatch(/role="status"[^>]*>Copied\. Paste it into Muse\.<\/p>/);
+    expect(home, s.domain).not.toMatch(/<a\b[^>]*aria-label="[^"]*Muse"/);
     expect(home, s.domain).not.toContain("https://muse.ai/");
+    for (const f of readdirSync(out(s)).filter((f) => f.endsWith(".js"))) expect(read(s, f), f).not.toContain("https://muse.ai/");
   }
 });
 
 test("the page script tells a phone from a desktop (iPadOS reports itself as a Mac)", () => {
+  // The user-agent tests of the page script (packages/ui/src/hooks/useLanding.ts), then the generated decisions.
   const ua = { iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X)", android: "Mozilla/5.0 (Linux; Android 16; Pixel 10)", mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", windows: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
+  const device = (nav: { userAgent: string; maxTouchPoints: number }) => {
+    const kind = deviceFor(/Android|iPhone|iPad|iPod/.test(nav.userAgent), /Macintosh|Mac OS X/.test(nav.userAgent), nav.maxTouchPoints);
+    return { mobile: kind === "Phone", messages: messagesOpensHere(kind) };
+  };
   expect(device({ userAgent: ua.iphone, maxTouchPoints: 5 })).toEqual({ mobile: true, messages: true });
   expect(device({ userAgent: ua.android, maxTouchPoints: 5 })).toEqual({ mobile: true, messages: true });
   expect(device({ userAgent: ua.mac, maxTouchPoints: 5 })).toEqual({ mobile: true, messages: true });
@@ -390,18 +513,46 @@ test("no 'buddies' identifier remains in sites, scripts, deploy or CI (renamed f
     }
   }
   expect(hits).toEqual([]);
-  expect(existsSync(join(REPO, "sites/friends.help/public/index.html"))).toBe(true);
+  expect(existsSync(join(REPO, "sites/friends.help/wrangler.toml"))).toBe(true);
+  expect(existsSync(join(REPO, "sites/friends.help/static/robots.txt"))).toBe(true);
   expect(existsSync(join(REPO, "sites/buddies.nyc"))).toBe(false);
+});
+
+test("a skill cannot hand off signup before explicit draft approval", async () => {
+  const slop = SITES.find(s => s.app === "slop")!;
+  const skills = join(tmp, "reordered-skills");
+  cpSync(SKILLS_DIR, skills, { recursive: true });
+  const file = join(skills, slop.skill, "SKILL.md");
+  const source = readFileSync(file, "utf8");
+  const reordered = source.replace(
+    /<!-- agentSignup: (decideApproval|offerHandoff) -->/g,
+    (_, event) => `<!-- agentSignup: ${event === "decideApproval" ? "offerHandoff" : "decideApproval"} -->`,
+  );
+  writeFileSync(file, reordered);
+  const built = await buildSite(slop, join(tmp, "reordered-build"), process.env, skills);
+  expect(built.ok).toBe(false);
+  expect(built.logs.join("\n")).toContain('the agentSignup model does not allow "offerHandoff" in phase AwaitingApproval (NativeConnectorHandoff)');
+});
+
+test("a skill cannot reintroduce the direct phone API", async () => {
+  const friends = SITES.find(s => s.app === "friends")!;
+  const skills = join(tmp, "direct-phone-skills");
+  cpSync(SKILLS_DIR, skills, { recursive: true });
+  const file = join(skills, friends.skill, "SKILL.md");
+  writeFileSync(file, readFileSync(file, "utf8") + "\nSend a phone to /api/auth/otp/start.\n");
+  const built = await buildSite(friends, join(tmp, "direct-phone-build"), process.env, skills);
+  expect(built.ok).toBe(false);
+  expect(built.logs.join("\n")).toContain("describes a direct phone sign-in outside the browser");
 });
 
 test("ntwrk.party join page says joining is by invitation", () => {
   const ntwrk = SITES.find((s) => s.app === "ntwrk")!;
   expect(htmlFiles(ntwrk)).not.toContain("join.html");
   expect(read(ntwrk, "SKILL.md")).toContain("invitation");
-  expect(read(ntwrk, "SKILL.md")).toContain("`canJoin:false`");
+  expect(read(ntwrk, "SKILL.md")).toContain("The Network is invitation-only.");
 });
 
-test("toE164 accepts US numbers only", () => {
+test("toE164 accepts US numbers only (the join page client)", () => {
   expect(toE164("(212) 555-0123")).toBe("+12125550123");
   expect(toE164("+1 212 555 0123")).toBe("+12125550123");
   expect(toE164("+44 20 7946 0958")).toBeNull();
@@ -412,7 +563,7 @@ test("toE164 accepts US numbers only", () => {
 test("retired Settings URLs refuse an old static account page over HTTP", async () => {
   const dir = mkdtempSync(join(tmpdir(), "retired-settings-"));
   writeFileSync(join(dir, "settings.html"), '<html><main data-settings>Old account page</main></html>');
-  const server = serveSite(SITES[0]!, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: dir });
+  const server = await serveSite(SITES[0]!, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: dir });
   try {
     for (const path of ["/settings", "/settings/", "/settings.html", "/settings?source=old-link"]) {
       for (const method of ["GET", "HEAD"]) {
@@ -423,7 +574,7 @@ test("retired Settings URLs refuse an old static account page over HTTP", async 
       }
     }
   } finally {
-    server.stop(true);
+    await server.stop(true);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -432,24 +583,25 @@ describe("dev server", () => {
   const slop = SITES.find((s) => s.app === "slop")!;
   let seen: { host: string | null; cookie: string | null; ip?: string | null } = { host: null, cookie: null };
   let last: Request | undefined;
-  const api = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      seen = { host: req.headers.get("x-forwarded-host"), cookie: req.headers.get("cookie"), ip: req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? req.headers.get("x-real-ip") };
-      last = req;
-      return Response.json({ ok: true }, { headers: { "set-cookie": "sid=abc; HttpOnly; Secure; SameSite=Lax; Domain=slop.date; Path=/" } });
-    },
+  let api: Awaited<ReturnType<typeof serveHttp>>;
+  let up: Awaited<ReturnType<typeof serveSite>>;
+  let down: Awaited<ReturnType<typeof serveSite>>;
+  let signed: Awaited<ReturnType<typeof serveSite>>;
+  beforeAll(async () => {
+    api = await serveHttp({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen = { host: req.headers.get("x-forwarded-host"), cookie: req.headers.get("cookie"), ip: req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? req.headers.get("x-real-ip") };
+        last = req;
+        return Response.json({ ok: true }, { headers: { "set-cookie": "sid=abc; HttpOnly; Secure; SameSite=Lax; Domain=slop.date; Path=/" } });
+      },
+    });
+    up = await serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop), proxySecret: "" });
+    down = await serveSite(slop, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: out(slop), proxySecret: "" });
+    signed = await serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop), proxySecret: "dev-secret" });
   });
-  const up = serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop) });
-  const down = serveSite(slop, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: out(slop) });
-  const signed = serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop), proxySecret: "dev-secret" });
-  afterAll(() => {
-    api.stop(true);
-    up.stop(true);
-    down.stop(true);
-    signed.stop(true);
-  });
+  afterAll(() => Promise.all([api, up, down, signed].map(s => s?.stop(true))));
 
   test("forwards the same backend paths as the production router, and strips spoofed proxy headers", async () => {
     for (const p of ["/mcp", "/oauth/authorize", "/.well-known/oauth-protected-resource"]) {
@@ -543,7 +695,7 @@ test("retired Join URLs return to the agent landing and never expose a cached fo
   writeFileSync(join(dir, "join.html"), '<html><form data-retired-signup>Old form</form></html>');
   try {
     for (const app of ["friends", "slop", "ntwrk"]) {
-      const server = serveSite(SITES.find(s => s.app === app)!, {port:0, apiOrigin:"http://127.0.0.1:9", outdir:dir});
+      const server = await serveSite(SITES.find(s => s.app === app)!, {port:0, apiOrigin:"http://127.0.0.1:9", outdir:dir});
       try {
         for (const path of ["/join", "/join/", "/join.html", "/join?via=agent"]) {
           const response = await fetch(`http://127.0.0.1:${server.port}${path}`, {redirect:"manual"});
@@ -551,7 +703,7 @@ test("retired Join URLs return to the agent landing and never expose a cached fo
           expect(response.headers.get("cache-control")).toBe("no-store");
           expect(await response.text()).not.toContain("data-retired-signup");
         }
-      } finally {server.stop(true);}
+      } finally {await server.stop(true);}
     }
   } finally {rmSync(dir,{recursive:true,force:true});}
 });

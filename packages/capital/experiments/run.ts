@@ -1,8 +1,9 @@
 // NC simulation runner: 90 days x 8 seeds, metrics and launch gates (design 2.8).
-//   bun run packages/capital/experiments/run.ts                 # default config, all arms
-//   bun run packages/capital/experiments/run.ts --seeds 8 --days 90 --json out.json
-//   bun run packages/capital/experiments/run.ts --sweep         # tuning sweep (cap, pair decay, thresholds)
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/capital/experiments/run.ts                 # default config, all arms
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/capital/experiments/run.ts --seeds 8 --days 90 --json out.json
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/capital/experiments/run.ts --sweep         # tuning sweep (cap, pair decay, thresholds)
 // HARNESS ONLY. No LLM calls. Persona truth is read here only to score.
+import { writePath } from "../../core/src/runtime/files.ts";
 import { simulate, v14Rate, isBad, DAY, T0, type SimOptions, type SimResult, type PType } from "./world.ts";
 import { balanceOf } from "../src/levers.ts";
 import type { CapitalConfigInput } from "../src/config.ts";
@@ -266,7 +267,7 @@ async function main() {
   results.launchGates = { seeds: gs, ...lg, byLever: comp };
   results.launchGatesSensitivity = lgC;
   const ji = args.indexOf("--json");
-  if (ji >= 0) await Bun.write(args[ji + 1]!, JSON.stringify(results, null, 1));
+  if (ji >= 0) await writePath(args[ji + 1]!, JSON.stringify(results, null, 1));
 }
 
 function effortSweep() {

@@ -1,14 +1,18 @@
 // Tangled standalone Quint state machines keep the safety, reachability and trace checks from the
 // source branch. See spec/models/README.md for the Markdown source and command options.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { availableParallelism } from "node:os";
+import { spawnProcess } from "../packages/core/src/runtime/process.ts";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { availableParallelism, cpus, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-const ROOT = join(import.meta.dir, "..");
+const ROOT = join(import.meta.dirname, "..");
 const MODEL_DIR = "spec/models";
 const OUTPUT_DIR = "runs/quint-models";
-const QUINT = join(ROOT, "tools/vibespec/node_modules/.bin/quint");
+const QUINT = join(ROOT, "tools/vibestack/node_modules/.bin/quint");
+const SIMULATOR = join(ROOT, "tools/vibestack/vibestack/simulator.ts");
 const SEED = "0x5eed";
+// Match the pinned Quint CLI's Rust default, independently of the runner's --jobs setting.
+const RUST_THREADS = String(cpus().length);
 
 function tangle(name: string): string {
   if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid Quint model name: ${name}`);
@@ -24,7 +28,8 @@ function tangle(name: string): string {
 }
 
 type Bounds = { maxSteps: number; maxSamples: number; verifySteps: number };
-type Step = { name: string; args: string[]; expectViolation: boolean };
+type Simulation = Pick<Bounds, "maxSteps" | "maxSamples"> & { invariant: string };
+type Step = { name: string; args: string[]; expectViolation: boolean; simulation?: Simulation };
 
 function bounds(text: string): Bounds {
   const b: Bounds = { maxSteps: 20, maxSamples: 4000, verifySteps: 8 };
@@ -53,10 +58,47 @@ function pool(jobs: number) {
   };
 }
 
-async function quint(args: string[]): Promise<{ code: number; out: string }> {
-  const p = Bun.spawn([QUINT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
-  const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
-  return { code: await p.exited, out: out + err };
+async function command(argv: string[], cwd = ROOT): Promise<{ code: number; out: string }> {
+  const p = spawnProcess(argv, { cwd, stdout: "pipe", stderr: "pipe" });
+  const [code, out, err] = await Promise.all([p.exited, new Response(p.stdout).text(), new Response(p.stderr).text()]);
+  return { code, out: out + err };
+}
+
+function simulationArgs(file: string, sim: Simulation): string[] {
+  return [file, "--main", basename(file, ".qnt"), "--seed", SEED, "--max-steps", String(sim.maxSteps),
+    "--max-samples", String(sim.maxSamples), "--invariant", sim.invariant];
+}
+
+function scratchFor(text: string): string | undefined {
+  // The CLI requires init and step to be actions. Pass other forms to the CLI for validation.
+  if (!/^\s*action\s+init\b/m.test(text) || !/^\s*action\s+step\b/m.test(text)) return;
+  try {
+    return mkdtempSync(join(tmpdir(), "thenetwork-quint-"));
+  } catch {
+    // The legacy CLI can run without writable temporary storage for compiled inputs.
+  }
+}
+
+async function compileModel(file: string, scratch: string): Promise<boolean> {
+  try {
+    return (await command([process.execPath, SIMULATOR, "compile", join(ROOT, file),
+      "--main", basename(file, ".qnt")], scratch)).code === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function compiledSimulation(file: string, sim: Simulation, scratch: string): Promise<"safe" | "violation" | undefined> {
+  const trace = join(scratch, `${sim.invariant}.itf.json`);
+  try {
+    const { code, out } = await command([process.execPath, SIMULATOR, "run", ...simulationArgs(join(ROOT, file), sim),
+      "--step", "step", "--n-traces", "1", "--n-threads", RUST_THREADS, "--out-itf", trace], scratch);
+    if (!statSync(trace).size) return;
+    if (code === 0) return "safe";
+    if (code === 1 && /invariant violated/i.test(out)) return "violation";
+  } catch {
+    // Missing traces and evaluator errors need the legacy CLI.
+  }
 }
 
 function stepsFor(file: string, text: string, verify: boolean, safetyCap: number): { steps: Step[]; problems: string[] } {
@@ -67,17 +109,21 @@ function stepsFor(file: string, text: string, verify: boolean, safetyCap: number
   if (/^\s*run\s+\w+/m.test(text)) {
     steps.push({ name: "test", args: ["test", file, "--main", main, "--seed", SEED], expectViolation: false });
   }
-  const sim = ["run", file, "--main", main, "--backend", "rust", "--seed", SEED,
-    "--max-steps", String(b.maxSteps), "--max-samples", String(b.maxSamples)];
+  const addSimulation = (invariant: string, maxSamples: number, expectViolation: boolean) => {
+    const simulation = { invariant, maxSamples, maxSteps: b.maxSteps };
+    steps.push({
+      name: expectViolation ? `${invariant} (must be reachable)` : invariant,
+      args: ["run", ...simulationArgs(file, simulation), "--backend", "rust"],
+      expectViolation, simulation,
+    });
+  };
   if (/^\s*val\s+safety\b/m.test(text)) {
-    const safetySim = [...sim];
-    safetySim[safetySim.indexOf("--max-samples") + 1] = String(Math.min(b.maxSamples, safetyCap));
-    steps.push({ name: "safety", args: [...safetySim, "--invariant", "safety"], expectViolation: false });
+    addSimulation("safety", Math.min(b.maxSamples, safetyCap), false);
   } else problems.push(`${file} has no \`val safety\``);
   const witnesses = [...text.matchAll(/^\s*val\s+(witness_\w+)/gm)].map((m) => m[1]);
   if (!witnesses.length) problems.push(`${file} has no \`val witness_*\``);
   for (const w of witnesses) {
-    steps.push({ name: `${w} (must be reachable)`, args: [...sim, "--invariant", w], expectViolation: true });
+    addSimulation(w, b.maxSamples, true);
   }
   if (verify) {
     steps.push({ name: "verify safety", args: ["verify", file, "--main", main, "--invariant", "safety",
@@ -97,20 +143,42 @@ async function checkModel(file: string, verify: boolean, typecheckOnly: boolean,
       lines.push(out.split("\n").slice(-40).join("\n"));
     }
   };
-  const exec = (step: Step) => run(async () => {
-    const t0 = performance.now();
-    const r = await quint(step.args);
-    const ok = step.expectViolation ? r.code !== 0 && /invariant violated/i.test(r.out) : r.code === 0;
-    record(step.name, ok, r.out, performance.now() - t0);
-  });
-  await exec({ name: "typecheck", args: ["typecheck", file], expectViolation: false });
-  if (!failures.length && !typecheckOnly) {
-    const { steps, problems } = stepsFor(file, text, verify, safetyCap);
-    failures.push(...problems);
-    // Apalache runs one at a time per model after the simulator steps, so that it does not starve them.
-    const verifySteps = steps.filter((s) => s.name === "verify safety");
-    await Promise.all(steps.filter((s) => s.name !== "verify safety").map(exec));
-    for (const s of verifySteps) await exec(s);
+  const scratch = typecheckOnly ? undefined : scratchFor(text);
+  try {
+    const compiled = await run(async () => {
+      const t0 = performance.now();
+      if (scratch && await compileModel(file, scratch)) {
+        record("typecheck", true, "", performance.now() - t0);
+        return scratch;
+      }
+      const r = await command([QUINT, "typecheck", file]);
+      record("typecheck", r.code === 0, r.out, performance.now() - t0);
+    });
+    if (!failures.length && !typecheckOnly) {
+      const exec = (step: Step) => run(async () => {
+        const t0 = performance.now();
+        const simulated = compiled && step.simulation ? await compiledSimulation(file, step.simulation, compiled) : undefined;
+        if (simulated === (step.expectViolation ? "violation" : "safe")) {
+          record(step.name, true, "", performance.now() - t0);
+          return;
+        }
+        // Use the same CLI result and diagnostics on errors, safety failures and unreached witnesses.
+        const r = await command([QUINT, ...step.args]);
+        const ok = step.expectViolation ? r.code !== 0 && /invariant violated/i.test(r.out) : r.code === 0;
+        // A diagnostic retry cannot erase a counterexample the evaluator already found.
+        const disagreement = ok && !step.expectViolation && simulated === "violation";
+        const out = disagreement ? `Invariant violated in the compiled simulation. The CLI retry did not reproduce it.\n${r.out}` : r.out;
+        record(step.name, ok && !disagreement, out, performance.now() - t0);
+      });
+      const { steps, problems } = stepsFor(file, text, verify, safetyCap);
+      failures.push(...problems);
+      // Apalache runs one at a time per model after the simulator steps, so that it does not starve them.
+      const verifySteps = steps.filter((s) => s.name === "verify safety");
+      await Promise.all(steps.filter((s) => s.name !== "verify safety").map(exec));
+      for (const s of verifySteps) await exec(s);
+    }
+  } finally {
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
   console.log(lines.join("\n"));
   return failures;
@@ -145,7 +213,7 @@ if (import.meta.main) {
     process.exit(0);
   }
   if (!existsSync(QUINT)) {
-    console.error("Quint is missing. Run bun run spec:setup.");
+    console.error("Quint is missing. Run pnpm run spec:setup.");
     process.exit(1);
   }
   const typecheckOnly = argv.includes("--typecheck-only");

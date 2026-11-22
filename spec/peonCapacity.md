@@ -8,7 +8,7 @@ The [matching engine model](models/matching_engine.md) follows job postings and 
 
 ### Only live or successful introductions occupy an opening
 
-The engine includes pending, accepted, and completed interactions and current open opportunities. Declined, expired, cancelled, and no-show interactions do not add occupancy. A candidate with several records on one posting occupies one opening there. Each posting has its own ledger. A booked opportunity counts for the service while it has a meeting and remains open. For the engine view, a booked row with recorded feedback uses that feedback instead of a synthetic acceptance.
+The engine includes pending, accepted, and completed interactions and current open opportunities. Declined, expired, cancelled, and no-show interactions do not add occupancy. A candidate with several records on one posting occupies one opening there. Each posting has its own ledger. A booked opportunity counts for the service while it has a meeting and remains open. A booked row adds a synthetic acceptance to the engine view until the row has recorded feedback.
 
 ```quint
 type LedgerPhase = Collecting | Published
@@ -16,10 +16,23 @@ type SeatLedger = { phase: LedgerPhase, occupied: Set[str] }
 
 pure val initial: SeatLedger = { phase: Collecting, occupied: Set() }
 
-pure def interactionOccupies(outcome: str): bool =
-  outcome == "pending" or outcome == "accepted" or outcome == "completed"
+pure def interactionOccupies(disposition: str): bool =
+  disposition == "pending" or disposition == "accepted" or disposition == "completed"
 
 pure def bookedOccupies(hasMeeting: bool, closed: bool): bool = hasMeeting and not(closed)
+
+pure def bookedNeedsSyntheticAcceptance(hasMeeting: bool, closed: bool, hasFeedback: bool): bool =
+  bookedOccupies(hasMeeting, closed) and not(hasFeedback)
+
+pure def lawFeedbackReplacesSyntheticAcceptance(hasMeeting: bool, closed: bool): bool =
+  not(bookedNeedsSyntheticAcceptance(hasMeeting, closed, true))
+
+pure def seatRecordOccupies(openOpportunity: bool, disposition: str): bool =
+  openOpportunity or interactionOccupies(disposition)
+
+pure def lawOpenOpportunityOccupies(disposition: str): bool = seatRecordOccupies(true, disposition)
+pure def lawEndedInteractionFreesOpening(openOpportunity: bool): bool =
+  seatRecordOccupies(openOpportunity, "declined") == openOpportunity
 
 pure def canObserveCandidate(l: SeatLedger, candidate: str, occupies: bool): bool =
   l.phase == Collecting and occupies and not(l.occupied.contains(candidate))
@@ -49,6 +62,12 @@ pure def capSlate(planned: int, remaining: int): int =
   if (planned < room) planned else room
 
 pure def bookedCapacityReached(posted: int, occupied: int): bool = occupied >= posted
+
+pure def closeUnbookedItems(postingClosed: bool, posted: int, occupied: int): bool =
+  postingClosed or bookedCapacityReached(posted, occupied)
+
+pure def lawClosedPostingClosesUnbookedItems(posted: int, occupied: int): bool =
+  closeUnbookedItems(true, posted, occupied)
 
 pure def lawRemainingNeverNegative(posted: int, occupied: int): bool = remainingOpenings(posted, occupied) >= 0
 pure def lawSlateRespectsRemaining(planned: int, remaining: int): bool =

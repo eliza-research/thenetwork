@@ -1,0 +1,105 @@
+import {
+  apply, inboxItemAllowedForRecipient, inboxItemDigestible, inboxItemExpired, initial,
+} from "./generated/notificationDispatch.effect.js"
+
+interface DigestRecord {
+  personId: string
+  itemIds: string[]
+}
+
+interface DigestPlan extends DigestRecord {
+  deliveryId: string
+  to: string
+  channel: string
+  timeZone: string
+}
+
+interface DigestItem {
+  seenAt?: number
+  notifiedAt?: number
+  expiresAt?: number
+  urgency: string
+}
+
+interface DigestRecipient {
+  to: string
+  timeZone: string
+  prefs: { channel: string }
+  proactiveAllowed: boolean
+}
+
+interface DispatchEffects<P extends DigestPlan, I extends DigestItem, R extends DigestRecipient> {
+  readItems(ids: string[]): Promise<I[]>
+  readRecipient(personId: string): Promise<R | undefined>
+  linkCurrent(plan: P, items: I[]): Promise<boolean>
+  rebuild(recipient: R, items: I[]): Promise<P>
+  record(plan: P): Promise<boolean>
+  enqueue(plan: P): Promise<unknown>
+}
+
+interface RevalidationEffects<R extends DigestRecord, I extends DigestItem> {
+  readDelivery(deliveryId: string): Promise<R | undefined>
+  idFor(personId: string, itemIds: string[]): string
+  readItems(ids: string[]): Promise<I[]>
+  canClaim?(record: R, items: I[]): Promise<boolean>
+}
+
+type DispatchResult<P> = { kind: "queued"; plan: P } | { kind: "cancelled"; deliveryId: string }
+
+error DigestIOFailure { message: string, cause: unknown }
+
+function io<T>(message: string, work: () => Promise<T>) {
+  return tryPromise({ try: work, catch: cause => new DigestIOFailure({ message, cause }) })
+}
+
+/** Re-read before the first write and enqueue only after recording succeeds. */
+export function dispatchInboxDigest<P extends DigestPlan, I extends DigestItem, R extends DigestRecipient>(
+  planned: P, now: number, effects: DispatchEffects<P, I, R>,
+): Promise<DispatchResult<P>> {
+  return runPromise(effect {
+    const items = try io("Could not read the planned inbox items", () => effects.readItems(planned.itemIds))
+    const pending = items.filter(item => inboxItemDigestible(item.seenAt !== undefined, item.notifiedAt !== undefined,
+      item.expiresAt !== undefined, item.expiresAt ?? 0, now))
+    const recipient = pending.length > 0
+      ? try io("Could not refresh the digest recipient", () => effects.readRecipient(planned.personId))
+      : undefined
+    const fresh = recipient === undefined ? [] : pending.filter(item => inboxItemAllowedForRecipient(item.urgency === "requested", recipient.proactiveAllowed))
+    const destinationChanged = recipient !== undefined && (planned.to !== recipient.to || planned.channel !== recipient.prefs.channel || planned.timeZone !== recipient.timeZone)
+    const linkCurrent = recipient !== undefined && !destinationChanged && fresh.length === planned.itemIds.length
+      ? try io("Could not refresh the assistant link", () => effects.linkCurrent(planned, fresh))
+      : true
+    const refreshed = try apply(initial, { type: "rereadItems", plannedCount: planned.itemIds.length,
+      remainingCount: fresh.length, recipientAvailable: recipient !== undefined, destinationChanged: destinationChanged || !linkCurrent })
+    if (!recipient || refreshed.phase === "DigestCancelled") return { kind: "cancelled", deliveryId: planned.deliveryId }
+
+    const final = refreshed.phase === "ReusingDigest" ? planned
+      : try io("Could not rebuild the inbox digest", () => effects.rebuild(recipient, fresh))
+    const recorded = try io("Could not record the inbox digest", () => effects.record(final))
+    const ready = try apply(refreshed, { type: "recordDigest", recorded })
+    if (ready.phase !== "EnqueueingDigest") return { kind: "cancelled", deliveryId: final.deliveryId }
+    try io("Could not enqueue the inbox digest", () => effects.enqueue(final))
+    try apply(ready, { type: "enqueueDigest" })
+    return { kind: "queued", plan: final }
+  })
+}
+
+/** A queued body is immutable. Revalidate its complete item set at send time. */
+export function queuedInboxDigestCurrent<R extends DigestRecord, I extends DigestItem>(
+  deliveryId: string, now: number, effects: RevalidationEffects<R, I>,
+): Promise<boolean> {
+  return runPromise(effect {
+    const record = try io("Could not read the queued digest", () => effects.readDelivery(deliveryId))
+    const queued = try apply(initial, { type: "readQueuedDigest", sameDigest: record !== undefined && effects.idFor(record.personId, record.itemIds) === deliveryId })
+    if (!record || queued.phase !== "ReadingQueuedItems") return false
+    const items = try io("Could not revalidate the queued digest items", () => effects.readItems(record.itemIds))
+    const current = try apply(queued, {
+      type: "revalidateQueuedItems",
+      allPresent: items.length === record.itemIds.length,
+      anyExpired: items.some(item => inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now)),
+      anyUnseen: items.some(item => item.seenAt === undefined),
+    })
+    if (current.phase !== "QueuedDigestNeeded") return false
+    const canClaim = effects.canClaim
+    return canClaim === undefined || (try io("Could not check the queued digest claim", () => canClaim(record, items)))
+  })
+}

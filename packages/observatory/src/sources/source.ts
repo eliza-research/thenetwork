@@ -31,7 +31,7 @@ export interface DataSource {
    * checks the role, the reason, the member's age and writes the audit row first. Absent: no photos.
    */
   photos?(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult>;
-  /** The weekly bias monitor reports (real mode: the Network service, GET /bias). Absent: the simulation has none here (bun run sim measures it). */
+  /** The weekly bias monitor reports (real mode: the Network service, GET /bias). Absent: the simulation has none here (pnpm run sim measures it). */
   bias?(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }>;
   /**
    * Texts held for staff (real mode: the Network service's leak review and held relay routes). The text of
@@ -78,6 +78,7 @@ export const REVIEW_BLOCK_ERRORS: Record<string, string> = {
   not_a_participant: "an explanation can only be edited for a participant",
   edit_leak: "the edited text would leak a private fact or contact details",
   cannot_swap: "that member cannot be swapped out",
+  review_stale: "the item changed (a re-roll) after you opened it: review what it says now",
   unknown_decision: "decision must be approve, reject, edit or reroll",
   busy_elsewhere: "approved, but a participant is now busy in another opportunity: nothing was sent",
   held: "approved, but a participant is now on safety hold: nothing was sent",

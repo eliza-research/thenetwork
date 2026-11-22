@@ -7,7 +7,8 @@
 //    update reads "The Network"), never a login code.
 //  - Our own domain only; public shorteners are filtered by carriers.
 
-import { TOKEN_PATTERN } from "./tokens.ts";
+import { linkedAssistants, type LinkedAssistant, updateHandoffPrefix, updateLinkTemplate, updatePromptLead } from "../../core/src/generated/agentEntry.ts";
+import { TOKEN_PATTERN } from "./reference.ts";
 import type { Assistant } from "./types.ts";
 
 export const MAX_PROMPT_CHARS = 80;
@@ -16,28 +17,27 @@ export const DEFAULT_PAGE_BASE = "https://ntwrk.party";
 
 export const ASSISTANT_LABEL: Record<Assistant, string> = { chatgpt: "ChatGPT", claude: "Claude", grok: "Grok" };
 
+const assistantKinds: Record<Assistant, LinkedAssistant> = { chatgpt: "ChatGptAssistant", claude: "ClaudeAssistant", grok: "GrokAssistant" };
+const assistants: Record<LinkedAssistant, Assistant> = { ChatGptAssistant: "chatgpt", ClaudeAssistant: "claude", GrokAssistant: "grok" };
+export const UPDATE_HANDOFF_ASSISTANTS: readonly Assistant[] = linkedAssistants.map(kind => assistants[kind]);
+
 const ALLOWED_HOSTS = new Set(["chatgpt.com", "claude.ai", "grok.com", "ntwrk.party"]);
 const SHORTENERS = /(^|\.)(bit\.ly|tinyurl\.com|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly|rebrand\.ly|cutt\.ly|shorturl\.at)$/i;
 
 export function updatePrompt(token: string): string {
   if (!TOKEN_PATTERN.test(token)) throw new Error("not a task token");
-  const p = `Ask The Network for update ${token}`;
+  const p = updatePromptLead + token;
   if (p.length > MAX_PROMPT_CHARS) throw new Error("prompt too long");
   return p;
 }
 
 export function assistantLink(a: Assistant, prompt: string): string {
-  const q = encodeURIComponent(prompt);
-  switch (a) {
-    case "chatgpt": return `https://chatgpt.com/?prompt=${q}`;
-    case "claude": return `https://claude.ai/new?q=${q}`;
-    case "grok": return `https://grok.com/?q=${q}`;
-  }
+  return updateLinkTemplate(assistantKinds[a]).replace("{q}", encodeURIComponent(prompt));
 }
 
 export function buttonPageLink(token: string, base = DEFAULT_PAGE_BASE): string {
   if (!TOKEN_PATTERN.test(token)) throw new Error("not a task token");
-  return `${base.replace(/\/$/, "")}/t/${token}`;
+  return base.replace(/\/$/, "") + updateHandoffPrefix + token;
 }
 
 /** Throws unless the URL is https, on an allowed host, not a shortener, and fits one SMS segment. */
@@ -51,7 +51,7 @@ export function assertSendableUrl(url: string, extraHosts: string[] = []): strin
 }
 
 /** The buttons on ntwrk.party/t/<token>. Tapping a button (a user gesture) does open the app. */
-export function buttonPageButtons(token: string, assistants: Assistant[], replyTo?: string): { label: string; href: string }[] {
+export function buttonPageButtons(token: string, assistants: readonly Assistant[], replyTo?: string): { label: string; href: string }[] {
   const prompt = updatePrompt(token);
   const buttons = assistants.map(a => ({ label: `Open in ${ASSISTANT_LABEL[a]}`, href: assistantLink(a, prompt) }));
   if (replyTo) buttons.push({ label: "Reply by text", href: `sms:${replyTo}` });

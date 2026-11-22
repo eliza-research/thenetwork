@@ -1,12 +1,13 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
+import { serveHttp } from "../packages/core/src/runtime/http.ts";
 // Local dev for the whole platform: the shared backend and the four sites, wired as in production
 // (docs/runbook-platform.md).
-//   bun run platform:dev                 dev Postgres (:54339) + migrations, the backend, the four sites
-//   bun run platform:dev --no-sites      the database and the backend only
+//   pnpm run platform:dev                 dev Postgres (:54339) + migrations, the backend, the four sites
+//   pnpm run platform:dev --no-sites      the database and the backend only
 //
 // What it starts, all on 127.0.0.1:
 //  - The dev Postgres cluster on port 54339 and every migration on its `network` database.
-//  - The shared backend (deploy/backend createBackend, the same code as `bun run start:backend`):
+//  - The shared backend (deploy/backend createBackend, the same code as `pnpm run start:backend`):
 //    /api/*, /webhooks/blooio, /mcp, /oauth/* and /.well-known/oauth-* on :8790, the staff API on
 //    :4848. Every network in platform.networks runs and ticks each minute. Sends are dry-run (stored
 //    with status dry_run, never sent). OTP codes are printed to this log ("[otp dev] ..."); nothing is texted.
@@ -16,9 +17,10 @@
 //    production (packages/platform/src/proxy.ts). The MCP server's issuer for each app is the local
 //    site origin (http://127.0.0.1:5102 for slop), so an MCP client connects to http://127.0.0.1:5102/mcp.
 // It refuses to run with NODE_ENV or PLATFORM_ENV set to production.
+import { spawnProcess } from "../packages/core/src/runtime/process.ts";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../packages/core/src/runtime/postgres.ts";
 import { createBackend, ipOf, loadConfig, type Logger } from "../deploy/backend/backend.ts";
 import { applySchema, DEV_PG_URL, devPgUp } from "../packages/observatory/db/dev-pg.ts";
 import { APP_IDS } from "../packages/platform/src/apps.ts";
@@ -28,7 +30,7 @@ import { createServiceMcp } from "../packages/network/service/serve.ts";
 import { NetworkService } from "../packages/network/service/service.ts";
 import { SITES } from "../sites/sites.ts";
 
-const REPO = resolve(import.meta.dir, "..");
+const REPO = resolve(import.meta.dirname, "..");
 const HOST = "127.0.0.1";
 
 /** Plain one-line logs for a terminal (the deployed backend logs JSON). Request lines only with --verbose. */
@@ -92,13 +94,13 @@ async function main() {
   const mcp = await createServiceMcp(svc, { databaseUrl: url, proxySecret: config.proxySecret, devOrigins, log: s => log.info(s) });
   const pool = new SQL({ url, max: 1 });
   const backend = createBackend({ svc, config, log, ping: async () => { await pool`select 1`; return true; }, mcp: mcp && (req => mcp.fetch(req)) });
-  const pub = Bun.serve({ hostname: HOST, port: apiPort, fetch: (req, server) => backend.publicFetch(req, server), maxRequestBodySize: 256 * 1024 });
-  const staff = Bun.serve({ hostname: HOST, port: staffPort, fetch: req => backend.staffFetch(req), maxRequestBodySize: 256 * 1024 });
+  const pub = await serveHttp({ hostname: HOST, port: apiPort, fetch: (req, server) => backend.publicFetch(req, server), maxRequestBodySize: 256 * 1024 });
+  const staff = await serveHttp({ hostname: HOST, port: staffPort, fetch: req => backend.staffFetch(req), maxRequestBodySize: 256 * 1024 });
   void backend.startTicks();
 
-  let sites: ReturnType<typeof Bun.spawn> | undefined;
+  let sites: ReturnType<typeof spawnProcess> | undefined;
   if (!process.argv.includes("--no-sites")) {
-    sites = Bun.spawn(["bun", "run", "scripts/sites-dev.ts"], {
+    sites = spawnProcess([process.execPath, "--import", "tsx", "scripts/sites-dev.ts"], {
       cwd: REPO, stdout: "inherit", stderr: "inherit",
       env: { ...process.env, PLATFORM_API_ORIGIN: `http://${HOST}:${pub.port}` },
     });

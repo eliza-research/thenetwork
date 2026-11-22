@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 // The friends block: friends.help in the NYC friends world (400 personas with 13-17 year olds, age
 // liars, adversaries and canaries; weekly plans, partner intros and crews), the official launch gates
 // (adopted 2026-10-08, all blocking) against random-within-area and the oracle on the same seeds, the
@@ -18,10 +19,11 @@ import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher, planToProposal as toFriendsProposal } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
-import { SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, visibleRedFlag, weekTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { isReal, SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
-import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
+import { PLAN_VENUES } from "../../packages/network/src/plans.ts";
+import { runFriendsWorld, slotOfCrew, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -42,6 +44,8 @@ function friendsSnapshotAfter(seed: number, weeks = 3, n = 160): FriendsSnapshot
 const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapshotAfter(seed));
 
 export async function friendsScheduleGates(b: Block): Promise<void> {
+  await friendsReachableVenueGate(b);
+  await friendsActivityDurationGate(b);
   await b.run("friends repeat plans keep the local weekday and time across DST, with the minimum lead", () => {
     const s = friendsSnapshotAfter(1);
     const past = s.outcomes.find(o => o.positive.length >= 2)!;
@@ -94,7 +98,6 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
   });
 
   await b.run("plans: every offered time fits the selected venue's opening hours", () => {
-    const recurring: { seed: number; closed: number; valid: number; retained: number; sources: string[] }[] = [];
     for (const seed of [101, 102, 103]) {
       const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
       r.world.state.week = 3; r.world.state.now += 7 * DAY;
@@ -105,7 +108,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const wk = planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, s), venues, crews: [], outcomes: [], offered: [] },
         { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, tableOptions: 3 }, FRIENDS_PLANS);
       const placed = wk.plans.filter(p => p.venueId);
-      expect(placed.length).toBeGreaterThan(0);
+      if (!placed.length) throw new Error(`seed ${seed} produced no new table with an open venue`);
       expect(placed.some(p => p.options.length > 1)).toBe(true);
       // These generated members attended a group and share climbing. Their stated windows
       // include a closed Saturday evening between an open Tuesday evening and Sunday morning.
@@ -119,7 +122,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
           memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
         }]));
         const input = { now: s.now, tz: NYC_TZ, evidence, venues, crews: [], outcomes: [], offered: [] };
-        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false, universalFirst: false, singleSlot: false, loosePass: false };
+        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false };
         const partners = planFriendsWeek(w, input, policy, FRIENDS_PLANS).partners;
         expect(partners.length).toBe(1);
         const open = planFriendsWeek(w, { ...input, venues: venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } })) }, policy, FRIENDS_PLANS).partners;
@@ -140,33 +143,31 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
           expect(start + (option.end - option.start) / HOUR).toBeLessThanOrEqual(close);
         }
       }
-      // Replay real crew and repeat history after venues shorten their hours. Morning plans
-      // remain possible; an old successful meetup does not prove the venue is still open.
-      const history = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: friendsPackMatcher() });
-      history.world.state.week = 3; history.world.state.now += 7 * DAY;
-      const snapshot = buildFriendsSnapshot(history.world.personas, history.world.state);
-      const world = new World(engineInputOf(snapshot), resolveConfig({ seed }), localEmbed, friendsPack);
+    }
+
+    // Use one morning plan that fits after the change, one that ends 15 minutes after closing,
+    // and one that starts after closing for each recurring path.
+    const activityId = "coffee_crawl";
+    const venue = VENUES.find(v => v.activities.includes(activityId))!;
+    const ids = ["a", "b", "c"];
+    const mini = new Mini(ids.map((id, index) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cara Li"][index]!, age: 30, area: venue.area, interests: ["coffee", "hiking"] })));
+    for (const id of ids) mini.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    const world = new World(mini.ctx().snapshot(), resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+    for (const source of ["crew_offer", "crew_session", "repeat"] as const) for (const [hour, minute] of [[14, 30], [14, 45], [20, 0]]) {
+      const at = Date.UTC(2026, 9, 3, hour, minute);
+      const crew: Crew = { id: "crew_venue", city: "nyc", activityId, venueId: venue.id, members: ids, cadenceDays: 7,
+        hostRotation: ids, sessions: [], handedOff: false, slot: { start: at } };
+      const outcome: PlanOutcomeRecord = { planId: "prior_venue", activityId, venueId: venue.id, city: "nyc", at, attended: ids, positive: ids, recurringWant: [] };
       const recurringAt = (hours: [number, number]) => {
-        const next = planFriendsWeek(world, { now: snapshot.now, tz: NYC_TZ, evidence: new Map(),
-          venues: VENUES.map(v => ({ ...v, hours: { weekday: hours, weekend: hours } })),
-          crews: snapshot.crews, outcomes: snapshot.outcomes, offered: snapshot.offered },
-        { ...DEFAULT_FRIENDS_POLICY, timeOptions: false }, FRIENDS_PLANS);
+        const next = planFriendsWeek(world, { now: START, tz: NYC_TZ, evidence: new Map(), venues: [{ ...venue, hours: { weekday: hours, weekend: hours } }],
+          crews: source === "crew_session" ? [crew] : [], outcomes: source === "crew_session" ? [] : [outcome], offered: [] },
+        { ...DEFAULT_FRIENDS_POLICY, crews: source !== "repeat", repeat: source === "repeat", timeOptions: false }, FRIENDS_PLANS);
         return [...next.sessions, ...next.offers.map(x => x.first), ...next.repeats];
       };
-      const open = recurringAt([0, 24]), morning = recurringAt([9, 12]);
-      const fitsMorning = (p: (typeof open)[number]) => {
-        const lp = localParts(p.window.start, NYC_TZ), hour = lp.hour + lp.minute / 60;
-        return hour >= 9 && hour + (p.window.end - p.window.start) / HOUR <= 12;
-      };
-      const valid = open.filter(fitsMorning);
-      expect(valid.length).toBeGreaterThan(0);
-      expect(open.some(p => !fitsMorning(p))).toBe(true);
-      const retained = valid.filter(p => morning.some(q => q.id === p.id && Bun.deepEquals(q.invited, p.invited)));
-      recurring.push({ seed, closed: morning.filter(p => !fitsMorning(p)).length, valid: valid.length,
-        retained: retained.length, sources: [...new Set(open.map(p => p.source))].sort() });
+      const open = recurringAt([0, 24]);
+      expect(open).toMatchObject([{ source, invited: ids, venueId: venue.id, window: { start: at + 7 * DAY } }]);
+      expect(recurringAt([9, 12])).toEqual(hour === 14 && minute === 30 ? open : []);
     }
-    expect([...new Set(recurring.flatMap(r => r.sources))].sort()).toEqual(["crew_offer", "crew_session", "repeat"]);
-    for (const r of recurring) { expect(r.closed).toBe(0); expect(r.retained).toBe(r.valid); }
   });
 
   await b.run("availability: future weekly slots do not change current plans; active slots still take effect", () => {
@@ -190,10 +191,10 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const active = plan(extra.map(f => ({ ...f, validFrom: s.now })));
       const expired = plan(extra.map(f => ({ ...f, validFrom: s.now - 30 * DAY, validTo: s.now - 1 })));
       expect(base.plans.length).toBeGreaterThan(0);
-      expect(Bun.deepEquals(expired, base)).toBe(true);
+      expect(isDeepStrictEqual(expired, base)).toBe(true);
       // Positive control: the very same availability matters at its inclusive start boundary.
-      expect(Bun.deepEquals(active, base)).toBe(false);
-      const sameFuturePlans = Bun.deepEquals(future, base);
+      expect(isDeepStrictEqual(active, base)).toBe(false);
+      const sameFuturePlans = isDeepStrictEqual(future, base);
       if (!sameFuturePlans) failures.push(seed);
     }
     expect(failures).toEqual([]);
@@ -217,7 +218,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
         const outcome: PlanOutcomeRecord = { planId: "earlier", activityId: crew.activityId, city: "nyc", venueId: venue.id, at: crew.slot.start, attended: ids, positive: ids, recurringWant: [] };
         const savedCrew = JSON.stringify(crew);
         const week = planFriendsWeek(w, { now: START, tz: NYC_TZ, evidence: new Map(ids.map(id => [id, { memberId: id, tz: NYC_TZ }])), venues: VENUES, crews: source === "session" ? [crew] : [], outcomes: source === "offer" ? [outcome] : [], offered: [] },
-          { ...DEFAULT_FRIENDS_POLICY, repeat: false, tables: false, singleSlot: false, partnerFallback: false, partnerIntros: 0, universal: false, loosePass: false }, FRIENDS_PLANS);
+          { ...DEFAULT_FRIENDS_POLICY, repeat: false, partnerIntros: 0, universal: false }, FRIENDS_PLANS);
         expect(JSON.stringify(crew)).toBe(savedCrew);
         const plans = source === "session" ? week.sessions : week.offers.map(x => x.first);
         expect(plans.length).toBe(1);
@@ -230,8 +231,8 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
         expect(items.every(item => item.reviewState === "pending")).toBe(true);
         const hosts = Object.entries(proposal.roles).filter(([, role]) => role === "host").map(([id]) => id);
         const contributions = items.filter(item => item.effort === "contribute").map(item => item.memberId);
-        const correct = plan.hostId === expectedHost && Bun.deepEquals(plan.invited, expectedInvited)
-          && Bun.deepEquals(hosts, [expectedHost]) && Bun.deepEquals(contributions, [expectedHost]);
+        const correct = plan.hostId === expectedHost && isDeepStrictEqual(plan.invited, expectedInvited)
+          && isDeepStrictEqual(hosts, [expectedHost]) && isDeepStrictEqual(contributions, [expectedHost]);
         rows.push({ seed, source, change, turn, host: plan.hostId, expectedHost, invited: plan.invited, correct });
       }
     }
@@ -266,19 +267,156 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const tuesdayOffered = plan.options.some(s => { const p = localParts(s.start, NYC_TZ); return p.weekday === 1 && p.hour === 19; });
       const fresh = ["recent_observed", "recent_valid", "mixed"].includes(kind);
       const expectedTimes = kind === "mixed" ? [START, old] : [fresh ? START : old];
-      const correct = tuesdayOffered === fresh && ids.every(id => Bun.deepEquals(info.get(id)!.standing.map(s => s.statedAt), expectedTimes));
+      const correct = tuesdayOffered === fresh && ids.every(id => isDeepStrictEqual(info.get(id)!.standing.map(s => s.statedAt), expectedTimes));
       rows.push({ seed, kind, tuesdayOffered, correct });
     }
     expect(rows.filter(x => x.correct).length).toBe(rows.length);
   });
 }
 
+export async function friendsReachableVenueGate(b: Block): Promise<void> {
+  await b.run("Friends planning prefers the open public venue that fits both partners' travel limits", () => {
+    const venues = PLAN_VENUES.filter(venue => venue.id === "pier-45" || venue.id === "central-reservoir");
+    const ids = ["a", "b"];
+    const slot = Date.UTC(2026, 9, 10, 14);
+    const propose = (tolerance: number, candidateVenues = venues) => {
+      const mini = new Mini([
+        { id: "a", name: "Ada", age: 30, area: "Financial District", interests: ["running"] },
+        { id: "b", name: "Bev", age: 30, area: "Roosevelt Island", interests: ["running"] },
+        { id: "c", name: "Cam", age: 30, area: "Roosevelt Island", interests: ["running"] },
+      ]);
+      for (const id of ids) mini.facets.push({
+        id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+        tags: ["verify:liveness:pass", "verify:age:pass", `friends:max_travel:${id === "a" ? 30 : tolerance}`],
+        scope: "agent_private", provenance: "said", confidence: 1,
+      });
+      const input: EngineInput = { ...mini.ctx().snapshot(), interactions: [{
+        id: "prior-group", kind: "group", category: "social", participants: ["a", "b", "c"], at: START - DAY, outcome: "completed",
+      }] };
+      const world = new World(input, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+      const evidence = new Map<MemberId, PlanEvidence>(ids.map(id => [id, {
+        memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows: [{ start: slot, end: slot + 3 * HOUR }], at: START, until: START + 7 * DAY },
+      }]));
+      return planFriendsWeek(world, { now: START, tz: NYC_TZ, evidence, venues: candidateVenues, crews: [], outcomes: [], offered: [] }, DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS).partners;
+    };
+    const expected = [{ venueId: "central-reservoir", invited: ids, minutes: { a: 34, b: 21 }, window: { start: slot } }];
+    expect(propose(20, venues.filter(venue => venue.id === "central-reservoir")).map(plan => plan.venueId)).toEqual(["central-reservoir"]);
+    expect(propose(20)).toMatchObject(expected);
+    expect(propose(17)).toEqual([]);
+  });
+}
+
+export async function friendsActivityDurationGate(b: Block): Promise<void> {
+  await b.run("Friends checks availability through the end of the actual activity", () => {
+    const venue = PLAN_VENUES.find(v => v.id === "inwood-hill")!;
+    const ids = ["a", "b", "c"];
+    const mini = new Mini(ids.map((id, index) => ({ id, name: ["Ada", "Bev", "Cam"][index]!, age: 30, area: "Inwood", interests: ["hiking"] })));
+    for (const id of ids) mini.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+      tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    const world = new World(mini.ctx().snapshot(), resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+    const start = Date.UTC(2026, 9, 10, 14);
+    const propose = (hoursFree: number, busyAt: number) => {
+      const evidence = new Map<MemberId, PlanEvidence>(ids.map(id => [id, {
+        memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows: [{ start, end: start + hoursFree * HOUR }], at: START, until: START + 7 * DAY },
+        ...(id === "c" ? { calendar: { observedAt: START, expiresAt: START + DAY,
+          coverage: { start: START, end: START + 7 * DAY }, busy: [{ start: start + busyAt * HOUR, end: start + (busyAt + 1) * HOUR }] } } : {}),
+      }]));
+      return planFriendsWeek(world, { now: START, tz: NYC_TZ, evidence, venues: [venue], crews: [], outcomes: [], offered: [] },
+        { ...DEFAULT_FRIENDS_POLICY, universal: false, partnerIntros: 0 }, FRIENDS_PLANS).plans.filter(plan => plan.activityId === "day_hike");
+    };
+    const open = propose(4, 4);
+    expect(open).toMatchObject([{ venueId: venue.id, window: { start, end: start + 4 * HOUR } }]);
+    expect([...open[0]!.invited].sort()).toEqual(ids);
+    expect(propose(4, 3)).toEqual([]);
+    expect(propose(2, 4)).toEqual([]);
+  });
+}
+
+export async function friendsSplitTableMetricGate(b: Block): Promise<void> {
+  await b.run("metrics: a split invitation counts once toward proposal quorum and both tables count as held", () => {
+    const venue = VENUES.find(v => v.activities.includes("coffee_crawl"))!;
+    const options = [SLOTS.indexOf("sat_am"), SLOTS.indexOf("sun_am")];
+    const result = runFriendsWorld({ seed: 5, n: 30, weeks: 1, matcher: world => {
+      const ids = world.personas.filter(isReal).slice(0, 9).map(member => member.id);
+      const accepted = new Map(ids.slice(0, 6).map((id, index) => [id, options[index < 3 ? 0 : 1]!]));
+      world.oracle.answer = id => {
+        const picked = accepted.get(id);
+        return { replied: true, yes: picked !== undefined, picks: picked === undefined ? [] : [picked] };
+      };
+      world.oracle.backsOut = () => false;
+      world.oracle.attends = () => true;
+      const plan = { kind: "plan" as const, activity: "coffee_crawl", venueHood: venue.area, options, alternates: [], quorum: 3, split: true };
+      return { name: "split-table metric fixture", propose: () => [{ ...plan, invited: ids.slice(0, 6) }, { ...plan, invited: ids.slice(6) }] };
+    } });
+    expect(result.flows.map(flow => [flow.stage, flow.probed, flow.attended.length])).toEqual([
+      ["held", 6, 3], ["held", 0, 3], ["no_quorum", 3, 0],
+    ]);
+    expect(friendsMetrics(result)).toMatchObject({ proposals: 2, probes: 9, quorumRate: 0.5, meetups: 2, attendance: 1 });
+  });
+}
+
+export async function friendsKnownContactMetricGate(b: Block): Promise<void> {
+  await b.run("metrics: a pair contacted again after a visible hold counts once as a known-adversary contact", () => {
+    const result = runFriendsWorld({ seed: 5, n: 100, weeks: 3, adversaryShares: { harasser: 0.2 },
+      matcher: { name: "known contact metric fixture", propose: () => [] } });
+    const offender = result.world.personas.find(member => member.hidden.adversary === "harasser" && !visibleRedFlag(member, 0))!;
+    const member = result.world.personas.find(isReal)!;
+    expect(offender).toBeTruthy();
+    result.world.state.safetyHolds.push({ memberId: offender.id, from: weekTime(1, 0, 9) });
+    const contact = { a: offender.id, b: member.id };
+    result.contacts.push({ ...contact, day: 2, key: "before-hold" });
+    expect(friendsMetrics(result).safety).toMatchObject({ adversaryContacts: 1, knownAdversaryContacts: 0 });
+    result.contacts.push({ ...contact, day: 9, key: "after-hold" }, { ...contact, day: 16, key: "repeated-after-hold" });
+    expect(friendsMetrics(result).safety).toMatchObject({ adversaryContacts: 1, knownAdversaryContacts: 1 });
+  });
+}
+
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await friendsScheduleGates(b);
+  await friendsSplitTableMetricGate(b);
+  await friendsKnownContactMetricGate(b);
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
-  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) all[arm].push(friendsMetrics(runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] })));
+  // PR #450: repeat and crew invitations read the latest enjoyment from earlier weeks, in meetup time order.
+  let priorChecks = 0, priorErrors = 0, memoryChecks = 0, memoryErrors = 0;
+  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
+    const decisions: { id: MemberId; week: number; enjoy: number | undefined; crew: boolean }[] = [];
+    const result = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: w => {
+      // Observe the real oracle without changing its answers, draws or matcher proposals.
+      const answer = w.oracle.answer.bind(w.oracle), crewOptIn = w.oracle.crewOptIn.bind(w.oracle);
+      w.oracle.answer = (id, key, c) => {
+        if (!/:(plan|partner)$/.test(key)) decisions.push({ id, week: c.week, enjoy: c.prevEnjoy, crew: false });
+        return answer(id, key, c);
+      };
+      w.oracle.crewOptIn = (id, key, enjoyed) => {
+        decisions.push({ id, week: w.state.week, enjoy: enjoyed, crew: true });
+        return crewOptIn(id, key, enjoyed);
+      };
+      const matcher = matchers[arm];
+      return typeof matcher === "function" ? matcher(w) : matcher;
+    } });
+    const latest = new Map<MemberId, number>();
+    const bookedAt = new Map(result.world.state.interactions.map(x => [x.id, x.at]));
+    const at = (m: MeetupRecord) => m.kind === "crew_self"
+      ? slotTime(m.week, SLOTS.indexOf(slotOfCrew(result.world.state.crews.find(c => c.id === m.crewId)!)))
+      : bookedAt.get(m.key)!;
+    for (let week = 0; week < spec.weeks; week++) {
+      for (const d of decisions.filter(x => x.week === week)) {
+        priorChecks++;
+        if (d.enjoy !== (latest.get(d.id) ?? (d.crew ? 0.5 : undefined))) priorErrors++;
+      }
+      for (const m of result.meetups.filter(x => x.week === week).sort((x, y) => at(x) - at(y)))
+        for (const id of m.attendees) latest.set(id, m.enjoy[id]!);
+    }
+    for (const id of new Set([...latest.keys(), ...result.world.lastEnjoy.keys()])) {
+      memoryChecks++;
+      if (result.world.lastEnjoy.get(id) !== latest.get(id)) memoryErrors++;
+    }
+    all[arm].push(friendsMetrics(result));
+  }
+  b.gate("harness: invitations use the latest prior-week enjoyment", priorChecks > 0 && memoryChecks > 0 && priorErrors + memoryErrors === 0,
+    `${priorErrors}/${priorChecks} wrong invitation inputs; ${memoryErrors}/${memoryChecks} wrong final memories`);
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);

@@ -1,10 +1,12 @@
-// NotifyStore on Postgres (db/schema.sql), with Bun's SQL client like packages/platform.
+// NotifyStore on Postgres (db/schema.sql), with the Node PostgreSQL client like packages/platform.
 // Item ids are bigserial numbers stored as text ids "inb_<n>" in the API.
-import { SQL } from "bun";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { digestItemSetCanBeRecorded } from "../../core/src/generated/notificationDispatch.ts";
 import type { DeliveryRecord, NotifyStore } from "./store.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
-import type { InboxItem, InboxItemInput, Surface } from "./types.ts";
+import { isAssistant, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
 import { dedupeKey } from "./store.ts";
 
 type Row = Record<string, any>;
@@ -34,6 +36,13 @@ const delivery = (r: Row): DeliveryRecord => {
     deliveryId: r.delivery_id, personId: r.person_id, itemIds: bigintArray(r.item_ids).map(toId), target: r.target,
     countsTowardCap: r.counts_toward_cap, sentAt: ms(r.sent_at)!,
   };
+  const link = r.assistant_link as Partial<NonNullable<DeliveryRecord["assistantLink"]>> | null;
+  if (typeof link?.app === "string" && link.app && Array.isArray(link.assistants) && link.assistants.length > 0
+    && link.assistants.every(isAssistant) && new Set(link.assistants).size === link.assistants.length
+    && typeof link.expiresAt === "number" && Number.isSafeInteger(link.expiresAt)
+    && typeof link.bodyHash === "string" && /^[a-f0-9]{64}$/.test(link.bodyHash)) {
+    d.assistantLink = { app: link.app, assistants: link.assistants, expiresAt: link.expiresAt, bodyHash: link.bodyHash };
+  }
   if (r.outcome) { d.outcome = r.outcome; d.outcomeAt = ms(r.outcome_at); }
   return d;
 };
@@ -49,7 +58,7 @@ export class PgNotifyStore implements NotifyStore {
 
   /** Apply db/schema.sql (idempotent). */
   async migrate() {
-    await this.sql.unsafe(await Bun.file(new URL("../db/schema.sql", import.meta.url)).text());
+    await this.sql.unsafe(await fileAt(new URL("../db/schema.sql", import.meta.url)).text());
   }
 
   async addItem(input: InboxItemInput, now: number) {
@@ -64,10 +73,11 @@ export class PgNotifyStore implements NotifyStore {
     return { item: item(existing), created: false };
   }
 
-  async getItems(ids: string[]) {
+  async getItems(ids: string[], lock = false) {
     const n = numIds(ids);
     if (!n.length) return [];
-    const rows = await this.sql`select * from notify.inbox_items where id = any(${this.sql.array(n, "int8")})`;
+    const rows = await this.sql`select * from notify.inbox_items where id = any(${this.sql.array(n, "int8")})
+      ${lock ? this.sql`order by id for share` : this.sql``}`;
     const byId = new Map(rows.map((r: Row) => [toId(r.id), item(r)]));
     return ids.map(id => byId.get(id)).filter((i): i is InboxItem => !!i);
   }
@@ -103,21 +113,30 @@ export class PgNotifyStore implements NotifyStore {
 
   async recordDelivery(d: DeliveryRecord) {
     return this.sql.begin(async tx => {
+      const ids = tx.array(numIds(d.itemIds), "int8");
+      const sentAt = new Date(d.sentAt);
+      if (d.deliveryId.startsWith("ntf_")) {
+        const pending = await tx`
+          select id from notify.inbox_items where person_id = ${d.personId} and id = any(${ids})
+            and seen_at is null and notified_at is null and (expires_at is null or expires_at > ${sentAt})
+          order by id for update`;
+        if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
+      }
       const ins = await tx`
-        insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at)
-        values (${d.deliveryId}, ${d.personId}, ${tx.array(numIds(d.itemIds), "int8")}, ${d.target}, ${d.countsTowardCap}, ${new Date(d.sentAt)})
+        insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at, assistant_link)
+        values (${d.deliveryId}, ${d.personId}, ${ids}, ${d.target}, ${d.countsTowardCap}, ${sentAt}, ${d.assistantLink ?? null}::jsonb)
         on conflict (delivery_id) do nothing
         returning delivery_id`;
       if (!ins.length) return false;
       await tx`
-        update notify.inbox_items set notified_at = ${new Date(d.sentAt)}, delivery_id = ${d.deliveryId}
-        where id = any(${tx.array(numIds(d.itemIds), "int8")}) and notified_at is null`;
+        update notify.inbox_items set notified_at = ${sentAt}, delivery_id = ${d.deliveryId}
+        where id = any(${ids}) and notified_at is null`;
       return true;
     });
   }
 
-  async getDelivery(id: string) {
-    const [r] = await this.sql`select * from notify.deliveries where delivery_id = ${id}`;
+  async getDelivery(id: string, lock = false) {
+    const [r] = await this.sql`select * from notify.deliveries where delivery_id = ${id} ${lock ? this.sql`for share` : this.sql``}`;
     return r ? delivery(r) : undefined;
   }
 

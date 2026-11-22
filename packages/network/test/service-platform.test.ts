@@ -3,10 +3,12 @@
 // STOP versus leave, the lowest age across apps, restarts, the row-level security role, the consent
 // ledger on every send, and the production boot checks. Postgres in a database of its own per test
 // process. Nothing is sent: dry-run adapters, or Blooio with a fake provider; OTP codes come from a fake.
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { findExecutable, spawnProcess } from "../../core/src/runtime/process.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
@@ -18,12 +20,12 @@ import { BlooioAdapter, DryRunAdapter, type ChannelAdapter, type Delivery, type 
 import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor } from "../src/copy.ts";
 import { START } from "./mini.ts";
-import { queueSink } from "../../notify/src/wiring.ts";
+import { deliveryIdFor } from "../../notify/src/scheduler.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 
 const T = 300_000;
-const REPO = resolve(import.meta.dir, "../../..");
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const REPO = resolve(import.meta.dirname, "../../..");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_service_platform_test_${process.pid}`;
 const ROLE = `svc_rls_test_${process.pid}`;
@@ -253,9 +255,19 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect(underAge.status).toBe(400);
     expect(underAge.body).toMatchObject({ error: "under_age" });
     expect(await lowestAge(p)).toBe(12);
-    expect((await web.join("slop", 30)).status).toBe(400);
-    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents);
 
+    // spec/memberAge.md, "Resume a confirmed refusal from the durable age"
+    expect(await sql`select app_id, state from platform.memberships order by app_id`)
+      .toEqual([{ app_id: "friends", state: "removed" }, { app_id: "slop", state: "removed" }]);
+    const consentEvents = () => sql`select app_id, state, source from platform.consent_events where e164 = ${p} order by id`;
+    const afterDecline = await consentEvents();
+    expect(afterDecline).toHaveLength(consents + 2);
+    expect(afterDecline.slice(consents)).toEqual([
+      { app_id: "friends", state: "opted_out", source: "join_declined" },
+      { app_id: "slop", state: "opted_out", source: "join_declined" },
+    ]);
+    expect((await web.join("slop", 30)).status).toBe(400);
+    expect(await consentEvents()).toEqual(afterDecline);
   }, T);
 
   test("a repeated age statement repairs cross-app age propagation after a database failure", async () => {
@@ -318,27 +330,40 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     await text(s, clock, phone, "Rae 30", { app: "friends" });
     await s.close();
     const sent: SendRequest[] = [];
+    let holdQueue = true;
+    class HeldAdapter extends BlooioAdapter {
+      override async deliver(messages: Outbound[]): Promise<Delivery[]> {
+        return holdQueue ? [] : super.deliver(messages);
+      }
+    }
     const { s: restarted } = service(clock, {
-      adapter: (_net, rt) => new BlooioAdapter({
+      adapter: (_net, rt) => new HeldAdapter({
         from: "+12125550100", clock, app: rt.app.id, liveGate: () => true, log: () => {},
         provider: { kind: "sim", send: async request => { sent.push(request); return { providerMessageId: request.idempotencyKey, status: "sent" }; } },
       }),
     });
     await restarted.start();
-    const queue = (restarted.runtimeFor("friends")!.adapter as BlooioAdapter).queue;
+    const runtime = restarted.runtimeFor("friends")!;
+    const queue = (runtime.adapter as BlooioAdapter).queue;
     const person = (await restarted.accounts.personFor(phone))!;
     const input = { personId: person.id, app: "friends", eventType: "plan", subjectId: "expired-plan", urgency: "requested" as const, summary: "Dinner is confirmed." };
-    await restarted.notify!.add({ ...input, expiresAt: clock.now() + MINUTE }, clock.now());
-    const expired = await restarted.notify!.dispatch(clock.now(), queueSink(queue));
-    expect(expired.sent).toHaveLength(1);
+    const enqueue = async (subjectId: string, expiresAt: number) => {
+      const { item } = await restarted.notify!.add({ ...input, subjectId, expiresAt }, clock.now());
+      await restarted.notifyTick();
+      const id = deliveryIdFor(person.id, [item.id]);
+      expect(await queue.statusOf(id)).toBe("pending");
+      expect(await one(sql`select member_id from platform.outbound where id = ${id}`))
+        .toEqual({ member_id: (await memberOf("friends", phone))!.id });
+      return id;
+    };
+    const expired = await enqueue("expired-plan", clock.now() + MINUTE);
     clock.advance(MINUTE);
-    await restarted.notify!.add({ ...input, subjectId: "current-plan", expiresAt: clock.now() + HOUR }, clock.now());
-    const current = await restarted.notify!.dispatch(clock.now(), queueSink(queue));
-    expect(current.sent).toHaveLength(1);
+    const current = await enqueue("current-plan", clock.now() + HOUR);
+    holdQueue = false;
     await queue.inbound(phone);
-    await queue.drain();
-    expect(sent.map(r => r.idempotencyKey)).toEqual([`tn:${current.sent[0]!.deliveryId}`]);
-    expect(await queue.statusOf(expired.sent[0]!.deliveryId)).toBe("expired");
+    await runtime.deliver();
+    expect(sent.map(r => r.idempotencyKey)).toEqual([`tn:${current}`]);
+    expect(await queue.statusOf(expired)).toBe("expired");
   }, T);
 
   test("SVC-04 and SVC-05 after a restart, a waiting reply is sent once; a stale proactive row and an old row expire unsent", async () => {
@@ -583,13 +608,15 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     const call = (method: string, path: string, b?: unknown) => s.fetch(new Request(`http://127.0.0.1${path}`, { method, headers: { authorization: "Bearer adm-tok", "content-type": "application/json" }, ...(b !== undefined ? { body: JSON.stringify(b) } : {}) }));
     const before = await count(sql`select count(*)::int as n from network.staff_audit`);
     expect((await call("POST", "/review/%E0%A4%A", { decision: "approve" })).status).toBe(400);
-    expect((await call("POST", "/review/o1", { decision: "approve", note: 7 })).status).toBe(400);
-    expect((await call("POST", "/review/o1", { decision: "approve", explanations: ["x"] })).status).toBe(400);
+    expect((await call("POST", "/review/o1", { decision: "approve", note: 7, revision: 0 })).status).toBe(400);
+    expect((await call("POST", "/review/o1", { decision: "approve", explanations: ["x"], revision: 0 })).status).toBe(400);
+    // spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw": a staff decision carries a revision.
+    for (const revision of [undefined, -1, 1.5, "0"]) expect((await call("POST", "/review/o1", { decision: "approve", revision })).status).toBe(400);
     expect((await call("POST", "/safety/lift", { memberId: "m", note: { x: 1 } })).status).toBe(400);
     expect(await count(sql`select count(*)::int as n from network.staff_audit`)).toBe(before);
     const saved = async () => (await one(sql`select saved_at from network.network_state where id = 'ntwrk:nyc'`)).saved_at.getTime();
     const t0 = await saved();
-    await Bun.sleep(20);
+    await sleep(20);
     expect((await call("GET", "/review")).status).toBe(200);
     expect(await saved()).toBe(t0);
   }, T);
@@ -627,7 +654,7 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
 describe("PLAT-06 the production boot check", () => {
   test("main.ts exits non-zero and names what is missing; dev providers never start in production", async () => {
     const run = async (env: Record<string, string>) => {
-      const p = Bun.spawn(["bun", "run", "packages/network/service/main.ts", "--once", "--dry-run"], {
+      const p = spawnProcess([process.execPath, "--import", "tsx", "packages/network/service/main.ts", "--once", "--dry-run"], {
         cwd: REPO, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env }, stdout: "pipe", stderr: "pipe",
       });
       const code = await p.exited;
@@ -635,7 +662,8 @@ describe("PLAT-06 the production boot check", () => {
     };
     const missing = await run({ PLATFORM_ENV: "production", OTP_PROVIDER: "dev", DATABASE_URL: "postgres://x@db.invalid/none" });
     expect(missing.code).not.toBe(0);
-    for (const word of ["refusing to start", "OTP_PROVIDER=twilio", "TURNSTILE_SECRET_KEY", "PLATFORM_PROXY_SECRET", "PLATFORM_SESSION_SECRET"]) expect(missing.err).toContain(word);
+    // The network boot policy requires a real provider. Blooio's app allow-list is optional.
+    for (const word of ["refusing to start", "OTP_PROVIDER=twilio or blooio", "TURNSTILE_SECRET_KEY", "PLATFORM_PROXY_SECRET", "PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET"]) expect(missing.err).toContain(word);
     const undeclared = await run({ DATABASE_URL: "postgres://x@db.invalid/none" });
     expect(undeclared.code).not.toBe(0);
     expect(undeclared.err).toContain("PLATFORM_ENV");

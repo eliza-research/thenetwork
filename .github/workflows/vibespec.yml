@@ -1,25 +1,64 @@
-name: Vibespec
+name: Vibestack
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
-      - 'spec/*.md'
+      - 'spec/**'
       - 'packages/core/src/generated/**'
+      - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
-      - 'tools/vibespec/**'
+      - 'tools/vibestack/**'
+      - 'scripts/vibestack.ts'
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'deploy/router.ts'
+      - 'packages/platform/src/**'
+      - 'scripts/sites-dev.ts'
+      - 'test/bombadil.ts'
+      - 'test/fixtures/browserSignup.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
       - '.github/workflows/vibespec.yml'
   pull_request:
     paths:
-      - 'spec/*.md'
+      - 'spec/**'
       - 'packages/core/src/generated/**'
+      - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
-      - 'tools/vibespec/**'
+      - 'tools/vibestack/**'
+      - 'scripts/vibestack.ts'
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'deploy/router.ts'
+      - 'packages/platform/src/**'
+      - 'scripts/sites-dev.ts'
+      - 'test/bombadil.ts'
+      - 'test/fixtures/browserSignup.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
       - '.github/workflows/vibespec.yml'
   workflow_dispatch:
+    inputs:
+      cold_formal_cache:
+        type: boolean
+        description: Start with an empty formal action cache
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: vibespec-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   generation:
@@ -31,17 +70,58 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: tools/vibespec/package-lock.json
-      - run: npm run spec:setup
-      - if: hashFiles('spec/*.md', 'packages/core/src/generated/*.ts') != ''
-        run: npm run spec:check-generated
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
+        working-directory: tools/vibestack
+      - name: Reuse content-keyed formal tool actions
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .spec-cache/formal
+          key: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ hashFiles('spec/**', 'scripts/spec-snapshots.ts', 'scripts/vibestack.ts', 'tools/vibestack/vibestack/**') }}
+          restore-keys: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
+      - if: hashFiles('spec/**/*.md', 'packages/core/src/generated/*.ts') != ''
+        run: pnpm run spec:check-generated
+
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run spec:setup
+      - run: pnpm --dir tools/vibestack exec playwright install --with-deps --no-shell chromium
+      - run: pnpm run spec:explore
 
   full-check:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    concurrency:
+      group: vibestack-full-check-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      REQUIRE_PG: "1"
+    services:
+      postgres:
+        image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54339:5432
+        options: >-
+          --health-cmd "pg_isready -U runner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -51,12 +131,70 @@ jobs:
           dafny-version: '4.11.0'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: tools/vibespec/package-lock.json
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run spec:setup
+      - name: Install the pinned Quint Rust evaluator
+        # Use the published asset directly so GitHub API rate limits cannot block setup.
+        working-directory: tools/vibestack
+        shell: bash
+        run: |
+          version="$(node -p 'require("@informalsystems/quint/dist/src/rust/binaryManager.js").QUINT_EVALUATOR_VERSION')"
+          test "$version" = v0.7.1
+          directory="$(node -p 'require("@informalsystems/quint/dist/src/config.js").rustEvaluatorDir("v0.7.1")')"
+          archive="$RUNNER_TEMP/quint-evaluator.tar.gz"
+          curl --fail --silent --show-error --location --retry 4 \
+            "https://github.com/quint-co/quint/releases/download/evaluator/$version/quint_evaluator-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' ce0502bdef65dc26c242a9e56379a9bb26de6f3db38f0e3989339d46a542f5eb "$archive" | sha256sum --check
+          mkdir -p "$directory"
+          tar -xzf "$archive" -C "$directory" quint_evaluator
+          test -x "$directory/quint_evaluator"
+      - name: Require the synthetic Postgres service
+        run: |
+          bin="$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin | sort -V | tail -n 1)"
+          test -x "$bin/pg_ctl"
+          export PATH="$bin:$PATH"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/pg_isready" -h localhost -p 54339
+          node --import tsx scripts/require-pg.ts
+      - name: Restore completed formal actions
+        id: formal-cache
+        if: github.event_name != 'workflow_dispatch' || !inputs.cold_formal_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          bun-version: 1.4.2
-      - run: bun install --frozen-lockfile
-      - run: npm run spec:setup
-      - run: npm run check
+          path: .spec-cache/formal
+          key: formal-full-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            formal-full-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
+            formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ hashFiles('spec/**', 'scripts/spec-snapshots.ts', 'scripts/vibestack.ts', 'tools/vibestack/vibestack/**') }}
+            formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
+      - name: Run the full Vibestack check
+        id: check
+        shell: bash
+        run: |
+          mkdir -p .spec-cache/formal
+          find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' |
+            sort > "$RUNNER_TEMP/formal-actions-before"
+          # End the check before the job deadline so completed actions can be uploaded.
+          timeout --kill-after=15s 27m pnpm run check
+      - name: Prepare completed actions for upload
+        if: ${{ !cancelled() && (steps.check.outcome == 'success' || steps.check.outcome == 'failure') }}
+        id: ready
+        shell: bash
+        run: |
+          # The toolkit publishes complete raw actions by atomic rename in this directory.
+          find .spec-cache/formal -mindepth 1 -maxdepth 1 -regextype posix-extended \
+            ! \( -type f -regex '.*/action-[a-f0-9]{24}\.json\.gz' \) -exec rm -rf -- {} +
+          find .spec-cache/formal -maxdepth 1 -type f -printf '%f\n' |
+            sort > "$RUNNER_TEMP/formal-actions-after"
+          if [[ -n "$(comm -13 "$RUNNER_TEMP/formal-actions-before" "$RUNNER_TEMP/formal-actions-after")" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Save completed formal actions
+        if: ${{ !cancelled() && steps.ready.outputs.changed == 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .spec-cache/formal
+          key: formal-full-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}

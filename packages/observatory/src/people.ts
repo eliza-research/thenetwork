@@ -6,7 +6,7 @@
 // server has written the audit row for it. A private app (slop, dating; PRD 40.3) is left out of the
 // summary: no membership row, its holds show only as "restricted" and its blocks without the app.
 // Its panel opens like any other, with a typed reason (that answer says whether there is a membership).
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APP_IDS, isAppId, isPrivateApp, PRIVATE_APPS, type AppId } from "./apps.ts";
 import type { PersonAppPanel, PersonSummary } from "./types.ts";
 

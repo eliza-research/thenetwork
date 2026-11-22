@@ -8,11 +8,11 @@ This library takes the decision steps from the [plan flow model](models/plan_run
 
 ### Only a pending member can change an open plan
 
-An acceptance during probing books at quorum. A partner plan below quorum asks the next eligible partner before the deadline. After booking, acceptances can add a member up to and including the late-join cutoff. A late acceptance after that cutoff does not add a member. A decline after booking does not close the plan. The first member's decline in a partner plan closes it. Other declines can use eligible alternates before the deadline.
+An acceptance during probing books at quorum if it arrives before the deadline. A reply at or after the deadline closes the probe without changing the member's answer. A partner plan below quorum asks the next eligible partner before the deadline. After booking, acceptances can add a member up to and including the late-join cutoff. A late acceptance after that cutoff does not add a member. A decline after booking does not close the plan. The first member's decline in a partner plan closes it. Other declines can use eligible alternates before the deadline.
 
 ```quint
 type PlanStage = Probing | Booked | Closed
-type ReplyChoice = IgnoreReply | AddMember | RecordLate | BookPlan | AskPartner | RecordAnswer | ClosePlan | AskAlternate
+type ReplyChoice = IgnoreReply | ExpireProbe | AddMember | RecordLate | BookPlan | AskPartner | RecordAnswer | ClosePlan | AskAlternate
 type ReplyFacts = {
   phase: PlanStage, pendingMember: bool, accepted: bool, yesAfter: int,
   needed: int, partnerPlan: bool, firstMember: bool, beforeDeadline: bool, lateJoinOpen: bool
@@ -21,23 +21,50 @@ type ReplyFacts = {
 pure def canApplyPlanReply(phase: PlanStage, pendingMember: bool): bool =
   phase != Closed and pendingMember
 
+pure def planProbeExpired(phase: PlanStage, deadlineReached: bool): bool =
+  phase == Probing and deadlineReached
+
 pure def planReplyChoice(reply: ReplyFacts): ReplyChoice =
   if (not(canApplyPlanReply(reply.phase, reply.pendingMember))) IgnoreReply
+  else if (planProbeExpired(reply.phase, not(reply.beforeDeadline))) ExpireProbe
   else if (reply.accepted) {
     if (reply.phase == Booked) {
       if (reply.lateJoinOpen) AddMember else RecordLate
     } else if (reply.yesAfter >= reply.needed) BookPlan
-    else if (reply.partnerPlan and reply.beforeDeadline) AskPartner
+    else if (reply.partnerPlan) AskPartner
     else RecordAnswer
   } else if (reply.phase == Booked) RecordAnswer
   else if (reply.partnerPlan and reply.firstMember) ClosePlan
-  else if (reply.beforeDeadline) AskAlternate
-  else RecordAnswer
+  else AskAlternate
+```
+
+### A Friends replacement needs a current pair value with every remaining member
+
+Keep the reviewed bench order. Before promoting a replacement, check the member's current Friend profile and pair value with each member still in the plan. A member who has declined or has been removed is out of the table. Skip an ineligible candidate and continue down the same reviewed bench. Repeat the check before sending an invitation to a promoted replacement.
+
+```quint
+pure def currentFriendPlanSeatFits(hasProfile: bool, peerValues: List[int]): bool =
+  hasProfile and peerValues.every(value => value >= 0)
+
+pure def lawFriendPlanSeatNeedsACurrentProfile(peerValues: List[int]): bool =
+  not(currentFriendPlanSeatFits(false, peerValues))
+
+pure def lawFriendPlanSeatNeedsEveryPairValue(hasProfile: bool, peerValues: List[int]): bool =
+  peerValues.some(value => value < 0) implies not(currentFriendPlanSeatFits(hasProfile, peerValues))
+```
+
+### An existing Friends plan can use the last discovery slot
+
+Discovery needs a positive capacity. Check an existing plan's Friend profiles without applying that capacity limit. The plan's own invitation can use the last slot. The current member and pair eligibility rules still apply.
+
+```quint
+pure def planProfileCapacityAllows(capacity: int, existingFriendPlan: bool): bool =
+  existingFriendPlan or capacity > 0
 ```
 
 ### Booking requires a pending acceptance that meets quorum
 
-Only an accepting response from a member whose answer is pending can book a plan. The run must still be probing, and the new answer must bring the acceptance count to quorum.
+Only an accepting response from a member whose answer is pending can book a plan. It must arrive before the probe deadline and bring the acceptance count to quorum.
 
 ```quint
 pure def lawBookingNeedsQuorum(phase: PlanStage, pendingMember: bool, accepted: bool, yesAfter: int, needed: int,
@@ -45,22 +72,23 @@ pure def lawBookingNeedsQuorum(phase: PlanStage, pendingMember: bool, accepted: 
   val facts = { phase: phase, pendingMember: pendingMember, accepted: accepted, yesAfter: yesAfter, needed: needed,
     partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: beforeDeadline, lateJoinOpen: lateJoinOpen }
   planReplyChoice(facts) == BookPlan implies
-    (phase == Probing and pendingMember and accepted and yesAfter >= needed)
+    (phase == Probing and pendingMember and accepted and beforeDeadline and yesAfter >= needed)
 ```
 
 ### An unanswered plan closes when its deadline passes
 
-When the deadline arrives, an unbooked plan closes. If a decline leaves no one pending and quorum is still unmet after the engine checks available alternates, the plan can also close before the deadline.
+When the deadline arrives, an unbooked plan closes. A reply before that deadline also closes a plan when it leaves no one pending and quorum is still unmet after the engine checks available alternates.
 
 ```quint
-pure def planProbeExpired(phase: PlanStage, deadlineReached: bool): bool =
-  phase == Probing and deadlineReached
-
 pure def unmetPlanQuorum(pendingCount: int, yesCount: int, needed: int): bool =
   pendingCount == 0 and yesCount < needed
 
 pure def lawOnlyProbingPlansExpire(phase: PlanStage): bool =
   planProbeExpired(phase, true) implies phase == Probing
+
+pure def lawReplyAtDeadlineClosesProbe(accepted: bool, yesAfter: int, needed: int, partnerPlan: bool, firstMember: bool): bool =
+  planReplyChoice({ phase: Probing, pendingMember: true, accepted: accepted, yesAfter: yesAfter, needed: needed,
+    partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: false, lateJoinOpen: false }) == ExpireProbe
 ```
 
 ## Story: Choose a fallback for a plan that cannot proceed
@@ -81,6 +109,31 @@ pure def planFallbackShape(yesCount: int, smallerOn: bool, minGroup: int, leadOk
 
 pure def lawDirectFallbackRequiresGroup(yesCount: int, smallerOn: bool, minGroup: int, leadOk: bool): bool =
   planFallbackShape(yesCount, smallerOn, minGroup, leadOk) == SmallerGroup implies yesCount >= 3
+```
+
+### Both Friends activity partners need prior group attendance
+
+Each Friends activity partner must have attended a completed group and must pass current one-to-one eligibility and pair checks for the plan's category. Check both members before asking staff to review a partner fallback, before sending either anonymous invitation, and before booking. If a partner fallback fails the check, use the ordinary solo event or next-week fallback.
+
+```quint
+pure def friendsPartnerPlanFits(currentSeats: List[bool], pairEligible: bool): bool =
+  currentSeats.length() == 2 and currentSeats.every(eligible => eligible) and pairEligible
+```
+
+### A group plan never books two members directly
+
+The engine counts the accepting members it can still seat after it removes booking conflicts and contact refusals. For Friends plans it seats an accepting member only when their current Friend profile gives them a pair value with every member already seated. A late join on Friends needs a current pair value with every booked member. A partner plan books when the seated count reaches its quorum. A group plan books only with three or more seated members, and only when the count reaches quorum or the activity permits two people. When a group plan keeps exactly two seated members, the engine uses the fallback for those two members. That fallback asks them again through a fresh partner plan, which needs new review and consent from both.
+
+```quint
+pure def planBookingConsented(partnerPlan: bool, seatedCount: int, needed: int, minGroup: int): bool =
+  if (partnerPlan) seatedCount >= needed
+  else seatedCount >= 3 and (seatedCount >= needed or minGroup <= 2)
+
+pure def lawGroupBookingNeedsThreeMembers(seatedCount: int, needed: int, minGroup: int): bool =
+  planBookingConsented(false, seatedCount, needed, minGroup) implies seatedCount >= 3
+
+pure def lawPartnerBookingNeedsQuorum(seatedCount: int, needed: int, minGroup: int): bool =
+  planBookingConsented(true, seatedCount, needed, minGroup) implies seatedCount >= needed
 ```
 
 ## Story: Keep plan invites on a separate allowance
