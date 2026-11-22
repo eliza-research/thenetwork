@@ -272,8 +272,12 @@ export function gates(a: ArmResult, random: ArmResult): Gate[] {
 export function gates3(a: ArmResult, random: ArmResult): Gate[] {
   const M = (f: (m: SlopMetrics) => number, r = a) => mean(r.metrics.map(f));
   const X = (f: (e: Extra) => number, r = a) => mean(r.extra.map(f));
-  const cut = (f: (e: Extra) => number) => 1 - X(f) / Math.max(1e-9, X(f, random));
-  const cutM = (f: (m: SlopMetrics) => number) => 1 - M(f) / Math.max(1e-9, M(f, random));
+  const cut = (name: string, observed: number, baseline: number): Gate => {
+    const value = Number.isFinite(baseline) && baseline > 0 ? 1 - observed / baseline : NaN;
+    return { name, value, target: ">= 90%", pass: value >= 0.9 };
+  };
+  const extraCut = (name: string, f: (e: Extra) => number) => cut(name, X(f), X(f, random));
+  const metricsCut = (name: string, f: (m: SlopMetrics) => number) => cut(name, M(f), M(f, random));
   const sdr = M(m => m.secondDateRate), sdrR = M(m => m.secondDateRate, random);
   const sec = M(m => m.secondDateRate * m.dates), secR = M(m => m.secondDateRate * m.dates, random);
   const fair = fairnessRatios(a), fairF = fairnessRatios(a, true);
@@ -281,11 +285,11 @@ export function gates3(a: ArmResult, random: ArmResult): Gate[] {
   return [
     { name: "Declared-minor contacts", value: M(m => m.safety.minorContacts), target: "= 0", pass: a.metrics.every(m => m.safety.minorContacts === 0) },
     { name: "Stated-filter violations", value: M(m => m.filterViolations), target: "= 0", pass: a.metrics.every(m => m.filterViolations === 0) },
-    { name: "Scam harm events cut vs random", value: cut(e => e.scamHarms), target: ">= 90%", pass: cut(e => e.scamHarms) >= 0.9 },
-    { name: "Minor contacts (age liars) cut vs random", value: cutM(m => m.safety.undisclosedMinorContacts), target: ">= 90%", pass: cutM(m => m.safety.undisclosedMinorContacts) >= 0.9 },
+    extraCut("Scam harm events cut vs random", e => e.scamHarms),
+    metricsCut("Minor contacts (age liars) cut vs random", m => m.safety.undisclosedMinorContacts),
     { name: "Repeat harassment victims per offender after the first report (max)", value: rep, target: "<= 1", pass: rep <= 1 },
-    { name: "Adversary contacts cut (scammers, harassers, age liars)", value: cut(e => e.coreAdversaryContacts), target: ">= 90%", pass: cut(e => e.coreAdversaryContacts) >= 0.9 },
-    { name: "Harm events cut (not counting 'not single')", value: cut(e => e.harmsNoDeception), target: ">= 90%", pass: cut(e => e.harmsNoDeception) >= 0.9 },
+    extraCut("Adversary contacts cut (scammers, harassers, age liars)", e => e.coreAdversaryContacts),
+    extraCut("Harm events cut (not counting 'not single')", e => e.harmsNoDeception),
     { name: "Scammer median reach", value: X(e => e.scammerMedianReach), target: "<= 1", pass: X(e => e.scammerMedianReach) <= 1 },
     { name: "Second-date rate vs random (and >= 20%)", value: sdr / sdrR, target: ">= 2.5x", pass: sdr / sdrR >= 2.5 && sdr >= 0.2 },
     { name: "Second dates per seed vs random", value: sec / secR, target: ">= 2x", pass: sec / secR >= 2 },
