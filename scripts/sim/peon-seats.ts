@@ -222,6 +222,17 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   for (const id of ["hm1", "hm2", "hm3", ...CANDIDATES, "c5", "c6"]) for (const a of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(id, a);
   w.net.holdMember("c6", "sim_staff", "held for the gate");
 
+  await b.run("intake: an invalid stated opening count needs a correction before read-back", async () => {
+    for (const invalid of ["0", "1.5"]) {
+      await w.say("hm1", POST.replace("2 openings", `${invalid} openings`));
+      expect(w.last("hm1")).toMatch(/How many openings/);
+      expect(w.saved.length).toBe(0);
+    }
+    await w.say("hm1", "two");
+    expect(w.last("hm1")).toMatch(/2 openings.*Reply yes/);
+    expect(w.saved.length).toBe(0);
+  });
+
   await b.run("intake: read back first, saved only on the manager's yes", async () => {
     const m = w.mark();
     await w.say("hm1", POST);
