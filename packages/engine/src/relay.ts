@@ -453,10 +453,11 @@ export type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kin
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|won'?t|wont|rather not|hold off|wait (?:to|before)|not until)\b/;
 /**
  * More refusals that stop a contact share or a photo send ("I'm not going to give him my number",
- * "I can't share my number"). Only for those two: a text relay often carries them ("tell them I can't
- * make it"). "Can't wait" is not a refusal.
+ * "I can't share my number", "I will not give him my number"). Only for those two: a text relay
+ * often carries them ("tell them I can't make it"). "Can't wait" and "will not wait" are not
+ * refusals ("can't wait! send them my number", "I will not wait, send them my number").
  */
-const SHARE_NEG = /\b(?:not going to|not gonna|can'?t(?! wait)|cant(?! wait)|cannot(?! wait)|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|not ready to|no way|refuse to)\b/;
+const SHARE_NEG = /\b(?:not going to|not gonna|can'?t(?! wait)|cant(?! wait)|cannot(?! wait)|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|not ready to|no way|refuse to|will not(?! wait)|should not(?! wait)|must not(?! wait)|shall not(?! wait))\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
 const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
