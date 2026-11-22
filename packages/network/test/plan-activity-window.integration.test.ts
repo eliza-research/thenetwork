@@ -1,8 +1,39 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR, type NetworkEvent } from "@thenetwork/core";
+import { DAY, fromLocal, HOUR, type NetworkEvent } from "@thenetwork/core";
 import { localEmbed, plans, resolveConfig, World } from "@thenetwork/engine";
 import { PLAN_VENUES, statedWindows } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
+
+test("a weekly check-in applies to the first remaining local occurrence across the clock change", async () => {
+  // spec/planFormation.md, "The member's latest weekly answer takes precedence"
+  const tz = "America/New_York";
+  const first = (hour: number) => fromLocal(2026, 10, 26, hour, tz);
+  const next = (hour: number) => fromLocal(2026, 11, 2, hour, tz);
+  for (const answerHour of [20.5, 9, 23]) {
+    const mini = new Mini([{ id: "a", name: "Ana", age: 30 }], {
+      seed: 1, growth: false, matchingEnabled: false,
+    });
+    mini.clock.set(fromLocal(2026, 10, 25, 13, tz));
+    await mini.onboard("a");
+    await mini.say("a", "WEEKLY");
+    expect(await mini.runUntil(() => mini.to("a").some(message => message.meta.checkIn), 10 * HOUR)).toBe(true);
+
+    const now = first(answerHour);
+    mini.clock.set(now);
+    await mini.say("a", "I'm free Monday evening.");
+    const recorded = mini.net.exportState().members.find(member => member.id === "a")?.stated;
+    const nextWeek = { start: next(18), end: next(19) };
+    expect(plans.planWindowMatchesStated(recorded, nextWeek, now)).toBe(answerHour !== 20.5);
+    const laterOccurrence = answerHour === 23;
+    expect(recorded).toEqual({
+      at: now, until: now + 7 * DAY, windows: [laterOccurrence
+        ? { start: next(17), end: next(22) }
+        : { start: Math.max(now, first(17)), end: first(22) }],
+    });
+    const afterExpiry = { start: now + 7 * DAY, end: now + 7 * DAY + HOUR };
+    expect(plans.planWindowMatchesStated(recorded, afterExpiry, now)).toBe(true);
+  }
+});
 
 test("the generic planner checks availability through the end of a four-hour hike", () => {
   const venue = PLAN_VENUES.find(v => v.id === "inwood-hill");
