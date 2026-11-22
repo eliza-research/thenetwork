@@ -14,9 +14,9 @@ export interface MeetingSettlement { phase: SettlementPhase }
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export type MeetingFeedbackClaim = "SendMeetingFeedback" | "WaitForMeetingBookingReceipt" | "RefuseMeetingFeedback";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
-export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
@@ -336,6 +336,19 @@ export function completedMeetingSlot(localWeekday: number, localHour: number): n
 export function lawWeekdayMeetingSlotNeedsEvening(localWeekday: number, localHour: number): boolean {
   //@ ensures \result === true
   return !(localWeekday < 5 && localHour < 17) || completedMeetingSlot(localWeekday, localHour) === -1;
+}
+
+/** Story: Ask for feedback and close attendance once / A liked date paces new proposals from its booked start (spec/meetingSettlement.md) */
+//@ pure
+export function completedDatePacingAt(knownBooking: boolean, bookedAt: number, feedbackAt: number): number {
+  return knownBooking ? bookedAt : feedbackAt;
+}
+
+/** Story: Ask for feedback and close attendance once / A liked date paces new proposals from its booked start (spec/meetingSettlement.md) */
+//@ pure
+export function lawKnownDatePacingUsesBooking(bookedAt: number, feedbackAt: number): boolean {
+  //@ ensures \result === true
+  return completedDatePacingAt(true, bookedAt, feedbackAt) === bookedAt;
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */

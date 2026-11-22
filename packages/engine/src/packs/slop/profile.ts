@@ -20,7 +20,7 @@
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
-import { completedMeetingSlot } from "../../../../core/src/generated/meetingSettlement.ts";
+import { completedDatePacingAt, completedMeetingSlot } from "../../../../core/src/generated/meetingSettlement.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
@@ -260,9 +260,12 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   }
   const negFrom = new Map<MemberId, Set<MemberId>>();
   const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
-  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.participants) {
-    const k = C(id), cur = lastDate.get(k);
-    if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
+  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) {
+    const at = completedDatePacingAt(r.bookedMeeting != null, r.bookedMeeting?.at ?? 0, r.at);
+    for (const id of r.participants) {
+      const k = C(id), cur = lastDate.get(k);
+      if (!cur || at > cur.at) lastDate.set(k, { at });
+    }
   }
   // Order-independent: feedback in (time, id) order, so "the last word on the last date" is stable under shuffles.
   const fbs = [...(input.feedback ?? [])].sort((x, y) => (x.at - y.at) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
