@@ -3,8 +3,10 @@
 // Activity from the date ideas both stated, 2-3 time options from the slots both said they are
 // usually free (then either, then the rest), a PUBLIC venue type only, short by default.
 import { canBeMatched, type City, type MemberId } from "@thenetwork/core";
+import { slopDatePairAllowed, slopDateProfilesAllowed } from "../../../../core/src/generated/slopDatePlan.ts";
 import { isOpaquePhotoId } from "../../relay.ts";
 import type { EngineInput } from "../../types.ts";
+import { memberIdResolver } from "../../world.ts";
 import { mutualMarkets } from "./geo.ts";
 import { SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
 import { SLOTS, slopProfiles, type SlopProfile, type Slot } from "./profile.ts";
@@ -35,6 +37,8 @@ function freeScore(p: SlopProfile, s: number): number {
 }
 
 export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets: readonly City[], o: SlopPackOptions = SLOP_DEFAULT_OPTIONS): DatePlan | null {
+  const adults = first.adult && partner.adult && canBeMatched(first.age) && canBeMatched(partner.age);
+  if (!slopDateProfilesAllowed(first.id !== partner.id, adults, first.optedIn && partner.optedIn, first.paused || partner.paused)) return null;
   const mm = mutualMarkets(first, partner, o, markets);
   if (!mm.length) return null;
   const activity = dateActivity(first, partner);
@@ -51,8 +55,20 @@ export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets:
 
 /** Plan from an engine input (the platform and the simulator call this after the mutual yes, or to fill probe time options). */
 export function planFromInput(input: EngineInput, first: MemberId, partner: MemberId, markets: readonly City[], o: SlopPackOptions = SLOP_DEFAULT_OPTIONS): DatePlan | null {
-  const P = slopProfiles(input);
-  const a = P.get(first), b = P.get(partner);
+  const canonical = memberIdResolver(input);
+  const aId = canonical(first), bId = canonical(partner);
+  const blocked = input.edges.some(edge => {
+    if (edge.type !== "blocked") return false;
+    const from = canonical(edge.from), to = canonical(edge.to);
+    return (from === aId && to === bId) || (from === bId && to === aId);
+  });
+  const held = input.safetyHolds?.some(hold => {
+    const id = canonical(hold.memberId);
+    return (id === aId || id === bId) && hold.from <= input.now && (hold.to === undefined || input.now < hold.to);
+  }) ?? false;
+  if (!slopDatePairAllowed(blocked, held)) return null;
+  const profiles = slopProfiles(input);
+  const a = profiles.get(aId), b = profiles.get(bId);
   return a && b ? planFirstDate(a, b, markets, o) : null;
 }
 

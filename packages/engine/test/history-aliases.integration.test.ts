@@ -119,3 +119,18 @@ test("the same Slop pairs have the same date plans with two-hop member aliases",
   expect(view.canonical("unknown")).toBe("unknown");
   expect(view.canonical("toString")).toBe("toString");
 });
+
+test("a direct date plan refuses current holds and blocks even when they use an old member ID", async () => {
+  const input = slopWorld(13, { perCity: 24, minorShare: 0 });
+  const result = await runEngine(input, { ...SLOP_ENGINE_CONFIG, seed: 13 }, { pack: slopPack });
+  const [first, partner] = result.proposals[0]!.participants as [string, string];
+  const plan = (extra: Partial<EngineInput> = {}) =>
+    planFromInput({ ...input, ...extra, idAliases: { "old:first": first } }, first, partner, ["sf", "nyc", "la"]);
+  expect(plan()?.public).toBe(true);
+  expect(plan({ edges: [...input.edges, { from: partner, to: "old:first", type: "blocked", strength: 1, explicit: true, createdAt: input.now }] })).toBeNull();
+  expect(plan({ safetyHolds: [{ memberId: "old:first", from: input.now - DAY }] })).toBeNull();
+  expect(plan({ safetyHolds: [{ memberId: first, from: input.now - DAY, to: input.now }] })?.public).toBe(true);
+  expect(plan({ safetyHolds: [{ memberId: partner, from: input.now + DAY }] })?.public).toBe(true);
+  expect(plan({ members: input.members.map(member => member.id === partner ? { ...member, state: "paused" } : member) })).toBeNull();
+  expect(plan({ members: input.members.map(member => member.id === first ? { ...member, age: 17 } : member) })).toBeNull();
+});
