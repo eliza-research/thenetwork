@@ -116,7 +116,7 @@ export class GameSource implements DataSource {
   /** Recent refusals, guard blocks and review expiries (health alerts look at the last 24 h). */
   private recent: { t: number; key: string }[] = [];
   /** When each member texted STOP; who invited someone (scorecard, growth). */
-  private optOutAt = new Map<MemberId, number>();
+  private stopHistory = new Map<MemberId, number[]>();
   private inviters = new Set<MemberId>();
   /** Leak-guard fallbacks per member and time (the timeline marks those messages). */
   private guardFallback = new Set<string>();
@@ -202,7 +202,7 @@ export class GameSource implements DataSource {
     this.takeover = new TakeoverAgent(persona, this.start, () => { this.store.clock.waitingForPlayer = true; this.push(); });
     this.records = [];
     this.judgeHour = -1; this.healthHour = -1;
-    this.recent = []; this.optOutAt.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
+    this.recent = []; this.stopHistory.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
     this.consent = o.network === "consent" ? new ConsentNetwork({
       seed: o.seed, review: o.review, engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
       onEngineRun: (log, proposals, at) => {
@@ -256,8 +256,11 @@ export class GameSource implements DataSource {
 
   private onRecord(r: RunRecord) {
     this.records.push(r);
-    if (r.type === "opt_out") this.optOutAt.set(r.memberId, r.t);
-    else if (r.type === "network_log") {
+    if (r.type === "opt_out") {
+      const stops = this.stopHistory.get(r.memberId);
+      if (stops) stops.push(r.t);
+      else this.stopHistory.set(r.memberId, [r.t]);
+    } else if (r.type === "network_log") {
       const d = r.detail as Record<string, any>;
       if (r.kind === "send_refused") this.recent.push({ t: r.t, key: `send_refused:${d.reason}` });
       else if (r.kind === "guard_blocked") { this.recent.push({ t: r.t, key: "guard_blocked" }); if (d.fallback) this.guardFallback.add(`${d.memberId}@${r.t}`); }
@@ -346,7 +349,7 @@ export class GameSource implements DataSource {
     const members = [...this.store.members.values()];
     const c = this.store.counts;
     const card = scorecard({
-      now, start: this.start, members, opps, requests, optOutAt: this.optOutAt, invites: c.invites, accepts: c.accepts,
+      now, start: this.start, members, opps, requests, stopHistory: this.stopHistory, invites: c.invites, accepts: c.accepts,
       messages: this.world.channel.all().filter(m => !m.system).map(m => ({ memberId: m.memberId, ts: m.ts, direction: m.direction, proactive: !!m.meta?.proactive, status: m.status })),
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0),
       sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,

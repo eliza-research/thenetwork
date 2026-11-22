@@ -515,7 +515,7 @@ export class RealSource implements DataSource {
       sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system`,
       sql`select type, payload->>'reason' as reason, count(*)::int as n from network.events where app_id = ${app} and at >= ${since} and type in ('send_refused', 'guard_blocked') group by 1, 2`,
       sql`select type, actor_id, at, payload->>'from' as inviter, payload->>'newMemberId' as invitee, payload->>'rule' as rule from network.events
-          where app_id = ${app} and type in ('member_opted_out', 'invite', 'growth_ask', 'invariant_violation')`,
+          where app_id = ${app} and type in ('invite', 'growth_ask', 'invariant_violation')`,
       // Messages about an opportunity that went out (or would have, dry-run): not refused, held or blocked.
       // Every message that went out (or would have, dry-run): not refused, held or blocked. The text is read
       // here only to apply the judge's connection-offer rule; it never leaves this function.
@@ -580,15 +580,13 @@ export class RealSource implements DataSource {
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
     // Scorecard and growth.
-    const optOutAt = new Map<string, number>();
-    for (const e of all) if (e.type === "member_opted_out" && e.actor_id) optOutAt.set(e.actor_id, ms(e.at) ?? 0);
     const inviteRows = all.filter(e => e.type === "invite");
     const inviters = new Set(inviteRows.map(e => e.inviter).filter(Boolean)).size;
     const invitees = new Set<string>(inviteRows.length ? inviteRows.map(e => e.invitee).filter(Boolean) : [...s.members.values()].filter(m => m.invitedBy).map(m => m.id));
     const members = [...s.members.values()];
     const messages: MsgMeta[] = (msgs as any[]).map(m => ({ memberId: m.member_id, ts: ms(m.ts) ?? 0, direction: m.direction, proactive: m.proactive, status: m.status }));
     const card = scorecard({
-      now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
+      now, start: this.store.clock.start, members, opps, messages, requests, invites: s.counts.invites, accepts: s.counts.accepts,
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
       inviters, minorContacts, leaks, worthwhileAnswers: survey[0] ?? { yes: 0, total: 0 },
     });

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { DAY, HOUR } from "@thenetwork/core";
 import { createServer } from "../src/server.ts";
-import type { GameSource } from "../src/sources/game.ts";
+import { GameSource } from "../src/sources/game.ts";
 import type { ControlCommand, ObsState } from "../src/types.ts";
 
 test("game state refreshes health and requests after recorded actions within the same hour", async () => {
@@ -47,5 +47,36 @@ test("game state refreshes health and requests after recorded actions within the
     await server.stop();
     if (!resolve(dir).startsWith(resolve(tmpdir()) + sep) || !dir.includes("obs-health-refresh-")) throw Error("Unexpected temporary directory");
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a second simulated STOP preserves the first interruption rejection", async () => {
+  // spec/consolePanels.md, "The simulated interruption proxy keeps each STOP window"
+  const game = new GameSource({ seed: 4, personas: 80, days: 21, engine: "off", network: "consent", pushMs: HOUR, tickMs: HOUR });
+  try {
+    await game.init();
+    const step = async (ms: number) => expect((await game.control({ type: "step", ms })).ok).toBe(true);
+    await step(8 * DAY);
+    const now = game.world.clock.now();
+    const first = game.world.channel.all().find(message => message.direction === "outbound" && message.meta?.proactive
+      && message.status === "delivered" && message.ts < now && now - message.ts < DAY && !game.world.channel.isOptedOut(message.memberId));
+    if (!first) throw new Error("The simulated channel had no recent confirmed proactive message");
+    const memberId = first.memberId;
+    const say = async (text: string) => expect((await game.control({ type: "say", memberId, text })).ok).toBe(true);
+    const score = () => game.state().stats.scorecard?.find(metric => metric.key === "worthwhile_interruption");
+    await say("STOP");
+    await step(4 * DAY);
+    const stopped = score();
+    expect(stopped?.n).toBeGreaterThan(0);
+    await say("START");
+    await say("STOP");
+
+    const stops = game.world.records.flatMap(record => record.type === "opt_out" && record.memberId === memberId ? [record.t] : []);
+    expect(stops).toHaveLength(2);
+    expect(stops[0]! - first.ts).toBeLessThanOrEqual(72 * HOUR);
+    expect(stops[1]! - first.ts).toBeGreaterThan(72 * HOUR);
+    expect(score()).toEqual(stopped);
+  } finally {
+    await game.dispose();
   }
 });
