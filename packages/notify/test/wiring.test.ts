@@ -7,7 +7,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
-import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
+import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
@@ -41,6 +41,7 @@ async function setup(prefs: Recipient["prefs"] = { channel: "imessage" }) {
   const r: Recipient = { personId: person.id, to, timeZone: NY, prefs, proactiveAllowed: true };
   const notifier = new Notifier(store, { get: id => (id === r.personId ? r : undefined) }, { isQuiet: () => false });
   const queue = new OutboundQueue({
+    recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"),
     sql, clock, provider, line: "+12125550100", app: "friends",
     checks: { live: () => true, recipient: queuePolicy(notifier, clock) },
     leakAllow: Object.values(APPS).flatMap(a => [`https://${a.domain}`, a.domain]),

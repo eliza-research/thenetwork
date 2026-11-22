@@ -1,6 +1,6 @@
 // spec/product/stories.md, "A help request names its effort and passes safety review".
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
+import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
@@ -17,6 +17,7 @@ describe.skipIf(!pgAvailable)("home-help consent card transport (Postgres)", () 
   test("a queued card reaches the recipient through the leak guard with three exact commands", async () => {
     const sent: SendRequest[] = [];
     const queue = new OutboundQueue({
+      recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"),
       sql, app: "ntwrk", line: "+12125550100", clock: new SimClock(Date.UTC(2026, 9, 5, 17)),
       checks: { live: () => true, leaks: () => ({ forbidden: ["canary_owner_", "canary_address_"] }) },
       provider: { kind: "sim", async send(request) {
