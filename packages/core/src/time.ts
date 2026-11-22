@@ -39,5 +39,6 @@ export function fromLocal(y: number, mo: number, d: number, h: number, tz: strin
 /** True if `ts` falls in local quiet hours [s, e) (wrapping past midnight); s === e means none. */
 export function inQuietHours(ts: number, tz: string, [s, e]: [number, number]): boolean {
   if (s === e) return false;
-  return withinQuietHours(localParts(ts, tz).hour, s, e);
+  const { hour, minute } = localParts(ts, tz);
+  return withinQuietHours(hour + minute / 60, s, e);
 }
