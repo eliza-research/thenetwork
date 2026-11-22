@@ -28,28 +28,12 @@ export const canBeMatched = (age: unknown): boolean => typeof age === "number" &
 export const UNDER_MIN_AGE_DECLINE =
   "Thanks for your interest in The Network. You need to be at least 13 to join, so we can't sign you up right now. We'd love to hear from you when you're older.";
 
-/**
- * Fragments shared by the slop reader and the network reader. Each reader still has its own
- * other endings. These are the pieces that have to stay the same, or the two readers drift.
- */
-
-/** Bare "and", "now", or "too". This ends an age only at MIN_MEMBER_AGE or older. */
 export const AGE_LOOSE_TAIL = "and\\b|now\\b|too\\b";
-
-/** "and I/we/my ..." starts a new clause, so the number is the age at every age. "and 0" is not. */
 export const AGE_AND_CLAUSE = "(?=\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b)";
-
-/** "and a half" or "and one half" stays part of the age. */
+const SPORTS_RECORD = /^\s+and(?:\s+also)?\s+(?:i(?:'m|\s+am)?|im|we|my)\s+(?:undefeated|won|winning|record|bracket|season|team|score)\b/;
+export const dropUnderMinSportsRecord = (n: number, after: string): number => (n < MIN_MEMBER_AGE && SPORTS_RECORD.test(after) ? NaN : n);
 export const AGE_AND_A_HALF = "\\s+and\\s+(?:a|one)\\s+half\\b";
-
-/** "and a half", ".5", or "1/2" stays part of the age. */
 export const AGE_HALF = `(?:${AGE_AND_A_HALF}|\\s*\\.5(?!\\d)|\\s+1\\/2\\b)`;
-
-/** A measure after a half is not an age. "years old" stays an age. */
 export const AGE_NOT_MEASURE = "(?!\\s*(?:minutes?|mins?|hours?|hrs?|miles?|mi\\b|km\\b|blocks?|percent|%|feet|ft\\b|inch(?:es)?\\b|steps?\\b|days?\\b|weeks?\\b|months?\\b|years?(?!\\s+old)\\b))";
-
-/**
- * The number, when a bare "and", "now", or "too" may end it. Under MIN_MEMBER_AGE this is not an
- * age, so the decline path never sees it. A move of the generated minimum moves this test with it.
- */
 export const ageAtLeastMin = (n: number): number => (n >= MIN_MEMBER_AGE && n < 100 ? n : NaN);
+export const atLeast13 = ageAtLeastMin;

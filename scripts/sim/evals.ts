@@ -114,6 +114,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   await b.run("age clauses: a half age counts, and a unit or a following number does not", () => {
     expect(statedAge("I'm 12 and a half")).toBe(12);
     expect(agesStated("I'm 12 and a half").explicit).toBeUndefined();
+    expect(agesStated("I'm 12 and a half years old").explicit).toBe(12);
+    expect(agesStated("I'm 12.5 years old").explicit).toBe(12);
+    expect(agesStated("I'm 11 1/2 years old").explicit).toBe(11);
+    expect(statedAge("I'm ten and a half weeks out")).toBeUndefined();
+    expect(statedAge("I'm 3 and I am undefeated")).toBeUndefined();
+    expect(statedAge("I'm 5 and we won")).toBeUndefined();
+    expect(statedAge("I'm 38 and my team won")).toBe(38);
     expect(statedAge("I'm twelve and a half")).toBe(12);
     expect(statedAge("I'm 4.5")).toBe(4);
     expect(agesStated("I'm 16 and a half").explicit).toBe(16);

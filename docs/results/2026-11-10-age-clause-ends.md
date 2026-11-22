@@ -21,18 +21,24 @@ Date: 2026-11-10 (Asia/Calcutta). Command: `bun run sim --only evals,onboard`. N
 | I'm 3 and 0 this season | none | none | none | no |
 | im 8 now | none | none | none | no |
 | I'm 12.5 minutes away | none | none | none | no |
-| I'm 12 and a half | 12 | 12 | 12 | yes |
-| I'm 4 and a half | 4 | 4 | 4 | yes |
+| I'm 12 and a half | 12 | none | 12 | yes |
+| I'm 4 and a half | 4 | none | 4 | yes |
+| I'm 12 and a half years old | 12 | 12 | 12 | yes |
+| I'm 12.5 years old | 12 | 12 | 12 | yes |
+| I'm 11 1/2 years old | 11 | 11 | 11 | yes |
+| I'm ten and a half weeks out | none | none | none | no |
+| I'm 3 and I am undefeated | none | none | none | no |
+| I'm 5 and we won | none | none | none | no |
 | im 16 and a half | 16 | 16 | 16 | no |
 | i'm 38 and divorced | 38 | none | 38 | no |
-| I'm 12 and I like games | 12 | 12 | 12 | yes |
-| i'm twelve and i like games | 12 | 12 | 12 | yes |
+| I'm 12 and I like games | 12 | none | 12 | yes |
+| i'm twelve and i like games | 12 | none | 12 | yes |
 | I'm 12 and 0 this season | none | none | none | no |
 | I'm 15 now | 15 | none | 15 | no |
 | I'm 15 too | 15 | none | 15 | no |
 | I'm 38 and I like games | 38 | 38 | 38 | no |
 
-"I'm 12 and I like games" is an explicit age 12. "and" starts a new clause ("I like games"), so the number is the age at every age, including under 13. The slop reader declines it. The network reader stores it as an explicit age, which is the decline path in docs/network.md section 6.3. "and" followed by a number ("I'm 3 and 0", "I'm 12 and 0") is still not an age. "now" and "too" still end an age only at 13 or older.
+"I'm 12 and I like games" is a stated age 12 and is not explicit, so the network chat path does not decline. The slop reader still declines it, because that reader treats the same clause as strict at every age. "I'm 12 and a half years old", "I'm 12.5 years old" and "I'm 11 1/2 years old" are explicit under 13 and do decline. "and" followed by a number ("I'm 3 and 0", "I'm 12 and 0") is still not an age. "now" and "too" still end an age only at 13 or older.
 
 `bun run sim --only evals,onboard` after the first change: 45/45 blocking gates pass. `bun run typecheck` exits 0. Full `bun run sim` after that change, before PostgreSQL was installed: 306/306 blocking gates pass in 408.8s, and the Postgres tracked gates skip.
 
@@ -59,3 +65,13 @@ After that merge, on 21 Nov 2026 (Asia/Calcutta): `bun run typecheck` exits 0, a
 The pull request base is `vibestack`. A half age or an "and I/we/my" clause under `MIN_MEMBER_AGE` is a stated age on the network reader and is not explicit, so it does not delete the member. The same forms at 13 or older stay explicit. A half followed by years (except "years old"), months, weeks, days, steps, or inches is not an age.
 
 On 22 Nov 2026 (Asia/Calcutta), Node 26.13.1: `pnpm run sim --only evals,onboard` is 51/51 blocking gates. `./node_modules/.bin/tsc --noEmit -p .` exits 0. The tracked onboard miss is still 98.4%. PostgreSQL was not started. Integration, e2e, and the full sim were not re-run.
+
+## Review follow-up on `01404175`
+
+New comments and JSDoc added by this pull request are removed. The explanation is in docs/network.md section 6.3. `atLeast13` in `classify.ts` is `ageAtLeastMin`, so PR #517's call to `atLeast13` still typechecks if either pull request merges first. Applying #517's short-age line on this tree, `./node_modules/.bin/tsc --noEmit -p .` exits 0, and `turning 16` reads as 15.
+
+A half followed by "years old" is explicit, including under 13. A half followed by a measure is not an age, including a word number ("I'm ten and a half weeks out"). A sports record under 13 ("I'm 3 and I am undefeated", "I'm 5 and we won") is not an age. The same shape at 13 or older stays an age. "I'm 12 and I like games" stays a stated age 12 and is not explicit.
+
+Bare "now", "too", and "and" under 13 are not age ends ("I'm 12 now", "im 11 too", "I'm 9 and a girl", "I'm 12 and bored"). They do not decline. The slop reader does not set `minor` from those words. With no record age the Network logs `age_unknown` and treats the member as a minor. "I'm 10 and in 5th grade" is the same: the grade table starts at 6th grade, so this sentence is not a grade age. That is the documented rule, not a new decline.
+
+On 23 Nov 2026 (Asia/Calcutta), Node 26.13.1, PostgreSQL 16 on port 54339: `pnpm run typecheck` exits 0. `pnpm run sim --only evals,onboard` is 51/51 blocking gates. The tracked onboard miss is still 98.4% (`lesbian`, `two miles`, `half a mile`). A Mini world checked the same sentences with no record age, with record age 25, and with record age 16. Explicit "years old" under 13 deletes only when the record is missing or under 18. Sports records, measures, and the bare under-13 tails delete nothing in all three cases. `pnpm run sim --only safety` is 18/18 blocking gates. The full `pnpm run sim` was stopped during the matching block. Integration, e2e, Quint, Dafny, and Bombadil were not re-run on this commit.
