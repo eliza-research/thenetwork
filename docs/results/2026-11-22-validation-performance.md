@@ -49,6 +49,17 @@ The generated check compares 232 current artifacts in both cache states. On GitH
 
 The matching changes preserve the decisions in [candidate search](../../spec/candidateSearch.md), [pair value](../../spec/pairValue.md), [travel presence](../../spec/travelPresence.md) and [dating radius](../../spec/datingRadius.md). The [candidate pool model](../../spec/models/candidate_pool.md) consumes the same ordered candidates. The existing generated decisions stay in the serving path.
 
+## Container builds
+
+Both Dockerfiles fetch the pinned production packages in a layer before copying application source. After a source edit, the install links the workspace offline from that layer.
+
+| Hosted source-only rebuild | Baseline median | Cached dependency layer median |
+| --- | ---: | ---: |
+| Backend | 11.72s | 8.01s |
+| Postgres backup | 8.55s | 4.90s |
+
+The Ubuntu runner built both images and ran three paired source-only edits with alternating build order. The revised builds reused the dependency-fetch layer. Final image config, symlink targets and application file hashes agree after normalizing pnpm's install metadata and launcher text. Both variants exercised the installed tsx launcher, core import and the relevant connector or backup artifacts with container networking disabled. Railway production cache-hit rates and timings remain unmeasured. [Hosted Docker benchmark](https://github.com/lalalune/thenetwork-1/actions/runs/45063373361), [pnpm container guidance](https://pnpm.io/docker#example-3-build-on-cicd).
+
 ## Other implementations evaluated
 
 - Reducing the size or count of the planted seeds would save runner time by reducing the validation workload. The exactness, budget, and certificate checks use the existing seeds and sizes.
