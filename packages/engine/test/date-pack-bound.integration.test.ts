@@ -5,12 +5,13 @@ import { dateTypeCeiling } from "../../core/src/generated/datePackValue.ts";
 import { directedUtility } from "../../core/src/generated/pairValue.ts";
 import { localEmbed } from "../src/embed.ts";
 import { bruteForceCandidates } from "../src/match/mod.ts";
+import { sharesTag } from "../src/match/pair.ts";
 import type { AppPack } from "../src/pack.ts";
 import { slopPack, SLOP_ENGINE_DEFAULTS } from "../src/packs/slop/index.ts";
 import { SLOP_DEFAULT_OPTIONS } from "../src/packs/slop/options.ts";
 import { datePackBound, datePackClassCap, datePackClassKey } from "../src/packs/slop/packBound.ts";
-import { SLOTS, type SlopProfile } from "../src/packs/slop/profile.ts";
-import { DATE_TYPE_WEIGHT, datePackValue } from "../src/packs/slop/score.ts";
+import { SLOTS, slopProfiles, type SlopProfile } from "../src/packs/slop/profile.ts";
+import { DATE_TYPE_WEIGHT, datePackCheapOf, datePackValue } from "../src/packs/slop/score.ts";
 import { baseMember, emptyInput, facet } from "../src/testkit.ts";
 import { World } from "../src/world.ts";
 
@@ -139,7 +140,36 @@ test("the Date pair bound and class caps keep every Date search equal to the sea
   expect(bounded.profiles).toBe(40);
   expect(bounded.kept).toEqual(full.kept);
   expect(bounded.kept.some(entry => entry.kept.length > 0)).toBe(true);
-  for (const { tally } of [bounded, full]) expect(tally).toMatchObject({ members: 40, exact: 40, boundViolations: 0, packBoundViolations: 0 });
+  for (const { tally } of [bounded, full]) expect(tally).toMatchObject({ members: 40, exact: 40, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0 });
   expect(bounded.tally.checks).toBeLessThan(full.tally.checks);
   expect(bounded.tally.touches).toBeLessThan(full.tally.touches);
+});
+
+test("a blank interest tag is in no posting and in no pack value, so the untouched class cap stays sound", () => {
+  const input = emptyInput();
+  for (let n = 0; n < 4; n++) {
+    const id = `b${n}`, is = n % 2 === 0 ? "woman" : "man";
+    input.members.push(baseMember(id, { homeCity: "nyc", prefs: { romanceOptIn: true, categoriesOptIn: ["romance"] } }));
+    input.facets.push(facet(id, 0, "preference", "Private dating preferences", [
+      `romance:is:${is}`, `romance:seeks:${is === "woman" ? "man" : "woman"}`, "romance:age:18-65", "slop:zip:11222", "slop:max_miles:10",
+    ], "agent_private"));
+    input.facets.push(facet(id, 1, "interest", "blank", ["  "]));
+  }
+  const w = new World(input, SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
+  const o = SLOP_DEFAULT_OPTIONS;
+  const people = slopProfiles(w.input, w.canonical);
+  const profiles = w.match.profiles.filter(p => p.lane === "Date");
+  expect(profiles).toHaveLength(4);
+  for (const p of profiles) expect(people.get(p.memberId)?.interests).toEqual([]);
+  let untouchedPairs = 0;
+  for (const a of profiles) for (const b of profiles) {
+    if (a === b || sharesTag(a, b)) continue;
+    const pa = people.get(a.memberId)!, pb = people.get(b.memberId)!;
+    untouchedPairs++;
+    expect(datePackCheapOf(pa, pb, o).sharedInterests).toBe(0);
+    expect(datePackValue(pa, pb, o)).toBeLessThanOrEqual(datePackClassCap(pa, datePackClassKey(pb), true, o));
+  }
+  expect(untouchedPairs).toBe(12);
+  for (const p of profiles) expect(w.match.candidates(p).kept).toEqual(bruteForceCandidates(w, w.match.index, p));
+  expect(w.match.tally()).toMatchObject({ members: 4, exact: 4, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0 });
 });

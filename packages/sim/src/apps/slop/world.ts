@@ -298,7 +298,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const freeA = !!a.hidden.adversary || oracle.free(a.id, week, slot), freeB = !!b.hidden.adversary || oracle.free(b.id, week, slot);
     f.seatsNotFree = (freeA ? 0 : 1) + (freeB ? 0 : 1);
     const showA = behavior.attends(a.id, coin, freeA), showB = behavior.attends(b.id, coin, freeB);
-    const at = slotTime(week, slot, a.homeCity);
+    const at = slotTime(week, slot, pr.city);
     if (!showA || !showB) {
       f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms, coin); return;
     }

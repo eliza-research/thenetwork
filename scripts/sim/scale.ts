@@ -318,12 +318,12 @@ export function ladderGates(b: Block, id: string, rungs: readonly Rung[]): void 
   b.gate(`${id}: exact searches equal brute force (${SAMPLE} sampled profiles per lane, N ${sizes} up to ${ORACLE_UP_TO})`, oracle.count === 0,
     `${sampled} exact searches compared; ${show(oracle)}`);
   const bound = merged(rungs, r => r.faults.bound);
-  const coreCount = (k: "boundViolations" | "packBoundViolations"): string => {
+  const coreCount = (k: "boundViolations" | "packBoundViolations" | "classCapViolations"): string => {
     const total = rungs.reduce((t, r) => t + (r.core[k] ?? 0), 0);
     if (total) fault(bound, `core ${k} ${total}`);
     return rungs.some(r => r.core[k] !== undefined) ? String(total) : "-";
   };
-  const counts = `core boundViolations ${coreCount("boundViolations")}, packBoundViolations ${coreCount("packBoundViolations")}`;
+  const counts = `core boundViolations ${coreCount("boundViolations")}, packBoundViolations ${coreCount("packBoundViolations")}, classCapViolations ${coreCount("classCapViolations")}`;
   b.gate(`${id}: no pair value above its bound, and no budgeted search omits a partner above its reported bound (sampled profiles; core counts)`,
     bound.count === 0, `${counts}; ${show(bound)}`);
   const segment = merged(rungs, r => r.faults.segment);

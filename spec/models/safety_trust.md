@@ -38,7 +38,7 @@ Open code defects (the model keeps the intended rule in `safety`; a `*Code` acti
 
 - ST-D2 (`relayAgeSignalReachesAgePolicy`, in `openAgeDefects`). The engine relay sets `ageSignal` when a member's own relayed text says they are under 18 (`packages/engine/src/relay.ts`, `minor:signal`), but `packages/network/src/relay.ts` and `store.ts` only store it; nothing calls the minors policy, so the member stays matchable. Checked again 2026-11-19.
 - ST-D3 (`minorSignalFollowsPerson`, SD-074 minor part, in `openAgeDefects`). `ConsentNetwork.minorReported` and a minor signal without a stated age change only this app's member; only a stated age reaches the person (`onAgeStated`). The person stays matchable on their other apps.
-- ST-D4 (`slotFromMeeting`, W3-237, low, matching data), fixed 2026-11-22. `slotOf` in `packages/engine/src/packs/slop/profile.ts` read `getUTCDay` and `getUTCHours`, so an 8 pm or a 2 pm New York meeting got the wrong attended slot. It now reads `localParts` in the zone of the member's home city, and `slotFromMeeting` is back in `safety`. `packages/engine/test/slop-attended-slot.integration.test.ts` checks a New York and a Los Angeles meeting.
+- ST-D4 (`slotFromMeeting`, W3-237, low, matching data), fixed 2026-11-22. `slotOf` in `packages/engine/src/packs/slop/profile.ts` read `getUTCDay` and `getUTCHours`, so an 8 pm or a 2 pm New York meeting got the wrong attended slot. It now reads `localParts` in the zone of the member's home city, and `slotFromMeeting` is back in `safety`. `packages/engine/test/slop-attended-slot.integration.test.ts` checks a New York and a Los Angeles meeting. Abstraction: the model has one zone, so `slotNY` takes every meeting in New York time. The code reads the zone of each member's home city, and New York when the home city has no zone, because an interaction record has no meeting city. The two agree for a member whose home city is New York. For a member who dates in a city of another zone, the code gives the slot of the meeting in the home-city zone, which the model does not show. This note is new: a review found that the note said "where the members are", which is not what the code does.
 
 - ST-D7 (`blockClosesAllApps`, F23 "A block ... invalidates queued work for the pair"). A check-in report blocks the pair (`recordMeetingSafetyReport`), but nothing closes another open item of the same two people on the same app, and no tick calls it off (`st_d7CheckInKeepsPairItemTest`). An urgent kind holds the subject, which closes their items anyway (`checkInCodeUrgentDropsTest`); a no-show report does not. In production two open items of one pair on one app are rare (a repeat date booked before the other person's check-in answer), so the severity is low; the cross-app case is ST-D1.
 
@@ -205,7 +205,7 @@ module safety_trust {
   // Day 0 is a Monday.
   pure def slotFor(dow: int, eve: bool): int =
     if (dow <= 4) (if (eve) dow else -1) else if (dow == 5) (if (eve) 6 else 5) else (if (eve) 8 else 7)
-  // The slot of the meeting where the members are: slotOf reads localParts in the member's home city zone (W3-237).
+  // The slot of the meeting in New York time, the one zone of the model (ST-D4 note: the code reads the home-city zone, W3-237).
   pure def slotNY(day: int, hour: int): int = slotFor(day % 7, hour >= 17)
   // decisions.ts outboundKind (a proved LemmaScript core; the model calls it, it does not re-prove it)
   pure def outboundKind(reply: bool, causal: bool, replyingTo: bool, safetyMeta: bool, proactive: bool): str =

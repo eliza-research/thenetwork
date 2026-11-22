@@ -152,7 +152,7 @@ export interface MatchingRunLog {
 }
 export interface SearchTally {
   members: number; checks: number; touches: number; exact: number; budgeted: number; empty: number; largestUnseenBound: number;
-  bounds?: number; checksAfterSettled?: number; boundViolations?: number; packBoundViolations?: number;
+  bounds?: number; checksAfterSettled?: number; boundViolations?: number; packBoundViolations?: number; classCapViolations?: number;
   touchClosed?: number; checkClosed?: number; memoHits?: number; refusals?: Record<string, number>;
 }
 export interface SearchOutcome { memberId: MemberId; lane: MatchLane; outcome: "empty" | "budgeted"; unseenBound: number }

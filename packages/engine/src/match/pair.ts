@@ -16,6 +16,9 @@ function intersectCount(a: TagSet, b: TagSet): number {
   return count;
 }
 
+export const sharesTag = (a: MatchProfile, b: MatchProfile): boolean =>
+  intersectCount(a.interests, b.interests) > 0 || intersectCount(a.seeks, b.offers) > 0 || intersectCount(a.offers, b.seeks) > 0;
+
 interface TermValues { readonly complement: number; readonly affinity: number; readonly closeness: number; readonly pack: number }
 
 export function weightedTerms(weights: LaneWeights, hasTraits: boolean, hasPackValue: boolean, values: TermValues): UtilityTerm[] {

@@ -81,7 +81,7 @@ test("an unfinished dense posting keeps a sound bound before spending the pair-c
   expect(result.unseenBound).toBeGreaterThanOrEqual(oracle[0]!.value);
   expect(world.match.tally()).toEqual({
     members: 1, checks: 0, touches: touchLimit, exact: 0, budgeted: 1, empty: 1, largestUnseenBound: result.unseenBound,
-    bounds: touchLimit, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, touchClosed: 1, checkClosed: 0, memoHits: 0, refusals: {},
+    bounds: touchLimit, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0, touchClosed: 1, checkClosed: 0, memoHits: 0, refusals: {},
   });
   expect(world.match.searchOutcomes()).toEqual([{ memberId: "owner", lane: "Intro", outcome: "budgeted", unseenBound: result.unseenBound }]);
 });
@@ -191,7 +191,7 @@ test("pack bounds, acceptance masks and the pair memo keep every search equal to
     return world.match.tally();
   });
   for (const tally of tallies) {
-    expect(tally).toMatchObject({ members: ids.length, exact: ids.length, boundViolations: 0, packBoundViolations: 0, checksAfterSettled: 0 });
+    expect(tally).toMatchObject({ members: ids.length, exact: ids.length, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0, checksAfterSettled: 0 });
     expect(tally.refusals?.mask_refused).toBeGreaterThan(0);
     expect(tally.memoHits).toBeGreaterThan(0);
   }

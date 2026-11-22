@@ -125,7 +125,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const ri = one("slop:religion_importance:");
     const num = (t: string) => Number(t.slice(t.indexOf("=") + 1));
     const wants = has("slop:wants:"), self = has("slop:self:");
-    const interestFacets = fs.filter(f => f.kind === "interest" && f.tags[0] && !NEVER_USED.test(f.tags[0]));
+    const interestFacets = fs.filter(f => f.kind === "interest" && f.tags[0] && f.tags[0].trim().length > 0 && !NEVER_USED.test(f.tags[0]));
     const interestFacet = new Map<string, string>();
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
     const visiting = [...new Set(input.presence.flatMap(p => {

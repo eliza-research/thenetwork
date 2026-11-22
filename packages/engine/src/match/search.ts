@@ -7,12 +7,12 @@ import { coverageValue, directedUtility, noPairValue, pairValueScale } from "../
 import type { SearchTally } from "../types.ts";
 import { pairKey, type World } from "../world.ts";
 import { partnerBlock, type CandidateBlock, type CandidateIndex, type Postings, type Span } from "./index.ts";
-import { gatePair, masksAdmit, packValueOf, pairArithmetic, pairValueOf, vectorsOf, weightedTerms, type PairCheck } from "./pair.ts";
+import { gatePair, masksAdmit, packValueOf, pairArithmetic, pairValueOf, sharesTag, vectorsOf, weightedTerms, type PairCheck } from "./pair.ts";
 import { compareText, wholeNumber, type EntityId, type MatchProfile, type TagSet } from "./profile.ts";
 
 interface RankedProfile { readonly profile: MatchProfile; readonly value: number }
 interface SearchCounters {
-  bounds: number; checksAfterSettled: number; boundViolations: number; packBoundViolations: number; memoHits: number;
+  bounds: number; checksAfterSettled: number; boundViolations: number; packBoundViolations: number; classCapViolations: number; memoHits: number;
   readonly refusals: Record<string, number>;
 }
 export interface SearchResult {
@@ -27,7 +27,7 @@ export interface SearchResult {
 
 const byRank = (x: RankedCandidate, y: RankedCandidate): number => y.value - x.value || x.ordinal - y.ordinal;
 
-const noCounters = (): SearchCounters => ({ bounds: 0, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, memoHits: 0, refusals: {} });
+const noCounters = (): SearchCounters => ({ bounds: 0, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0, memoHits: 0, refusals: {} });
 
 function resultOf(block: CandidateBlock | undefined, search: CandidateSearch, touches: number, counters = noCounters()): SearchResult {
   const kept = [...search.kept].sort(byRank).flatMap(c => {
@@ -196,6 +196,12 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       const packAB = packValueOf(w, vectors, profile, other), packBA = packValueOf(w, vectors, other, profile);
       if (top.packAB !== undefined && packAB !== undefined && packAB > top.packAB) counters.packBoundViolations++;
       if (top.packBA !== undefined && packBA !== undefined && packBA > top.packBA) counters.packBoundViolations++;
+      const classes = vectors.packClasses, packClass = other.packClass;
+      if (classes && packClass !== undefined && packAB !== undefined) {
+        const capOf = (untouched: boolean): number => wholeNumber(classes.cap(w, profile, packClass, untouched), "pack class cap");
+        if (packAB > capOf(false)) counters.classCapViolations++;
+        if (!sharesTag(profile, other) && packAB > capOf(true)) counters.classCapViolations++;
+      }
       checked = gatePair(w, profile, other, pairArithmetic(profile, other, traitCosts, packAB, packBA));
     }
     if (reused === undefined) memo?.keep(profile, other, checked);
@@ -291,7 +297,7 @@ export function bruteForceCandidates(w: World, index: CandidateIndex, profile: M
 
 export const emptySearchTally: SearchTally = {
   members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, empty: 0, largestUnseenBound: -1,
-  bounds: 0, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, touchClosed: 0, checkClosed: 0, memoHits: 0, refusals: {},
+  bounds: 0, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0, touchClosed: 0, checkClosed: 0, memoHits: 0, refusals: {},
 };
 
 export function tallySearch(tally: SearchTally, result: SearchResult): SearchTally {
@@ -310,6 +316,7 @@ export function tallySearch(tally: SearchTally, result: SearchResult): SearchTal
     checksAfterSettled: (tally.checksAfterSettled ?? 0) + counters.checksAfterSettled,
     boundViolations: (tally.boundViolations ?? 0) + counters.boundViolations,
     packBoundViolations: (tally.packBoundViolations ?? 0) + counters.packBoundViolations,
+    classCapViolations: (tally.classCapViolations ?? 0) + counters.classCapViolations,
     touchClosed: (tally.touchClosed ?? 0) + (result.budgetedBy === "touches" ? 1 : 0),
     checkClosed: (tally.checkClosed ?? 0) + (result.budgetedBy === "checks" ? 1 : 0),
     memoHits: (tally.memoHits ?? 0) + counters.memoHits,
