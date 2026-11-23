@@ -504,6 +504,13 @@ export function ageOnDate(birth: CalendarDate, today: CalendarDate): number {
 
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
 //@ pure
+export function signupAdultDate(birth: CalendarDate): CalendarDate {
+  const local_2 = exact_authorizationPages(birth.year + 18);
+  return birth.month === 2 && birth.day === 29 && !isLeapYear(local_2) ? ({ year: local_2, month: 3, day: 1 } as CalendarDate) : ({ year: local_2, month: birth.month, day: birth.day } as CalendarDate);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
 export function calendarDateExists(date: CalendarDate): boolean {
   return date.year >= 1 && date.year <= 9999 && date.month >= 1 && date.month <= 12 && date.day >= 1 && date.day <= daysInMonth(date.year, date.month);
 }
@@ -537,6 +544,13 @@ export function birthdateAccepted(birth: CalendarDate, today: CalendarDate): boo
 
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
 //@ pure
+export function lawAdultSignupDateCountsEighteen(birth: CalendarDate): boolean {
+  //@ ensures \result === true
+  return !calendarDateExists(birth) || ageOnDate(birth, signupAdultDate(birth)) === 18;
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
 export function lawLeapDayOnlyInLeapYears(year: number): boolean {
   //@ ensures \result === true
   return !(year >= 1 && year <= 9999) || calendarDateExists(({ year: year, month: 2, day: 29 } as CalendarDate)) === isLeapYear(year);
@@ -566,14 +580,14 @@ export function lawAcceptedAgeIsBetweenZeroAnd120(birth: CalendarDate, today: Ca
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
 //@ pure
 export function calendarDateOfDay(epochDay: number): CalendarDate {
-  const local_2 = exact_authorizationPages((epochDay >= 0 ? epochDay : 0) + 719468);
-  const local_3 = quotient_authorizationPages(local_2, 146097);
-  const local_4 = exact_authorizationPages(local_2 - exact_authorizationPages(local_3 * 146097));
-  const local_5 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(local_4 - quotient_authorizationPages(local_4, 1460)) + quotient_authorizationPages(local_4, 36524)) - quotient_authorizationPages(local_4, 146096)), 365);
-  const local_6 = exact_authorizationPages(local_4 - exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(365 * local_5) + quotient_authorizationPages(local_5, 4)) - quotient_authorizationPages(local_5, 100)));
-  const local_7 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(5 * local_6) + 2), 153);
-  const local_8 = local_7 < 10 ? exact_authorizationPages(local_7 + 3) : exact_authorizationPages(local_7 - 9);
-  return { year: exact_authorizationPages(exact_authorizationPages(local_5 + exact_authorizationPages(local_3 * 400)) + (local_8 <= 2 ? 1 : 0)), month: local_8, day: exact_authorizationPages(exact_authorizationPages(local_6 - quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(153 * local_7) + 2), 5)) + 1) };
+  const local_3 = exact_authorizationPages((epochDay >= 0 ? epochDay : 0) + 719468);
+  const local_4 = quotient_authorizationPages(local_3, 146097);
+  const local_5 = exact_authorizationPages(local_3 - exact_authorizationPages(local_4 * 146097));
+  const local_6 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(local_5 - quotient_authorizationPages(local_5, 1460)) + quotient_authorizationPages(local_5, 36524)) - quotient_authorizationPages(local_5, 146096)), 365);
+  const local_7 = exact_authorizationPages(local_5 - exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(365 * local_6) + quotient_authorizationPages(local_6, 4)) - quotient_authorizationPages(local_6, 100)));
+  const local_8 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(5 * local_7) + 2), 153);
+  const local_9 = local_8 < 10 ? exact_authorizationPages(local_8 + 3) : exact_authorizationPages(local_8 - 9);
+  return { year: exact_authorizationPages(exact_authorizationPages(local_6 + exact_authorizationPages(local_4 * 400)) + (local_9 <= 2 ? 1 : 0)), month: local_9, day: exact_authorizationPages(exact_authorizationPages(local_7 - quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(153 * local_8) + 2), 5)) + 1) };
 }
 
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
