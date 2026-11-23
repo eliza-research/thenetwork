@@ -493,6 +493,25 @@ function privateShareQualified(text: string, request: RegExpMatchArray): boolean
   return qualifier !== null && /^[\s,:]*$/.test(before.slice(qualifier[0].length));
 }
 
+// spec/relayDecision.md, "A condition on the recipient's assent or a later time leaves the private item unapproved"
+// A precondition stated as its own sentence before the request leaves the item unapproved too.
+// Only someone else's assent counts: the member's own "I have to ask first" is not a condition on the share.
+const PRIOR_PRECONDITION_SUBJECT = String.raw`(?:she|he|they|them|him|her|my\s+(?:match|date)|(?!(?:i|we|you|me|us|it|this|that)\b)[\p{L}][\p{L}'-]{1,30})`;
+const PRIOR_PRECONDITION_VERB = String.raw`(?:agrees?|approves?|says?\s+(?:yes|ok(?:ay)?|so)|asks?|requests?)`;
+const PRIOR_PRECONDITION = new RegExp(
+  String.raw`(?:\b${PRIOR_PRECONDITION_SUBJECT}\s+(?:(?:has|have)\s+to|needs?\s+to|must|has\s+got\s+to)\s+${PRIOR_PRECONDITION_VERB}\b` +
+  String.raw`|\b${PRIOR_PRECONDITION_SUBJECT}\s+${PRIOR_PRECONDITION_VERB}\s+(?:for\s+(?:it|my\s+number|me)\s+)?first\s*$` +
+  String.raw`|\bwait\s+for\b[^.!?;]*\bto\s+${PRIOR_PRECONDITION_VERB}\b` +
+  String.raw`|^[\s,]*only\s+after\b[^.!?;]*\b${PRIOR_PRECONDITION_VERB}\b` +
+  String.raw`|^[\s,]*unless\b[^.!?;]*\b${PRIOR_PRECONDITION_VERB}\b)`,
+  "iu",
+);
+
+function priorSentenceConditionsShare(text: string, request: RegExpMatchArray): boolean {
+  return text.slice(0, request.index!).toLowerCase().split(RELAY_SENTENCE).slice(0, -1)
+    .some(sentence => PRIOR_PRECONDITION.test(sentence.trim()));
+}
+
 const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|would|could|did|should|must|shall|'ll)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t|mustn'?t)\s+wait\b/g;
 const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
 const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
@@ -927,7 +946,8 @@ export function parseRelayRequest(text: string): RelayRequest {
       privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
     const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
-      || question || privateShareQualified(spoken, privateRequest);
+      || question || privateShareQualified(spoken, privateRequest)
+      || priorSentenceConditionsShare(spoken, privateRequest);
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)
