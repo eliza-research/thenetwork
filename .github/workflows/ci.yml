@@ -75,7 +75,7 @@ jobs:
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
       - name: Install the toolkit (tools/vibestack)
-        run: pnpm run spec:setup
+        run: pnpm --dir tools/vibestack --filter vibestack install --frozen-lockfile --ignore-scripts
         timeout-minutes: 5
       - name: Require Postgres
         run: |
@@ -131,7 +131,7 @@ jobs:
         run: |
           if git grep -n -I -E 'ntwrk[.]love' -- .; then echo "use ntwrk.party / api.ntwrk.party instead"; exit 1; fi
       - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
-        run: pnpm run sites:build
+        run: node --import tsx --env-file-if-exists=.env sites/sites.ts
         env:
           DEPLOY_TARGET: production
 
@@ -219,15 +219,11 @@ jobs:
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
       - name: Install the toolkit (tools/vibestack)
-        run: pnpm run spec:setup
+        run: pnpm --dir tools/vibestack --filter vibestack install --frozen-lockfile --ignore-scripts
         timeout-minutes: 5
       - name: Design tokens agree with design.md (design:check)
         run: pnpm run design:check
-      - name: Design-system CSS (design:build)
-        run: pnpm run design:build
-      - name: Generated stories are current (ui:gen, --check)
-        run: pnpm run ui:gen
-      - name: Component stories (ui:test)
+      - name: Generate design CSS, check generated stories and run component stories (ui:test)
         run: pnpm run ui:test
         timeout-minutes: 10
       - name: ESLint for packages/ui, apps and the console and connector pages (lint:ui)
@@ -282,15 +278,18 @@ jobs:
           pg_isready -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
           node --import tsx packages/observatory/db/dev-pg.ts up
+      - name: Generate design and connector CSS
+        run: pnpm run connector:css
+        timeout-minutes: 5
       # Use the four hosted CPUs. Keep the package default for local runs.
       - name: Integration suite (includes the security suite)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run test:integration --maxWorkers=4
+          node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration --maxWorkers=4
         timeout-minutes: 30
       - name: E2E suite (tests/e2e)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run test:e2e --maxWorkers=4
+          node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project e2e --maxWorkers=4
         timeout-minutes: 10
 
