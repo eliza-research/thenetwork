@@ -453,7 +453,7 @@ Acceptance:
 - The prompt is `Read https://<domain>/SKILL.md?version=<version> and follow it.` The slop.date prompt has no version query. A person can select the prompt without the page script.
 - The Copy button shows only when the page script runs. A press shows "Copied". When the clipboard refuses, the page selects the prompt and the button shows "Selected: press copy".
 - The agent row shows logos only, in this order: ChatGPT, Claude, Grok, Muse, Gemini, Perplexity, Cursor, OpenClaw, Hermes. The agent's name is the hover label of its logo. The accessible name of a tile with a link is "Open in <name>", and of a copy-only tile "Copy the prompt for <name>".
-- The row never shows an agent that the app's connector refuses. The OpenAI surface of the connector serves every app, so each page shows the ChatGPT tile, slop.date included.
+- The row never shows an agent that the app's connector refuses. The OpenAI surface of the connector serves the endpoint of every app, so each page shows the ChatGPT tile, slop.date included. Only the slop.date endpoint of that surface names slop.date.
 - A phone, or a Mac with more than one touch point, does not show Cursor. Without the page script, the Muse tile (copy only) does not show.
 - A press on a tile follows its link, if it has one, and copies the prompt. The status line then says that the agent opens, where to paste the prompt, or "Copy the prompt, then paste it into your agent." when the copy fails. Without the page script the status line stays empty.
 - The page shows, in this order: the brand mark, the headline, the prompt, the Copy button, the agent row, the Messages entry, the status line, and the Privacy and Terms links. It has fewer than 45 words and one heading.
