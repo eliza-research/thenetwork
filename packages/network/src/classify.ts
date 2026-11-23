@@ -1139,6 +1139,10 @@ const PROBE_TIME_LABEL = /\boption\s+[abc]\b|^\s*[abc]\s+(?:was|were)\b|\bweeken
 const PROBE_CLAUSE_BOUNDARY = /([.,;!?\n]|\b(?:but|though|however)\b)/;
 const CURRENT_PROBE_CHOICE = /^\s+(?:works?|(?:will|would) work|(?:is|would be) (?:good|fine|great|best))(?: for me)?(?: (?:please|thanks))?\s*$/;
 const CURRENT_PROBE_REFUSAL = /^(?:no(?: (?:thanks|thank you))?|(?:neither|none of (?:those|these|them)(?: times| options)?) works?(?: for me)?)$/;
+const DIRECT_MEETING_REFUSAL = new RegExp(
+  String.raw`^(?:i|we)\s+(?:(?:don't|do not)\s+(?:want to|wanna)\s+meet(?:\s+(?:them|him|her|this person|that person))?|`
+    + String.raw`(?:can't|cannot|won't|will not|couldn't)\s+(?:make it|come|attend))$`,
+);
 const EXPLICIT_ALTERNATIVE_RANGE = /(?:^|[.,;!]\s*)\s*(?:any day|any ?time|anything|everything|all|whichever)\s+(?:but|except|other than|apart from|aside from|excluding|barring)\b/;
 const CLARIFIED_ALTERNATIVE_RANGE = new RegExp(
   String.raw`^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:${NAMED_EXCLUSION_RANGE}|(?:any|every|each) (?:morning|afternoon|evening|night)s?)\s+(?:but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that)\s+)*$`,
@@ -1147,6 +1151,15 @@ const CLARIFIED_ALTERNATIVE_RANGE = new RegExp(
 function isIndependentProbeAnswer(clause: string): boolean {
   return CURRENT_PROBE_REFUSAL.test(clause.trim()) || readDirectProbeOrdinals(clause).choices.length > 0 || timeMentions(clause).some(mention =>
     !clause.slice(0, mention.at).trim() && CURRENT_PROBE_CHOICE.test(clause.slice(mention.end)));
+}
+
+function hasDetachedProbeRefusal(text: string): boolean {
+  return sentencesOf(text).some(({ text: sentence, at }) => {
+    const direct = sentence.trim().replace(/[.!;]+$/, "").trim();
+    if (/^["']/.test(direct) || /\bif\b|\?/.test(direct) || COND_RX.test(direct)
+      || !probeChoiceAuthored(text.slice(0, at)) || describesAnotherPerson(direct)) return false;
+    return CURRENT_PROBE_REFUSAL.test(direct) || isCompleteParticipationRefusal(direct) || DIRECT_MEETING_REFUSAL.test(direct);
+  });
 }
 
 function separatePastProbeTimes(text: string): { current: string; past: boolean } {
@@ -1375,8 +1388,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       unresolved.push(m);
     } else mark(matching, m.at, m.end - m.at, true, !!m.group);
   }
-  if (conditionalTimeRefusal && !t.split(PROBE_CLAUSE_BOUNDARY).some(clause => CURRENT_PROBE_REFUSAL.test(clause.trim()))) {
-    return { answer: "unclear", keys: [], why: "conditional" };
+  if (conditionalTimeRefusal) {
+    if (!hasDetachedProbeRefusal(t)) return { answer: "unclear", keys: [], why: "conditional" };
+    if (c.why !== "mixed" && c.why !== "refusal") c = { answer: "no", why: "refusal" };
   }
   // Read a general answer without the words already bound to a specific refused time.
   if (qualifiedTimeRefusals.size) {
