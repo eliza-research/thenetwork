@@ -654,24 +654,26 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([]);
   }, T);
 
-  test.for(["Friday works.", "I think Friday works."])("#626 a semicolon can separate this offered time choice from a safety correction: %s", async (choice, { onTestFinished }) => {
-    const { s, askSlop, clock, competingSlopProbe, pending, reports, signed, slopAri, slopBen } = await signedSafetyFixture(onTestFinished);
-    const offer = "slop.626-semicolon-time-probe";
-    const friday = Date.UTC(2026, 9, 16, 23);
-    const saturday = Date.UTC(2026, 9, 17, 15);
-    await askSlop("626-semicolon-time-safety-ask");
-    await competingSlopProbe(offer, slopBen, [
-      { key: "a", label: "Friday 7pm", start: friday, end: friday + HOUR },
-      { key: "b", label: "Saturday 11am", start: saturday, end: saturday + HOUR },
-    ]);
-    await signed("626-semicolon-time-reply", `It was someone else; ${choice}`, "slop");
-    const safetyPending = Boolean(await pending("slop"));
-    const picked = await s.runtimeFor("slop")!.readState(net => net.exportState().opps.find(opp => opp.id === offer)?.picks?.[slopAri]);
-    clock.advance(MINUTE);
-    await signed("626-semicolon-time-later-yes", "Yes.", "slop");
-    const reportOnExcludedMember = (await reports("slop"))?.some(report => report.subjectId === slopBen);
-    expect({ safetyPending, picked, reportOnExcludedMember }).toEqual({ safetyPending: false, picked: [friday], reportOnExcludedMember: false });
-  }, T);
+  for (const choice of ["Friday works.", "I think Friday works."]) {
+    test(`#626 a semicolon can separate the offered reply "${choice}" from a safety correction`, async ({ onTestFinished }) => {
+      const { s, askSlop, clock, competingSlopProbe, pending, reports, signed, slopAri, slopBen } = await signedSafetyFixture(onTestFinished);
+      const offer = "slop.626-semicolon-time-probe";
+      const friday = Date.UTC(2026, 9, 16, 23);
+      const saturday = Date.UTC(2026, 9, 17, 15);
+      await askSlop("626-semicolon-time-safety-ask");
+      await competingSlopProbe(offer, slopBen, [
+        { key: "a", label: "Friday 7pm", start: friday, end: friday + HOUR },
+        { key: "b", label: "Saturday 11am", start: saturday, end: saturday + HOUR },
+      ]);
+      await signed("626-semicolon-time-reply", `It was someone else; ${choice}`, "slop");
+      const safetyPending = Boolean(await pending("slop"));
+      const picked = await s.runtimeFor("slop")!.readState(net => net.exportState().opps.find(opp => opp.id === offer)?.picks?.[slopAri]);
+      clock.advance(MINUTE);
+      await signed("626-semicolon-time-later-yes", "Yes.", "slop");
+      const reportOnExcludedMember = (await reports("slop"))?.some(report => report.subjectId === slopBen);
+      expect({ safetyPending, picked, reportOnExcludedMember }).toEqual({ safetyPending: false, picked: [friday], reportOnExcludedMember: false });
+    }, T);
+  }
 
   const replacementReplies = [
     { scenario: "a complete replacement", reply: "It was someone else.", keepsQuestion: false, expectedProbe: "probing" },
