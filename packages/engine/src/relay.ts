@@ -563,7 +563,8 @@ const PRIVATE_RENEWAL_ANCHOR = new RegExp(
 );
 const TERMINAL_PRIVATE_RETRACTION = /^\s*(?:(?:actually|wait|sorry|lol|ok(?:ay)?|oh|ugh)[,\s]+)?(?:never ?mind|nvm)\b/iu;
 const PRIVATE_RENEWAL_CORRECTION = /^\s*(?:(?:actually|sorry)[,\s:]+)?/iu;
-const UNRESOLVED_RENEWAL_FOLLOWUP = /\b(?:it|this|that|either|both|instead|ask(?:ing)?|confirm(?:ing)?|wait(?:ing)?|decid(?:e|ed|ing)|(?:re)?think(?:ing)?|reconsider(?:ing)?|not ready|maybe|perhaps|doubts?|hesitant|torn|conflicted|on the fence|recipient|destination|permission|approval|consent|private)\b/u;
+const INDEPENDENT_RENEWAL_STATUS = /^(?:(?:i am|we are) (?:running late|at (?:work|home|the office|the station)|on (?:my|our) way)|(?:i|we) have (?:arrived|left)|(?:i|we)(?:'ll| will) be there|the (?:restaurant|caf[eé]|venue|office|station) is (?:open|closed))$/u;
+const UNRESOLVED_RENEWAL_PAYLOAD = /\b(?:it|this|that|either|both|instead|ask(?:ing)?|confirm(?:ing)?|wait(?:ing)?|delay(?:ing)?|get back to you|transfer|decid(?:e|ed|ing)|(?:re)?think(?:ing)?|reconsider(?:ing)?|not ready|maybe|perhaps|doubts?|hesitant|torn|conflicted|on the fence|recipient|destination|permission|approval|consent|private)\b/u;
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const PRIVATE_CONDITION_MARKER = String.raw`if|when(?:ever)?|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
@@ -711,9 +712,10 @@ function independentRenewalFollowup(sentence: string): boolean {
   const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
   const body = envelope?.at(-1) ?? words;
   const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+  if (!envelope) return INDEPENDENT_RENEWAL_STATUS.test(statement);
   return PRIVATE_CONDITION_STATEMENT.test(statement) && !PRIVATE_CONDITION_ITEM_NAME.test(statement)
     && !PRIVATE_RELAY_ACTION.test(statement) && !PRIVATE_RELAY_UNCERTAIN.test(statement)
-    && !UNRESOLVED_RENEWAL_FOLLOWUP.test(statement);
+    && !UNRESOLVED_RENEWAL_PAYLOAD.test(statement);
 }
 
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[], contact: boolean): boolean {
