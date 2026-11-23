@@ -125,6 +125,11 @@ test("a signed quoted youth cue does not restrict the adult sender", async () =>
     'Can we adapt what she said: "after school tomorrow"?',
     "She said 'I’m underage.'",
     'I heard her say, "I’m underage."',
+    'Can you check the dialogue: "I’m underage."',
+    'The character whispered, "I’m underage."',
+    'The copy reads, "After school tomorrow."',
+    'I told her "Mara said ‘I’m underage.’"',
+    'I said “I’m 17.”',
   ].entries()) {
     clock.advance(MINUTE);
     expect((await post(turn(`quoted-youth-${i}`, phone, text, app.id))).status).toBe(200);
@@ -139,17 +144,44 @@ test("a signed quoted youth cue does not restrict the adult sender", async () =>
 }, 60_000);
 
 // spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("a signed unfinished draft does not set the adult sender's exact age", async () => {
+  const phone = "+12125550176";
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Age fixture signup failed: ${joined.error}`);
+  clock.advance(MINUTE);
+  expect((await post(turn("unclosed-quoted-draft-age", phone, 'Can you proofread this draft: "Hello. Age: 15', app.id))).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  const member = (await service.runtimeFor(app.id)!.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+  expect(member).toMatchObject({ minor: false, minorSignal: false, age: 29 });
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
 test("fresh Slop onboarding preserves the member's age and matching tags across a quoted age", () => {
   const now = clock.now();
   const fresh = slopOnboarding.read(undefined, "I'm a woman looking for men.", [], { now, age: 29 });
   expect(fresh.state).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
   expect(fresh.tags.some(tag => tag.tag.startsWith("romance:"))).toBe(true);
 
-  const quoted = slopOnboarding.read(fresh.state, 'She said "Hello. Age: 12."', [], { now, age: 29 });
-  expect(quoted.state).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
-  expect(quoted.tags).toEqual(fresh.tags);
+  for (const text of [
+    'She said "Hello. Age: 12."',
+    'Can you proofread this draft: "Hello. Age: 15',
+    'The character whispered, "I’m in 7th grade."',
+    'Can you check the dialogue: "I’m underage."',
+    'One example: "I’m in middle school.',
+    'I told her "Mara said ‘I’m underage.’"',
+    'I said “I’m 17.”',
+  ]) {
+    const quoted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
+    expect(quoted.state, text).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
+    expect(quoted.tags, text).toEqual(fresh.tags);
+  }
 
-  const own = slopOnboarding.read(quoted.state, "I'm in 7th grade.", [], { now, age: 29 });
+  const own = slopOnboarding.read(fresh.state, "I'm in 7th grade.", [], { now, age: 29 });
   expect(own.state).toMatchObject({ age: { value: 12 }, minor: true, declined: false });
   expect(own.tags).toEqual([]);
 }, 60_000);

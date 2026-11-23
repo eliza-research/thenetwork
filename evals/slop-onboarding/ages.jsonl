@@ -121,3 +121,13 @@
 {"text":"She said 'I'm underage.'","minor":false}
 {"text":"I heard her say, \"I’m underage.\"","minor":false}
 {"text":"She said \"I am a minor","minor":false}
+{"text":"Can you check the dialogue: \"I’m underage.\"","minor":false}
+{"text":"Can you proofread this draft: \"Hello. Age: 15","minor":false}
+{"text":"One example: \"I’m in middle school.","minor":false}
+{"text":"I told her \"Mara said ‘I’m underage.’\"","minor":false}
+{"text":"I said “I’m 17.”","minor":false}
+{"text":"I just texted her “I’m underage.”","minor":true}
+{"text":"I’m quoting myself: “I’m underage.”","minor":true}
+{"text":"I told her \"I said ‘I’m underage.’\"","minor":true}
+{"text":"'cuz i'm underage","minor":true}
+{"text":"The character whispered, \"I’m in 7th grade.\"","minor":false}

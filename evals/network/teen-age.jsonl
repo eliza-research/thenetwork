@@ -297,3 +297,12 @@
 {"text":"She said 'I'm underage.'","teen":false}
 {"text":"I heard her say, \"I’m underage.\"","teen":false}
 {"text":"She said \"I am a minor","teen":false}
+{"text":"Can you check the dialogue: \"I’m underage.\"","teen":false}
+{"text":"Can you proofread this draft: \"Hello. Age: 15","teen":false}
+{"text":"One example: \"I’m in middle school.","teen":false}
+{"text":"I told her \"Mara said ‘I’m underage.’\"","teen":false}
+{"text":"I said “I’m 17.”","teen":false}
+{"text":"I just texted her “I’m underage.”","teen":true}
+{"text":"I’m quoting myself: “I’m underage.”","teen":true}
+{"text":"I told her \"I said ‘I’m underage.’\"","teen":true}
+{"text":"'cuz i'm underage","teen":true}

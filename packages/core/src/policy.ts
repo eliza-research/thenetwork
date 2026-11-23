@@ -100,31 +100,26 @@ export function quoteStillOpen(prefix: string): boolean {
 
 /** Check the exact evidence span in the normalized message, across sentence boundaries. */
 export function unquotedOwnAgeEvidence(text: string, start: number, end: number): boolean {
-  const quote = quoteInSpan(text, start, end);
-  const before = quote ? text.slice(0, quote.at).split(/[.!?;\n]/).at(-1)! : "";
-  return ownAgeEvidenceAllowed(!!quote && (SPEECH_FRAME.test(before) || hasClosingQuote(text, quote)));
+  return ownAgeEvidenceAllowed(quoteInSpan(text, start, end) !== undefined);
 }
 
-const SPEECH_FRAME = /\b(?:say|said|says|tell|told|tells|text|texted|texts|message|messaged|write|wrote|writes|quote|quoted|reply|replied|asked|asks|posted|read|was like|is like)\b[^.!?;\n]*$/;
+const OWN_QUOTE = /^\s*(?:(?:i|we)\s+(?:(?:just|already)\s+)?(?:said|told|texted|wrote|replied|posted|messaged)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?|i(?:'m| am)\s+quoting myself)\s*[:,]?\s*$/;
+const SPEECH_FRAME = /(?:\b(?:say|said|says|tell|told|tells|text|texted|texts|message|messaged|write|wrote|writes|quote|quoted|reply|replied|asked|asks|posted|read|reads|whispered|was like|is like)\b[^.!?;\n]*|\b(?:one|an?|the|this|that|your)\s+(?:line|draft|dialogue|script|example|excerpt|lyrics?)\s*[:,]?\s*)$/;
 const LEADING_ELISION = /^(?:cause|cos|coz|cuz|bout|round|kay|nother|em|sup|til|till|tis|twas)\b/;
-const OTHER_SPEAKER = /\b(he|she|they|someone|somebody|(?:my|his|her|their|this|that|a|the) (?:[a-z]+ )?(?:friend|sister|brother|sis|bro|cousin|mom|mum|dad|mother|father|teacher|classmate|kid|son|daughter|girl|guy|boy|coworker|roommate|bf|gf|boyfriend|girlfriend|ex))((?: (?!(?:and|n|then|but|so|or)\b)[a-z]+){0,2}) (?:said|says|texted|texts|wrote|writes|told me|tells me|told him|told her|asked|asks|messaged|replied|posted|goes|went|was like|is like)\s*[:,]?\s*$/;
-const HEARD_SPEAKER = /\b(?:heard|hear|overheard) (?:him|her|them|someone|somebody|(?:my|this|a) [a-z]+) (?:say|said|saying|tell|telling)\s*[:,]?\s*$/;
-function anotherSpeaker(before: string): boolean {
-  const m = OTHER_SPEAKER.exec(before);
-  return (!!m && !/\b(?:i|me|we|myself)\s+(?:and|n|&)\s+$/.test(before.slice(0, m.index))) || HEARD_SPEAKER.test(before);
-}
+const beforeQuote = (text: string, at: number, start = 0): string => text.slice(start, at).split(/[.!?;\n]/).at(-1)!;
 
 /** A repeat of the sender's own disclosure or an unfinished casual aside can still be a youth cue. */
 export function ownYouthCue(text: string, start: number, end: number): boolean {
   const quote = quoteInSpan(text, start, end);
   if (!quote) return ownYouthCueAllowed(false, false, false);
-  const before = text.slice(0, quote.at).split(/[.!?;\n]/).at(-1)!;
-  const attributed = SPEECH_FRAME.test(before);
-  const unfinishedCasual = !attributed && !hasClosingQuote(text, quote);
-  return ownYouthCueAllowed(true, !anotherSpeaker(before), unfinishedCasual);
+  const before = beforeQuote(text, quote.at);
+  const ownAttribution = OWN_QUOTE.test(before)
+    && (quote.innerAt === undefined || OWN_QUOTE.test(beforeQuote(text, quote.innerAt, quote.at + 1)));
+  const unfinishedCasual = quote.innerAt === undefined && !SPEECH_FRAME.test(before) && !hasClosingQuote(text, quote);
+  return ownYouthCueAllowed(true, ownAttribution, unfinishedCasual);
 }
 
-type Quote = { at: number; mark: "'" | '"' };
+type Quote = { at: number; mark: "'" | '"'; innerAt?: number };
 
 function hasClosingQuote(text: string, quote: Quote): boolean {
   for (let at = text.indexOf(quote.mark, quote.at + 1); at >= 0; at = text.indexOf(quote.mark, at + 1)) {
@@ -141,14 +136,14 @@ function quoteDelimiter(text: string, at: number, closing: boolean): boolean {
   if (/[a-z0-9]/i.test(prev)) return false;
   const after = text.slice(at + 1), before = text.slice(0, at);
   if (/^\d{2}\b/.test(after) && /\bclass of\s*$/i.test(before)) return false;
-  return !LEADING_ELISION.test(after) || SPEECH_FRAME.test(before.split(/[.!?;\n]/).at(-1)!);
+  return !LEADING_ELISION.test(after) || SPEECH_FRAME.test(beforeQuote(text, at));
 }
 
 function quoteInSpan(text: string, start: number, end: number): Quote | undefined {
   let doubleAt = -1, singleAt = -1;
   const active = (): Quote | undefined => {
-    if (doubleAt >= 0 && (singleAt < 0 || doubleAt < singleAt)) return { at: doubleAt, mark: '"' };
-    if (singleAt >= 0) return { at: singleAt, mark: "'" };
+    if (doubleAt >= 0 && (singleAt < 0 || doubleAt < singleAt)) return { at: doubleAt, mark: '"', innerAt: singleAt >= 0 ? singleAt : undefined };
+    if (singleAt >= 0) return { at: singleAt, mark: "'", innerAt: doubleAt >= 0 ? doubleAt : undefined };
   };
   for (let i = 0; i < end; i++) {
     if (i >= start && (doubleAt >= 0 || singleAt >= 0)) return active();
