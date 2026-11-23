@@ -580,7 +580,11 @@ const POLITE_PRIVATE_CONDITION = new RegExp(
 );
 const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
-const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?(?:let me know|tell me(?:\s+how it went)?)\s*$/iu;
+const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
+const PRIVATE_RESPONSE_FOLLOWUP = new RegExp(
+  String.raw`^(?:${RECURRING_PRIVATE_CONDITION})\s+${OTHER}\s+(?:repl(?:y|ies)|responds?|reports?\s+(?:an?|the)\s+(?:problem|issue))\s*,\s*(?:please\s+)?tell me(?:\s+how it went)?\s*$`,
+  "iu",
+);
 const INDEPENDENT_WHEN_QUESTION = /^when(?:ever)?\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
 const PRIVATE_CONDITION_ITEM_NAME = new RegExp(String.raw`\b(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})\b`, "u");
 const INCOMPLETE_CONDITION_ACTION = new RegExp(
@@ -661,12 +665,14 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   const polite = POLITE_PRIVATE_CONDITION.exec(condition);
   if (polite && PRIVATE_RELAY_COURTESY.test(condition.slice(polite[0].length))) return false;
   if (detached || /^\s*,\s*and\b/i.test(clause)) {
+    if (PRIVATE_RESPONSE_FOLLOWUP.test(condition)) return false;
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
     if (main) {
       const words = main.toLowerCase();
       const independentStatement = PRIVATE_CONDITION_STATEMENT.test(main)
-        && (detached || (!PRIVATE_CONDITION_ITEM_NAME.test(words) && !UNRESOLVED_RENEWAL_PAYLOAD.test(words)));
-      if (TEXT_REQ.test(main) || PRIVATE_CONDITION_FOLLOWUP.test(main) || independentStatement) {
+        && (detached || (!PRIVATE_CONDITION_ITEM_NAME.test(words) && !PRIVATE_RELAY_ACTION.test(words)
+          && !UNRESOLVED_RENEWAL_PAYLOAD.test(words)));
+      if (TEXT_REQ.test(main) || (detached && PRIVATE_CONDITION_FOLLOWUP.test(main)) || independentStatement) {
         return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
           || INCOMPLETE_CONDITION_ACTION.test(words)
           || (PRIVATE_CONDITION_ITEM_NAME.test(words) && (PRIVATE_RELAY_ACTION.test(words) || /\btell\b/u.test(words)));
@@ -757,8 +763,7 @@ function privateCourtesy(sentence: string): boolean {
 
 function independentRenewalFollowup(sentence: string): boolean {
   const words = sentence.trim().toLowerCase();
-  const followup = PRIVATE_CONDITION_MAIN.exec(words)?.[1];
-  if (privateCourtesy(words) || (followup !== undefined && PRIVATE_CONDITION_FOLLOWUP.test(followup))) return true;
+  if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
   const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
   const body = envelope?.at(-1) ?? words;
   const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
