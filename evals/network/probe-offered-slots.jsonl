@@ -70,7 +70,7 @@
 {"text":"sat and sun both","answer":"yes","keys":["b","c"]}
 {"text":"sat and sun both except Thursday","answer":"yes","keys":["b","c"]}
 {"text":"sat and sun both at 11am","answer":"unclear","keys":[]}
-{"text":"sat sun both","answer":"unclear","keys":[]}
+{"text":"sat sun both","answer":"yes","keys":["b","c"]}
 {"text":"the 2nd and 3rd both work","answer":"unclear","keys":[]}
 {"text":"Both Saturday, not Thursday.","answer":"unclear","keys":[]}
 {"text":"Yes both Saturday, not Thursday.","answer":"unclear","keys":[]}
@@ -117,3 +117,8 @@
 {"text":"the first and second either work","answer":"yes","keys":["a","b"]}
 {"text":"sat and sun either at 11am","answer":"unclear","keys":[]}
 {"text":"sat and sun either but not sunday","answer":"yes","keys":["b"]}
+{"text":"sat sun","answer":"yes","keys":["b","c"]}
+{"text":"sat sunday works","answer":"yes","keys":["b","c"]}
+{"text":"sat sun and thu","answer":"yes","keys":["a","b","c"]}
+{"text":"sun sat","answer":"yes","keys":["b","c"]}
+{"text":"sat sun work for me","answer":"yes","keys":["b","c"]}

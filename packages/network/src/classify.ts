@@ -846,18 +846,18 @@ export const parseYesNo = (body: string): YesNo => consentOf(body).answer;
 export type { TimeOption };
 
 // Day names. A full name always counts; a short form ("sun", "sat", "wed", "mon") counts only in a
-// day context (before a time, a daypart, "or", "and", a comma or the end), so "if the sun's out",
+// day context (before a time, a daypart, another day, "or", "and", a comma or the end), so "if the sun's out",
 // "sat down" or "c'mon" never pick a day.
 const DAY_NAMES = [
   ["Sunday", "sun"], ["Monday", "mon"], ["Tuesday", "tues?"], ["Wednesday", "weds?"],
   ["Thursday", "thu|thur|thurs"], ["Friday", "fri"], ["Saturday", "sat"],
 ] as const;
+const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
 const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|works?\b|`
-  + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
+  + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b|(?:${DAY_TOKEN})\b)|\s*[,;!?.]|\s*$))`;
 const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
 ]);
-const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
 const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times)\b/;
 const OTHER_TIMES = /\bother times?\b/;
 const NO_OTHER_TIMES = /\b(?:no|not) other times?\b/g;
