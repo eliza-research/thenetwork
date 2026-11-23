@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, normalizeFractionalAgeInitialism, parseReply, quoteStillOpen, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, normalizeFractionalAgeInitialism, parseReply, quoteStillOpen, quotedFromAnother, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
@@ -197,7 +197,7 @@ export function minorSignOf(text: string): boolean {
     const re = new RegExp(MINOR_SIGNS.source, "g");
     let m: RegExpExecArray | null;
     while ((m = re.exec(s.text))) {
-      if (!quoteStillOpen(t.slice(0, s.at + m.index))) return true;
+      if (!quotedFromAnother(t, s.at + m.index)) return true;
       if (m[0].length === 0) re.lastIndex++;
     }
   }

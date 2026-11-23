@@ -114,6 +114,28 @@ export function quoteStillOpen(prefix: string): boolean {
   return double || single;
 }
 
+/**
+ * True when the minor sign at `at` sits inside a closed double-quoted span that a named third
+ * party introduced in the same sentence (`she said "..."`, `my friend texted "..."`). Unlike
+ * quoteStillOpen, a leading apostrophe (`'cause`, `'til`, `'em`, `'sup`, `class of '27`), an
+ * unclosed quote, or the sender's own quoted words (`I told her "I'm underage"`) never hide a
+ * self-statement: those stay minor. Single quotes are never quotes here.
+ */
+const QUOTE_SPEAKER = /\b(he|she|they|someone|somebody|(?:my|his|her|their|this|a) (?:[a-z]+ )?(?:friend|sister|brother|sis|bro|cousin|mom|mum|dad|mother|father|teacher|classmate|kid|son|daughter|girl|guy|boy|coworker|roommate|bf|gf|boyfriend|girlfriend|ex))((?: [a-z]+){0,2}) (?:said|says|texted|texts|wrote|writes|told me|tells me|asked|asks|messaged|dm'?d|replied|posted|goes|went|was like|is like)\s*[:,]?\s*$/;
+const FIRST_PERSON = /\b(?:i|i'[a-z]+|ive|im|id|we|we'[a-z]+|me|us)\b/;
+export function quotedFromAnother(text: string, at: number): boolean {
+  let open = -1;
+  for (let i = 0; i < at; i++) {
+    if (text[i] !== "\"") continue;
+    if (open < 0 && /[0-9]/.test(text[i - 1] ?? "")) continue;
+    open = open < 0 ? i : -1;
+  }
+  if (open < 0 || text.indexOf("\"", at) < 0) return false;
+  const clause = text.slice(0, open).split(/[.!?;\n]/).pop()!;
+  const m = QUOTE_SPEAKER.exec(clause);
+  return !!m && !FIRST_PERSON.test(clause.slice(0, m.index) + m[1] + m[2]);
+}
+
 export const AGE_LOOSE_TAIL = "and\\b(?!\\s+(?:\\d|(?:a|one)\\s+half\\b))|now\\b|too\\b";
 export const ARTICLE_AGE_END =
   "(?:\\s+(?:(?:trans|cis|single|straight|gay|bi|queer|lesbian|pan)\\s+)*(?:person|human|guy|girl|boy|man|woman|kid|teen(?:ager)?|student|non[- ]?binary|enby))?" +

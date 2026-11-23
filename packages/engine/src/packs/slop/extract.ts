@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeFractionalAgeInitialism, quoteStillOpen, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeFractionalAgeInitialism, quoteStillOpen, quotedFromAnother, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -223,7 +223,7 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
     }
     for (const r of MINOR_SIGNS) for (const m of all(r.rx, s.text)) {
       const lead = m[0].length - m[0].trimStart().length;
-      if (quoteStillOpen(t.slice(0, s.start + m.index + lead))) continue;
+      if (quotedFromAnother(t, s.start + m.index + lead)) continue;
       out.minor ??= cand(true as const, s, m, 0.9);
       const a = r.age?.(m);
       if (a !== undefined && a >= 10 && a < 18 && (!out.age || a < out.age.value)) { out.age = cand(a, s, m, 0.85); out.strict = false; }

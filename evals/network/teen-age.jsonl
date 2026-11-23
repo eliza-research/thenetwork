@@ -287,3 +287,6 @@
 {"text":"She said \"this is true. I'm 12.5 years old.\"","teen":false}
 {"text":"He told me \"I'm underage\"","teen":false}
 {"text":"She said \"I'm in 7th grade\"","teen":false}
+{"text":"cant go 'cause my mom won't let me","teen":true}
+{"text":"I told her \"I'm underage\"","teen":true}
+{"text":"ugh \"so tired. i have a math test tomorrow","teen":true}

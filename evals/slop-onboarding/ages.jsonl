@@ -109,3 +109,5 @@
 {"text":"She said \"I'm in 7th grade\"","minor":false}
 {"text":"She said \"I'm a high school freshman\"","minor":false}
 {"text":"She said \"I'm in high school\"","minor":false}
+{"text":"cant go 'cause my mom won't let me","minor":true}
+{"text":"I told her \"I'm underage\"","minor":true}
