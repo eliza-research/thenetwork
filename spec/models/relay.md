@@ -8,7 +8,7 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. A condition on the recipient's assent or a later time supplies uncertainty to the private request rule. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. An operative condition before or after the request can supply uncertainty to the private request rule. A prior condition can still apply when a separate clause follows it or it names a private item that must come first. Reports, quotations, instructions to proceed and unrelated remarks supply no such evidence. A clear statement about the same named actor, action, and any specified item can settle a prior request to wait. The reader keeps the stated item and recipient words when it compares the condition with the completion. If the condition explicitly names the transfer recipient, the reader also compares that recipient with the request. A question leaves the condition open. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
 
 The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message when the sender gives a near-birthday or current school-year cue. The shell checks the cue's speaker and excludes another person's quoted or reported words, a hypothetical and an adult school role. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader. The model takes the evidence category as input.
 
@@ -306,7 +306,8 @@ module relay {
   }
 
   // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
-  // signals after claiming the receipt. It includes conditions and timing in the uncertainty signal.
+  // signals after claiming the receipt. An operative unmet condition can supply uncertainty before
+  // the private request. The reader checks authorship, scope and any stated completion.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
   // supplies none. A later independent directive can supply one, and an ordinary text envelope
   // still follows the text path. Signed tests cover this reader boundary.
@@ -967,6 +968,16 @@ module relay {
       .then(claimPrivateContact("a1", false, true, false)).then(commitNone("a1")).then(answer("a1"))
       .then(claim("a2", "text")).then(commitText("a2", "block", false)).then(answer("a2"))
       .expect(desk.swaps.size() == 0 and desk.log.get("a2").decision == "block" and queue.rows.keys().size() == 0 and safety)
+
+  // The first reply contains an operative prior condition. The second records its specific
+  // completion and gives a fresh direct request. The model takes the reader's uncertainty as input.
+  run priorAssentBeforeSwapTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claimPrivateContact("b1", false, true, false)).then(commitNone("b1")).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
 
   run delegatedShareKeepsSwapPendingTest =
     init
