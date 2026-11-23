@@ -480,6 +480,7 @@ test.each([
   { text: "Send him my number. Scratch that. Send it. Let me think it over first.", shares: false },
   { text: "Send him my number. Scratch that. Send him my photo.", shares: false },
   { text: "Send him my number. Never mind. Send it.", shares: false },
+  { text: "Send him my number. Haha nevermind. Send him my number now.", shares: false },
   { text: "Send him my number. Wait.", shares: false },
   { text: "Send him my number. Let me think.", shares: false },
   { text: "Send him my number. Keep it private.", shares: false },

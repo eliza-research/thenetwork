@@ -561,7 +561,7 @@ const PRIVATE_RENEWAL_ANCHOR = new RegExp(
   String.raw`^\s*(?:(?:actually|sorry)[,\s]+)?(?:${RELAY_SHORT_RETRACTION}|scratch that|take that back)(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$`,
   "iu",
 );
-const TERMINAL_PRIVATE_RETRACTION = /^\s*(?:(?:actually|wait|sorry|lol|ok(?:ay)?|oh|ugh)[,\s]+)?(?:never ?mind|nvm)\b/iu;
+const TERMINAL_PRIVATE_RETRACTION = /\b(?:never ?mind|nvm)\b/iu;
 const PRIVATE_RENEWAL_CORRECTION = /^\s*(?:(?:actually|sorry)[,\s:]+)?/iu;
 const INDEPENDENT_RENEWAL_STATUS = /^(?:(?:i am|we are) (?:running late|at (?:work|home|the office|the station)|on (?:my|our) way)|(?:i|we) have (?:arrived|left)|(?:i|we)(?:'ll| will) be there|the (?:restaurant|caf[eé]|venue|office|station) is (?:open|closed))$/u;
 const UNRESOLVED_RENEWAL_PAYLOAD = /\b(?:it|this|that|either|both|instead|ask(?:ing)?|confirm(?:ing)?|wait(?:ing)?|delay(?:ing)?|get back to you|transfer|decid(?:e|ed|ing)|(?:re)?think(?:ing)?|reconsider(?:ing)?|not ready|maybe|perhaps|doubts?|hesitant|torn|conflicted|on the fence|recipient|destination|permission|approval|consent|private)\b/u;
@@ -743,7 +743,7 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
       referenceAvailable = true;
       adjacentPause = false;
     } else if (lead !== undefined || LATE_PRIVATE_RETRACTION.test(sentence) || LATE_PRIVATE_STOP_LEAD.test(sentence)) {
-      if (TERMINAL_PRIVATE_RETRACTION.test(sentence)) return true;
+      if (TERMINAL_PRIVATE_RETRACTION.test(lead ?? sentence)) return true;
       retracted = true;
       renewedAfterPause = false;
       referenceAvailable &&= authored && !question && PRIVATE_RENEWAL_ANCHOR.test(sentence);
