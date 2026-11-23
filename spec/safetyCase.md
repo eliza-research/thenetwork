@@ -185,17 +185,23 @@ pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: 
 
 ### The exact open report follows its subject through ordinary app leave
 
-An open, urgent report from a member who met the subject continues to restrict matching in the originating app after ordinary leave. When the runtime forgets the member, the shell records only the app, originating runtime, exact report ID, and verified canonical subject. Its review remains with that runtime. The shell erases the association on account erasure or phone reassignment. A generic lift and closing a case leave this report open. Exact dismissal removes only its own restriction. An authorized hold of an archived report records the durable staff hold and marks the exact report held in the same transaction. A ban still requires the existing verified person and staff authority.
+An open, urgent report from a member who met the subject continues to restrict matching in the originating app after ordinary leave. At the forget transaction, an open minor report also carries if the member has an active age signal from a report. This applies when the reporter has not met the subject and when the report arrives after leave starts. The member's own stated age uses the person-level age policy. The shell records only the app, originating runtime, exact report ID, and verified canonical subject. Its review remains with that runtime. The shell erases the association on account erasure or phone reassignment. A generic lift and closing a case leave this report open. Exact dismissal removes only its own restriction. An authorized hold of an archived report records the durable staff hold and marks the exact report held in the same transaction. A ban still requires the existing verified person and staff authority.
 
 ```quint
-pure def carryReportOnAppLeave(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
-  ordinaryLeave and reportRestrictsMatching(reportPhase, metBefore, urgent)
+pure def carryReportOnAppLeave(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool, reportedMinor: bool): bool =
+  ordinaryLeave and (reportRestrictsMatching(reportPhase, metBefore, urgent) or (reportPhase == ReportOpen and reportedMinor))
 
 pure def archivedReportHoldAllowed(exactSubject: bool, matchingRestriction: bool): bool =
   exactSubject and matchingRestriction
 
-pure def lawOnlyOpenReportsCarry(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
-  carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) implies reportPhase == ReportOpen
+pure def lawOnlyOpenReportsCarry(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool, reportedMinor: bool): bool =
+  carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent, reportedMinor) implies reportPhase == ReportOpen
+
+pure def lawReportedMinorSignalSurvivesOrdinaryLeave(urgent: bool): bool =
+  carryReportOnAppLeave(true, ReportOpen, false, urgent, true)
+
+pure def lawAccountErasureCarriesNoReport(reportPhase: ReportPhase, metBefore: bool, urgent: bool, reportedMinor: bool): bool =
+  not(carryReportOnAppLeave(false, reportPhase, metBefore, urgent, reportedMinor))
 
 pure def lawArchivedHoldRequiresExactSubject(matchingRestriction: bool): bool =
   not(archivedReportHoldAllowed(false, matchingRestriction))

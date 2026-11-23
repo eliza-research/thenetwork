@@ -124,6 +124,7 @@ module safety_trust {
     live: Mid -> bool,
     trust: Mid -> Trust,
     minorF: Mid -> bool,
+    minorReportedF: Mid -> bool,
     caseSt: Mid -> str,
     blocks: Set[Set[Mid]],
     personBlocks: Set[(str, str)],
@@ -232,8 +233,12 @@ module safety_trust {
   pure def reportHeld(st: State, m: Mid): bool =
     st.reports.exists(r => r.subject == m and r.status == "open" and r.met and URGENT.contains(r.kind))
   pure def reportIdentity(r: Report): ReportIdentity = (r.subject, r.origReporter, r.kind, r.source, r.at)
+  pure def openMinorReport(r: Report): bool = r.status == "open" and r.kind == "minor"
   pure def carriedReportHeld(st: State, m: Mid): bool = st.reports.exists(r =>
-    r.subject.p == m.p and r.subject.app == m.app and urgentOpen(r) and st.carriedReports.contains(reportIdentity(r)))
+    r.subject.p == m.p and r.subject.app == m.app and r.status == "open" and st.carriedReports.contains(reportIdentity(r)))
+  // Keep the obligation independent of whether the exact report restriction was successfully carried.
+  pure def retainUnresolvedMinorSignals(st: State): State = { ...st,
+    minorP: st.minorP.filter(h => st.reports.exists(r => r.subject.p == h._1 and r.subject.app == h._2 and openMinorReport(r))) }
   // Durable coverage for this app or every app. Production preserves global authority on the other apps after a lift.
   pure def localHoldDecision(st: State, m: Mid): int =
     if (st.personHolds.contains((m.p, m.app))) st.holdDecisions.get((m.p, m.app)) else -1
@@ -368,8 +373,10 @@ module safety_trust {
   // network.ts:1593 minorReported: a case event, then (first time) the minor flags and dropMember on THIS Network.
   pure def minorReported(st: State, t: Mid): State = {
     val s1 = caseEv(st, t, "minor_reported")
-    if (s1.minorF.get(t)) s1
-    else { ...s1, minorF: s1.minorF.set(t, true), minorP: s1.minorP.union(Set((t.p, t.app))), opps: dropOpps(s1.opps, t) }
+    val flagged = if (s1.minorF.get(t)) s1
+      else { ...s1, minorF: s1.minorF.set(t, true), minorReportedF: s1.minorReportedF.set(t, true), opps: dropOpps(s1.opps, t) }
+    if (flagged.minorReportedF.get(t)) { ...flagged, minorP: flagged.minorP.union(Set((t.p, t.app))) }
+    else flagged
   }
 
   // network.ts:1284 fileReport (the caller, blockAndReport, writes the case event and keeps the trust rules).
@@ -469,6 +476,7 @@ module safety_trust {
     }),
     caseSt: st.caseSt.set(m, "none"),
     minorF: st.minorF.set(m, false),
+    minorReportedF: st.minorReportedF.set(m, false),
     blocks: st.blocks.filter(b => not(b.contains(m))),
     contextualBlocks: st.contextualBlocks.filter(b => b._1 != m and b._2 != m),
     // reports about them stay; a reporter who left is not named (reporterId = "")
@@ -493,8 +501,8 @@ module safety_trust {
       val sc = st.trust.get(m).score
       addPts(st, m, if (HOLD - sc > 0) HOLD - sc else 1, "staff_hold", NOBODY, notice)
     } else st
-    { ...s1, reports: s1.reports.map(r =>
-      if (r.subject == m and r.status == "open" and (onlyRep == "" or r.reporterP == onlyRep)) { ...r, status: "held" } else r) }
+    retainUnresolvedMinorSignals({ ...s1, reports: s1.reports.map(r =>
+      if (r.subject == m and r.status == "open" and (onlyRep == "" or r.reporterP == onlyRep)) { ...r, status: "held" } else r) })
   }
 
   // network.ts:4497-4508 syncMember -> personHold: a person hold that covers a live member who is not on
@@ -509,7 +517,8 @@ module safety_trust {
       addPts(st, m, if (HOLD - sc > 0) HOLD - sc else 1, "staff_hold", NOBODY, "none")
     } else st
     val s2 = { ...s1, opps: dropOpps(s1.opps, m), restricted: s1.restricted.union(Set(m)) }
-    { ...s2, reports: s2.reports.map(r => if (r.subject == m and (r.status == "open" or r.status == "held")) { ...r, status: "banned" } else r) }
+    retainUnresolvedMinorSignals({ ...s2, reports: s2.reports.map(r =>
+      if (r.subject == m and (r.status == "open" or r.status == "held")) { ...r, status: "banned" } else r) })
   }
 
   // ------------------------------------------------------------------ init
@@ -525,6 +534,7 @@ module safety_trust {
     live: INIT_LIVE,
     trust: ALL_MIDS.mapBy(_ => NO_TRUST),
     minorF: ALL_MIDS.mapBy(_ => false),
+    minorReportedF: ALL_MIDS.mapBy(_ => false),
     caseSt: ALL_MIDS.mapBy(_ => "none"),
     blocks: Set(),
     personBlocks: Set(),
@@ -826,7 +836,6 @@ module safety_trust {
       caseSt: st.caseSt.set(m, "lifted"),
       heldMids: st.heldMids.exclude(Set(m)),
       autoHeldP: st.autoHeldP.exclude(Set((m.p, m.app))),
-      minorP: st.minorP.exclude(Set((m.p, m.app))),
       counted: st.counted.set(m, Set()),
       src: st.src.set(m, NO_SRC),
       staffCleared: st.staffCleared.union(Set(m)),
@@ -869,8 +878,8 @@ module safety_trust {
   // Staff dismiss a report (network.ts:1409).
   action dismiss(r: Report): bool = all {
     s.reports.contains(r), r.status == "open",
-    val resolved = { ...s, reports: s.reports.exclude(Set(r)).union(Set({ ...r, status: "dismissed" })),
-      carriedReports: s.carriedReports.exclude(Set(reportIdentity(r))), lastAction: "dismiss" }
+    val resolved = retainUnresolvedMinorSignals({ ...s, reports: s.reports.exclude(Set(r)).union(Set({ ...r, status: "dismissed" })),
+      carriedReports: s.carriedReports.exclude(Set(reportIdentity(r))), lastAction: "dismiss" })
     s' = if (s.live.get(r.subject)) caseEv(resolved, r.subject, "report_dismissed") else resolved,
   }
 
@@ -878,17 +887,17 @@ module safety_trust {
   // app only, one network at a time (W3-232). Each unit: clearMinorSignal and dismiss the open minor reports.
   action clearMinorStart(m: Mid, scope: str): bool = all {
     s.live.get(m), s.clearing == Set(), scope == "*" or scope == m.app,
-    s.minorP.exists(x => x._1 == m.p), not(s.statedRelayMinors.contains(m.p)),
+    liveMidsOf(s, m.p).exists(x => s.minorReportedF.get(x)), not(s.statedRelayMinors.contains(m.p)),
     s' = { ...s, clearing: liveMidsOf(s, m.p).filter(x => scope == "*" or x.app == m.app), lastAction: "clearMinorStart" },
   }
   action clearMinorApply(x: Mid): bool = all {
     s.clearing.contains(x), s.live.get(x),
-    s' = { ...s,
+    s' = retainUnresolvedMinorSignals({ ...s,
       minorF: s.minorF.set(x, false),
-      reports: s.reports.map(r => if (r.subject == x and r.kind == "minor" and r.status == "open") { ...r, status: "dismissed" } else r),
-      minorP: s.minorP.exclude(Set((x.p, x.app))),
+      minorReportedF: s.minorReportedF.set(x, false),
+      reports: s.reports.map(r => if (r.subject == x and openMinorReport(r)) { ...r, status: "dismissed" } else r),
       clearing: s.clearing.exclude(Set(x)),
-      lastAction: "clearMinorApply" },
+      lastAction: "clearMinorApply" }),
   }
 
   // Ban by person (service.ts:2014): ban rows, suppression, restricted platform memberships, then one unit per app
@@ -932,19 +941,19 @@ module safety_trust {
     s' = { ...s, pendingTexts: s.pendingTexts.exclude(Set(p)), shareGrants: s.shareGrants.union(Set(p)), lastAction: "shareYes" },
   }
 
-  // App leave begins with consent. Keep the historical standalone minor-signal abstraction.
-  // Committed hard holds and exact open reports use current state at the atomic forget.
+  // App leave begins with consent. Committed hard holds and exact open reports use current state
+  // at the atomic forget, including a minor report filed after leave consent was recorded.
   action leaveStart(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val recorded = if (lvl(s, m) != "hold" and s.minorF.get(m) and not(covered(s, m))) writeHold(s, p, app) else s
-    all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...recorded, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
+    all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...s, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
   }
   pure def retainHardHold(st: State, m: Mid): State =
     if (lvl(st, m) == "hold" and not(covered(st, m) or st.banned.contains(m.p)))
       writeHold(st, m.p, m.app)
     else st
   pure def retainOpenReports(st: State, m: Mid): State = { ...st,
-    carriedReports: st.carriedReports.union(st.reports.filter(r => r.subject == m and urgentOpen(r)).map(reportIdentity)) }
+    carriedReports: st.carriedReports.union(st.reports.filter(r => r.subject == m and
+      (urgentOpen(r) or (st.minorF.get(m) and st.minorReportedF.get(m) and openMinorReport(r)))).map(reportIdentity)) }
 
   action leaveFinish(m: Mid): bool = all {
     s.leaving.contains(m), s.live.get(m),
@@ -953,8 +962,7 @@ module safety_trust {
   // The leave with nothing between the two steps (run tests only).
   action leave(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val recorded = if (lvl(s, m) != "hold" and s.minorF.get(m) and not(covered(s, m))) writeHold(s, p, app) else s
-    all { s.live.get(m), s' = { ...forget(retainOpenReports(retainHardHold(recorded, m), m), m), lastAction: "leave" } }
+    all { s.live.get(m), s' = { ...forget(retainOpenReports(retainHardHold(s, m), m), m), lastAction: "leave" } }
   }
 
   // A join by text: a banned person is refused; a hold does not refuse a join (PRD 40.3). A former member gets
@@ -968,7 +976,8 @@ module safety_trust {
       not(s.live.get(cur)), not(p.in(s.banned)), g2 <= 1,
       s' = { ...s,
         gen: s.gen.set((app, p), g2), joined: s.joined.set((app, p), true),
-        live: s.live.set(m2, true), trust: s.trust.set(m2, NO_TRUST), minorF: s.minorF.set(m2, false), caseSt: s.caseSt.set(m2, "none"),
+        live: s.live.set(m2, true), trust: s.trust.set(m2, NO_TRUST),
+        minorF: s.minorF.set(m2, false), minorReportedF: s.minorReportedF.set(m2, false), caseSt: s.caseSt.set(m2, "none"),
         lastAction: "join" },
     }
   }
@@ -1098,8 +1107,8 @@ module safety_trust {
   }))
 
   // Founder decision 1 (AGENTS.md): "Age is a person-level fact"; minors are never matched. A minor report on
-  // an app keeps the person's member on that app out of matching across a leave and a rejoin, until staff
-  // clear it or lift the carried-over hold (SD-021, fixed).
+  // an app keeps the person's member on that app out of matching across ordinary leave and rejoin,
+  // until staff resolve the report. A trust hold has its own independent authority.
   val minorSignalFollowsPersonInApp = s.minorP.forall(h => {
     val x = midOf(s, h._2, h._1)
     s.live.get(x) implies not(matchable(s, x))
@@ -1368,6 +1377,18 @@ module safety_trust {
       .then(leave("slop", "ben"))
       .then(join("slop", "ben"))
       .expect(not(matchable(s, BEN_S1)) and minorSignalFollowsPersonInApp and urgentMetReportBlocksMatchingInApp)
+
+  run minorReportDuringLeaveFollowsRejoinTest =
+    init
+      .then(leaveStart("peon", "ana"))
+      .then(report("ben", "peon", "ana", "report", "minor", false))
+      .expect(s.minorReportedF.get(ANA_P) and not(matchable(s, ANA_P)) and s.carriedReports == Set())
+      .then(leaveFinish(ANA_P))
+      .then(join("peon", "ana"))
+      .expect(minorSignalFollowsPersonInApp and not(matchable(s, midOf(s, "peon", "ana")))
+        and not(covered(s, midOf(s, "peon", "ana"))) and matchable(s, ANA_S))
+      .then(all { nondet r = s.reports.oneOf() dismiss(r) })
+      .expect(matchable(s, midOf(s, "peon", "ana")) and s.carriedReports == Set())
 
   // SD-022 (fixed): staff hold on slop, the process stops before the peon unit: ben@peon is covered (not
   // matchable) and the next tick holds him.

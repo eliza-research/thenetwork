@@ -264,15 +264,29 @@ export function lawArchivedHoldRequiresExactSubject(matchingRestriction: boolean
 
 /** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
 //@ pure
-export function carryReportOnAppLeave(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
-  return ordinaryLeave && reportRestrictsMatching(reportPhase, metBefore, urgent);
+export function carryReportOnAppLeave(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean, reportedMinor: boolean): boolean {
+  return ordinaryLeave && (reportRestrictsMatching(reportPhase, metBefore, urgent) || (reportPhase === "ReportOpen" && reportedMinor));
 }
 
 /** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
 //@ pure
-export function lawOnlyOpenReportsCarry(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
+export function lawOnlyOpenReportsCarry(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean, reportedMinor: boolean): boolean {
   //@ ensures \result === true
-  return !carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) || reportPhase === "ReportOpen";
+  return !carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent, reportedMinor) || reportPhase === "ReportOpen";
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawReportedMinorSignalSurvivesOrdinaryLeave(urgent: boolean): boolean {
+  //@ ensures \result === true
+  return carryReportOnAppLeave(true, "ReportOpen", false, urgent, true);
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawAccountErasureCarriesNoReport(reportPhase: ReportPhase, metBefore: boolean, urgent: boolean, reportedMinor: boolean): boolean {
+  //@ ensures \result === true
+  return !carryReportOnAppLeave(false, reportPhase, metBefore, urgent, reportedMinor);
 }
 
 /** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */

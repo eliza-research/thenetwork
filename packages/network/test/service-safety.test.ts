@@ -1121,6 +1121,79 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(delivered.some(request => request.idempotencyKey === `tn:${clearedId}`)).toBe(true);
   }, T);
 
+  test("an exact minor report from a stranger restricts matching after signed app leave and rejoin", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const secret = "synthetic-minor-report-carryover-turn-secret";
+    const options = { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret } };
+    const { s, otp } = service(clock, options);
+    await s.start();
+    const web = site(s, clock, otp);
+    const subjectPhone = newPhone(), reporterPhone = newPhone();
+    for (const [app, phone, name] of [["friends", subjectPhone, "Ari"], ["peon", subjectPhone, "Ari"],
+      ["friends", reporterPhone, "Blair"]] as const) {
+      await web.login(app, phone);
+      expect((await web.join(app, 30, name)).status).toBe(200);
+    }
+    const person = (await s.accounts.personFor(subjectPhone))!;
+    const former = (await memberOf("friends", subjectPhone))!.id;
+    const other = (await memberOf("peon", subjectPhone))!.id;
+    const reporter = (await memberOf("friends", reporterPhone))!.id;
+    const signed = async (from: string, messageId: string, text: string) => {
+      clock.advance(MINUTE);
+      const input: TurnRequest = { app: "friends", channel: "blooio", transport: "imessage", from, to: null,
+        messageId, text, receivedAt: clock.now() };
+      const body = JSON.stringify(input);
+      const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) });
+      const response = await s.fetch(new Request("http://localhost" + TURN_PATH, { method: "POST", body, headers }));
+      expect(response.status).toBe(200);
+      return await response.json() as TurnResponse;
+    };
+    expect(await signed(reporterPhone, "stranger-minor-report", "report Ari, he's only 15")).toMatchObject({
+      outcome: "handled", app: "friends",
+    });
+    const initial = s.runtimeFor("friends")!;
+    const state = await initial.pg.load();
+    expect(state?.members.find(member => member.id === former)).toMatchObject({ minor: true, minorReported: true });
+    const report = state?.reports?.find(item => item.subjectId === former);
+    expect(report).toMatchObject({ reporterId: reporter, kind: "minor", met: false, status: "open" });
+    expect(await initial.readState(net => net.trust.level(former))).toBe("ok");
+    const reportId = report!.id;
+
+    expect(await signed(subjectPhone, "minor-report-subject-leave", "leave friends.help")).toMatchObject({
+      outcome: "handled", app: "friends", replies: [expect.any(String)],
+      consent: { state: "opted_out", scope: "app", app: "friends" },
+    });
+    expect(await memberOf("friends", subjectPhone)).toBeUndefined();
+    await s.close();
+
+    const restarted = service(clock, options);
+    await restarted.s.start();
+    const browser = site(restarted.s, clock, restarted.otp);
+    await browser.login("friends", subjectPhone);
+    expect((await browser.join("friends", 30, "Ari")).status).toBe(200);
+    const current = (await memberOf("friends", subjectPhone))!.id;
+    expect(current).not.toBe(former);
+    expect((await restarted.s.accounts.personFor(subjectPhone))?.id).toBe(person.id);
+    const matching = () => sql`select app_id,staff_held,report_held from platform.matching_ages
+      where member_id in (${current},${other}) order by app_id`;
+    const unaffected = { app_id: "peon", staff_held: false, report_held: false };
+    const restricted = [{ app_id: "friends", staff_held: false, report_held: true }, unaffected];
+    expect(await matching()).toEqual(restricted);
+    const carryovers = () => sql`select app_id,origin_runtime_id,report_id from platform.report_safety_carryovers
+      where person_id=${person.id}`;
+    expect(await carryovers()).toEqual([{ app_id: "friends", origin_runtime_id: "friends:nyc", report_id: reportId }]);
+
+    const dismiss = async (app: AppId) => (await staff(restarted.s, "saf-tok", "POST", `/apps/${app}/safety/dismiss`, {
+      reportId, note: "staff reviewed the age report",
+    })).json();
+    expect(await dismiss("peon")).toEqual({ ok: false, reason: "unknown_report" });
+    expect(await matching()).toEqual(restricted);
+    expect(await dismiss("friends")).toEqual({ ok: true });
+    expect(await carryovers()).toEqual([]);
+    expect(await matching()).toEqual([{ app_id: "friends", staff_held: false, report_held: false }, unaffected]);
+  }, T);
+
   test.each(["hold", "ban"] as const)("a committed global %s stops queued peer delivery while a related runtime is still waiting", async decision => {
     // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
     await fresh();
