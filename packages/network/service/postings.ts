@@ -154,8 +154,6 @@ export function jobPostingRoutes(deps: PostingRouteDeps): (req: Request, path: s
       if (!managerId || !ID.test(managerId) || !id || !must || !nice) return json({ ok: false, error: "invalid_posting" }, 400);
       const prev = await stored(id);
       if (prev && prev.managerId !== managerId) return json({ ok: false, reason: "not_owner" }, 409);
-      // Closed is final: an edit never reopens a post (its openings are already 0). A new post gets a new id.
-      if (prev && prev.status !== "active") { await audit("save_posting", false, managerId, { postingId: id, reason: "posting_closed" }); return json({ ok: false, reason: "posting_closed" }, 409); }
       posting = {
         id, managerId, title: str(b.title, 80) ?? prev?.title ?? "", family: str(b.family, 48)?.toLowerCase().replace(/[^a-z0-9]+/g, "_") ?? prev?.family ?? (str(b.title, 80) ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "_"),
         ...(Number.isInteger(b.seniority) ? { seniority: b.seniority } : prev?.seniority ? { seniority: prev.seniority } : {}),

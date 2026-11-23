@@ -217,6 +217,8 @@ export interface QueueOptions {
    * not at enqueue: a text that waited out quiet hours still gets its lookups.
    */
   unknownTtlMs?: number;
+  /** Collected gateway replies expire after the signed turn retention window (default 7 days, or unknownTtlMs if set). */
+  collectedUnknownTtlMs?: number;
   /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
   ttlProactiveMs?: number;
   ttlMs?: number;
@@ -864,11 +866,10 @@ export class OutboundQueue {
       this.o.onAlert?.(row.id,"unknown_acceptance_expired");
       changes.push({ id: row.id, app: row.app, memberId: row.memberId, status: "failed_unknown" });
     }
-    // A reply another transport took over (collectedReceipt) whose receipt never came, or came as "unknown":
-    // after the same TTL it ends failed_unknown (the gateway may have sent it), so nothing waits forever unseen.
+    const collectedTtl = this.opt("collectedUnknownTtlMs", this.o.unknownTtlMs ?? 7 * DAY);
     for (const r of await this.sql`update platform.outbound set status='failed_unknown',ended_at=${new Date(this.now)},updated_at=${new Date(this.now)},
       note='gateway receipt never resolved' where app_id=${this.app} and line=${this.line} and status in ('collected','send_unknown')
-      and created_at<${new Date(this.now-ttl)} returning id,member_id`) {
+      and created_at<${new Date(this.now-collectedTtl)} returning id,member_id`) {
       this.o.onAlert?.(r.id,"collected_receipt_expired");
       changes.push({id:r.id,app:this.app,...(r.member_id?{memberId:r.member_id}:{}),status:"failed_unknown"});
     }

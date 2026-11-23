@@ -72,16 +72,16 @@ let policyControl: ReturnType<typeof runTakeover> | undefined;
 test.each(replies)("records takeover attendance after '$text'", async ({ text, cancelled, preservesPolicy }) => {
   const { reply, decision, attendance, selected } = await runTakeover(text);
   const intent = cancelled ? "flake_notice" : "accept";
-  expect({ reply, decision, attendance }).toMatchObject({
+  expect({ reply, decision }).toMatchObject({
     reply: { ok: true, data: { text, intent } },
     decision: { intent, proposalId: selected.proposalId },
-    attendance: { cancelledWithNotice: cancelled },
   });
   if (preservesPolicy) {
     const neutral = await (policyControl ??= runTakeover("I read the details"));
     expect(neutral.selected).toEqual(selected);
     expect(attendance).toEqual(neutral.attendance);
   } else {
+    expect(attendance).toMatchObject({ cancelledWithNotice: cancelled });
     if (!cancelled) expect(attendance?.cancelledByNetwork).toBeUndefined();
     expect(attendance?.showed).toBe(!cancelled);
   }

@@ -622,6 +622,12 @@ export class BlooioAdapter implements ChannelAdapter {
             ? rt.net.recipientPolicy(row.memberId, "reengage", { proactive: true })
             : { ok: false, reason: "reengagement_changed" };
         }
+        if (venueBookingNoticeBase(row.id)) {
+          const recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
+          if (!rt.net.approvedBookingLink(row.oppId, recipient, row.text, row.id)) {
+            return { ok: false, reason: "booking_changed" };
+          }
+        }
         return !row.memberId && !rt.memberOf(row.to) ? { ok: true }
           : policy(row.to, { kind: row.kind, ...(row.oppId && !terminalNotice(row) ? { briefId: row.oppId } : {}), agentInitiated });
       },
@@ -644,7 +650,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
-        await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+        if (!(await rt.stateCurrent(tx))) return false;
         if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
         if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
@@ -652,10 +658,10 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
         if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
         if (row.oppId && row.memberId) await lockPeerOpportunityContact(tx, row.app, rt.pg.id, row.memberId, row.id);
+        return true;
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
-        if (!(await rt.stateCurrent(tx))) return { ok: false, reason: "stale_state", retryAt: this.o.clock.now() };
         if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
         if (row.id.startsWith("ntf_")) {
           return await rt.notificationClaimCurrent(tx, row) ? { ok: true } : { ok: false, reason: "notification_obsolete" };
