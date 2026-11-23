@@ -2430,12 +2430,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     const text = body.trim();
     const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
     const exact = this.resolveTarget(m, name, p.verb === "report").target;
-    const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && safetyName(value) === name) ? exact : undefined;
+    // The answer to "Who do you mean?" names its target with a word or two around it ("yes, Ben",
+    // "Ben please"): strip a leading yes and a trailing please before comparing, so the name still
+    // has to be the whole answer and "Ben's friend" or "not Ben, Cy" never resolves to Ben.
+    const core = name.replace(/^(?:yes|yeah|yep|yup|correct|ok|okay)[,.!\s]+/i, "").replace(/(?:[,\s]+(?:please|pls|thanks|thank you))$/i, "");
+    const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && safetyName(value) === core) ? exact : undefined;
     const competing = m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
     const confirmed = !competing && p.targets?.length === 1
       && /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i.test(text)
       ? this.members.get(p.targets[0]!) : undefined;
-    const target = named ?? confirmed;
+    // A pronoun ("him", "him please") answers the one person the question named.
+    const pronoun = !competing && p.targets?.length === 1 && PRONOUN_TARGET.test(core)
+      ? this.members.get(p.targets[0]!) : undefined;
+    const target = named ?? pronoun ?? confirmed;
     if (target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id))) {
       this.applyBlock(m, p.verb, p.kind, target);
       return true;
