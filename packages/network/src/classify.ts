@@ -872,13 +872,15 @@ const BOTH_TIME_QUALIFIER = /^\s+(?:(?:at|around|by|after|before)\s+\d{1,2}(?::[
 const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
 const NAMED_TIME_EXCLUSION = `except|${NAMED_EXCLUSION_PHRASES}`;
 const BOTH_TIME_BOUNDARY = new RegExp(String.raw`[.,;!?\n]|\b(?:but|${NAMED_TIME_EXCLUSION})\b`);
+const PROBE_DAY_LIST_WORD = String.raw`\b(?:${DAY_TOKEN})\b`;
 const DIRECT_PROBE_DAY_LIST = new RegExp(
   String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
-    + String.raw`(?<days>\b(?:${DAY_TOKEN})\b(?:\s+(?:(?:and|or)\s+)?\b(?:${DAY_TOKEN})\b)+)`
+    + String.raw`(?<days>${PROBE_DAY_LIST_WORD}(?:\s+(?:(?:and|or)\s+)?${PROBE_DAY_LIST_WORD})+)`
     + String.raw`(?=(?:\s+(?:both|either)\b)?(?:\s+(?:${OFFERED_PAIR_AFFIRMATIVE}))?\s*(?:$|${BOTH_TIME_BOUNDARY.source}))`,
   "dgu",
 );
-const PROBE_DAY_LIST_TOKEN = new RegExp(String.raw`\b(?:${DAY_TOKEN})\b`, "gu");
+const PROBE_DAY_LIST_TOKEN = new RegExp(PROBE_DAY_LIST_WORD, "gu");
+const SPACED_PROBE_DAY_PAIR = new RegExp(String.raw`${PROBE_DAY_LIST_WORD}\s+${PROBE_DAY_LIST_WORD}`);
 const TRAILING_BOTH_DAY_PAIR = new RegExp(
   String.raw`(?:^|[.;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
     + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+both\b`,
@@ -942,6 +944,10 @@ type TimeMention = ProbeSpan & {
   day?: string; minute?: number; part?: "morning" | "afternoon" | "evening";
   group?: "weekday" | "weekend"; nightsOnly?: boolean;
 };
+
+function spanContains(outer: ProbeSpan, inner: ProbeSpan): boolean {
+  return outer.at <= inner.at && inner.end <= outer.end;
+}
 
 function directProbeDayLists(text: string): ProbeSpan[] {
   return [...text.matchAll(DIRECT_PROBE_DAY_LIST)].flatMap(match => {
@@ -1382,17 +1388,21 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return { key: o.key, day, knownDay: day !== undefined && DAY_WORDS.some(([, name]) => name === day),
       weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute) };
   });
+  const matchingOffered = (m: TimeMention) => offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
+    && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
+      m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
+  const unresolvedLists = dayLists.filter(list => SPACED_PROBE_DAY_PAIR.test(t.slice(list.at, list.end))
+    && mentions.some(m => spanContains(list, m) && matchingOffered(m).length !== 1));
   for (const m of mentions) {
     if (!memberChoiceAt(m.at)) continue;
+    if (unresolvedLists.some(list => spanContains(list, m))) { unresolved.push(m); continue; }
     if (partExclusion && m.at >= partExclusion.index && m.at < partExclusionEnd) continue;
     const prefix = t.slice(0, m.at);
     const exclusion = m.at === partExclusionEnd || NAMED_EXCLUSION.test(prefix);
     const currentAlternative = clarifiedTimes && exclusion && CLARIFIED_ALTERNATIVE_RANGE.test(prefix)
       && CURRENT_PROBE_CHOICE.test(t.slice(m.end).replace(/[.!]\s*$/, ""));
     if (clarifiedTimes && !currentAlternative && probeTimeIsRecurring(t, m.at, m.end)) continue;
-    const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
-      && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
-        m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
+    const matching = matchingOffered(m);
     const refused = exclusion || probeTimeIsRefused(t, m.at, m.end) || joinedRefusals.has(m);
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
@@ -1494,6 +1504,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
+  if (unresolvedLists.length) return { ...unclear, why: "slot" };
   if (contradictedExclusion || namedExclusion && (open.length === 0 || [...namedExcluded].some(key => strong.has(key)))) {
     return { ...unclear, why: "slot" };
   }
