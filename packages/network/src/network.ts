@@ -137,7 +137,7 @@ import { currentPairAllowed } from "../../core/src/generated/currentPairRestrict
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, sentencesOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -180,12 +180,14 @@ function safetyReplyConsent(text: string) {
 
 function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
   const reply = text.normalize("NFKC").trim().replace(/^(?:no|nope)(?:[,.!?;:]\s*|\s+)/i, "");
-  const [opening, punctuation] = reply.split(/([,.!?;:])/, 2);
-  const clause = safetyName(opening!);
+  const openingSentence = sentencesOf(reply, true)[0]!.text;
+  const opening = openingSentence.split(/[,.!?;:]/, 1)[0]!;
+  const clause = safetyName(opening);
   const rejectsName = names.some(name => name && clause === `not ${safetyName(name)}`);
   const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
-  const rejectsWithCorrection = punctuation !== "?" && /^it was (?:someone|somebody) else$/.test(clause);
-  const refersToAnotherPerson = punctuation !== "?" && ["someone else", "somebody else"].some(phrase =>
+  const openingIsQuestion = openingSentence.includes("?");
+  const rejectsWithCorrection = !openingIsQuestion && /^it was (?:someone|somebody) else$/.test(safetyName(openingSentence));
+  const refersToAnotherPerson = !openingIsQuestion && ["someone else", "somebody else"].some(phrase =>
     replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `)));
   const unnamedRejection = refersToAnotherPerson || ["not him", "not her", "not them"].includes(clause);
   return safetyQuestionExclusion(rejectsName || rejectsWithCorrection, unnamedRejection, competing);

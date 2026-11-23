@@ -644,6 +644,37 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
   }, T);
 
+  const replacementReplies = [
+    { scenario: "a complete replacement", reply: "It was someone else.", keepsQuestion: false },
+    { scenario: "a replacement before an independent question", reply: "It was someone else. Can we still meet Friday?", keepsQuestion: false },
+    { scenario: "incidental help with scheduling", reply: "Someone else can pick up my kid, so yes.", keepsQuestion: true },
+    { scenario: "a tag question", reply: "It was someone else, right?", keepsQuestion: true },
+    { scenario: "a question with grouped punctuation", reply: "It was somebody else!?", keepsQuestion: true },
+    { scenario: "a replacement qualified by maybe", reply: "It was someone else, maybe.", keepsQuestion: true },
+    { scenario: "a replacement qualified by I think", reply: "It was somebody else, I think.", keepsQuestion: true },
+    { scenario: "a bare pronoun rejection", reply: "not him", keepsQuestion: true },
+  ];
+  for (const { scenario, reply, keepsQuestion } of replacementReplies) {
+    // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+    test(`#626 signed replacement attribution handles ${scenario}`, async ({ onTestFinished }) => {
+      const { askSlop, clock, competingSlopProbe, pending, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+      const askedAt = await askSlop("replacement-safety-ask");
+      await competingSlopProbe("slop.replacement-competing-probe");
+      expect(await signed("replacement-safety-answer", reply, "slop")).toMatchObject({ app: "slop" });
+      expect(await reports("slop")).toEqual([]);
+      if (keepsQuestion) {
+        expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
+      } else {
+        expect(await pending("slop")).toBeUndefined();
+        clock.advance(MINUTE);
+        await signed("replacement-first-yes", "yes", "slop");
+        clock.advance(MINUTE);
+        await signed("replacement-later-yes", "yes", "slop");
+        expect(await reports("slop")).toEqual([]);
+      }
+    }, T);
+  }
+
   const safetyControlCases = [
     { name: "Nvm", reply: "nvm", probeReply: undefined },
     { name: "No", reply: "no", probeReply: undefined },
