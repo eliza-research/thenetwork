@@ -446,3 +446,6 @@
 {"text": "I said no, send him my number", "want": "none"}
 {"text": "Tell him to wait until I say so, send him my number", "want": "text"}
 {"text": "I'm joking, send him my number", "want": "none"}
+{"text": "Tell him Ana said, send him my number", "want": "text"}
+{"text": "Tell him hi, I'm joking, send him my number", "want": "text"}
+{"text": "Tell him hi, hypothetically, send him my number", "want": "text"}

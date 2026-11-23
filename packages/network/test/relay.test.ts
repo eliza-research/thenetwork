@@ -501,6 +501,28 @@ test("a comma-joined direct clause can finish a signed number swap", async () =>
 }, 60_000);
 
 test.each([
+  "Tell him Ana said, send him my number",
+  "Tell him hi, I'm joking, send him my number",
+  "Tell him hi, hypothetically, send him my number",
+])("someone else's words, a joke or a hypothetical in a tell clause relays as text and cannot finish a number swap: %s", async text => {
+  const id = "reported-words-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+
+  const sent = await post(await ask("bo", id + "-reported", text));
+  expect(sent.status).toBe(200);
+  expect(await sent.json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before);
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
+
+  const accepted = await post(await ask("bo", id + "-direct", "Please send Ari my number."));
+  expect(await accepted.json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
   "Don't forget to send it",
   "Don't hesitate, send it now",
   "I can't wait anymore",

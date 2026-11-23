@@ -772,6 +772,8 @@ function directRelayLead(prefix: string): boolean {
   if (!DIRECT_RELAY_LEAD.test(afterComma)) return false;
   if (RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)) return true;
   return /^\s*(?:please\s+)?(?:tell|ask|let)\s/i.test(aside)
+    && !/[,:;]/.test(aside)
+    && !/\b(?:said|says|say|told|tells|texted|wrote|joking|kidding|jk|hypothetically|imagine|lol)\b/i.test(aside)
     && !/\b(?:if|when(?:ever)?|once|until|till|unless|after|first|wait|later|yet|not|no|ready|only)\b|n't\b/i.test(aside)
     && !INCOMPLETE_RELAY_ASIDE.test(aside)
     && !/^\s*(?:(?:hold|hang)\s+on|wait|scratch that)\b/i.test(aside)
