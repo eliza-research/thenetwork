@@ -90,12 +90,18 @@ describe.skipIf(!pgAvailable)("real mode: minor contacts in friends.help teen it
 
   test("a social item of 16 and 17 from a generator that is not a teen friendship generator is counted at every contact", async () => {
     const on = await count();
-    const [own] = await sql.unsafe(`select count(*)::int as n from network.messages where app_id = 'friends' and opportunity_id = '${opp}' and ${CONTACTS}`);
-    expect(own.n).toBeGreaterThan(0);
     const [{ generator }] = await sql`select generator from network.opportunities where app_id = 'friends' and id = ${opp}`;
+    // Contacts to replacement candidates outside the current pair already count in the baseline.
+    const [pair] = await sql.unsafe(`select count(*)::int as n from network.messages
+      where app_id = 'friends' and opportunity_id = '${opp}' and ${CONTACTS}
+        and member_id in ('${teens[0]}', '${teens[1]}')`);
+    expect(pair.n).toBeGreaterThan(0);
     await sql`update network.opportunities set generator = 'second_encounter' where app_id = 'friends' and id = ${opp}`;
-    expect(await count()).toBe(on + own.n);
-    await sql`update network.opportunities set generator = ${generator} where app_id = 'friends' and id = ${opp}`;
+    try {
+      expect(await count()).toBe(on + pair.n);
+    } finally {
+      await sql`update network.opportunities set generator = ${generator} where app_id = 'friends' and id = ${opp}`;
+    }
     expect(await count()).toBe(on);
   }, T);
 
