@@ -103,22 +103,10 @@ export function normText(s: string): string {
 }
 
 interface Sentence { start: number; text: string }
-function sentences(t: string): Sentence[] {
-  const out: Sentence[] = [];
-  const re = /[^.!?;\n]+/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(t))) {
-    // "2.5 miles": a dot between digits does not end a sentence.
-    out.push({ start: m.index, text: m[0] });
-  }
-  // Re-join pieces split inside a decimal number.
-  for (let i = out.length - 1; i > 0; i--) {
-    const a = out[i - 1]!, b = out[i]!;
-    if (/\d$/.test(a.text) && /^\d/.test(b.text) && t[a.start + a.text.length] === "." && a.start + a.text.length + 1 === b.start) {
-      out.splice(i - 1, 2, { start: a.start, text: t.slice(a.start, b.start + b.text.length) });
-    }
-  }
-  return out;
+function sentences(t: string, preserveLeadingDecimal = false): Sentence[] {
+  // Keep radius tokens like ".5" intact so the numeric reader cannot match their integer suffix.
+  const re = preserveLeadingDecimal ? /(?:[^.!?;\n]|\.(?=\d))+/g : /(?:[^.!?;\n]|(?<=\d)\.(?=\d))+/g;
+  return Array.from(t.matchAll(re), m => ({ start: m.index, text: m[0] }));
 }
 
 const NEG = /\b(?:not|no|never|don'?t|dont|doesn'?t|isn'?t|aren'?t|won'?t|can'?t|cant|cannot|hate|hates|without|except|nor|zero|nah|nope|avoid)\b/;
@@ -564,7 +552,7 @@ const DISTANCE_RX = new RegExp("(?<![\\d.$])(\\d{1,3}(?:\\.\\d+)?|\\b(?:(?:one|a
 
 function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance> | undefined {
   let best: Cand<Distance> | undefined;
-  for (const s of sentences(t)) {
+  for (const s of sentences(t, true)) {
     for (const m of all(DISTANCE_RX, s.text)) {
       const around = s.text;
       const pos = /\b(?:within|radius|away|max|tops|or less|or closer|up to|no more than|not more than|no further|under|travel|go|is fine|works|ok|okay|of|from|around|near|distance|far|willing|limit|range|date|dating|meet)\b/.test(around);

@@ -24,6 +24,7 @@ import {
   applyCorrection, extractSlopProfile, extractSlopProfileLLM, hardComplete, hasField, HARD_FIELDS, llmSlopReader, markAsked, nextQuestion, readBack, readBackFacts,
   type OnboardField, type SlopOnboarding, type SlopReader,
 } from "../../packages/engine/src/packs/slop/index.ts";
+import { SLOP_READBACK, slopOnboarding } from "../../packages/network/service/packs.ts";
 import { agesStated } from "../../packages/network/src/classify.ts";
 import { Mini } from "../../packages/network/test/mini.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
@@ -541,6 +542,30 @@ export async function currentAgeEvidenceGate(b: Block): Promise<void> {
 
 export async function onboardBlock(b: Block, o: { quick: boolean; llm?: boolean }): Promise<void> {
   await currentAgeEvidenceGate(b);
+  await b.run("Slop onboarding never saves the suffix of a decimal distance", () => {
+    const cases = [
+      [".5 miles", undefined],
+      ["0.5 miles", undefined],
+      ["half a mile", undefined],
+      ["Please stay within .25 miles of 11211", undefined],
+      ["Within 201 miles", undefined],
+      ["Within 1.5 miles of 11211", 2],
+      ["I ran .5 miles today. Within 1.5 miles is fine.", 2],
+    ] as const;
+    for (const [text, miles] of cases) {
+      const { state, tags } = slopOnboarding.read(undefined, text, ["slop_distance"], { now: 0, age: 30 });
+      const profile = state as SlopOnboarding;
+      const radiusTags = tags.filter(t => t.tag.startsWith("slop:scope:") || t.tag.startsWith("slop:max_miles:")).map(t => t.tag);
+      expect({ text, distance: profile.distance?.value, radiusTags }).toEqual({ text,
+        distance: miles === undefined ? undefined : { mode: "radius", miles },
+        radiusTags: miles === undefined ? [] : [`slop:scope:radius:${miles}`, `slop:max_miles:${miles}`],
+      });
+    }
+    const ctx = { now: 0, age: 30 };
+    const saved = slopOnboarding.read(undefined, "within 1.5 miles", ["slop_distance"], ctx).state;
+    const corrected = slopOnboarding.read(saved, "actually, within .5 miles", [SLOP_READBACK], ctx).state as SlopOnboarding;
+    expect(corrected.distance?.value).toEqual({ mode: "radius", miles: 2 });
+  });
 
   // spec/memberAge.md, "A half age needs age wording to confirm an under-13 refusal".
   await b.run("current half ages are distinct from measures, milestones, and sports records", () => {
