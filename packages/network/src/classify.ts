@@ -12,7 +12,7 @@ import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { hasOrElseThreat } from "../../core/src/abuse.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { historicalProbeTimeClause, mayRetryCounter, probeExclusionAlternative, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
+import { historicalProbeTimeClause, mayRetryCounter, pickedTimes, probeExclusionAlternative, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearning.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
@@ -839,7 +839,7 @@ const OTHER_TIMES = /\bother times?\b/;
 /** "Any of them", "whichever", "any time": every option. */
 const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|whichever|any ?time|all good)\b/;
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
-const ALL_WEAK = /\b(either|both)\b/;
+const ALL_WEAK = /\b(either|both)\b/g;
 const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
 const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
 const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
@@ -1075,13 +1075,19 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const individual = new Set<string>(), grouped = new Set<string>();
+  const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
+  const refuse = (keys: readonly string[], clause?: string) => {
+    for (const key of keys) neg.add(key);
+    if (clause !== undefined) refusedClauses.add(clause);
+  };
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
+    const cl = clauseAt(t, i, len);
+    if (negatedAt(t, i, len)) return refuse(keys, cl);
+    pickedClauses.add(cl);
     for (const k of keys) {
-      if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
       (group ? grouped : individual).add(k);
-      const cl = clauseAt(t, i, len);
       if ((!unbound || !calendar) && onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
@@ -1099,9 +1105,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const alone = (explicitTimesOnly ? EXPLICIT_KEY : /^\s*([abc])[\s.!,)]*$/).exec(t);
   if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); individual.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
-  for (const [re, index] of PROBE_ORDINALS) {
+  let weakOrdinalMissing = false;
+  for (const [re, index] of PROBE_ORDINALS) for (const match of t.matchAll(re)) {
     const option = options.at(index);
-    if (option) for (const match of t.matchAll(re)) mark([option.key], match.index!, match[0].length);
+    if (option) mark([option.key], match.index!, match[0].length);
+    else weakOrdinalMissing = true;
   }
   const ordinalChoices = independentOrdinalChoices(t);
   const ordinalKeys = ordinalChoices.flatMap(choices => choices.map(choice => options[probeOrdinalIndex(choice, options.length)]?.key));
@@ -1140,10 +1148,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       namedExclusion ||= exclusion;
       contradictedExclusion ||= exclusion && NEG_AFTER.test(t.slice(m.end));
       refusedGroup ||= !!m.group;
-      for (const key of matching) {
-        neg.add(key);
-        if (exclusion) namedExcluded.add(key);
-      }
+      refuse(matching, exclusion ? undefined : clauseAt(t, m.at, m.end - m.at));
+      if (exclusion) for (const key of matching) namedExcluded.add(key);
     } else if (unbound && !m.day || !matching.length || !m.group && matching.length > 1 && (explicitTimesOnly || !m.part)
       || m.part && !m.day && !m.group && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
         && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
@@ -1180,6 +1186,19 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return unboundProbeTimeNeedsClarification(unbound, current.length > 0)
       ? { ...unclear, why: "slot" } : explicitYes(current);
   }
+  const strongAll = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t);
+  const weakCues = explicitTimesOnly || strongAll ? [] : [...t.matchAll(ALL_WEAK)];
+  const weakAt = weakCues[0];
+  const weakRefusal = weakCues.some(cue => refusedClauses.has(clauseAt(t, cue.index!, cue[0].length)));
+  if (weakAt && (pos.size || unresolved.length || weakOrdinalMissing || weakRefusal)) {
+    if (contradictedExclusion) return { ...unclear, why: "slot" };
+    if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return explicitYes([]);
+    if (unresolved.length || weakOrdinalMissing || [...pos].some(key => !all.includes(key))
+      || [...pickedClauses].some(clause => refusedClauses.has(clause))
+      || weakCues.some(cue => negatedAt(t, cue.index!, cue[0].length))) return { ...unclear, why: "slot" };
+    const chosen = picked.filter(key => !neg.has(key) && open.includes(key));
+    return chosen.length ? explicitYes(pickedTimes(chosen, open)) : { ...unclear, why: "slot" };
+  }
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
@@ -1188,7 +1207,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
-  const allAt = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t) ?? ALL_WEAK.exec(t);
+  const allAt = strongAll ?? weakAt;
   if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
     return open.length ? explicitYes(open) : { ...unclear, why: "slot" };

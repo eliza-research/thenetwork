@@ -51,3 +51,13 @@
 {"text":"Last Saturday was great, except Sunday.","answer":"unclear","keys":[]}
 {"text":"Last Saturday was great, anything except Sunday.","answer":"yes","keys":["a","b"]}
 {"text":"Last Saturday was great and neither works.","answer":"yes","keys":[]}
+{"text":"both Saturday and Sunday","answer":"yes","keys":["b","c"]}
+{"text":"Saturday and Sunday both work","answer":"yes","keys":["b","c"]}
+{"text":"both Sat and Sun","answer":"yes","keys":["b","c"]}
+{"text":"both Thursday and Sunday work","answer":"yes","keys":["a","c"]}
+{"text":"Saturday and Sunday, either is fine","answer":"yes","keys":["b","c"]}
+{"text":"both of those work","answer":"yes","keys":["a","b","c"]}
+{"text":"Both Saturday and Sunday, not Sunday.","answer":"yes","keys":["b"]}
+{"text":"Both Saturday and Sunday don't work.","answer":"unclear","keys":[]}
+{"text":"Saturday and Monday. Both work.","answer":"unclear","keys":[]}
+{"text":"Either option C","labels":["Thursday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
