@@ -53,6 +53,21 @@ pure def lawExpiredActiveRowStopsSuperseding(expiresAt: int, asOf: int): bool =
   asOf >= expiresAt implies not(standingIntentSuppliesEvidence(classifyStandingIntent("active", expiresAt, asOf)))
 ```
 
+### Use the matching category for known want evidence
+
+Use the app's matching ontology and the effective engine settings when a live want supplies evidence for a proposed match. For example, with personal-growth relabeling enabled, a known ceramics goal can justify a hobby match. A goal about growing the Network keeps its own category. Shared wants count as reciprocal evidence only when they belong to the proposal's category. The relabeling does not change the member's stored consent. Review and first contact still check that consent. Only shareable evidence can appear in the reason shown to the participants.
+
+```quint
+pure def knownWantCategory(statedCategory: str, relabelledCategory: str): str =
+  if (relabelledCategory == "") statedCategory else relabelledCategory
+
+pure def lawKnownWantWithoutRelabelKeepsItsCategory(statedCategory: str): bool =
+  knownWantCategory(statedCategory, "") == statedCategory
+
+pure def lawKnownWantUsesEffectiveCategory(statedCategory: str, relabelledCategory: str): bool =
+  relabelledCategory != "" implies knownWantCategory(statedCategory, relabelledCategory) == relabelledCategory
+```
+
 ### Changed matching evidence starts another standing intent search
 
 After the daily run, recheck live standing intents on the next normal matching tick when usable evidence or supply changes. A new eligible member, a changed usable facet, a fresh intent, or a current event in the matching input can change that evidence. Include current and future presence of those members. A trip that changes, begins, or ends changes the evidence for the existing market, even when the trip is to a different city. Exclude invalid and ended windows. Use the same app and city, and keep the last searched evidence with the matching state so a retry or restart does not repeat a completed search. A private facet cannot start a search. The daily run and any rechecks share the same daily proposal limit.

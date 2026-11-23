@@ -8,6 +8,8 @@ A member needs a recorded approval before contact (the review judge, or a named 
 
 Check review and deadlines, participant answers, name disclosure, STOP, cancellation, and the pause after unanswered invitations. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+After an ambiguous answer to a timed offer, the reply slot keeps a time choice open until the member makes an offered choice, declines, or asks for other times. The reply oracle distinguishes a timed ambiguity and an explicit current choice. The [probe reply rules](../probeReply.md) and signed booking tests check the exact offered keys. The live service upgrades an older timed reply slot with `clarified` and no stored mode on its first non-resolving reply. The model starts with current-format slots and records `timeChoice: false` for a generic clarification.
+
 Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch](../probeDispatch.md), [review deadline rule](../reviewDeadline.md), and [meeting confirmation and attendance settlement](../meetingSettlement.md). The Network shell keeps the roster, persisted statuses, channel effects, and attendance records. The [repeat encounter rules](../repeatEncounter.md) cover a new review after two private responses to the same completed meeting.
 
 The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action, so it never starts, confirms or closes a job posting read-back ([posting policy](../postingPolicy.md), "Only the member's own text in the thread issues a command"). Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds. A reply to an expired probe ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended") gets one direct answer and changes no opportunity state, so the modeled answer action does not take it. A replacement asks again each member who heard about the earlier roster ([probe dispatch](../probeDispatch.md), "A replacement asks again every member who heard about the earlier roster"); the model takes the pair path, and the shell applies the same rule to an activity-partner plan backfill. A direct answer to a probe that the replacement voided gets one honest answer that the plan changed and changes no opportunity state ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended"), so the modeled answer action does not take it either. A direct answer to a probe that was waiting when its opportunity closed gets the same one honest answer that the invitation ended and changes no opportunity state, so the modeled answer action does not take it. The model uses the 48-hour window of a generic probe for every probe; the probe dispatch rules give a Slop probe and a time question 24 hours ([probe dispatch](../probeDispatch.md), "A reply or an expired deadline settles the probe").
@@ -24,11 +26,29 @@ Known drift (the owner has not decided which side is correct): the model's `clos
 
 The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
 
+The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a qualified use of the same words. A direct withdrawal declines the offer. A quoted or negated use and an unbound time keep its current probe open. The first member's accepted slots can narrow and renumber the next member's offer. A valid ordinal or day group acts only on that member's current offer. The reviewed Slop test checks the selected start. This standalone model abstracts the precise slots to all, none, or unresolved.
+
+The same declined action covers a standalone “afraid not,” “not a chance,” or
+“no chance.” A qualified use of those words stays in the unresolved action.
+The probe reader also removes explicitly excluded options. Its fallback
+selection keeps any stated time-of-day limit before it calls the modeled
+answer action.
+
+A negative or conditional cancellation uses the same booked-reply guard. Exact local start and date-only selection use the one-booking rule in the executable spec. The standalone state machine uses deterministic traces for the special interpretations and abstracts from a second simultaneous booked reply. A [number-swap withdrawal](../opportunityLifecycle.md#a-number-swap-refusal-does-not-decline-the-booked-meeting) keeps the booking unless the member also refuses attendance. The relay model owns the transfer state. The trace below follows the booked slot and makes sure the counterpart receives cancellation only after the attendance refusal.
+
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
+
+At the start of a runtime tick, the settlement rule releases a booked reply
+slot that expired or lost its meeting before any new prompt is sent. An open
+reply slot stays with its booking.
+Group attendance settlement supplies exact named absence evidence to the
+reliability rule. A group report without an identified participant does not
+mark anyone absent or reduce their reliability.
 
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=250 max-samples=8000 verify-steps=3
+// quint-witness: witness_requestFulfilled happyPathTest
 //
 // The opportunity machines of the ConsentNetwork (docs/research/2026-11-07-state-machines.md section 6.6):
 // opportunity-lifecycle, opp-participant-status, review-item, awaiting-slot, yes-hold,
@@ -98,14 +118,14 @@ module opportunity {
   pure val FEEDBACK_DUE = 168
 
   // What the member really says (the readers see only the text).
-  pure val INTENTS = Set("yes", "yes_other_times", "counter", "no", "unclear", "cancel",
-                         "fb_good", "fb_other_noshow", "fb_self_noshow", "ack", "job_post")
+  pure val INTENTS = Set("yes", "yes_other_times", "counter", "no", "unclear", "cancel", "past_time",
+                         "fb_good", "fb_other_noshow", "fb_self_noshow", "ack", "job_post", "timed_slot_ambiguity", "offered_time_choice")
   // Intents that are consent to meet (AGENTS.md decision 11: only answer "yes" is consent, a counter is
   // not a yes). "yes, but none of those times" is a yes to the meeting.
-  pure val CONSENT = Set("yes", "yes_other_times", "ack")
+  pure val CONSENT = Set("yes", "yes_other_times", "ack", "offered_time_choice")
 
   // ---------------------------------------------------------------- types
-  type Aw = { kind: str, opp: str, at: int, clarified: bool }
+  type Aw = { kind: str, opp: str, at: int, clarified: bool, timeChoice: bool }
   // phase: "" (absent) | "awaiting" | "held" | "decided" | "stopped"; approver: "" | "judge" | "staff";
   // held: the judge held the item (a ghost of review.exception); judgedRosters: network.ts review.judgedRosters.
   type Review = { decision: str, deadline: int, decidedAt: int, invalidated: bool,
@@ -120,7 +140,7 @@ module opportunity {
     contacted: Set[str], told: Set[str], sentAt: str -> int, turnAt: str -> int, timeRetry: Set[str], askedAgain: Set[str],
     meetingAt: int, bookedTold: Set[str], bookedAt: str -> int, confirmed: Set[str], reminded: Set[str],
     feedbackSent: bool, finalized: bool, post: str -> str, feedbackFrom: Set[str],
-    outcomeRec: str,
+    outcomeRec: str, firstIntroduction: bool,
     // ghosts
     accepted: str -> str, withdrawn: Set[str], saidNo: Set[str], cancelAsked: Set[str],
     revealSent: Set[str], wasTold: Set[str], silent: Set[str], expiredSilent: Set[str],
@@ -164,7 +184,7 @@ module opportunity {
 
   pure def L(act: str, o: str, m: str, x: str): Last = { act: act, o: o, m: m, x: x, dt: 0 }
   pure def J(kind: str, o: str, m: str, why: str): Job = { kind: kind, o: o, m: m, why: why, ack: false }
-  pure val NO_AW: Aw = { kind: "none", opp: "", at: 0, clarified: false }
+  pure val NO_AW: Aw = { kind: "none", opp: "", at: 0, clarified: false, timeChoice: false }
 
   pure def zeroMap(v: int): str -> int = MEMBERS.mapBy(_ => v)
   pure def strMap(v: str): str -> str = MEMBERS.mapBy(_ => v)
@@ -177,7 +197,7 @@ module opportunity {
     contacted: Set(), told: Set(), sentAt: zeroMap(-1), turnAt: zeroMap(-1), timeRetry: Set(), askedAgain: Set(),
     meetingAt: -1, bookedTold: Set(), bookedAt: zeroMap(-1), confirmed: Set(), reminded: Set(),
     feedbackSent: false, finalized: false, post: strMap(""), feedbackFrom: Set(),
-    outcomeRec: "",
+    outcomeRec: "", firstIntroduction: false,
     accepted: strMap(""), withdrawn: Set(), saidNo: Set(), cancelAsked: Set(),
     revealSent: Set(), wasTold: Set(), silent: Set(), expiredSilent: Set(),
     released: Set(), cancelHeard: Set(), droppedBy: Set(), noShowCount: zeroMap(0),
@@ -373,11 +393,11 @@ module opportunity {
   // went out and was not answered (first), or a booked plan they were told about and did not confirm.
   pure def owedAnswer(s: S, m: str, except: str): Aw = {
     val pr = OPP_ORDER.select(o => o != except and op(s, o).stage == "probing" and op(s, o).told.contains(m) and stat(s, o, m) == "probing")
-    if (pr.length() > 0) { kind: "probe", opp: pr[0], at: op(s, pr[0]).sentAt.get(m), clarified: false }
+    if (pr.length() > 0) { kind: "probe", opp: pr[0], at: op(s, pr[0]).sentAt.get(m), clarified: false, timeChoice: false }
     else {
       val bk = OPP_ORDER.select(o => o != except and op(s, o).stage == "scheduled" and stat(s, o, m) == "yes"
         and op(s, o).bookedTold.contains(m) and not(op(s, o).confirmed.contains(m)))
-      if (bk.length() > 0) { kind: "booked", opp: bk[0], at: op(s, bk[0]).bookedAt.get(m), clarified: false } else NO_AW
+      if (bk.length() > 0) { kind: "booked", opp: bk[0], at: op(s, bk[0]).bookedAt.get(m), clarified: false, timeChoice: false } else NO_AW
     }
   }
 
@@ -537,7 +557,7 @@ module opportunity {
 
   // ---------------------------------------------------------------- reveal
   pure def onSentReveal(s: S, o: str, m: str): S = {
-    val s1 = expectSlot(s, m, { kind: "booked", opp: o, at: s.now, clarified: false })
+    val s1 = expectSlot(s, m, { kind: "booked", opp: o, at: s.now, clarified: false, timeChoice: false })
     val x = op(s1, o)
     putO(s1, o, { ...x, bookedTold: x.bookedTold.union(Set(m)), bookedAt: x.bookedAt.set(m, s1.now),
                   revealSent: x.revealSent.union(Set(m)), wasTold: x.wasTold.union(Set(m)) })
@@ -609,12 +629,23 @@ module opportunity {
     }
   }
 
+  // The Slop history projects only the exact named pair. The queue is the oracle for valid original
+  // receipts, so delivered reveals are distinct from collected reveals and anonymous probes.
+  pure def observeSlopIntroductions(s: S): S =
+    OPPS.fold(s, (acc, o) => {
+      val x = op(acc, o)
+      if (x.firstIntroduction or x.parts.size() != 2 or x.review.decision != "approve"
+        or not(x.stage == "scheduled" or x.stage == "done" or x.closedFrom == "scheduled")
+        or not(x.parts.forall(p => x.revealQ.get(p) == "delivered"))) acc
+      else putO(acc, o, { ...x, firstIntroduction: true })
+    })
+
   // heardFrom: any inbound resets the pause rules. The queue releases messages held for an answer
   // (outbound-queue.ts).
   pure def unhold(q: str): str = if (q == "held") "pending" else q
   pure def heardFrom(s: S, m: str): S = {
     val x = mm(s, m)
-    val s1 = putM(s, m, { ...x, initialInvites: Set(), outbound: 0, onlyWhenAsked: false })
+    val s1 = putM(observeSlopIntroductions(s), m, { ...x, initialInvites: Set(), outbound: 0, onlyWhenAsked: false })
     OPP_ORDER.foldl(s1, (acc, o) => putO(acc, o, { ...op(acc, o),
       probeQ: op(acc, o).probeQ.set(m, unhold(op(acc, o).probeQ.get(m))),
       revealQ: op(acc, o).revealQ.set(m, unhold(op(acc, o).revealQ.get(m))) }))
@@ -624,20 +655,25 @@ module opportunity {
   // parseProbeReply with time options (classify.ts) merged by the probe branch.
   // A bare "counter" ("how about next week instead?") is "unclear" (consentOf, classify.ts, SD-041); a
   // counter with a yes word ("sounds fun! how about next week") is a yes with no time, the same reading as
-  // "yes_other_times"; "it was great" -> yes (an affirmation); "I couldn't make it" -> no (a can't);
+  // "yes_other_times". "Saturday was great" is a qualified time reference and stays unclear, even
+  // with a model yes. "I couldn't make it" reads no in this historical oracle.
+  // A rejection of time options on an untimed probe is qualified unclear. A relative time or
+  // duration with no independent offered choice is also qualified unclear. The probe stays open.
   // "ok" -> yes, unclear after two of our messages in a row, and unclear when another message
   // followed the unclarified probe: the "ok" or "Thanks! 👍" answers that message, not the probe.
-  pure def readProbe(intent: str, outboundBefore: int, answersOther: bool): str =
-    if (Set("yes", "fb_good").contains(intent)) "yes_all"
+  pure def readProbe(intent: str, outboundBefore: int, answersOther: bool, timeChoice: bool): str =
+    if (intent == "offered_time_choice") "yes_chosen"
     else if (intent == "yes_other_times") "yes_none"
+    else if (Set("no", "cancel", "fb_self_noshow", "direct_withdrawal").contains(intent)) "no"
+    else if (timeChoice) "unclear"
+    else if (Set("yes", "fb_good").contains(intent)) "yes_all"
     else if (intent == "ack") (if (outboundBefore >= 2 or answersOther) "unclear" else "yes_all")
-    else if (Set("no", "cancel", "fb_self_noshow").contains(intent)) "no"
     else "unclear"
 
   // yesNoOf / consentOf (classify.ts): yes, no, counter or unclear.
   pure def readYesNo(intent: str): str =
     if (Set("yes", "fb_good", "ack").contains(intent)) "yes"
-    else if (Set("no", "cancel", "fb_self_noshow").contains(intent)) "no"
+    else if (Set("no", "cancel", "fb_self_noshow", "direct_withdrawal").contains(intent)) "no"
     else "unclear"
 
   // ---------------------------------------------------------------- onProbeAnswer
@@ -653,7 +689,7 @@ module opportunity {
           // "Yes, but none of those": other times, once (a reply; the times hook sets awaiting probe).
           val s1 = putO(s, o, { ...x1, timeRetry: x1.timeRetry.union(Set(m)), status: x1.status.set(m, "probing"), sentAt: x1.sentAt.set(m, s.now) })
           val s2 = collect(s1, m, "times", o, false)
-          putM(s2, m, { ...mm(s2, m), aw: { kind: "probe", opp: o, at: s2.now, clarified: false } })
+          putM(s2, m, { ...mm(s2, m), aw: { kind: "probe", opp: o, at: s2.now, clarified: false, timeChoice: false } })
         } else push(collect(putO(s, o, x1), m, "reply", o, false), [J("probes", o, "", "")])
       } else {
         val s1 = putO(s, o, { ...x, status: x.status.set(m, "unavailable"), saidNo: x.saidNo.union(Set(m)), askedAgain: x.askedAgain.exclude(Set(m)) })
@@ -691,23 +727,25 @@ module opportunity {
     val yn = readYesNo(intent)
     if (intent == "job_post") {
       // peon: postingTurn (jobs.ts) reads the post back and sets awaiting "posting" with no expect.
-      putM(s, m, { ...mm(s, m), aw: { kind: "posting", opp: "", at: s.now, clarified: false } })
+      putM(s, m, { ...mm(s, m), aw: { kind: "posting", opp: "", at: s.now, clarified: false, timeChoice: false } })
     } else if (aw.kind == "posting") {
       // The manager's yes or no to the read-back ends the draft. SD-043: the slot goes back to a
       // probe or booked plan that still waits for this member's answer.
       putM(s, m, { ...mm(s, m), aw: owedAnswer(s, m, "") })
     } else {
       // The probe branch.
-      val pr = readProbe(intent, outboundBefore, aw.kind == "probe" and not(aw.clarified) and mm(s, m).lastOutProbe != aw.opp)
+      val pr = readProbe(intent, outboundBefore, aw.kind == "probe" and not(aw.clarified) and mm(s, m).lastOutProbe != aw.opp, aw.timeChoice)
       val probeDone = aw.kind == "probe" and pr != "unclear"
-      val clarifyNow = aw.kind == "probe" and pr == "unclear" and not(aw.clarified)
+      val clarifyTime = intent == "timed_slot_ambiguity"
+      val clarifyNow = aw.kind == "probe" and pr == "unclear"
+        and (if (clarifyTime) not(aw.timeChoice) else not(aw.clarified))
         and not(Set("cancel", "fb_other_noshow", "fb_self_noshow").contains(intent))
       if (probeDone) {
         val s1 = putM(s, m, { ...mm(s, m), aw: NO_AW })
         onProbeAnswer(s1, m, aw.opp, pr != "no", pr == "yes_none", intent, env)
       } else if (clarifyNow) {
-        collect(putM(s, m, { ...mm(s, m), aw: { ...aw, clarified: true } }), m, "reply", aw.opp, false)
-      } else if (aw.kind == "booked" and op(s, aw.opp).stage == "scheduled" and stat(s, aw.opp, m) == "yes" and (intent == "cancel" or yn == "no")) {
+        collect(putM(s, m, { ...mm(s, m), aw: { ...aw, clarified: true, timeChoice: clarifyTime } }), m, "reply", aw.opp, false)
+      } else if (aw.kind == "booked" and op(s, aw.opp).stage == "scheduled" and stat(s, aw.opp, m) == "yes" and (intent == "cancel" or yn == "no" or intent == "swap_and_attendance")) {
         push(putM(s, m, { ...mm(s, m), aw: NO_AW }), [dropJob(aw.opp, m, true)])
       } else if (aw.kind == "booked" and (yn == "yes" or intent == "ack")) {
         val s1 = putM(s, m, { ...mm(s, m), aw: NO_AW })
@@ -725,7 +763,7 @@ module opportunity {
           val fbKind = Set("fb_good", "fb_other_noshow", "fb_self_noshow").contains(intent)
           if ((aw.kind == "feedback" and intent != "ack") or fbKind) {
             val o = if (aw.kind == "feedback") aw.opp else feedbackDue(s, m)
-            if (o != "") onFeedback(putM(s, m, { ...mm(s, m), aw: NO_AW }), m, o, intent) else s
+            if (o != "") onFeedback(if (aw.timeChoice) s else putM(s, m, { ...mm(s, m), aw: NO_AW }), m, o, intent) else s
           } else s
         }
       }
@@ -760,7 +798,7 @@ module opportunity {
         if (r == "sent") {
           val a1 = collect(acc, d.to, d.kind, d.opp, false)
           if (d.kind == "reveal") onSentReveal(a1, d.opp, d.to)
-          else expectSlot(a1, d.to, { kind: "feedback", opp: d.opp, at: a1.now, clarified: false })
+          else expectSlot(a1, d.to, { kind: "feedback", opp: d.opp, at: a1.now, clarified: false, timeChoice: false })
         }
         else if (r == "deferred") pushDef(acc, d.kind, d.opp, d.to)
         else if (d.kind == "reveal" and op(acc, d.opp).stage == "scheduled" and stat(acc, d.opp, d.to) == "yes") push(acc, [dropJob(d.opp, d.to, false)])
@@ -856,7 +894,7 @@ module opportunity {
           if (stat(acc, o, p) != "yes") acc
           else {
             val r = sendGate(acc, p, "feedback", "logistics", true, false, env)
-            if (r == "sent") expectSlot(collect(acc, p, "feedback", o, false), p, { kind: "feedback", opp: o, at: acc.now, clarified: false })
+            if (r == "sent") expectSlot(collect(acc, p, "feedback", o, false), p, { kind: "feedback", opp: o, at: acc.now, clarified: false, timeChoice: false })
             else if (r == "deferred") pushDef(acc, "feedback", o, p)
             else acc
           })
@@ -992,7 +1030,7 @@ module opportunity {
                  val s1 = collect(checked, m, "probe", o, invite)
                  val y = op(s1, o)
                  putM(putO(s1, o, { ...y, contacted: y.contacted.union(Set(m)), told: y.told.union(Set(m)), sentAt: y.sentAt.set(m, s1.now) }), m,
-                      { ...mm(s1, m), aw: { kind: "probe", opp: o, at: s1.now, clarified: false } })
+                      { ...mm(s1, m), aw: { kind: "probe", opp: o, at: s1.now, clarified: false, timeChoice: false } })
                } else push(setStat(checked, o, m, "unavailable"), [J("replace", o, m, ""), J("probes", o, "", "")])
       s' = { ...s2, last: L("probeSend", o, m, r), jobEnv: env },
     }
@@ -1087,7 +1125,7 @@ module opportunity {
   pure def forgetRest(s3: S, m: str): S = {
     val s4 = OPP_ORDER.foldl(s3, (acc, o) => {
       val y = op(acc, o)
-      if (y.stage != "absent" and (y.parts.contains(m) or y.requester == m)) putO(acc, o, { ...y, stage: "gone", everTerminal: true })
+      if (y.stage != "absent" and (y.parts.contains(m) or y.requester == m)) putO(acc, o, { ...y, stage: "gone", firstIntroduction: false, everTerminal: true })
       else putO(acc, o, { ...y, alts: y.alts.exclude(Set(m)) })
     })
     // slots on a deleted opportunity end; the member state goes; deferred sends to them, or about
@@ -1166,7 +1204,7 @@ module opportunity {
     if (s.toDeliver == Set()) s' = popped
     else { nondet d = s.toDeliver.oneOf() s' = deliverOne(popped, d, s.jobEnv) },
   }
-  action runRefresh = all { jobIs("refresh"), s' = refreshUnanswered(popped) }
+  action runRefresh = all { jobIs("refresh"), s' = refreshUnanswered(observeSlopIntroductions(popped)) }
   action runAdv = all { jobIs("adv"), s' = advance(popped, job.o, s.jobEnv) }
   action runExp = all { jobIs("exp"), s' = expireProbe(popped, job.o, job.m) }
   action runExpire = all { jobIs("expire"), s' = expireSlots(popped) }
@@ -1447,6 +1485,12 @@ module opportunity {
     (x.stage == "scheduled" and s.now >= x.meetingAt) implies x.parts.forall(p => x.status.get(p) == "yes" implies x.bookedTold.contains(p))
   })
 
+  run swapWithdrawalKeepsBookedMeetingTest =
+    bookO1(30).then(answer("a", "swap_only", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "scheduled" and op(s, "o1").cancelHeard == Set())
+      .then(answer("a", "swap_and_attendance", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "closed" and op(s, "o1").cancelHeard == Set("b") and safety)
+
   // SD-139. A terminal drop clears each member's booked slot before another reply can use it.
   val bookedSlotAlive = MEMBERS.forall(m => {
     val aw = mm(s, m).aw
@@ -1487,13 +1531,24 @@ module opportunity {
     (TEEN_OPEN.contains(tOpp(s, o).stage) and tRosterHasMinor(s.teen, o)) implies
       (TEEN_FRIENDSHIP.get(o) and TEEN_ROSTER.get(o).forall(m => tAge(m, s.teen.day + 1) <= 18)))
 
+  val slopIntroductionNeedsTwoReceipts = OPPS.forall(o => {
+    val x = op(s, o)
+    x.firstIntroduction implies
+      (x.parts.size() == 2 and x.review.decision == "approve" and x.parts.forall(p => x.revealQ.get(p) == "delivered"))
+  })
+
+  val slotClarificationStaysOnProbe = MEMBERS.forall(m => {
+    val aw = mm(s, m).aw
+    aw.timeChoice implies (aw.kind == "probe" and aw.clarified)
+  })
+
   // The invariants hold between two units (`idle`); inside a unit, jobs are still to run.
   val safety = idle implies and {
     contactNeedsRecordedApproval, heldItemNeedsStaff, decidedBeforeDeadline, namesAfterAllYes, counterIsNotYes, slotOwnerAlive, noLostAnswer,
     minorNever, minorEndsBooking, minorKnewMarked, stopWins, terminalStable, requestNotStuck, cancelReachesTold, partialAcceptReleased,
     noShowOnce, bookedMembersTold, bookedSlotAlive, pauseNeedsUnansweredInvitations,
     teenFriendAgeRule, teenSwitchOffNoMinor, teenRosterIsJudgedStrictly, teenGroupSmall, teenGroupRule, teenAuditByStaffRole,
-    teenNeverNineteenOrOtherLane,
+    teenNeverNineteenOrOtherLane, slopIntroductionNeedsTwoReceipts, slotClarificationStaysOnProbe,
   }
 
   // ---------------------------------------------------------------- known open (not in safety)
@@ -1549,6 +1604,8 @@ module opportunity {
   val witness_teenStopSwept = not(idle) or TEEN_OPPS.forall(o => tOpp(s, o).closedReason != "teen_intros_off")
   val witness_heldStaffApproved = not(idle) or OPPS.forall(o => op(s, o).review.approver != "staff")
   val witness_reviewStopped = not(idle) or OPPS.forall(o => op(s, o).review.phase != "stopped")
+  val witness_explicitTimeChoice = not(idle) or OPPS.forall(o => MEMBERS.forall(m => op(s, o).accepted.get(m) != "offered_time_choice"))
+// quint-witness: witness_explicitTimeChoice timeChoiceAfterClarificationTest
 
   // ================================================================ run tests (traces from the code)
   pure val ALL_OPEN: Env = { openW: MEMBERS, budget: true, lead: 30 }
@@ -1575,7 +1632,38 @@ module opportunity {
       .then(answer("a", "fb_good", ALL_OPEN)).then(settled)
       .then(answer("b", "fb_good", ALL_OPEN)).then(settled)
       .then(tick(1, ALL_OPEN)).then(settled)
-      .expect(op(s, "o1").finalized and s.req.outcome == "fulfilled" and safety)
+      .expect(op(s, "o1").finalized and safety)
+      .expect(not(witness_requestFulfilled))
+
+  run pastTimeCannotAcceptProbeTest =
+    init
+      .then(submit("o1")).then(settled)
+      .then(judgeRecord("o1", "approve", true, ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(answer("b", "past_time", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "probing" and stat(s, "o1", "b") == "probing"
+        and op(s, "o1").revealSent == Set() and mm(s, "b").aw.kind == "probe" and safety)
+      .then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "scheduled" and op(s, "o1").revealSent == Set("a", "b") and safety)
+
+  run mutualNamedIntroductionSurvivesCancellationTest =
+    init
+      .then(submit("o1")).then(settled)
+      .then(judgeRecord("o1", "approve", true, ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(queueDecide("probe", "o1", "a", "delivered")).then(settled)
+      .expect(not(op(s, "o1").firstIntroduction))
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .then(queueDecide("reveal", "o1", "a", "delivered")).then(settled)
+      .then(tick(1, ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "scheduled" and not(op(s, "o1").firstIntroduction))
+      .then(queueDecide("reveal", "o1", "b", "delivered")).then(settled)
+      .then(answer("a", "cancel", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "closed" and op(s, "o1").firstIntroduction and slopIntroductionNeedsTwoReceipts)
 
   // A reject closes the item and nobody is contacted (decide, reject).
   run rejectTest =
@@ -1591,6 +1679,16 @@ module opportunity {
       .expect(op(s, "o2").stage == "closed" and op(s, "o2").review.decision == "expired" and op(s, "o2").contacted == Set()
               and s.collected == 0 and safety)
 
+  run qualifiedReplyKeepsProbeTest =
+    init.then(submit("o2")).then(settled).then(judgeRecord("o2", "approve", true, ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "qualified_withdrawal", ALL_OPEN)).then(settled)
+      .expect(stat(s, "o2", "a") == "probing" and mm(s, "a").aw.kind == "probe")
+      .then(answer("a", "unbound_time", ALL_OPEN)).then(settled)
+      .expect(stat(s, "o2", "a") == "probing" and op(s, "o2").revealSent == Set() and safety)
+      .then(answer("a", "direct_withdrawal", ALL_OPEN)).then(settled)
+      .expect(stat(s, "o2", "a") == "out" and op(s, "o2").revealSent == Set() and safety)
+
   // SD-041 (113a369, opportunity-counter-offer.test.ts): "how about next week instead?" is unclear: one
   // clarification, the probe stays open, silence expires it, and the request item closes. No names go out.
   run counterOfferTest =
@@ -1600,6 +1698,21 @@ module opportunity {
       .then(tick(PROBE_TTL + 1, ALL_OPEN)).then(settled)
       .expect(op(s, "o2").parts == Set("b", "c") and stat(s, "o2", "a") == "out" and op(s, "o2").revealSent == Set()
               and counterIsNotYes and safety)
+
+  run timeChoiceAfterClarificationTest =
+    init.then(submit("o2")).then(settled).then(judgeRecord("o2", "approve", true, ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "unclear", ALL_OPEN)).then(settled)
+      .expect(mm(s, "a").aw.clarified and not(mm(s, "a").aw.timeChoice) and s.collected == 2)
+      .then(answer("a", "timed_slot_ambiguity", ALL_OPEN)).then(settled)
+      .expect(mm(s, "a").aw.timeChoice and s.collected == 3)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .expect(mm(s, "a").aw.timeChoice and stat(s, "o2", "a") == "probing" and op(s, "o2").accepted.get("a") == "")
+      .then(answer("a", "ack", ALL_OPEN)).then(settled)
+      .then(answer("a", "timed_slot_ambiguity", ALL_OPEN)).then(settled)
+      .expect(mm(s, "a").aw.timeChoice and s.collected == 3 and op(s, "o2").revealSent == Set() and safety)
+      .then(answer("a", "offered_time_choice", ALL_OPEN)).then(settled)
+      .expect(mm(s, "a").aw == NO_AW and stat(s, "o2", "a") == "available" and safety)
+      .expect(not(witness_explicitTimeChoice))
 
   // SD-075 (791ff6a, opportunity-withdraw-yes.test.ts): a yes, then "actually no, sorry" with no slot: the
   // yes is taken back; b replaces a; b and c say yes; the names go to b and c only.
@@ -1767,7 +1880,7 @@ module opportunity {
       .then(answer("a", "fb_good", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").feedbackFrom.contains("a") and stat(s, "o2", "a") == "probing" and not(op(s, "o2").contacted.contains("a")))
       .then(probeSend("o2", "a", ALL_OPEN)).then(settled)
-      .expect(mm(s, "a").aw == { kind: "probe", opp: "o2", at: s.now, clarified: false } and counterIsNotYes and safety)
+      .expect(mm(s, "a").aw == { kind: "probe", opp: "o2", at: s.now, clarified: false, timeChoice: false } and counterIsNotYes and safety)
 
   // SD-043 (74602b1, opportunity-awaiting-slot.test.ts): a job post read-back holds the slot of a pending
   // probe; "no" drops the post and the slot goes back to the probe; the next "yes" answers the probe.

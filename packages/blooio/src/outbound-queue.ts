@@ -19,14 +19,14 @@
 //    Blooio conversation limits hold the row until the person writes; number-level blocks end it (blocked).
 //  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
 //  - A row to someone who is not a member keeps the address and the text only until it ends.
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import {
   consentPolicy, conversationPolicy, dispatchFailurePolicy, duePolicy, holdForReply, lineCaps, linePolicy, livePolicy, personPolicy,
   quietPolicy, recipientPolicy, replyPolicy, textPolicy,
 } from "../../core/src/generated/outboundAdmission.ts";
 import { controlQuietHoursValid } from "../../core/src/generated/participationControls.ts";
 import {
-  acceptanceEndsRow, acceptanceRecordsSend, gatewayReceiptApplies, gatewayReplyPhase, gatewayReplySendTime, returnsPersonSlot, step as stepReceipt, type FailureKind, type ReceiptPhase,
+  acceptanceEndsRow, acceptanceRecordsSend, gatewayReceiptApplies, gatewayReplyPhase, gatewayReplySendTime, keepAcceptedRecipientCount, returnsPersonSlot, step as stepReceipt, type FailureKind, type ReceiptPhase,
 } from "../../core/src/generated/outboundReceipt.ts";
 import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
 import { settleClaimedSend, type SendDisposition } from "../../core/src/vibe/outboundReceiptShell.js";
@@ -146,6 +146,13 @@ export interface AppChecks {
   claimed?(row: QueueRow, tx: SQL): Promise<void>;
 }
 
+export type RecipientWindowKey = (line: string, recipient: string) => string;
+
+export function recipientWindowHasher(secret: string): RecipientWindowKey {
+  return (line, recipient) => createHmac("sha256", secret)
+    .update(JSON.stringify(["outbound-recipient-window", line, recipient])).digest("hex");
+}
+
 export interface QueueOptions {
   sql: SQL;
   clock: Clock;
@@ -159,6 +166,8 @@ export interface QueueOptions {
   /** The worker's name on its leases. */
   instance?: string;
   quiet?: QuietWindow;
+  /** Stable, line-scoped digest for a recipient whose accepted send has had its address scrubbed. */
+  recipientWindowKey: RecipientWindowKey;
   /** Sends of any kind to one recipient in a rolling hour (runaway-loop guard). Default 10. */
   perRecipientPerHour?: number;
   /** Agent-initiated sends from the line in a rolling day (prototype P3 measures the real number). Default 200. */
@@ -496,8 +505,12 @@ export class OutboundQueue {
       return this.wait(row, "retry_scheduled", now + HOUR, `line safety ${action}`);
     }
     if (!compliance) {
+      const cutoff = new Date(now - HOUR);
+      const recipientKey = this.o.recipientWindowKey(row.line, row.to);
+      // Read both counts in one snapshot. A delivery receipt moves a row from one count to the other.
       const [counts] = await this.sql`select
-        count(*) filter (where to_address = ${row.to} and sent_at > ${new Date(now - HOUR)})::int as recipient,
+        (count(*) filter (where to_address = ${row.to} and sent_at > ${cutoff}) +
+          (select count(*) from platform.outbound_recipient_window where recipient_key=${recipientKey} and sent_at>${cutoff}))::int as recipient,
         count(*) filter (where kind in ('proactive', 'transactional') and sent_at > ${new Date(now - DAY)})::int as line,
         count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
         from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
@@ -689,6 +702,14 @@ export class OutboundQueue {
       context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind,createdAt:row.createdAt}};
   }
 
+  /** spec/outboundReceipt.md, "A terminal receipt preserves the recipient cap after payload erasure" */
+  private async preserveRecipientWindow(tx: SQL, id: string, phase: ReceiptPhase,
+    { line, address, memberId, sentAt }: { line: string; address: string | null; memberId: string | null; sentAt: Date | null }): Promise<void> {
+    if (!address || !sentAt || !keepAcceptedRecipientCount(phase, !!this.o.provider.receipt, memberId === null, true, sentAt.getTime() > this.now - HOUR)) return;
+    await tx`insert into platform.outbound_recipient_window (outbound_id,recipient_key,sent_at)
+      values (${id},${this.o.recipientWindowKey(line, address)},${sentAt}) on conflict (outbound_id) do nothing`;
+  }
+
   /** Commit only an extant immutable row. The person lock is shared with canonical erasure. */
   private async acceptReceipt(row: QueueRow, receipt: SendReceipt): Promise<StatusChange> {
     const from = { phase: row.status === "unknown_acceptance" ? "AcceptanceUnknown" : "Sending" } as const;
@@ -704,7 +725,7 @@ export class OutboundQueue {
       await tx`select set_config('app.app_id',${this.app},true)`;
       if (row.memberId) await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
         where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
-      const wrote=await tx`update platform.outbound set status=${status},provider_message_id=${receipt.providerMessageId},
+      const [wrote]=await tx<{ member_id: string | null; sent_at: Date }[]>`update platform.outbound set status=${status},provider_message_id=${receipt.providerMessageId},
         provider_message_ids=${{ids:providerIds}}::jsonb->'ids',history_recorded=${receipt.historyRecorded??null},chat_id=${receipt.chatId??null},
         transport=${receipt.transport??null},sent_at=case when ${wentOut} then coalesce(sent_at,${at}) else sent_at end,lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
         note=${status === "failed" ? "provider reported failure" : !delivered && receipt.replayed ? "idempotent replay" : null},
@@ -712,8 +733,10 @@ export class OutboundQueue {
         to_address=case when ${terminal} and member_id is null then null else to_address end,
         body=case when ${terminal} and member_id is null then null else body end
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
-        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning id`;
-      if (!wrote.length) return false;
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning member_id,sent_at`;
+      if (!wrote) return false;
+      await this.preserveRecipientWindow(tx, row.id, accepted.phase,
+        { line: row.line, address: row.to, memberId: wrote.member_id, sentAt: wrote.sent_at });
       if (wentOut) await this.countSend(tx,this.line,row.to,row.kind,row.reengagement,at);
       return true;
     });
@@ -815,13 +838,22 @@ export class OutboundQueue {
       return { id: row.id, app: row.app, memberId: row.memberId, status: "failed" };
     }
     const final = u.status === "delivered" || u.status === "read";
-    const rows = await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
-      delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
-      read_at = case when ${u.status === "read"} then ${at} else read_at end,
-      ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
-      to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
-      where id = ${row.id} and status = ${row.status} returning id`;
-    if (!rows.length) return this.applyStatus(u);
+    const changed = await this.sql.begin(async tx => {
+      // Pin the current recipient before clearing the payload. This also serializes concurrent receipts.
+      const [prior] = await tx<{ address: string | null; memberId: string | null; sentAt: Date | null; line: string }[]>`select
+        to_address as address,member_id as "memberId",sent_at as "sentAt",line from platform.outbound
+        where id=${row.id} and status=${row.status} for update`;
+      if (!prior) return false;
+      await tx`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
+        delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
+        read_at = case when ${u.status === "read"} then ${at} else read_at end,
+        ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
+        to_address = case when ${final} and member_id is null then null else to_address end,
+        body = case when ${final} and member_id is null then null else body end where id=${row.id}`;
+      await this.preserveRecipientWindow(tx, row.id, next.phase, prior);
+      return true;
+    });
+    if (!changed) return this.applyStatus(u);
     return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
   }
 
@@ -851,6 +883,7 @@ export class OutboundQueue {
    * Such an address counts as a new conversation again. Returns how many were removed.
    */
   async purge(): Promise<number> {
+    await this.sql`delete from platform.outbound_recipient_window where sent_at<=${new Date(this.now - HOUR)}`;
     const before = new Date(this.now - DAY);
     const rows = await this.sql`delete from platform.line_conversations c where c.line = ${this.line}
       and coalesce(greatest(c.last_inbound_at, c.last_outbound_at), c.first_outbound_at) < ${before}

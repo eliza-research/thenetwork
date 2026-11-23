@@ -1,6 +1,7 @@
 import type { MemberId, Owned } from "@thenetwork/core";
 import { initial as initialRelay, step as stepRelay, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import { relayAgeStatementRead, relayAgeStatementRefuses, relaySevereBlockCaseEvent, relayStartsMinorPolicy, relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
+import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import {
   relayGuard, relayItemAsync, relaySenderNotice, RELAY_LIMITS, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
@@ -63,6 +64,7 @@ export interface RelayAsk {
   from: MemberId;
   kind: RelayAskKind;
   text?: string;
+  targetName?: string;
   matchId?: string;
 }
 export interface RelayOutcome {
@@ -127,6 +129,13 @@ export class RelayDesk {
     if (choice === "RelayAskWhichMatch") return { itemId: ask.itemId, decision: "unnamed", reason: NOTICE.whichMatch };
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: choice === "RelayNamedNotLive" ? NOTICE.matchClosed : NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
+    if (ask.targetName !== undefined) {
+      const recipient = this.host.member(to)?.firstName;
+      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
+        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+      }
+    }
     const now = this.host.now();
     const pair = this.host.teenPair?.(match.id) === true;
     if (ask.kind !== "text" && pair) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.textOnly };

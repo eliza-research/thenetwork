@@ -11,12 +11,14 @@ import { ageAnswer, birthDateAnswer, birthDateStated, classify, extractProfile, 
 import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
-import { APPS, keywordApp, lookingForReading, type AppId } from "../../packages/platform/src/apps.ts";
+import { APPS, keywordApp, lookingFor, lookingForReading, type AppId } from "../../packages/platform/src/apps.ts";
 import { parseJoinText } from "../../packages/network/service/service.ts";
 import { phoneChangeLinkRequest } from "../../packages/network/service/phone-change-link.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { parseReviewJudgeReply } from "../../packages/engine/src/reviewJudge.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { riskTerms } from "../../packages/engine/src/filters.ts";
 import { Block, expect } from "./gate.ts";
 import { planAgainOf } from "../../packages/network/src/classify.ts";
 import { readPhotoMessage, type PhotoReading, type PhotoSlot, type ReaderContext, type ReaderDraft, type ReaderThread } from "../../packages/network/service/photoReference.ts";
@@ -26,6 +28,20 @@ const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export async function evalsBlock(b: Block): Promise<void> {
+  await b.run("child-care requests recognize stated ages and split transport verbs", () => {
+    const cfg = resolveConfig();
+    const risky = [
+      ...["6yo", "6 y/o", "6 y.o.", "6 y o", "6 y-old", "6 yrs old", "six-year-old", "sixteen-year-old"]
+        .map(age => "watch my " + age + " Saturday"),
+      "pick my kid up", "who can pick my two kids up", "drop my kid off",
+      "dropping the kids off", "drop my 5 y.o. off", "pick up my kid",
+    ];
+    const benign = ["parents with young kids", "watch my kidney stone symptoms", "watch my 6 y.o. startup",
+      "pick a book for my child up", "pick the parcel up", "pick me up at the airport", "dog sitter available"];
+    expect(risky.filter(body => riskTerms(cfg, body).length === 0)).toEqual([]);
+    expect(benign.filter(body => riskTerms(cfg, body).length > 0)).toEqual([]);
+  });
+
   await b.run("Settings consent: paused is not STOP; global STOP and newer app START project independently", async () => {
     let at = Date.parse("2026-10-09T12:00:00Z");
     const e164 = "+12125550301", store = new MemoryPeopleStore();
@@ -142,6 +158,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`areas: recall >= 0.9 (n ${areas.length})`, areas.length >= 190 && areaRecall >= 0.9, areaRecall.toFixed(3));
   const defaulted = unknown.filter(l => extractProfile(l.text).area !== undefined).map(l => l.text);
   b.gate("areas: an unknown place is never defaulted", defaulted.length === 0 && extractProfile("I live in Hoboken").areaUnknown === true, defaulted.slice(0, 5).join(" | "));
+  // spec/planFormation.md, "A known trip must fit the member's travel limit"
+  await b.run("areas: recognize Fort Greene's abbreviations in a member's home area", () => {
+    const inputs = ["based in Ft Greene", "I'm in ft. greene", "live in ft greene near the park",
+      "I live in Fort Greene", "I work in Ft. Greene", "I live in Ft. Green"];
+    expect(inputs.map(text => extractProfile(text).area))
+      .toEqual(["Fort Greene", "Fort Greene", "Fort Greene", "Fort Greene", undefined, undefined]);
+  });
 
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
@@ -193,6 +216,17 @@ export async function evalsBlock(b: Block): Promise<void> {
     }
     for (const t of ["cancel the date", "stop by at 7", "quit my job", "I have to leave early", "leave slop alone lol", "leave the party now", "quit smoking now", "exit the building now"]) expect([t, leaveTarget(t) ?? null]).toEqual([t, null]);
     expect(optOutPhrase(`${"I had a long day at work and the train was late again. ".repeat(3)}stop texting me`)).toBe(false);
+  });
+  await b.run("platform lookingFor: 'all apps'/'everything' joins every app; a bare 'all' does not", () => {
+    const sorted = (t: string) => [...lookingFor(t)].sort();
+    // Explicit "every app" answers still enroll in all three (founder decision 2).
+    for (const t of ["I want everything", "all three", "give me all of them", "all apps please"]) expect([t, sorted(t)]).toEqual([t, ["friends", "peon", "slop"]]);
+    // A stray "all" is not a request to join dating and work: an opt-out answer must never enroll anyone.
+    expect(["not interested at all", sorted("not interested at all")]).toEqual(["not interested at all", []]);
+    expect(["just friends, that's all", sorted("just friends, that's all")]).toEqual(["just friends, that's all", ["friends"]]);
+    // A negated "all apps"/"everything" answer must not enroll anyone (the all-apps branch obeys the negation guard).
+    for (const t of ["I don't want all apps", "not everything", "dont want all of them", "without all apps"]) expect([t, sorted(t)]).toEqual([t, []]);
+    expect([sorted("all apps except dating"), sorted("all of these but work")]).toEqual([["friends", "peon"], ["friends", "slop"]]);
   });
 
   type Routing = { kind: "first" | "join" | "lookingFor"; text: string; reading: Record<string, unknown> };

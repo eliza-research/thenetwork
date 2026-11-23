@@ -10,17 +10,18 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, DEFAULT_MODEL, endpointsFor, HOUR, judgeLLM, LLMBudget, MINUTE, recommenderLLM, SimClock } from "@thenetwork/core";
-import { slopProfiles } from "../../engine/src/packs/slop/profile.ts";
+import { localEmbed, SLOP_ENGINE_DEFAULTS, slopPack, slopProfiles, World } from "@thenetwork/engine";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
+import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { APPS } from "../../platform/src/apps.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { copy } from "../src/copy.ts";
-import { REVEAL_PLACE_PLACEHOLDER, REVEAL_TIME_PLACEHOLDER } from "../src/network.ts";
+import { meetingFeedbackKey, REVEAL_PLACE_PLACEHOLDER, REVEAL_TIME_PLACEHOLDER, reviewApproved } from "../src/network.ts";
 import { Mini, START } from "./mini.ts";
 import { CostLedger, PgCostSink } from "../service/cost.ts";
 import { modelReviewJudge } from "../../engine/src/reviewJudge.ts";
@@ -81,12 +82,13 @@ async function run(s: NetworkService, clock: SimClock, ms: number, step = 30 * M
   for (let t = 0; t < ms; t += step) { clock.advance(Math.min(step, ms - t)); await s.tick(); }
 }
 
-test("Slop availability follows the booked time in the meeting's zone", async () => {
+test("Slop availability and pacing follow the booked time in the meeting's zone", async () => {
   const cases = [
-    { meetingAt: Date.UTC(2026, 9, 13, 0), timeZone: undefined, slot: 0, lat: 40.7, lng: -74 },
-    { meetingAt: Date.UTC(2026, 9, 11, 22), timeZone: "America/Los_Angeles", slot: 7, lat: 34.05, lng: -118.25 },
+    { meetingAt: Date.UTC(2026, 9, 13, 0), timeZone: undefined, slot: 0, lat: 40.7, lng: -74, liked: "rae" },
+    { meetingAt: Date.UTC(2026, 9, 11, 22), timeZone: "America/Los_Angeles", slot: 7, lat: 34.05, lng: -118.25, liked: "sam" },
   ];
-  for (const { meetingAt, timeZone, slot, lat, lng } of cases) {
+  const pacing = slopPack.eligibility.memberRules.find(rule => rule.id === "recently_matched")!;
+  for (const { meetingAt, timeZone, slot, lat, lng, liked } of cases) {
     const ids = ["rae", "sam"];
     const world = new Mini([
       { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
@@ -104,7 +106,8 @@ test("Slop availability follows the booked time in the meeting's zone", async ()
     const feedbackAt = Date.UTC(2026, 9, 13, 16);
     world.clock.set(feedbackAt);
     await world.net.tick(feedbackAt);
-    await world.say("rae", "We both came. It was great.");
+    const feedback = (id: string) => id === liked ? "We both came. It was great. I would meet again." : "We both came.";
+    await world.say("rae", feedback("rae"));
     const state = world.net.exportState();
     const interaction = state.interactions.find(item => item.id === `${opportunityId}:fb:rae`)!;
     expect(interaction).toMatchObject({ at: feedbackAt, outcome: "completed" });
@@ -113,9 +116,79 @@ test("Slop availability follows the booked time in the meeting's zone", async ()
 
     // Older snapshots can recover the booked time from the exact opportunity after a restart.
     delete interaction.bookedMeeting;
+    delete interaction.opportunityId;
     world.net.importState(state);
     expect(history()?.attendedSlots).toEqual([slot]);
+
+    world.clock.advance(HOUR);
+    await world.say("sam", feedback("sam"));
+    expect(world.net.exportState().feedback).toMatchObject([
+      { from: "rae", at: feedbackAt, wouldMeetAgain: liked === "rae" },
+      { from: "sam", at: feedbackAt + HOUR, wouldMeetAgain: liked === "sam" },
+    ]);
+    const afterBothReplies = slopProfiles(world.net.engineInput(world.clock.now()));
+    for (const id of ids) expect(afterBothReplies.get(id)?.history).toMatchObject({ dates: 1, attendedSlots: [slot] });
+    const gate = (id: string, at: number) => {
+      const view = new World(world.net.engineInput(at), SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
+      return pacing.check(view, id, view.get(id)!, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false });
+    };
+    const tenDaysAfterBooking = meetingAt + 10 * DAY;
+    expect(gate(liked, tenDaysAfterBooking - 1)).toBe("recently_matched");
+    expect(gate(ids.find(id => id !== liked)!, tenDaysAfterBooking - 1)).toBeNull();
+    expect(gate(liked, tenDaysAfterBooking)).toBeNull();
   }
+});
+
+test("Slop pacing uses feedback about the latest completed date", async () => {
+  const firstMeetingAt = Date.UTC(2026, 9, 11, 22);
+  const latestMeetingAt = Date.UTC(2026, 9, 14, 23);
+  const world = new Mini([
+    { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
+    { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
+    { id: "cy", name: "Cy", age: 30, romance: { is: "man", seeks: ["woman"] } },
+  ], { app: "slop", plans: false, growth: false, hooks: {
+    timeOptions: opportunity => {
+      const start = opportunity.participants.includes("cy") ? latestMeetingAt : firstMeetingAt;
+      return [{ start, end: start + HOUR }];
+    },
+  } });
+  world.clock.set(Date.UTC(2026, 9, 9, 15));
+  await world.onboard("rae", "sam", "cy");
+  const book = async (counterpart: string) => {
+    const pair = ["rae", counterpart];
+    const id = world.propose(pair, { category: "romance", objective: "a coffee date" });
+    await world.answerProbes(pair, () => "Yes, the first time works.");
+    return id;
+  };
+  const tickAt = async (at: number) => {
+    world.clock.set(at);
+    await world.net.tick(at);
+  };
+  const first = await book("sam");
+  await tickAt(firstMeetingAt + 16 * HOUR);
+  await world.say("sam", "We both came.");
+  await world.say("rae", "Thanks.");
+  const latest = await book("cy");
+  expect(world.meetings).toMatchObject([{ at: firstMeetingAt }, { at: latestMeetingAt }]);
+
+  // Rae answers the old prompt after the second date has started, before its check-in is due.
+  await tickAt(latestMeetingAt + HOUR);
+  await world.say("rae", "We both came. It was great. I would meet again.");
+  await tickAt(latestMeetingAt + 15 * HOUR);
+  await world.say("cy", "We both came.");
+  const evidence = world.net.engineInput(world.clock.now());
+  expect(evidence.feedback).toContainEqual(expect.objectContaining({ from: "rae", about: "sam", opportunityId: first, wouldMeetAgain: true }));
+  expect(evidence.feedback).toContainEqual(expect.objectContaining({ from: "cy", about: "rae", opportunityId: latest }));
+  expect(slopProfiles(evidence).get("rae")?.history).toMatchObject({ lastDateAt: latestMeetingAt, lastDateLiked: undefined });
+  const earlyAnswer = evidence.feedback!.find(reply => reply.from === "rae")!;
+  const likedDateWith = (reply: typeof earlyAnswer) => slopProfiles({ ...evidence, feedback: [reply] }).get("rae")?.history.lastDateLiked;
+  expect(likedDateWith({ ...earlyAnswer, about: "cy" })).toBeUndefined();
+  expect(likedDateWith({ ...earlyAnswer, opportunityId: undefined })).toBeUndefined();
+  expect(likedDateWith({ ...earlyAnswer, opportunityId: undefined, about: "cy" })).toBe(true);
+
+  world.clock.advance(HOUR);
+  await world.say("rae", "We both came. I would meet again.");
+  expect(slopProfiles(world.net.engineInput(world.clock.now())).get("rae")?.history.lastDateLiked).toBe(true);
 });
 
 describe.skipIf(!pgAvailable)("slop.date: join to report after the date (NetworkService, Postgres)", () => {
@@ -265,7 +338,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
     const [prompt] = await sql<{ id: string; body: string }[]>`select id,body from network.messages
       where app_id='slop' and member_id=${rae} and opportunity_id=${item.oppId} and type='feedback_request' and direction='outbound'`;
-    const syntheticHistory = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+    const syntheticHistory = new OutboundQueue({ recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"), sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
       provider: { kind: "sim", send: async () => { throw new Error("Fixture only records an accepted prompt"); } } });
     // The member gets guidance even before the exact feedback prompt is accepted. Until then, the
     // service cannot treat her statement as a report against the counterpart of that prompt.
@@ -391,6 +464,297 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     console.log(JSON.stringify({ scope: "slop-review-judge-live-matching-judge", ...matchingJudge }));
     console.log(JSON.stringify({ scope: "slop-review-judge-live", model: process.env.JUDGE_MODEL ?? DEFAULT_MODEL, judgments: decided.map(r => ({ verdict: r.verdict, reason: r.reason, model: r.model })), contacted, held: !!held, requests: requests!.n, spend }));
     await s.close(); svc = undefined;
+  }, T);
+
+  // spec/datingRadius.md, "A mutual named introduction stays in first-date history"
+  test("only two exact named booking receipts preserve a Slop introduction after cancellation and restart", async () => {
+    await svc?.close();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const secret = "synthetic-slop-introduction-history-turn";
+    const makeService = () => new NetworkService({
+      url: URL_, clock, log: () => {}, photoStorage: null, notify: false,
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      networks: [{ id: "slop:nyc", matchingEnabled: false }], adapter: () => new DryRunAdapter(() => {}),
+    });
+    let s = svc = makeService();
+    await s.start();
+    const people = [];
+    // spec/newMatchParticipation.md, "Recheck the member and category before a new contact"
+    for (const [e164, firstName, is, seeks] of [[RAE, "Rae", "woman", "man"], [SAM, "Sam", "man", "woman"]] as const) {
+      const result = await s.accounts.join(APPS.slop, { e164, personId: null }, {
+        firstName, age: 30, consent: { sms: true, wording: APPS.slop.consent.text },
+      });
+      if (!result.ok) throw new Error("Fixture could not join");
+      people.push({ id: result.membership.memberId, name: firstName, age: 30, e164, romance: { is, seeks: [seeks] } });
+    }
+    const ids = people.map(person => person.id);
+    const world = new Mini(people, { app: "slop", plans: false, growth: false });
+    await world.onboard(...ids);
+    const oppId = world.propose(ids, { category: "romance", objective: "a coffee date" });
+    expect(await world.runUntil(() => reviewApproved(world.net.exportState().opps.find(opp => opp.id === oppId)?.review))).toBe(true);
+    await world.answerProbes(ids);
+    const seed = world.net.exportState();
+    const booked = seed.opps.find(opp => opp.id === oppId)!;
+    expect(booked).toMatchObject({ stage: "scheduled", bookedTold: expect.arrayContaining(ids) });
+    clock.set(world.clock.now());
+    const rt = () => s.runtimeFor("slop")!;
+    await rt().unitOfWork(net => net.importState({ ...net.exportState(), members: seed.members, opps: [booked] }));
+
+    const queue = new OutboundQueue({ recipientWindowKey: s.outboundRecipientKey, sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records receipts"); } } });
+    const first = { id: "slop-introduction-first", to: people[0]!.e164, memberId: people[0]!.id, type: "proposal", text: "You're both in: a first date with Sam." };
+    const second = { id: "slop-introduction-second", to: people[1]!.e164, memberId: people[1]!.id, type: "proposal", text: "You're both in: a first date with Rae." };
+    const notices = [first, second,
+      { ...second, id: "unrelated-schedule-notice", type: "scheduling" }];
+    await sql.begin(async tx => {
+      for (const item of notices) {
+        await tx`insert into network.messages (app_id,id,member_id,direction,channel,body,type,status,opportunity_id,proactive,system,ts)
+          values ('slop',${item.id},${item.memberId},'outbound','imessage',${item.text},${item.type},'collected',${oppId},false,false,${new Date(clock.now())})`;
+        await queue.recordCollected(tx, [{ id: item.id, memberId: item.memberId, to: item.to, kind: "transactional", text: item.text }]);
+      }
+      await queue.collectedReceipt(tx, [notices[0]!.id, notices[2]!.id], "accepted", clock.now());
+    });
+    const introductionId = `${oppId}:introduced`;
+    const history = () => rt().unitOfWork(net => net.engineInput(clock.now()).interactions?.filter(item => item.id === introductionId) ?? []);
+    const pairGate = () => rt().unitOfWork(net => {
+      const view = new World(net.packInput(clock.now()), SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
+      const [first, second] = ids as [string, string];
+      return slopPack.eligibility.pairRules.find(rule => rule.id === "already_introduced")!
+        .check(view, first, second, "romance", view.get(first)!, view.get(second)!);
+    });
+    expect(await history()).toEqual([]);
+    expect(await pairGate()).toBeNull();
+
+    clock.advance(MINUTE);
+    const acceptedAt = clock.now();
+    await sql.begin(tx => queue.collectedReceipt(tx, [second.id], "accepted", acceptedAt));
+    await signedText(s, clock, secret, RAE, "slop-first-date-cancel", "I can't make it anymore.");
+    const retired = await rt().pg.load();
+    expect(retired?.opps.find(opp => opp.id === oppId)?.stage).toBe("closed");
+    expect(retired?.interactions.filter(item => item.id === introductionId)).toMatchObject([
+      { at: acceptedAt, outcome: "accepted", participants: ids },
+    ]);
+    await s.close();
+    await sql`delete from platform.outbound where app_id='slop' and id in ${sql([first.id, second.id])}`;
+    clock.advance(32 * DAY);
+    s = svc = makeService();
+    await s.start();
+    await expect(history()).resolves.toMatchObject([{ id: introductionId, at: acceptedAt, outcome: "accepted", participants: ids }]);
+    expect(await pairGate()).toBe("already_introduced");
+    expect((await rt().pg.load())?.feedback).toEqual([]);
+    await s.close(); svc = undefined;
+  }, T);
+
+  test.each([
+    { scenario: "while answering feedback", answer: "I came, but Rae couldn't make it.", missing: true, report: "no_show" },
+    { scenario: "while a later booking awaits a reply", answer: "Rae bailed on me.", missing: true, report: undefined },
+    { scenario: "with a direct counterpart absence", answer: "He flaked on me.", missing: true, report: undefined },
+    { scenario: "with nobody at the date", answer: "Nobody showed up.", missing: true, report: undefined },
+    { scenario: "with an unrelated driver absence", answer: "My driver bailed on me.", missing: false, report: undefined },
+    { scenario: "with a quoted absence", answer: "'A message: Rae bailed on me.'", missing: false, report: undefined },
+    { scenario: "with a denied absence", answer: "Rae didn't flake on me.", missing: false, report: undefined },
+    { scenario: "with a casual contact idiom", answer: "He hit me up after dinner.", safety: true, missing: false, report: undefined },
+    { scenario: "with direct disclosure of physical harm", answer: "My date choked me.", safety: true, missing: false, report: "unsafe" },
+    { scenario: "with a denial of physical harm", answer: "My date never choked me.", safety: true, missing: false, report: undefined },
+    { scenario: "with a spelled counterpart age", answer: "He said he's seventeen.", safety: true, missing: false, report: "minor" },
+    { scenario: "with a compound counterpart age", answer: "My date was a 16-year-old.", safety: true, missing: false, report: "minor" },
+    { scenario: "with a relative's unrelated age", answer: "We talked about how my son is a 12-year-old.", safety: true, missing: false, report: undefined },
+    { scenario: "with a quoted age in a story", answer: "She said “he is 15” while reading a novel.", safety: true, missing: false, report: undefined },
+    { scenario: "with positive sentiment about the finished date", answer: "We hit it off.", missing: false, report: undefined, sentiment: "positive" },
+    { scenario: "with neutral sentiment about the finished date", answer: "It was okay.", missing: false, report: undefined, sentiment: "neutral" },
+    { scenario: "with quoted sentiment about the finished date", answer: "'We hit it off.'", missing: false, report: undefined, sentiment: "neutral" },
+    { scenario: "with negated sentiment about the finished date", answer: "We didn't hit it off.", missing: false, report: undefined, sentiment: "neutral" },
+  ])("a signed check-in is feedback about the finished date $scenario", async ({ scenario, answer, missing, report, safety, sentiment }) => {
+    // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
+    // spec/meetingSettlement.md, "Classify each attendee from the available reports"
+    // spec/safetyCase.md, "Report language distinguishes physical harm from casual contact"
+    await svc?.close();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const secret = "synthetic-slop-absence-turn-signing-secret";
+    const service = svc = new NetworkService({
+      url: URL_, clock, log: () => {}, photoStorage: null, notify: false,
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      networks: [{ id: "slop:nyc", matchingEnabled: false }], adapter: () => new DryRunAdapter(() => {}),
+    });
+    await service.start();
+    const app = APPS.slop;
+    const people = [];
+    for (const [phone, name] of [[RAE, "Rae"], [SAM, "Sam"]] as const) {
+      const result = await service.accounts.join(app, { e164: phone, personId: null }, {
+        firstName: name, age: 30, consent: { sms: true, wording: app.consent.text },
+      });
+      if (!result.ok) throw new Error("Fixture member could not join");
+      people.push({ id: result.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["climbing"], skills: ["belaying"] });
+    }
+    const ids = people.map(person => person.id);
+    const [rae, sam] = ids as [string, string];
+    const world = new Mini(people, { plans: false, growth: false });
+    await world.onboard(...ids);
+    const id = world.propose(ids);
+    await world.answerProbes(ids);
+    const seeded = world.net.exportState();
+    const past = seeded.opps.find(opp => opp.id === id)!;
+    expect(past.stage).toBe("scheduled");
+    clock.set(past.meetingAt! + 4 * HOUR);
+    const future = { ...past, id: "next-slop-booking", meetingAt: clock.now() + DAY };
+    past.stage = "done";
+    past.feedbackSent = true;
+    for (const member of seeded.members) member.awaiting = { kind: "feedback", oppId: id, at: clock.now() };
+    const rt = service.runtimeFor("slop")!;
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: seeded.members, opps: [past, future] }));
+    const state = async () => (await rt.pg.load())!;
+    const history = () => rt.unitOfWork(net => slopProfiles(net.engineInput(clock.now())));
+    const own = "I did not show up.";
+    await signedText(service, clock, secret, RAE, "absence-unreceived", own);
+    await signedText(service, clock, secret, SAM, "counterpart-absence-unreceived", answer);
+    expect((await state()).opps.find(opp => opp.id === id)?.post).toBeUndefined();
+    expect((await state()).reports).toEqual([]);
+
+    const queue = new OutboundQueue({ recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"), sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records prompt receipts"); } } });
+    const prompt = "How did your date go?";
+    await sql.begin(async tx => {
+      for (const [index, memberId] of ids.entries()) {
+        const key = meetingFeedbackKey(id, memberId);
+        await tx`insert into network.messages (app_id,id,member_id,direction,channel,body,type,status,opportunity_id,proactive,system,ts)
+          values ('slop',${key},${memberId},'outbound','imessage',${prompt},'feedback_request','collected',${id},false,false,${new Date(clock.now())})`;
+        await queue.recordCollected(tx, [{ id: key, memberId, to: [RAE, SAM][index]!, kind: "transactional", text: prompt }]);
+        await queue.collectedReceipt(tx, [key], "accepted", clock.now());
+      }
+    });
+    const laterBookingAwaits = scenario === "while a later booking awaits a reply";
+    if (laterBookingAwaits) await rt.unitOfWork(net => {
+      const saved = net.exportState();
+      saved.members.find(member => member.id === rae)!.awaiting = { kind: "booked", oppId: future.id, at: clock.now() };
+      net.importState(saved);
+    });
+    clock.advance(MINUTE);
+    await signedText(service, clock, secret, RAE, "absence-exact-receipt", laterBookingAwaits ? "I couldn't make it. Something came up." : own);
+    const afterSelf = await state();
+    expect({
+      upcoming: afterSelf.opps.find(opp => opp.id === future.id)?.stage,
+      post: afterSelf.opps.find(opp => opp.id === id)?.post?.[rae],
+      reports: afterSelf.reports,
+      blocks: afterSelf.blocks,
+    }).toMatchObject({ upcoming: "scheduled", post: { came: false, otherNoShow: false }, reports: [], blocks: [] });
+    await signedText(service, clock, secret, RAE, "absence-next-cancellation", "I can't make it anymore.");
+    expect((await state()).opps.find(opp => opp.id === future.id)?.stage).toBe("closed");
+
+    await signedText(service, clock, secret, SAM, "absence-other-participant", answer);
+    const afterOther = await state();
+    expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: missing });
+    expect(afterOther.reports).toMatchObject(report
+      ? [{ reporterId: sam, subjectId: rae, kind: report, opportunityId: id, source: "check_in" }]
+      : []);
+    expect(afterOther.blocks).toHaveLength(report ? 1 : 0);
+    if (report === "minor") {
+      expect(afterOther.members.find(member => member.id === rae)).toMatchObject({ minorReported: true });
+      const [person] = await sql`select p.lowest_age from platform.people p
+        join platform.phone_identities ph on ph.person_id=p.id where ph.e164=${RAE}`;
+      expect(person?.lowest_age).toBe(30);
+    }
+    if (sentiment) {
+      const feedback = afterOther.feedback.find(item => item.from === sam && item.opportunityId === id);
+      expect(feedback).toMatchObject({ sentiment, wouldMeetAgain: false });
+      expect(feedback?.repeatConsent).toBeUndefined();
+      const ownExperience = afterOther.opps.find(opp => opp.id === id)?.post?.[sam];
+      expect(ownExperience?.worthwhile === true).toBe(sentiment === "positive");
+      expect(ownExperience?.confirmedRoster).toBeUndefined();
+    }
+    if (safety) {
+      await service.close(); svc = undefined;
+      return;
+    }
+    const afterBothReplies = await history();
+    expect(afterBothReplies.get(sam)?.history).toMatchObject({ dates: 1, noShows: 0 });
+    expect(afterBothReplies.get(rae)?.history).toMatchObject({ dates: 0, noShows: 1 });
+    await rt.unitOfWork(net => {
+      const saved = net.exportState();
+      const absence = saved.interactions.find(item => item.opportunityId === id && item.outcome === "no_show")!;
+      expect(absence.noShowBy).toEqual([rae]);
+      delete absence.opportunityId;
+      delete absence.noShowBy;
+      // A similarly shaped old row cannot accuse its apparent author without the exact saved opportunity.
+      saved.interactions.push({ ...absence, id: `lost-opportunity:fb:${sam}` });
+      net.importState(saved);
+    });
+    const restored = await history();
+    expect(restored.get(sam)?.history).toMatchObject({ dates: 1, noShows: 0 });
+    expect(restored.get(rae)?.history).toMatchObject({ dates: 0, noShows: 1 });
+    await service.close(); svc = undefined;
+  }, T);
+
+  // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
+  test("unprompted signed feedback follows booked time with the exact prompt receipt", async () => {
+    await svc?.close();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START + 7 * DAY);
+    const secret = "synthetic-feedback-order-turn-signing-secret";
+    const service = svc = new NetworkService({
+      url: URL_, clock, log: () => {}, photoStorage: null, notify: false,
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      networks: [{ id: "slop:nyc", matchingEnabled: false }], adapter: () => new DryRunAdapter(() => {}),
+    });
+    await service.start();
+    const names = ["Rae", "Sam", "Cy"];
+    const phones = [RAE, SAM, "+12125550189"];
+    const people = [];
+    for (const [index, name] of names.entries()) {
+      const result = await service.accounts.join(APPS.slop, { e164: phones[index]!, personId: null }, {
+        firstName: name, age: 30, consent: { sms: true, wording: APPS.slop.consent.text },
+      });
+      if (!result.ok) throw new Error("Fixture member could not join");
+      people.push({ id: result.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["climbing"] });
+    }
+    const [rae, sam, cy] = people.map(person => person.id) as [string, string, string];
+    const world = new Mini(people, { plans: false, growth: false });
+    await world.onboard(rae, sam, cy);
+    const id = world.propose([rae, sam]);
+    await world.answerProbes([rae, sam]);
+    const seeded = world.net.exportState();
+    const booked = seeded.opps.find(opp => opp.id === id)!;
+    expect(booked.stage).toBe("scheduled");
+    const latest = {
+      ...booked, id: "latest-booked-date", stage: "done" as const, feedbackSent: true,
+      createdAt: clock.now() - 6 * DAY, meetingAt: clock.now() - DAY, scheduleRevision: 2,
+    };
+    const earlier = {
+      ...latest, id: "earlier-booked-date", participants: [rae, cy], contacted: [rae, cy],
+      createdAt: clock.now() - 5 * DAY, meetingAt: clock.now() - 3 * DAY,
+      status: [[rae, "yes"], [cy, "yes"]] as typeof latest.status,
+    };
+    for (const person of seeded.members) person.awaiting = undefined;
+    const rt = service.runtimeFor("slop")!;
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: seeded.members, opps: [latest, earlier] }));
+
+    const queue = new OutboundQueue({ recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"), sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records prompt receipts"); } } });
+    const delivered = async (oppId: string, revision: number) => {
+      const key = meetingFeedbackKey(oppId, rae, revision), prompt = "How did your date go?";
+      await sql.begin(async tx => {
+        await tx`insert into network.messages (app_id,id,member_id,direction,channel,body,type,status,opportunity_id,proactive,system,ts)
+          values ('slop',${key},${rae},'outbound','imessage',${prompt},'feedback_request','collected',${oppId},false,false,${new Date(clock.now())})`;
+        await queue.recordCollected(tx, [{ id: key, memberId: rae, to: RAE, kind: "transactional", text: prompt }]);
+        await queue.collectedReceipt(tx, [key], "accepted", clock.now());
+      });
+    };
+    const feedback = async () => (await rt.pg.load())!.feedback.map(f => [f.opportunityId, f.about]);
+    await delivered(latest.id, 1);
+    await signedText(service, clock, secret, RAE, "feedback-stale-revision", "We both came.");
+    expect(await feedback()).toEqual([]);
+
+    await delivered(earlier.id, earlier.scheduleRevision);
+    await delivered(latest.id, latest.scheduleRevision);
+    clock.advance(MINUTE);
+    await signedText(service, clock, secret, RAE, "feedback-latest-booking", "We both came. It was great.");
+    expect(await feedback()).toEqual([[latest.id, sam]]);
+
+    clock.advance(MINUTE);
+    await signedText(service, clock, secret, RAE, "feedback-earlier-booking", "It was great, we really clicked.");
+    expect(await feedback()).toEqual([[latest.id, sam], [earlier.id, cy]]);
+    await service.close(); svc = undefined;
   }, T);
 
   // Founder decision (2026-10-11, issue #22): a woman or a man who stays unclear about who they hope to

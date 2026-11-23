@@ -3,7 +3,7 @@ import {serveHttp,type HttpServer} from "../../core/src/runtime/http.ts";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {DAY,HOUR,MINUTE,SimClock} from "@thenetwork/core";
 import {dropTestDb,pgAvailable,testDb} from "../../observatory/test/pg.ts";
-import {TURN_PATH,type TurnRequest} from "../../core/src/svc/contract.ts";
+import {RELAY_PATH,TURN_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
@@ -17,7 +17,8 @@ import type {AuditEntry} from "../../observatory/src/types.ts";
 const secret="synthetic-photo-relay-signing-secret-20261122",start=Date.UTC(2026,10,22,17),clock=new SimClock(start);
 const staffToken="synthetic-photo-relay-safety-token-20261122",reviewerToken="synthetic-photo-relay-reviewer-token-20261122";
 const phones={ari:"+12125550301",maya:"+12125550302",jordan:"+12125550303",teo:"+12125550304",nia:"+12125550305",omar:"+12125550306",
-  lee:"+12125550307",kim:"+12125550308",rosa:"+12125550309",tao:"+12125550310",sam:"+12125550311",una:"+12125550312"} as const;
+  lee:"+12125550307",kim:"+12125550308",rosa:"+12125550309",tao:"+12125550310",sam:"+12125550311",una:"+12125550312",
+  vic:"+12125550313",wes:"+12125550314"} as const;
 type Who=keyof typeof phones;
 let url:string,sql:SQL,service:NetworkService,server:HttpServer,cloud:HttpServer,seq=0,storageReads=0,failPreviewAudit=false,screenMode:"clean"|"flagged"|"down"="clean",screenCalls=0;
 const people:Record<Who,{personId:string;memberId:string}>={} as never;
@@ -111,6 +112,61 @@ test.skipIf(!pgAvailable)("a sender names a photo in their own words, sees exact
   expect((await replayed.json() as {replies?:string[]}).replies).toEqual(yes.replies);
   expect(await offers("ari","maya")).toHaveLength(1);
 },120_000);
+
+test.skipIf(!pgAvailable)("a photo named in the member's own words is not proposed when another person is asked to send it, or the member puts a condition on it, hedges it or takes it back",async()=>{
+  for(const text of [
+    "Tell Ana to send Jordan photo 2.",
+    "Could you let Ana show Jordan photo 2?",
+    "I have Ana assigned to, show Jordan photo 2.",
+    "Send Jordan photo 2, Ana said.",
+    "Send Jordan photo 2. Let me think it over first.",
+    "Send Jordan photo 2. Actually, no.",
+    "Send Jordan photo 2, hold on.",
+    "Send Jordan photo 2 if he asks.",
+    "Send Jordan photo 2 every time he asks.",
+    "Show Jordan photo 2 when Pat agrees.",
+    "Send Jordan photo 2 tomorrow.",
+    "Send Jordan photo 2. Scratch that, I'll show him in person.",
+    "Maya said send Jordan photo 2.",
+    "Maya says send Jordan photo 2.",
+    "Maya said to send Jordan photo 2.",
+    "My friend told me to send Jordan photo 2.",
+  ]){
+    const said=await say("ari",text);
+    expect(said.reply,text).not.toContain("Send Jordan photo 2");
+    expect(said.reply,text).not.toContain("Reply YES");
+    expect(await offers("ari","jordan")).toEqual([]);
+  }
+  expect((await say("ari","send Jordan photo 2")).reply).toContain("Send Jordan photo 2");
+  await say("ari","no");
+  expect(await offers("ari","jordan")).toEqual([]);
+},120_000);
+
+test.skipIf(!pgAvailable)("a YES that also asks to share the number does not confirm a pending photo, and a photo take-back next to a number share takes the photo back and starts the swap",async()=>{
+  midday();
+  await join("vic","Vic",30);await join("wes","Wes",31);
+  await pair("photo-vic-wes","vic","wes");
+  await upload("vic",1);
+  expect((await say("vic","send Wes photo 1")).reply).toContain("Send Wes photo 1");
+  expect((await say("vic","yes send him my number")).outcome).toBe("open");
+  expect(await offers("vic","wes")).toEqual([]);
+  await say("vic","no");
+  await say("vic","send Wes photo 1");
+  expect((await say("vic","yes")).reply).toContain("I'll ask Wes if they want it.");
+  const [offer]=await offers("vic","wes");
+  expect(offer!.phase).toBe("asking");
+  const text="Unsend the photo. Send him my number.";
+  const taken=await say("vic",text);
+  expect(taken.outcome).toBe("open");
+  expect(await offers("vic","wes")).toEqual([{id:offer!.id,phase:"revoked"}]);
+  const relay:RelaySendRequest={channel:"blooio",messageId:taken.messageId,app:"slop",memberId:people.vic.memberId,itemId:null,text};
+  const r=await post(RELAY_PATH,relay,`${taken.messageId}:relay`);
+  expect(r.status).toBe(200);
+  const body=await r.json() as {decision:string;senderNotice:string};
+  expect(body.decision).toBe("hold");
+  expect(body.senderNotice).not.toContain("photo");
+  expect(await offers("vic","wes")).toEqual([{id:offer!.id,phase:"revoked"}]);
+},180_000);
 
 test.skipIf(!pgAvailable)("a changed photo set or a lapsed proposal never becomes consent",async()=>{
   const proposed=await say("ari","send Jordan photo 2");

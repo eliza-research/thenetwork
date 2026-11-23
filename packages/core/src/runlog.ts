@@ -6,6 +6,8 @@ import type { AppId, City, MemberId, ParticipationState, Proposal } from "./type
 export interface LoggedMessage {
   id: string; ts: number; direction: "outbound" | "inbound"; memberId: MemberId; body: string;
   status: string; keyword?: string; system?: boolean;
+  /** Outbound message whose simulated decision produced this received reply. */
+  replyToMessageId?: string;
   /** App the message was sent or received in (absent = "ntwrk"). */
   app?: AppId;
   meta?: { type?: string; proposalId?: string; proactive?: boolean; firstContact?: boolean; [k: string]: unknown };
@@ -33,12 +35,16 @@ export type RunRecord =
   | { t: number; type: "run_start"; runId: string; seed: number | string; config: Record<string, unknown>; start: number }
   | { t: number; type: "persona"; persona: LoggedPersona }
   | { t: number; type: "join"; memberId: MemberId; app?: AppId }
-  | { t: number; type: "message"; msg: LoggedMessage }
-  | { t: number; type: "decision"; memberId: MemberId; messageId: string; messageType: string; intent: string; decision: string; proposalId?: string; delayMs: number }
+  | { t: number; type: "message"; msg: LoggedMessage; bookingNoticeMeetingId?: string }
+  | { t: number; type: "decision"; memberId: MemberId; messageId: string; messageType: string; intent: string; decision: string; proposalId?: string; delayMs: number;
+    /** The World records the actual inbound separately when the simulated reply reaches the channel. */
+    tracksReplyReceipt?: true }
   | { t: number; type: "judgment"; memberId: MemberId; messageId: string; worthwhile: boolean; source: "policy" | "llm" }
   | { t: number; type: "proposal"; source: "network" | "engine" | "scenario" | "player"; proposal: Proposal; oracle: OracleSummary }
   | { t: number; type: "meeting_scheduled"; meetingId: string; proposalId: string; participants: MemberId[]; at: number; city: City }
-  | { t: number; type: "outcome"; meetingId: string; proposalId: string; at: number; attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> }
+  | { t: number; type: "outcome"; meetingId: string; proposalId: string; at: number; attendance: Record<MemberId, {
+      showed: boolean; cancelledWithNotice: boolean; cancelledByNetwork?: true; enjoyment: number;
+    }> }
   | { t: number; type: "feedback"; memberId: MemberId; proposalId?: string; text: string; enjoyment?: number }
   | { t: number; type: "block"; from: MemberId; to: MemberId }
   | { t: number; type: "opt_out"; memberId: MemberId }

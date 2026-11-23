@@ -24,7 +24,7 @@ import { isReal, NYC_TZ, SLOTS } from "../../packages/sim/src/apps/friends/perso
 import { TEEN_WORLD } from "../../packages/sim/src/generator.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { PLAN_VENUES } from "../../packages/network/src/plans.ts";
-import { runFriendsWorld, runFriendsWorldAsync, slotOfCrew, VENUE_BY_ID, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
+import { runFriendsWorld, runFriendsWorldAsync, slotOfCrew, VENUE_BY_ID, VENUES, type FriendsProposal, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
 import { ACTIVITIES, activityAllAges, activityById, venueAllAges } from "../../packages/engine/src/packs/network/activities.ts";
 import { groupAgeAllowed, rosterHasMinor, teenPlaceAllowed, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
 import { teenFriendCategory } from "../../packages/core/src/generated/matchLane.ts";
@@ -408,27 +408,106 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   // PR #450: repeat and crew invitations read the latest enjoyment from earlier weeks, in meetup time order.
   let priorChecks = 0, priorErrors = 0, memoryChecks = 0, memoryErrors = 0;
   const met: string[][] = [];
+  const bookings = { crewMeetups: 0, slotConflicts: 0, overCapBookings: 0, duplicateCrewWeeks: 0 };
+  const selections = { feasible: 0, firstUnavailable: 0, missed: 0, cancelledSeats: 0 };
+  let metEvents = 0, wrongMetTimes = 0;
+  const metKey = (a: MemberId, b: MemberId, at: number) => `${[a, b].sort().join("|")}|${at}`;
   for (const arm of ["pack", "random", "oracle", "open"] as const) for (const seed of spec.seeds) {
+    const proposals = new Map<string, FriendsProposal>();
+    const partnerVotes = new Map<string, Map<MemberId, number[]>>();
+    const coinFlow = new Map<string, string>();
     const decisions: { id: MemberId; week: number; enjoy: number | undefined; crew: boolean }[] = [];
     const result = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, statedOpenness: arm === "open", matcher: w => {
       // Observe the real oracle without changing its answers, draws or matcher proposals.
-      const answer = w.oracle.answer.bind(w.oracle), crewOptIn = w.oracle.crewOptIn.bind(w.oracle);
+      const answer = w.oracle.answer.bind(w.oracle), crewOptIn = w.oracle.crewOptIn.bind(w.oracle), coinKey = w.coins.key.bind(w.coins);
+      w.coins.key = (meaning, instance) => {
+        const coin = coinKey(meaning, instance);
+        if (meaning.startsWith("probe:")) coinFlow.set(coin, instance.slice(0, instance.lastIndexOf("|")));
+        return coin;
+      };
       w.oracle.answer = (id, key, c) => {
         if (!/^probe:w\d+:(plan|partner):/.test(key)) decisions.push({ id, week: c.week, enjoy: c.prevEnjoy, crew: false });
-        return answer(id, key, c);
+        const vote = answer(id, key, c);
+        const flow = coinFlow.get(key);
+        if (vote.yes && flow?.endsWith(":partner")) {
+          const votes = partnerVotes.get(flow) ?? new Map<MemberId, number[]>();
+          votes.set(id, vote.picks);
+          partnerVotes.set(flow, votes);
+        }
+        return vote;
       };
       w.oracle.crewOptIn = (id, key, enjoyed) => {
         decisions.push({ id, week: w.state.week, enjoy: enjoyed, crew: true });
         return crewOptIn(id, key, enjoyed);
       };
       const matcher = matchers[arm];
-      return typeof matcher === "function" ? matcher(w) : matcher;
+      const delegate = typeof matcher === "function" ? matcher(w) : matcher;
+      return { ...delegate, propose(ctx) {
+        const offered = delegate.propose(ctx);
+        if (offered instanceof Promise) throw new Error(`matcher ${delegate.name} is async`);
+        offered.forEach((proposal, index) => {
+          if (proposal.kind === "partner") proposals.set(`w${ctx.week}:${index}:partner`, proposal);
+        });
+        return offered;
+      } };
     } });
     const latest = new Map<MemberId, number>();
     const bookedAt = new Map(result.world.state.interactions.map(x => [x.id, x.at]));
     const at = (m: MeetupRecord) => m.kind === "crew_self"
       ? slotTime(m.week, SLOTS.indexOf(slotOfCrew(result.world.state.crews.find(c => c.id === m.crewId)!)))
       : bookedAt.get(m.key)!;
+    const slots = new Map<string, Set<number>>();
+    const used = (id: MemberId, week: number) => {
+      const key = `${id}|${week}`;
+      const existing = slots.get(key) ?? new Set<number>();
+      slots.set(key, existing);
+      return existing;
+    };
+    const reserve = (id: MemberId, week: number, when: number) => {
+      const taken = used(id, week);
+      if (taken.has(when)) bookings.slotConflicts++;
+      if (taken.size >= 2) bookings.overCapBookings++;
+      taken.add(when);
+    };
+    for (const f of result.flows) {
+      const proposal = proposals.get(f.key), votes = partnerVotes.get(f.key);
+      if (proposal?.invited.length === 2 && votes?.size === 2) {
+        const available = proposal.options.filter(slot => proposal.invited.every(id =>
+          votes.get(id)?.includes(slot) && used(id, f.week).size < 2 && !used(id, f.week).has(slotTime(f.week, slot))));
+        if (available.length) {
+          selections.feasible++;
+          if (!available.includes(proposal.options[0]!)) selections.firstUnavailable++;
+          if (f.going.length !== 2 || !available.some(slot => slotTime(f.week, slot) === bookedAt.get(f.key))) selections.missed++;
+        }
+      }
+      if (f.stage === "backout") selections.cancelledSeats += f.booked.length;
+      if (f.stage === "held" || f.stage === "no_show") for (const id of f.booked) reserve(id, f.week, bookedAt.get(f.key)!);
+    }
+    const crewWeeks = new Set<string>();
+    const expectedMet = new Map<string, number>();
+    for (const m of result.meetups) {
+      if (m.crewId) {
+        const key = `${m.crewId}|${m.week}`;
+        if (crewWeeks.has(key)) bookings.duplicateCrewWeeks++;
+        crewWeeks.add(key);
+      }
+      if (m.kind === "crew_self") {
+        bookings.crewMeetups++;
+        for (const id of m.attendees) reserve(id, m.week, at(m));
+      }
+      for (let i = 0; i < m.attendees.length; i++) for (const other of m.attendees.slice(i + 1)) {
+        const key = metKey(m.attendees[i]!, other, at(m));
+        expectedMet.set(key, (expectedMet.get(key) ?? 0) + 1);
+      }
+    }
+    for (const edge of result.world.state.edges) if (edge.type === "met") {
+      metEvents++;
+      const key = metKey(edge.from, edge.to, edge.createdAt);
+      const remaining = expectedMet.get(key) ?? 0;
+      if (remaining > 0) expectedMet.set(key, remaining - 1);
+      else wrongMetTimes++;
+    }
+    wrongMetTimes += [...expectedMet.values()].reduce((sum, count) => sum + count, 0);
     for (let week = 0; week < spec.weeks; week++) {
       for (const d of decisions.filter(x => x.week === week)) {
         priorChecks++;
@@ -446,6 +525,11 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   }
   b.gate("harness: invitations use the latest prior-week enjoyment", priorChecks > 0 && memoryChecks > 0 && priorErrors + memoryErrors === 0,
     `${priorErrors}/${priorChecks} wrong invitation inputs; ${memoryErrors}/${memoryChecks} wrong final memories`);
+  b.gate("harness: handoffs respect crew frequency and shared booking caps",
+    (o.quick || bookings.crewMeetups > 0) && bookings.slotConflicts + bookings.overCapBookings + bookings.duplicateCrewWeeks === 0, JSON.stringify(bookings));
+  b.gate("harness: mutually available pairs use a free offered time and cancelled plans reserve no seats",
+    selections.feasible > 0 && selections.missed === 0 && selections.cancelledSeats === 0, JSON.stringify(selections));
+  b.gate("harness: met edges use actual meetup times", metEvents > 0 && wrongMetTimes === 0, `${wrongMetTimes} mismatches across ${metEvents} events`);
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);

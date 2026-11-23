@@ -7,8 +7,9 @@
 // under 18 to anyone (no random intros, and any proposal involving one is refused at dispatch);
 // minors get single-player value only: onboarding plus concierge answers and public suggestions.
 import { DAY, HOUR, MINUTE, type City, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot } from "@thenetwork/core";
+import { bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 // Engine availability helpers (pure; their import chain does not reach the simulator, so no cycle).
-import { availabilityProb, candidateSlots, standingFromFacets, type AvailabilityEvidence, type TimeSlot } from "../../engine/src/attention.ts";
+import { availabilityProb, candidateSlots, standingFromFacets, type AvailabilityEvidence } from "../../engine/src/attention.ts";
 import { parseYesNo } from "./agent/policy.ts";
 import type { SimMeta } from "./channel.ts";
 import type { InboundMessage, NetworkContext, NetworkUnderTest } from "./network.ts";
@@ -17,6 +18,8 @@ import { CITY_TZ, fmtLocal, localHour, localParts, nextLocalHour } from "./time.
 
 export interface StubOptions {
   seed?: number | string;
+  /** Whether this simulation dispatches new introductions. */
+  matchingEnabled?: boolean;
   /** Generate random intros itself (default true). Set false when an Engine feeds proposals. */
   randomIntros?: boolean;
   /** Share of eligible members per city paired each day (default 0.1). */
@@ -153,9 +156,10 @@ export class StubNetwork implements NetworkUnderTest {
     }
   }
 
-  submitProposal(p: Proposal) { this.queued.push(p); }
+  submitProposal(p: Proposal) { if (this.opts.matchingEnabled !== false) this.queued.push(p); }
 
   private dailyRun(city: City, now: number) {
+    if (this.opts.matchingEnabled === false) return;
     const mine = this.queued.filter(p => p.city === city);
     this.queued = this.queued.filter(p => p.city !== city);
     for (const p of mine) this.dispatch(p, now);
@@ -294,9 +298,10 @@ export class StubNetwork implements NetworkUnderTest {
 
   private schedule(opp: Opp, now: number) {
     const going = [...opp.invites].filter(([, i]) => i.status === "yes").map(([id]) => id);
+    const at = this.opts.timeAware ? this.pickSlot(opp.p, going, now) : nextLocalHour(now + 2 * DAY, opp.p.city, 19);
+    if (at === undefined) return this.cancel(opp, "no_available_slot");
     opp.stage = "scheduled";
     for (const inv of opp.invites.values()) if (inv.status === "pending") inv.status = "dropped";
-    const at = this.opts.timeAware ? this.pickSlot(opp.p, going, now) : nextLocalHour(now + 2 * DAY, opp.p.city, 19);
     opp.meetingAt = at;
     const area = this.member(going[0]!).area;
     this.ctx.recordMeeting({ proposalId: opp.p.id, participants: going, at, city: opp.p.city, kind: opp.p.kind });
@@ -317,7 +322,8 @@ export class StubNetwork implements NetworkUnderTest {
       this.send(this.member(id), keep
         ? `Quick update: ${m.first} can't make it today, sorry about the change. The rest of you are still on.`
         : `Quick update: ${m.first} can't make it today, so I'm calling this one off. Sorry about that, I'll look for another time.`,
-        { type: "cancellation", proposalId: opp.p.id });
+        { type: "cancellation", proposalId: opp.p.id, meetingAt: opp.meetingAt },
+        keep ? undefined : `${bookedCancellationPrefix}${opp.p.id}:${id}`);
     }
     if (!keep) opp.stage = "cancelled";
   }
@@ -387,16 +393,19 @@ export class StubNetwork implements NetworkUnderTest {
 
   // ------------------------------------------------------------------ helpers
   /** StubOptions.timeAware: the meeting slot from the members' stated availability (see StubOptions). */
-  private pickSlot(p: Proposal, going: MemberId[], now: number): number {
+  private pickSlot(p: Proposal, going: MemberId[], now: number): number | undefined {
     const tz = CITY_TZ[p.city];
     const snap = this.ctx.snapshot();
     const ev = going.map(id => this.statedAvailability(snap, id, p.city, tz, now));
-    let cands: TimeSlot[] = p.window ? candidateSlots(tz, now, { window: p.window }) : [];
-    if (!cands.length) cands = candidateSlots(tz, now);
+    const cands = candidateSlots(tz, now, { window: p.window });
     const scored = cands.map(slot => ({ slot, joint: ev.reduce((acc, e) => acc * availabilityProb(e, slot, now), 1) }));
     const best = Math.max(0, ...scored.map(x => x.joint));
     const near = scored.filter(x => x.joint > 0 && x.joint >= 0.8 * best);
-    if (!near.length) return nextLocalHour(now + 2 * DAY, p.city, 19);
+    if (!near.length) {
+      const fallback = nextLocalHour(now + 2 * DAY, p.city, 19);
+      if (!p.window || (fallback >= p.window.start && fallback <= p.window.end)) return fallback;
+      return undefined;
+    }
     return near[hash32(p.id) % near.length]!.slot.start;
   }
 
@@ -457,13 +466,16 @@ export class StubNetwork implements NetworkUnderTest {
     return m;
   }
 
-  private send(m: MemberState, body: string, meta: SimMeta) {
+  private send(m: MemberState, body: string, meta: SimMeta, deliveryKey?: string) {
     if (m.optedOut) return;
+    // Never repeat an acknowledgement: the same info/concierge text to the same member within
+    // 10 minutes (e.g. two quick messages both answered "Thanks, noted...") is sent once.
     const now = this.ctx.clock.now();
     const last = this.lastSent.get(m.id);
     if ((meta.type === "info" || meta.type === "concierge") && last && last.body === body && now - last.at < ACK_DEDUP_MS) return;
     this.lastSent.set(m.id, { body, at: now });
-    return this.ctx.send(m.id, body, { meta, idempotencyKey: `${m.id}:${++this.seq}` });
+    const next = ++this.seq;
+    return this.ctx.send(m.id, body, { meta, idempotencyKey: deliveryKey ?? `${m.id}:${next}` });
   }
 }
 

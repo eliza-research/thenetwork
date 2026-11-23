@@ -107,27 +107,30 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
   if (!ids.length) return false;
   const rows = await tx<{
     scheduled: boolean; confirmed: boolean | null; revision: number | null; meeting_at: Date | null;
-    group_booking: boolean | null; roster_recorded: boolean; roster_includes_recipient: boolean | null; roster_confirmed: boolean;
+    group_booking: boolean | null; roster_recorded: boolean; roster_includes_recipient: boolean | null; roster_accepted: boolean;
   }[]>`select opp.meeting_at,
     (booking.id is not null and opp.state='SCHEDULED') as scheduled,
     (seat.role='participant' and seat.status='confirmed') as confirmed,booking."scheduleRevision" as revision,
     opp.kind='group' as group_booking,msg.booking_roster_member_ids is not null as roster_recorded,
     msg.member_id=any(msg.booking_roster_member_ids) as roster_includes_recipient,
     not exists (select 1 from unnest(msg.booking_roster_member_ids) named(member_id) where not exists (
-      select 1 from network.participations current_seat where current_seat.app_id=msg.app_id
-        and current_seat.opportunity_id=msg.opportunity_id and current_seat.member_id=named.member_id
-        and current_seat.role='participant' and current_seat.status='confirmed'
-    )) as roster_confirmed
+      select 1 from network.participations current_seat
+      join lateral jsonb_array_elements(booking.status) accepted(seat)
+        on accepted.seat->>0=current_seat.member_id and accepted.seat->>1='yes'
+      where current_seat.app_id=msg.app_id and current_seat.opportunity_id=msg.opportunity_id
+        and current_seat.member_id=named.member_id and current_seat.role='participant'
+        and current_seat.status in ('pending','confirmed')
+    )) as roster_accepted
     from network.messages msg
     left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     left join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=msg.opportunity_id and seat.member_id=msg.member_id
     left join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
-    left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int) on booking.id=msg.opportunity_id
+    left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int,status jsonb) on booking.id=msg.opportunity_id
     where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.direction='outbound' and msg.type='proposal' and msg.opportunity_id is not null`;
   const now = clock.now();
   return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true,
     (row.revision ?? 0) === 0, (row.meeting_at?.getTime() ?? now) - now)
-    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_confirmed))
+    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_accepted))
     || !await venueBookingNoticesCurrent(tx, app, runtimeId, ids, now, queued);
 }
 
@@ -144,16 +147,31 @@ function receivedBookingNotice(receipt: BookingReceipt, now: number): boolean {
   return bookingNoticeReceived(receipt.status, receipt.sent_at?.getTime() ?? -1, now);
 }
 
+type BookingReceiptRequest = { oppId: string; memberId: MemberId; revision: number; lane: string | null };
+
+export async function currentBookingReceipts(tx: SQL, app: string, bookings: readonly BookingReceiptRequest[]): Promise<Map<number, BookingReceipt | undefined>> {
+  const expected = bookings.map(({ oppId, memberId, revision, lane }, idx) => {
+    const key = rescheduleUpdateKey(oppId, revision, memberId);
+    return { idx, opp_id: oppId, member_id: memberId, kind: revision === 0 ? "proposal" : "scheduling",
+      notice_id: revision === 0 ? null : lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key };
+  });
+  const notices = await tx<(BookingReceipt & { idx: number })[]>`select expected.idx, exact.status, exact.sent_at, exact.gateway_reply
+    from jsonb_to_recordset(${expected}::jsonb) as expected(idx int,opp_id text,member_id text,kind text,notice_id text)
+    cross join lateral (
+      select receipt.status,receipt.sent_at,notice.inbound_id is not null as gateway_reply from network.messages notice
+      join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
+      where notice.app_id=${app} and notice.opportunity_id=expected.opp_id and notice.member_id=expected.member_id
+        and notice.direction='outbound' and notice.type=expected.kind and (expected.notice_id is null or notice.id=expected.notice_id)
+      order by notice.id limit 2 for share of receipt
+    ) as exact`;
+  const receipts = new Map<number, BookingReceipt | undefined>();
+  for (const notice of notices) receipts.set(notice.idx, receipts.has(notice.idx) ? undefined : notice);
+  return receipts;
+}
+
 export async function currentBookingReceipt(tx: SQL, app: string, oppId: string, memberId: MemberId,
   revision: number, lane: string | null): Promise<BookingReceipt | undefined> {
-  const key = rescheduleUpdateKey(oppId, revision, memberId);
-  const changed = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key;
-  const notices = await tx<BookingReceipt[]>`select receipt.status,receipt.sent_at,notice.inbound_id is not null as gateway_reply from network.messages notice
-    join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
-    where notice.app_id=${app} and notice.opportunity_id=${oppId} and notice.member_id=${memberId}
-      and notice.direction='outbound' and ${revision === 0 ? tx`notice.type='proposal'` : tx`notice.type='scheduling' and notice.id=${changed}`}
-    order by notice.id limit 2 for share of receipt`;
-  return notices.length === 1 ? notices[0] : undefined;
+  return (await currentBookingReceipts(tx, app, [{ oppId, memberId, revision, lane }])).get(0);
 }
 
 async function cancellationBookingReceipts(tx: SQL, app: string, oppId: string, memberId: string,
@@ -235,17 +253,19 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
 async function meetingFeedbackAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<ClaimCheck> {
   const refused = { ok: false, reason: "meeting_feedback_changed" } as const;
   if (!row.memberId || !row.oppId || row.kind !== "transactional") return refused;
+  // An accepted seat can receive a prompt while attendance is still open.
+  // The console records attendance only after settlement.
   const [meeting] = await tx<{ meeting_at: Date | null; revision: number; lane: string | null; open: boolean; accepted: boolean }[]>`select
       opp.meeting_at,coalesce(schedule."scheduleRevision",0) as revision,schedule.lane,
       (opp.state='COMPLETED' and schedule.stage='done' and not coalesce(schedule.finalized,false)
         and not coalesce(schedule."feedbackFrom" ? ${row.memberId},false)) as open,
-      (seat.role='participant' and seat.status='attended') as accepted
+      (seat.role='participant' and coalesce(schedule.status @> jsonb_build_array(jsonb_build_array(msg.member_id,'yes'::text)),false)) as accepted
     from network.messages msg
     join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=opp.id and seat.member_id=msg.member_id
     join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
     join lateral jsonb_to_recordset(saved.state->'opps') as schedule(id text,"scheduleRevision" int,lane text,stage text,
-      finalized boolean,"feedbackFrom" jsonb) on schedule.id=opp.id
+      finalized boolean,"feedbackFrom" jsonb,status jsonb) on schedule.id=opp.id
     where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.opportunity_id=${row.oppId}
       and msg.direction='outbound' and msg.type='feedback_request' and msg.body=${row.text}`;
   if (!meeting?.meeting_at) return refused;
@@ -642,6 +662,7 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
   };
   return new OutboundQueue({
     sql: rt.db, clock: o.clock, provider: o.provider, line: o.line, app: o.app, checks, instance: rt.instance,
+    recipientWindowKey: rt.outboundRecipientKey,
     perLinePerDay: num("BLOOIO_LINE_DAILY_CAP"), newChatsPerLinePerDay: num("BLOOIO_LINE_NEW_CHATS_PER_DAY"), ...o.limits, leakAllow: OWN_DOMAINS,
     onAlert: (id, why) => o.log(`[blooio] alert ${why} on ${id} (${o.app})`),
   });

@@ -10,7 +10,13 @@ Check load generations, delta ordering, reveal badges, and filter behavior. The 
 
 Imported from `quint/observatory_sync.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
-The browser calls [Observatory snapshot and live updates](../observatorySync.md) for the current load, delta versions, and feed sequence. Reveal, filters, and other separate console state remain in this standalone model.
+The browser calls [Observatory snapshot and live updates](../observatorySync.md) for the current load, delta versions, and feed sequence. Reveal, filters, and other separate console state remain in this standalone model. The [member consent view](../observatoryMemberConsent.md) supplies the current simulated consent and count in a snapshot or delta.
+
+The simulated world releases controlled replies and drains its old step
+before sending a reset for its replacement. Commands waiting for the previous
+world cannot mutate the replacement.
+A database graph refresh changes or removes edges in its app scope. Edge
+deletion publishes a reset so the browser reads the new complete graph.
 
 The convention of [staff_console](staff_console.md) applies: the intended `grant`, `unreveal`, `otherAnswer`, `revealAnswer` and `shellKeys` are in `step`, and `unrevealRun`, `badgeFollowsGrant`, `revealReadPending`, `tabNonInterference` and `safetyIgnoresOrigin` are in `safety`. The intended page adds one to a reveal generation on each POST or DELETE answer, reads the list again after it, drops a GET answer of an older reveal generation, keeps the list on a failed GET answer, ends the badge only on 200 or 404, and applies no Origin filter on the Safety tab; `witness_badgeKeptOnFailure` and `witness_oldReadDropped` show the intended paths. The `*Code` actions (`grantCode`, `unrevealCode`, `otherAnswerCode`, `revealAnswerCode`, one `*By(code, ...)` body each) and `shellKeysCode` follow the code and are outside `step`; the `*CodeTest` runs show each rule fail after them.
 

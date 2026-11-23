@@ -21,6 +21,19 @@ The age invariant is `teenFriendAgeRule` ([friend introductions with a minor](..
 [Standing intent freshness](../standingIntent.md) governs matching
 evidence, judgment views, probe order, and cached matching profiles. The [repeat encounter rules](../repeatEncounter.md) require consent tied to the same completed meeting before a repeat candidate exists.
 
+[Booked meeting settlement](../meetingSettlement.md#a-liked-date-paces-new-proposals-from-its-booked-start) supplies the date for Slop's proposal pause. The model records the date at the meeting transition and associates accepted feedback with its exact opportunity. It uses one opportunity per pair. The backend regression covers the fallback for older feedback without an opportunity ID.
+
+[Dating radius](../datingRadius.md#date-planning-uses-the-matched-members-canonical-profiles) gives matching and the standalone planner the same bounded member-alias rules. The reference trace covers the lookup. The seeded engine test covers cache order and verifies identical plans.
+
+The [profile skill rule](../profileSkillLearning.md) applies to the offline reader. The Network adds eligible skills to the member's matching facets and retains previously learned skills. The model takes the reader's clause evidence as input. The optional model reader has its own prompt and validator and is outside this transition.
+
+The [Slop onboarding reader rules](../slopOnboarding.md) distinguish a
+possible match's gender and age range from member facts. The resulting
+profile state uses only the member's own age for the age gate. A spelled
+distance and its equivalent in digits produce the same radius input.
+
+[Job posting policy](../postingPolicy.md#a-post-with-a-workplace-needs-a-supported-area) makes a supported site a condition of in-person read-back and publication. The Peon model below covers onsite and hybrid posts. A direct area answer can complete an unconfirmed draft, and an early yes leaves it open. The signed integration also covers an update to remote mode, which does not require a site.
+
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -39,7 +52,9 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README
 //     (slopGenerators: w.match.edges). A pair has a value only through match/pair.ts pairValueOf: the pack
 //     pair rules (packs/slop/rules.ts slopPairRules, the radius in geo.ts), both compatibility estimates at
 //     the lane floor and the private rating standings within the band plus the uncertainties. Screening
-//     refuses a candidate without a lane or a pair value (filters.ts laneReason). slopAssign
+//     refuses a candidate without a lane or a pair value (filters.ts laneReason). Presence search
+//     only checks markets that pass both distance limits, and can fall back within that set
+//     (packs/slop/geo.ts overlap, geo.ts overlapInMarkets). slopAssign
 //     (packs/slop/assign.ts) opens round 1 with the exposure floor (policy.ts exposureFloor: floor
 //     members, highest carried debt first, each reserve their best edge that fits, up to the floor cap),
 //     then runs one greedy pass per round over the edges (scarce members first, then value order), each
@@ -61,7 +76,9 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README
 //   - Time is a day count. Ticks are 1, 3, 7 or 30 days.
 //   - slop: three adults a, b, c and one member k aged 15. Only b smokes. The five hard fields are two
 //     bits: `core` (gender, seeks, age range, distance) and `loc` (a placeable location).
-//   - peon: one hiring manager with postings A and B, and one candidate.
+//   - peon: one hiring manager with postings A and B. Each posting has one tracked candidate and
+//     at most one prior interview. After that interview settles, the tracked candidate represents
+//     a different eligible applicant for that posting.
   //   - The engine run and the Network gate of one run are one action (in memory, then one unit).
   //     The standingIntent spec owns evidence-triggered scope and the daily queue shared by those runs.
 //
@@ -75,6 +92,9 @@ module matching_engine {
   // ------------------------------------------------------------------ constants
   pure val NONE = -1000
   pure val SLOP_MEMBERS = Set("a", "b", "c", "k")
+  pure def canonicalMember(known: Set[str], aliases: str -> str, incoming: str): str =
+    0.to(7).fold(incoming, (id, _) => if (known.contains(id) or not(aliases.keys().contains(id))) id else aliases.get(id))
+
   pure val SLOP_ADULTS = Set("a", "b", "c")
   pure val AGE = Map("a" -> 30, "b" -> 28, "c" -> 32, "k" -> 15)
   pure val SMOKERS = Set("b")
@@ -83,6 +103,7 @@ module matching_engine {
   pure val DATE_UNVALUED = Set(("b", "c"))
   pure val MAX_ASKS = 2            // extract.ts MAX_ASKS_PER_QUESTION (read-back cap: service/packs.ts); options.ts maxAsksPerField
   pure val REPROBE_DAYS = 7        // packs/slop/options.ts reprobeAfterDays (rules.ts already_introduced)
+  pure val LIKED_DATE_DAYS = 10    // packs/slop/options.ts pacing.likedDateDays
   pure val GATE_DAYS = 60          // network.ts gateReason and pairHistory(a, b, 60) (gate and avoid edges)
   pure val BUDGET_N = 2            // spec/matchLane.md laneLimits(Date).weeklyCapacity 2; outreach budget.normal 2 over 7 days
   pure val BUDGET_DAYS = 7
@@ -98,7 +119,8 @@ module matching_engine {
 
   // ------------------------------------------------------------------ types
   type Ob = { core: bool, loc: bool, confirmed: bool, readBacks: int, db: bool, noDb: bool, goal: bool }
-  type Opp = { stage: str, at: int, everBooked: bool }
+  type Opp = { stage: str, at: int, everBooked: bool, meetingAt: int, feedbackFrom: Set[str], likedBy: Set[str] }
+  type SlopDate = { meetingAt: int, opportunity: (str, str), liked: bool }
   type Slop = {
     minor: str -> bool, held: str -> bool, ob: str -> Ob, tags: str -> Set[str],
     // awaiting: the open wait ("none", "readback", "question"); askedField: what the last ask was about
@@ -108,6 +130,7 @@ module matching_engine {
     locAskAt: str -> int, locAnswered: str -> bool,
     lastBasicsAsk: str -> int, basicsAsks: str -> int,
     opp: (str, str) -> Opp, netDeclAt: (str, str) -> int, engDeclAt: (str, str) -> int,
+    lastDate: str -> SlopDate,
     // sentTimes: invites sent (the Network budget); billed: per pair, the proposals the engine counts.
     sentTimes: str -> List[int], billed: (str, str) -> List[int],
     judgeOn: bool, judgeLast: (str, str) -> int, judgeCalls: int
@@ -119,7 +142,8 @@ module matching_engine {
   }
   type Posting = { status: str, openings: int, stated: int, reason: str, createdAt: int, version: int, seniority: bool, areaOk: bool }
   type Draft = { kind: str, id: str, openings: int, seniority: bool, areaOk: bool, mustDup: bool, said: str }
-  type Seat = { stage: str, reviewedVersion: int, yesVersion: int }
+  type Seat = { stage: str, reviewedVersion: int, yesVersion: int, acceptedAt: int,
+    priorInterview: str, priorAcceptedAt: int, priorFeedbackAt: int }
   type Peon = {
     env: str, posting: str -> Posting, draft: Draft, verified: bool, candDraft: bool, candOn: bool, mgrHeld: bool,
     // A no is kept per seat (network.ts seatSide, markDeclined): the pair is (candidate, seat).
@@ -198,6 +222,10 @@ module matching_engine {
   // profile.ts silentAsks: a slop_location ask at least 7 days old, none of them answered.
   def locSilent(m: str): bool =
     slop.locAskAt.get(m) != NONE and not(slop.locAnswered.get(m)) and now - slop.locAskAt.get(m) >= SILENT_DAYS
+  def slopDatePacing(m: str): bool = {
+    val date = slop.lastDate.get(m)
+    date.liked and now - date.meetingAt < LIKED_DATE_DAYS
+  }
 
   // Engine member view: network.ts packInput (adults only), then match/profile.ts buildProfiles and
   // packs/slop/generators.ts slopVectors.memberships: a Date membership only when filters.ts memberReason
@@ -208,7 +236,7 @@ module matching_engine {
   def engineMemberOk(m: str): bool = all {
     adult(m), not(slop.held.get(m)), slop.tags.get(m).contains("core"),
     slop.tags.get(m).contains("loc") or locSilent(m),
-    not(inOpen(m)), engineCount(m) < BUDGET_N,
+    not(inOpen(m)), not(slopDatePacing(m)), engineCount(m) < BUDGET_N,
   }
   def locUnasked(m: str): bool = not(slop.tags.get(m).contains("loc")) and not(locSilent(m))
   // The Network gate: network.ts eligible (minor, hold, busy, overBudget) and gateReason (pair_history 60 days).
@@ -235,6 +263,14 @@ module matching_engine {
   // jobs.ts postingFromFacts and network.ts storedPosting: a closed posting's openings facet is 0, read back as 1.
   pure def storedOpenings(p: Posting): int = if (p.status == "active") p.openings else 1
   def seatDeclined(id: str): bool = now - peon.declAt.get(id) < GATE_DAYS
+  // spec/peonCapacity.md and network.ts seatView: an unanswered booking projects as accepted.
+  pure def bookedSeatOccupancy(seat: Seat): int =
+    (if (seat.priorInterview == "accepted" or seat.priorInterview == "completed") 1 else 0)
+    + (if (seat.stage == "booked") 1 else 0)
+  // Feedback changes occupancy and records its own time. The original application answer still counts.
+  def applicationAnswers(seat: Seat): int =
+    (if (seat.priorAcceptedAt >= 0 and seat.priorAcceptedAt <= now) 1 else 0)
+    + (if (seat.stage == "booked") 1 else 0)
   // peon/profile.ts p.open, world.ts live intent, peon/rules.ts (job_closed, employer_unverified,
   // locationOk), the Hire level fit (`seniority` abstracts the standing band, spec/matchLane.md), and
   // peon_not_onboarded for the candidate. packInput holds the seat with its
@@ -243,7 +279,7 @@ module matching_engine {
   def engineSeatOk(id: str): bool = all {
     peon.posting.get(id).status == "active",
     now < peon.posting.get(id).createdAt + HORIZON,
-    peon.posting.get(id).openings > 0,
+    peon.posting.get(id).openings > bookedSeatOccupancy(peon.seat.get(id)),
     peon.verified, peon.candOn, not(peon.mgrHeld), not(seatDeclined(id)),
     peon.posting.get(id).seniority, peon.posting.get(id).areaOk,
     not(peon.introduced.contains(id)),
@@ -270,7 +306,8 @@ module matching_engine {
       pendingAsk: SLOP_MEMBERS.mapBy(m => false), askedField: SLOP_MEMBERS.mapBy(m => "none"),
       locAskAt: SLOP_MEMBERS.mapBy(m => NONE), locAnswered: SLOP_MEMBERS.mapBy(m => false),
       lastBasicsAsk: SLOP_MEMBERS.mapBy(m => NONE), basicsAsks: SLOP_MEMBERS.mapBy(m => 0),
-      opp: PAIRS.mapBy(p => { stage: "none", at: NONE, everBooked: false }),
+      opp: PAIRS.mapBy(p => { stage: "none", at: NONE, everBooked: false, meetingAt: NONE, feedbackFrom: Set(), likedBy: Set() }),
+      lastDate: SLOP_MEMBERS.mapBy(_ => { meetingAt: NONE, opportunity: ("a", "b"), liked: false }),
       netDeclAt: PAIRS.mapBy(p => NONE), engDeclAt: PAIRS.mapBy(p => NONE),
       sentTimes: SLOP_MEMBERS.mapBy(m => []), billed: PAIRS.mapBy(p => []),
       judgeOn: judgeOn, judgeLast: PAIRS.mapBy(p => NONE), judgeCalls: 0,
@@ -283,7 +320,8 @@ module matching_engine {
     // Peon matching runs locally only. "prod" exercises serving ingress, while "harness" can seed candidate rows.
     peon' = {
       env: env, posting: POSTINGS.mapBy(p => noPosting), draft: noDraft, verified: false, candDraft: false, candOn: false, mgrHeld: false,
-      seat: POSTINGS.mapBy(p => { stage: "none", reviewedVersion: 0, yesVersion: 0 }), declAt: POSTINGS.mapBy(p => NONE), introduced: Set(),
+      seat: POSTINGS.mapBy(p => { stage: "none", reviewedVersion: 0, yesVersion: 0, acceptedAt: NONE,
+        priorInterview: "none", priorAcceptedAt: NONE, priorFeedbackAt: NONE }), declAt: POSTINGS.mapBy(p => NONE), introduced: Set(),
     },
     ph' = { reopened: false, openingsLost: false, mcpConfirmed: false, filledLost: false, saveFailed: false,
             crossJobBlock: false, engineSelectedHeld: false, seatFilled: false, candidateConfirmed: false },
@@ -482,8 +520,26 @@ module matching_engine {
 
   action slopMeet(p: (str, str)): bool = all {
     slop.opp.get(p).stage == "scheduled",
-    slop' = { ...slop, opp: slop.opp.set(p, { ...slop.opp.get(p), stage: "met" }) },
+    slop' = { ...slop, opp: slop.opp.set(p, { ...slop.opp.get(p), stage: "met", meetingAt: now }) },
     sh' = sh, keepPeon, keepOther, now' = now, lastAction' = "slopMeet",
+  }
+
+  // This transition receives each member's first accepted feedback and its exact booked opportunity.
+  action slopFeedback(p: (str, str), from: str, liked: bool): bool = {
+    val o = slop.opp.get(p)
+    all {
+      o.stage == "met", has(p, from), not(o.feedbackFrom.contains(from)), now - o.meetingAt < 7,
+      slop' = { ...slop,
+        opp: slop.opp.set(p, { ...o, feedbackFrom: o.feedbackFrom.union(Set(from)),
+                              likedBy: if (liked) o.likedBy.union(Set(from)) else o.likedBy }),
+        lastDate: SLOP_MEMBERS.mapBy(m => {
+          val prior = slop.lastDate.get(m)
+          if (not(has(p, m)) or prior.meetingAt > o.meetingAt
+              or (prior.meetingAt == o.meetingAt and (prior.opportunity != p or m != from))) prior
+          else { meetingAt: o.meetingAt, opportunity: p, liked: m == from and liked }
+        }) },
+      sh' = sh, keepPeon, keepOther, now' = now, lastAction' = "slopFeedback",
+    }
   }
 
   // ================================================================== peon postings (job-posting)
@@ -496,8 +552,13 @@ module matching_engine {
   }
   action mgrDraftUpdate(id: str, openings: int): bool = all {
     peon.draft.kind == "none", peon.posting.get(id).status == "active", not(peon.mgrHeld),
-    peon' = { ...peon, draft: { ...noDraft, kind: "update", id: id, openings: openings } },
+    peon' = { ...peon, draft: { ...noDraft, kind: "update", id: id, openings: openings, areaOk: peon.posting.get(id).areaOk } },
     ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "mgrDraftUpdate",
+  }
+  action mgrAreaReply: bool = all {
+    Set("new", "update").contains(peon.draft.kind), not(peon.draft.areaOk),
+    peon' = { ...peon, draft: { ...peon.draft, areaOk: true } },
+    ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "mgrAreaReply",
   }
   // "Close my data analyst post" or "we filled it" (jobs.ts readPostingText; FILLED_COMMAND sets `filled`).
   action mgrDraftClose(id: str, said: str): bool = all {
@@ -536,12 +597,13 @@ module matching_engine {
       if (isClose) { ...prev, status: "closed", reason: if (d.said == "filled") "filled" else "closed", version: prev.version + 1 }
       else { status: "active", openings: openings, stated: stated, reason: "",
              createdAt: if (prev.status == "none") now else prev.createdAt, version: prev.version + 1,
-             seniority: if (d.kind == "new") d.seniority else prev.seniority, areaOk: if (d.kind == "new") d.areaOk else prev.areaOk }
-    val refused = not(isClose) and peon.mgrHeld                        // managerProblem
+             seniority: if (d.kind == "new") d.seniority else prev.seniority, areaOk: d.areaOk }
+    val needsSite = not(isClose or d.areaOk)
+    val refused = not(isClose) and (peon.mgrHeld or needsSite)                        // managerProblem
     val saves = src == "sms" and not(isFinal) and not(refused)
     val postings = if (saves) peon.posting.set(d.id, saved) else peon.posting
     all {
-      peon' = if (src == "mcp") peon else { ...peon, draft: noDraft, posting: postings,
+      peon' = if (src == "mcp" or needsSite) peon else { ...peon, draft: noDraft, posting: postings,
         seat: if (isClose and saves) peon.seat.setBy(d.id, endSeat) else peon.seat },
       ph' = { ...ph,
         mcpConfirmed: ph.mcpConfirmed or (src == "mcp" and postings != peon.posting),
@@ -612,7 +674,8 @@ module matching_engine {
     val gateOk = not(peon.mgrHeld) and not(seatDeclined(id))
     all {
       peon' = { ...peon,
-        seat: if (gateOk) peon.seat.set(id, { stage: "review", reviewedVersion: peon.posting.get(id).version, yesVersion: 0 }) else peon.seat,
+        seat: if (gateOk) peon.seat.set(id, { ...peon.seat.get(id), stage: "review", reviewedVersion: peon.posting.get(id).version,
+          yesVersion: 0, acceptedAt: NONE }) else peon.seat,
         introduced: if (gateOk) peon.introduced.union(Set(id)) else peon.introduced },
       ph' = { ...ph,
         engineSelectedHeld: ph.engineSelectedHeld or peon.mgrHeld,
@@ -646,11 +709,28 @@ module matching_engine {
     val seat = peon.seat.get(id)
     val accepted = yes and reviewedHireCurrent.contains(id) and seat.yesVersion == seat.reviewedVersion
     all {
-    peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: if (accepted) "booked" else "closed" }),
+    peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: if (accepted) "booked" else "closed",
+              acceptedAt: if (accepted) now else NONE }),
               declAt: if (yes) peon.declAt else peon.declAt.set(id, now) },
     ph' = { ...ph, seatFilled: ph.seatFilled or accepted },
     keepSlop, keepOther, now' = now, lastAction' = "mgrAnswer",
     },
+  }
+
+  // The qualifying Peon feedback prompt binds the report to this booked interview. Silence
+  // keeps the synthetic acceptance.
+  action retainInterviewDisposition(id: str, disposition: str): bool = {
+    val seat = peon.seat.get(id)
+    all {
+      seat.stage == "booked",
+      seat.priorInterview == "none",
+      Set("no_show", "completed", "accepted").contains(disposition),
+      disposition == "accepted" or now > seat.acceptedAt,
+      peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: "none", acceptedAt: NONE, priorInterview: disposition,
+        priorAcceptedAt: seat.acceptedAt, priorFeedbackAt: if (disposition == "accepted") NONE else now }),
+        introduced: peon.introduced.exclude(Set(id)) },
+      ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "retainInterviewDisposition",
+    }
   }
 
   // ================================================================== probe flow library (probe-flow)
@@ -680,8 +760,12 @@ module matching_engine {
   action tick(d: int): bool = all {
     now + d <= MAX_NOW,
     now' = now + d,
-    // network.ts checkSeats at every tick: an open seat item of a posting that is not active ends.
-    peon' = { ...peon, seat: POSTINGS.mapBy(id => if (peon.posting.get(id).status != "active") endSeat(peon.seat.get(id)) else peon.seat.get(id)) },
+    // network.ts checkSeats closes unbooked items if the posting ends or the booked count fills it.
+    peon' = { ...peon, seat: POSTINGS.mapBy(id => {
+      val posting = peon.posting.get(id)
+      val seat = peon.seat.get(id)
+      if (posting.status != "active" or bookedSeatOccupancy(seat) >= posting.openings) endSeat(seat) else seat
+    }) },
     ph' = ph, keepSlop, keepOther, lastAction' = "tick",
   }
 
@@ -699,10 +783,14 @@ module matching_engine {
     nondet out = Set("yes", "no").oneOf()
     nondet act = Set("hike", "drinks").oneOf()
     nondet slot = Set("day", "eve").oneOf()
-    any { slopDailyRun(p), slopReview(p, ok), slopProbe(p, out, act, slot), slopMeet(p) },
+    nondet respondent = Set(p._1, p._2).oneOf()
+    any { slopDailyRun(p), slopReview(p, ok), slopProbe(p, out, act, slot), slopMeet(p), slopFeedback(p, respondent, ok) },
     nondet d = Set(1, 3, 7, 30).oneOf()
     tick(d),
   }
+  action peonReplyStep(id: str, agree: bool): bool =
+    any { peonEngineRun(id), seatReview(id, agree), candAnswer(id, agree), mgrAnswer(id, agree) }
+
   action peonStep(safetyEvents: bool): bool = {
     nondet id = POSTINGS.oneOf()
     nondet n = Set(0, 1, 2, 3).oneOf()
@@ -712,10 +800,13 @@ module matching_engine {
     nondet src = Set("sms", "mcp").oneOf()
     nondet said = Set("filled", "closed").oneOf()
     any {
-      any { all { n > 0, mgrDraftNew(id, n, b1, b2, b3) }, mgrDraftUpdate(id, n), mgrDraftClose(id, said), mgrNo, mgrYes(src) },
+      any { all { n > 0, mgrDraftNew(id, n, b1, b2, b3) }, mgrDraftUpdate(id, n), mgrDraftClose(id, said), mgrAreaReply, mgrNo, mgrYes(src) },
       any { staffClose(id, said), staffSave(id, n), staffVerify, harnessCandidate, all { safetyEvents, setMgrHold(b1) } },
       any { candidateDraft(b1), candidateConfirm(b2) },
-      any { peonEngineRun(id), seatReview(id, b1), candAnswer(id, b1), mgrAnswer(id, b1) },
+      if (ph.seatFilled) {
+        val disposition = if (b2) "no_show" else if (b3) "completed" else "accepted"
+        any { peonReplyStep(id, b1), retainInterviewDisposition(id, disposition) }
+      } else peonReplyStep(id, b1),
       nondet d = Set(1, 3, 7, 30).oneOf()
       tick(d),
     }
@@ -777,6 +868,15 @@ module matching_engine {
   val budgetAcrossAssign = not(sh.selectedOverBudget)
   // service/packs.ts "a daytime hike"; packs/slop/plan.ts PUBLIC_VENUE trailhead daytime. SD-443.
   val activityFitsSlot = not(sh.hikeAtNight)
+  val lawKnownDatePacingUsesBooking = SLOP_MEMBERS.forall(m => {
+    val latest = slop.lastDate.get(m)
+    latest.liked implies slop.opp.get(latest.opportunity).meetingAt == latest.meetingAt
+      and (now - latest.meetingAt < LIKED_DATE_DAYS implies not(engineMemberOk(m)))
+  })
+  val lawFeedbackForAnotherDateCannotPace = SLOP_MEMBERS.forall(m => {
+    val latest = slop.lastDate.get(m)
+    latest.liked implies slop.opp.get(latest.opportunity).likedBy.contains(m)
+  })
 
   // jobs.ts closedReason; jobs.ts "no new candidates are sent": a closed post stays closed. SD-114.
   val closedTerminal = not(ph.reopened)
@@ -798,6 +898,19 @@ module matching_engine {
   val engineNeverSelectsHeld = not(ph.engineSelectedHeld)
   // network.ts checkSeats: a seat is never booked past its openings.
   val seatCapacity = POSTINGS.forall(id => peon.seat.get(id).stage == "booked" implies peon.posting.get(id).openings >= 1)
+  val lawMissedInterviewDoesNotFillOpening = POSTINGS.forall(id => {
+    val seat = peon.seat.get(id)
+    seat.priorInterview == "no_show" implies bookedSeatOccupancy(seat) == (if (seat.stage == "booked") 1 else 0)
+  })
+  val lawPendingReviewDoesNotFillOpening = POSTINGS.forall(id => {
+    val seat = peon.seat.get(id)
+    seat.stage == "review" and seat.priorInterview == "none" implies bookedSeatOccupancy(seat) == 0
+  })
+  val lawPeonAcceptanceIsVisibleAtItsRecordedTime = POSTINGS.forall(id => {
+    val seat = peon.seat.get(id)
+    seat.priorFeedbackAt >= 0 implies seat.priorAcceptedAt >= 0 and seat.priorAcceptedAt < seat.priorFeedbackAt
+      and applicationAnswers(seat) == 1 + (if (seat.stage == "booked") 1 else 0)
+  })
 
   // attention.ts "nobody is named before everyone needed said yes": a flow still probing has someone to ask. SD-063.
   val probeFlowProgresses = (flow.stage == "probing_first" or flow.stage == "probing_partners") implies toProbe(flow).size() > 0
@@ -808,9 +921,10 @@ module matching_engine {
   val safety = all {
     teenFriendAgeRule, heldNeverCandidate, proposedPairValued, locatedBeforeMatch, deletedFieldClearsTag,
     answersReachLoop, askTerminates, engineAgreesWithGate, unsentNotBilled, budgetAcrossAssign,
-    activityFitsSlot,
+    activityFitsSlot, lawKnownDatePacingUsesBooking, lawFeedbackForAnotherDateCannotPace,
     closedTerminal, openingsPreserved, confirmedInOwnThread, filledRecorded, acceptedPostingPersists,
     declineScopedToJob, engineNeverSelectsHeld, seatCapacity, candidateProfileRequiresConfirmation, hireBookingMatchesApprovedPosting,
+    lawMissedInterviewDoesNotFillOpening, lawPendingReviewDoesNotFillOpening, lawPeonAcceptanceIsVisibleAtItsRecordedTime,
     probeFlowProgresses, planSeatHonorsHoldout, judgeCacheReused,
   }
 
@@ -861,6 +975,28 @@ module matching_engine {
   action hardFields(m: str): bool = agentNext(m).then(say(m, "core")).then(say(m, "loc"))
 
   // Onboarding to a confirmed read-back (docs/results/2026-10-09-slop-onboarding.md).
+  pure def profileSkillsAfter(learned: Set[str], skill: str, quoted: bool, anotherPerson: bool, sought: bool, ownClaim: bool): Set[str] =
+    if (not(quoted or anotherPerson) and (not(sought) or ownClaim)) learned.union(Set(skill)) else learned
+
+  run offlineProfileSkillOwnershipTest =
+    initWith("prod", false, "flow").expect(and {
+      profileSkillsAfter(Set("climbing"), "design", false, false, true, false) == Set("climbing"),
+      profileSkillsAfter(Set("climbing"), "design", true, false, false, true) == Set("climbing"),
+      profileSkillsAfter(Set("climbing"), "design", false, true, false, false) == Set("climbing"),
+      profileSkillsAfter(Set("climbing"), "design", false, false, true, true) == Set("climbing", "design"),
+      profileSkillsAfter(Set("climbing"), "design", false, false, false, false) == Set("climbing", "design"),
+    })
+
+  run datePlanUsesCanonicalMemberTest =
+    initWith("prod", false, "slop")
+      .expect({
+        val known = Set("a", "b")
+        val aliases = Map("legacy" -> "previous", "previous" -> "a", "a" -> "b", "cycleA" -> "cycleB", "cycleB" -> "cycleA")
+        canonicalMember(known, aliases, "legacy") == "a" and canonicalMember(known, aliases, "a") == "a"
+          and canonicalMember(known, aliases, "cycleA") == "cycleA"
+          and canonicalMember(known, aliases, "unknown") == "unknown"
+      })
+
   run readBackTest = initWith("prod", false, "slop")
     .then(agentNext("a")).then(say("a", "core")).then(say("a", "loc"))
     .expect(slop.awaiting.get("a") == "readback" and slop.ob.get("a").readBacks == 1)
@@ -946,6 +1082,25 @@ module matching_engine {
     .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), true)).then(slopProbe(("a", "b"), "yes", "drinks", "eve"))
     .expect(not(witness_matchedAfterConfirm) and safety)
 
+  run slopPacingUsesBookedStartTest = initWith("prod", false, "slop")
+    .then(hardFields("a")).then(hardFields("b")).then(hardFields("c"))
+    .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), true)).then(slopProbe(("a", "b"), "yes", "drinks", "eve"))
+    .then(tick(1)).then(slopMeet(("a", "b")))
+    .then(tick(1)).then(slopFeedback(("a", "b"), "a", true))
+    .then(tick(1)).then(slopFeedback(("a", "b"), "b", false))
+    .then(tick(7)).expect(slopDatePacing("a") and not(slopDatePacing("b")) and lawKnownDatePacingUsesBooking)
+    .then(tick(1)).expect(not(slopDatePacing("a")) and enginePairs.contains(("a", "c")))
+
+  run slopLateFeedbackKeepsSourceMeetingTest = initWith("prod", false, "slop")
+    .then(hardFields("a")).then(hardFields("b")).then(hardFields("c"))
+    .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), true)).then(slopProbe(("a", "b"), "yes", "drinks", "eve"))
+    .then(tick(1)).then(slopMeet(("a", "b"))).then(slopFeedback(("a", "b"), "b", false))
+    .then(slopDailyRun(("a", "c"))).then(slopReview(("a", "c"), true)).then(slopProbe(("a", "c"), "yes", "drinks", "eve"))
+    .then(tick(3)).then(slopMeet(("a", "c")))
+    .then(slopFeedback(("a", "b"), "a", true)).then(tick(1)).then(slopFeedback(("a", "c"), "c", false))
+    .expect(slop.lastDate.get("a").opportunity == ("a", "c") and not(slopDatePacing("a")) and lawFeedbackForAnotherDateCannotPace)
+    .then(slopFeedback(("a", "c"), "a", true)).expect(slopDatePacing("a") and lawFeedbackForAnotherDateCannotPace)
+
   // SD-207 fixed (scripts/sim/slop.ts gate): two proposals for a in one week (both sent); a is not
   // usable in selection until the budget period ends.
   run overBudgetTest = initWith("prod", false, "slop")
@@ -993,6 +1148,12 @@ module matching_engine {
     .then(hardFields("a")).expect(not(PAIRS.exists(p => has(p, "k") and enginePairs.contains(p))) and safety)
 
   // SD-042 fixed (peon-posting-lifecycle.integration.test.ts): the assistant's "yes" does not post.
+  run inPersonPostingNeedsSiteTest = initWith("prod", false, "peon")
+    .then(mgrDraftNew("A", 1, true, false, false)).then(mgrYes("sms"))
+    .expect(peon.posting.get("A").status == "none" and peon.draft.kind == "new")
+    .then(mgrAreaReply).then(mgrYes("sms"))
+    .expect(peon.posting.get("A").status == "active" and peon.posting.get("A").areaOk and safety)
+
   run mcpPostingTest = initWith("prod", false, "peon")
     .then(mgrDraftNew("A", 2, true, true, false)).then(mgrYes("mcp"))
     .expect(peon.posting.get("A").status == "none" and peon.draft.kind == "new" and confirmedInOwnThread)
@@ -1060,6 +1221,25 @@ module matching_engine {
     .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)
     .then(peonEngineRun("A")).then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
     .expect(not(witness_postingFilled))
+
+  run missedInterviewReplacementTest = initWith("harness", false, "peon")
+    .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)
+    .then(peonEngineRun("A")).then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
+    .then(tick(1)).then(retainInterviewDisposition("A", "no_show")).then(peonEngineRun("A")).then(tick(1))
+    .expect(peon.seat.get("A").stage == "review" and lawMissedInterviewDoesNotFillOpening and applicationAnswers(peon.seat.get("A")) == 1)
+    .then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
+    .expect(bookedSeatOccupancy(peon.seat.get("A")) == 1)
+
+  run completedInterviewKeepsOpeningTest = initWith("harness", false, "peon")
+    .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)
+    .then(peonEngineRun("A")).then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
+    .then(tick(1)).then(retainInterviewDisposition("A", "completed"))
+    .expect(not(engineSeatOk("A")) and lawPeonAcceptanceIsVisibleAtItsRecordedTime and applicationAnswers(peon.seat.get("A")) == 1)
+
+  run unansweredInterviewKeepsOpeningTest = initWith("harness", false, "peon")
+    .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)
+    .then(peonEngineRun("A")).then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
+    .then(retainInterviewDisposition("A", "accepted")).expect(not(engineSeatOk("A")))
 
   // SD-063 fixed (scripts/sim/conformance.ts gate): a one-participant flow is revealed on its yes.
   run oneParticipantFlowTest = initWith("prod", false, "flow").then(flowStart(1)).then(flowAnswer("x", true))

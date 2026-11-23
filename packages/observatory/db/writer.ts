@@ -129,11 +129,15 @@ export function rowsFromGame(g: GameSource): NetworkRows {
   }
   for (const m of w.channel.all()) {
     if (!kept(m.memberId)) continue;
+    const notice = m.direction === "outbound" && !m.system && m.status === "delivered"
+      ? m.meta?.bookingUpdate ?? (m.meta?.booked && { at: m.meta.booked.at, revision: 0 })
+      : undefined;
     r.messages.push({
       id: m.id, member_id: m.memberId, direction: m.direction, channel: m.channel, body: m.body, status: m.status,
       // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it, as the service does.
       type: (m.meta?.type as string) ?? null, opportunity_id: ((m.meta?.proposalId ?? (m.meta?.probe as { key?: string } | undefined)?.key) as string) ?? null, proactive: !!m.meta?.proactive,
       system: !!m.system, ts: date(m.ts),
+      simulated_booking_start: date(notice?.at), simulated_booking_revision: notice?.revision ?? null,
     });
   }
   const opps = s.opps;

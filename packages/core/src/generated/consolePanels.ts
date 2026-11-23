@@ -3,7 +3,7 @@
 import { type ReportStep as consoleWorkspace_ReportStep, type RequestSegment as consoleWorkspace_RequestSegment, type ConfigPhase as consoleWorkspace_ConfigPhase, type RequestOutcome as consoleWorkspace_RequestOutcome, type ConfigControl as consoleWorkspace_ConfigControl, type AuditPhase as consoleWorkspace_AuditPhase, type TrayPhase as consoleWorkspace_TrayPhase, type RevealPhase as consoleWorkspace_RevealPhase, type WorldEvent as consoleWorkspace_WorldEvent, type HeldStatus as consoleWorkspace_HeldStatus, type WorkMode as consoleWorkspace_WorkMode, type WorkPanel as consoleWorkspace_WorkPanel, type HeldChoice as consoleWorkspace_HeldChoice, type PanelAnswer as consoleWorkspace_PanelAnswer, type PanelView as consoleWorkspace_PanelView, type CaseRowStatus as consoleWorkspace_CaseRowStatus, type CaseStep as consoleWorkspace_CaseStep, type CaseRow as consoleWorkspace_CaseRow, type ConfigEditor as consoleWorkspace_ConfigEditor, type StaffView as consoleWorkspace_StaffView, type RevealForm as consoleWorkspace_RevealForm, type HeldRow as consoleWorkspace_HeldRow, type ReportRow as consoleWorkspace_ReportRow, type Workspace as consoleWorkspace_Workspace, minProposalPicks as consoleWorkspace_minProposalPicks, minReasonChars as consoleWorkspace_minReasonChars, maxRevealMinutes as consoleWorkspace_maxRevealMinutes, revealMinuteChoices as consoleWorkspace_revealMinuteChoices, proposalFormShown as consoleWorkspace_proposalFormShown, groupProposal as consoleWorkspace_groupProposal, heldReleasable as consoleWorkspace_heldReleasable, reportStepAllowed as consoleWorkspace_reportStepAllowed, reportDecision as consoleWorkspace_reportDecision, requestShown as consoleWorkspace_requestShown, configControl as consoleWorkspace_configControl, proposeAllowed as consoleWorkspace_proposeAllowed, lawAGroupShowsTheForm as consoleWorkspace_lawAGroupShowsTheForm, trayShown as consoleWorkspace_trayShown, worldMenuShown as consoleWorkspace_worldMenuShown, revealOffered as consoleWorkspace_revealOffered, staffActs as consoleWorkspace_staffActs, panelView as consoleWorkspace_panelView, panelAllowed as consoleWorkspace_panelAllowed, reportOutcome as consoleWorkspace_reportOutcome, lawClearMinorNeedsAMinorReport as consoleWorkspace_lawClearMinorNeedsAMinorReport, lawReadOnlyDataTakesNoReportDecision as consoleWorkspace_lawReadOnlyDataTakesNoReportDecision, lawEveryOutcomeHasASegment as consoleWorkspace_lawEveryOutcomeHasASegment, lawAllShowsEveryOutcome as consoleWorkspace_lawAllShowsEveryOutcome, lawOnlyAdminsGetTheSwitch as consoleWorkspace_lawOnlyAdminsGetTheSwitch, lawProposalNeedsTheForm as consoleWorkspace_lawProposalNeedsTheForm, lawMinorsAreNeverProposed as consoleWorkspace_lawMinorsAreNeverProposed, lawRefusedPanelShowsNoRows as consoleWorkspace_lawRefusedPanelShowsNoRows, lawRowsNeedAnAnswer as consoleWorkspace_lawRowsNeedAnAnswer, lawAuditLogIsAdminOnly as consoleWorkspace_lawAuditLogIsAdminOnly, markPhotoReviewed as consoleWorkspace_markPhotoReviewed, canDecideHeld as consoleWorkspace_canDecideHeld, decideHeld as consoleWorkspace_decideHeld, canReceiveHeldAnswer as consoleWorkspace_canReceiveHeldAnswer, receiveHeldAnswer as consoleWorkspace_receiveHeldAnswer, alwaysReleaseWasReleasable as consoleWorkspace_alwaysReleaseWasReleasable, alwaysHiddenMinorTextIsNeverReleased as consoleWorkspace_alwaysHiddenMinorTextIsNeverReleased, sometimesHeldTextReleased as consoleWorkspace_sometimesHeldTextReleased, sometimesHeldPhotoReleased as consoleWorkspace_sometimesHeldPhotoReleased, sometimesHeldTextRejected as consoleWorkspace_sometimesHeldTextRejected, canReceiveCase as consoleWorkspace_canReceiveCase, receiveCase as consoleWorkspace_receiveCase, canToggleCaseRow as consoleWorkspace_canToggleCaseRow, toggleCaseRow as consoleWorkspace_toggleCaseRow, canActOnCase as consoleWorkspace_canActOnCase, actOnCase as consoleWorkspace_actOnCase, canReceiveCaseAnswer as consoleWorkspace_canReceiveCaseAnswer, receiveCaseAnswer as consoleWorkspace_receiveCaseAnswer, alwaysCaseActionNeedsAnActingSafetyViewer as consoleWorkspace_alwaysCaseActionNeedsAnActingSafetyViewer, sometimesCaseClosed as consoleWorkspace_sometimesCaseClosed, sometimesHoldLifted as consoleWorkspace_sometimesHoldLifted, canReceiveReport as consoleWorkspace_canReceiveReport, receiveReport as consoleWorkspace_receiveReport, reportOpen as consoleWorkspace_reportOpen, typeReportNote as consoleWorkspace_typeReportNote, actOnReport as consoleWorkspace_actOnReport, canReceiveReportAnswer as consoleWorkspace_canReceiveReportAnswer, receiveReportAnswer as consoleWorkspace_receiveReportAnswer, alwaysBanNeedsTheService as consoleWorkspace_alwaysBanNeedsTheService, alwaysASentReportDecisionIsAllowed as consoleWorkspace_alwaysASentReportDecisionIsAllowed, alwaysReportDecisionNeedsANote as consoleWorkspace_alwaysReportDecisionNeedsANote, lawEveryReportStepLeavesTheOpenStatus as consoleWorkspace_lawEveryReportStepLeavesTheOpenStatus, sometimesReportBanned as consoleWorkspace_sometimesReportBanned, sometimesReportHeld as consoleWorkspace_sometimesReportHeld, sometimesReportDismissed as consoleWorkspace_sometimesReportDismissed, chooseRequestSegment as consoleWorkspace_chooseRequestSegment, sometimesAllRequests as consoleWorkspace_sometimesAllRequests, switchShown as consoleWorkspace_switchShown, canReceiveConfig as consoleWorkspace_canReceiveConfig, receiveConfig as consoleWorkspace_receiveConfig, pressMatchingSwitch as consoleWorkspace_pressMatchingSwitch, canEndConfirmation as consoleWorkspace_canEndConfirmation, endConfirmation as consoleWorkspace_endConfirmation, confirmMatchingSwitch as consoleWorkspace_confirmMatchingSwitch, canReceiveSwitchAnswer as consoleWorkspace_canReceiveSwitchAnswer, receiveSwitchAnswer as consoleWorkspace_receiveSwitchAnswer, alwaysConfigNeedsTheAnalystRole as consoleWorkspace_alwaysConfigNeedsTheAnalystRole, stepSwitchChangesOnlyAfterSaving as consoleWorkspace_stepSwitchChangesOnlyAfterSaving, alwaysSavedSwitchWasShown as consoleWorkspace_alwaysSavedSwitchWasShown, sometimesSwitchSaved as consoleWorkspace_sometimesSwitchSaved, sometimesSwitchRefused as consoleWorkspace_sometimesSwitchRefused, canLoadAudit as consoleWorkspace_canLoadAudit, loadAudit as consoleWorkspace_loadAudit, canReceiveAudit as consoleWorkspace_canReceiveAudit, receiveAudit as consoleWorkspace_receiveAudit, alwaysAuditLogNeedsAnAdmin as consoleWorkspace_alwaysAuditLogNeedsAnAdmin, sometimesAuditShown as consoleWorkspace_sometimesAuditShown, canSubmitProposal as consoleWorkspace_canSubmitProposal, submitProposal as consoleWorkspace_submitProposal, canReceiveProposalAnswer as consoleWorkspace_canReceiveProposalAnswer, receiveProposalAnswer as consoleWorkspace_receiveProposalAnswer, alwaysTrayWorkIsSimulated as consoleWorkspace_alwaysTrayWorkIsSimulated, sometimesProposed as consoleWorkspace_sometimesProposed, canOpenWorldMenu as consoleWorkspace_canOpenWorldMenu, openWorldMenu as consoleWorkspace_openWorldMenu, canCloseWorldMenu as consoleWorkspace_canCloseWorldMenu, closeWorldMenu as consoleWorkspace_closeWorldMenu, canSendWorldEvent as consoleWorkspace_canSendWorldEvent, sendWorldEvent as consoleWorkspace_sendWorldEvent, alwaysWorldMenuIsSimulated as consoleWorkspace_alwaysWorldMenuIsSimulated, sometimesWorldEventSent as consoleWorkspace_sometimesWorldEventSent, canStartReveal as consoleWorkspace_canStartReveal, startReveal as consoleWorkspace_startReveal, canTypeRevealReason as consoleWorkspace_canTypeRevealReason, typeRevealReason as consoleWorkspace_typeRevealReason, canChooseRevealMinutes as consoleWorkspace_canChooseRevealMinutes, chooseRevealMinutes as consoleWorkspace_chooseRevealMinutes, canCancelReveal as consoleWorkspace_canCancelReveal, cancelReveal as consoleWorkspace_cancelReveal, canSubmitReveal as consoleWorkspace_canSubmitReveal, submitReveal as consoleWorkspace_submitReveal, canReceiveRevealAnswer as consoleWorkspace_canReceiveRevealAnswer, receiveRevealAnswer as consoleWorkspace_receiveRevealAnswer, alwaysRevealHasAReasonAndALimit as consoleWorkspace_alwaysRevealHasAReasonAndALimit, alwaysRevealLengthIsAChoice as consoleWorkspace_alwaysRevealLengthIsAChoice, stepRevealFollowsAGrant as consoleWorkspace_stepRevealFollowsAGrant, canEndReveal as consoleWorkspace_canEndReveal, endReveal as consoleWorkspace_endReveal, canExpireReveal as consoleWorkspace_canExpireReveal, expireReveal as consoleWorkspace_expireReveal, sometimesRevealGranted as consoleWorkspace_sometimesRevealGranted, initial as consoleWorkspace_initial, alwaysAdminHoldsEveryRole as consoleWorkspace_alwaysAdminHoldsEveryRole, alwaysSimulatedWorldShowsNoRealData as consoleWorkspace_alwaysSimulatedWorldShowsNoRealData, stepNewViewerClosesForms as consoleWorkspace_stepNewViewerClosesForms, canReceiveHeldText as consoleWorkspace_canReceiveHeldText, receiveHeldText as consoleWorkspace_receiveHeldText, canTypeHeldReason as consoleWorkspace_canTypeHeldReason, typeHeldReason as consoleWorkspace_typeHeldReason, canLoadHeldPhoto as consoleWorkspace_canLoadHeldPhoto, loadHeldPhoto as consoleWorkspace_loadHeldPhoto, canMarkPhotoReviewed as consoleWorkspace_canMarkPhotoReviewed, canTypeReportNote as consoleWorkspace_canTypeReportNote, canActOnReport as consoleWorkspace_canActOnReport, canPressMatchingSwitch as consoleWorkspace_canPressMatchingSwitch, canConfirmMatchingSwitch as consoleWorkspace_canConfirmMatchingSwitch, alwaysSavingNeedsTheSwitch as consoleWorkspace_alwaysSavingNeedsTheSwitch, receiveViewer as consoleWorkspace_receiveViewer } from "./consoleWorkspace.ts";
 import { type AgeSide as friendIntroAge_AgeSide } from "./friendIntroAge.ts";
 import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings } from "./memberAge.ts";
-import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type SharedReportRoute as safetyCase_SharedReportRoute, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase } from "./safetyCase.ts";
+import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SharedReportRoute as safetyCase_SharedReportRoute, type SafetyCase as safetyCase_SafetyCase } from "./safetyCase.ts";
 
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
 export interface GamePanel { present: boolean; over: boolean; levelPlaying: boolean; resetSent: boolean; levelChecked: boolean }
@@ -73,6 +73,10 @@ export const biasAlertBelow: number = 80;
 export const maxProactiveHundredths: number = 200;
 /** Story: Read the health numbers of an app / The proactive rate and the inviter share show their targets (spec/consolePanels.md) */
 export const inviterTargetPercent: number = 30;
+/** Story: Read the health numbers of an app / Confirmed proactive delivery contributes to the staff rate (spec/consolePanels.md) */
+export const confirmedProactiveDeliveryStatuses: string[] = ["delivered", "read"];
+/** Story: Read the health numbers of an app / The simulated interruption proxy keeps each STOP window (spec/consolePanels.md) */
+export const interruptionProxyWindowMs: number = exact_consolePanels(72 * 3600000);
 /** Story: Follow events in the feed and the pipeline / The feed segments group the event kinds (spec/consolePanels.md) */
 export const joinsHiddenFrom: number = 60;
 /** Story: Run simulation experiments in the lab / A lab run starts only in the simulated world with a valid request (spec/consolePanels.md) */
@@ -329,22 +333,36 @@ export function lawEveryKnownPositiveCountIsAnAlarm(count: number): boolean {
   return (countMark(true, count) === "CountAlarm") === count > 0;
 }
 
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function labAcceptsWork(stopping: boolean): boolean {
+  return !stopping;
+}
+
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function labRunInterrupted(status: string): boolean {
+  return status === "queued" || status === "running";
+}
+
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function lawLabClosesAdmissionOnShutdown(stopping: boolean): boolean {
+  //@ ensures \result === true
+  return !stopping || !labAcceptsWork(stopping);
+}
+
+/** Story: Run simulation experiments in the lab / Stopping the console closes the lab and finishes interrupted runs (spec/consolePanels.md) */
+//@ pure
+export function lawFinishedLabRunSurvivesShutdown(status: string): boolean {
+  //@ ensures \result === true
+  return !(status === "done" || status === "failed") || !labRunInterrupted(status);
+}
+
 /** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
 //@ pure
 export function runsView(r: RunCompare): RunsView {
   return r.runTotal <= 0 ? "NoRunsView" : (!r.comparing ? "RunDetailView" : (r.picked < 2 || r.diff === "NoDiff" ? "PickTwoView" : (r.diff === "DiffLoading" ? "DiffLoadingView" : (r.diff === "DiffShown" ? "DiffShownView" : "DiffFailedView"))));
-}
-
-/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
-//@ pure
-export function sometimesPickTwo(p: ConsolePanels): boolean {
-  return runsView(p.runs) === "PickTwoView";
-}
-
-/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
-//@ pure
-export function canReceiveRuns(p: ConsolePanels, runTotal: number): boolean {
-  return runTotal >= 0;
 }
 
 /** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
@@ -372,6 +390,18 @@ export function receiveRuns(p: ConsolePanels, runTotal: number): ConsolePanels {
 //@ pure
 export function sometimesRunDetail(p: ConsolePanels): boolean {
   return runsView(p.runs) === "RunDetailView";
+}
+
+/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
+//@ pure
+export function sometimesPickTwo(p: ConsolePanels): boolean {
+  return runsView(p.runs) === "PickTwoView";
+}
+
+/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
+//@ pure
+export function canReceiveRuns(p: ConsolePanels, runTotal: number): boolean {
+  return runTotal >= 0;
 }
 
 /** Story: Compare two matching runs / Compare opens only with two runs, and a third pick drops the oldest (spec/consolePanels.md) */
@@ -618,6 +648,52 @@ export function inviterMark(known: boolean, sharePercent: number): ShareMark {
 export function lawTwoMessagesAWeekDoNotWarn(rateHundredths: number): boolean {
   //@ ensures \result === true
   return !(rateHundredths <= 200) || !proactiveWarns(rateHundredths);
+}
+
+/** Story: Read the health numbers of an app / Confirmed proactive delivery contributes to the staff rate (spec/consolePanels.md) */
+//@ pure
+export function confirmsProactiveDelivery(status: string): boolean {
+  return confirmedProactiveDeliveryStatuses.reduce((confirmed: boolean, candidate: string) => confirmed || status === candidate, false);
+}
+
+/** Story: Read the health numbers of an app / Confirmed proactive delivery contributes to the staff rate (spec/consolePanels.md) */
+//@ pure
+export function lawAcceptedProactiveDeliveryIsUnconfirmed(status: string): boolean {
+  //@ ensures \result === true
+  return !(status === "queued" || status === "accepted" || status === "sent") || !confirmsProactiveDelivery(status);
+}
+
+/** Story: Read the health numbers of an app / Proactive load uses observed member time (spec/consolePanels.md) */
+//@ pure
+export function observedMembershipMs(start: number, end: number, joinedAt: number): number {
+  return end < start || end < joinedAt ? 0 : (start < joinedAt ? exact_consolePanels(end - joinedAt) : exact_consolePanels(end - start));
+}
+
+/** Story: Read the health numbers of an app / Proactive load uses observed member time (spec/consolePanels.md) */
+//@ pure
+export function lawFutureJoinAddsNoMemberTime(start: number, end: number, joinedAt: number): boolean {
+  //@ ensures \result === true
+  return !(end < joinedAt) || observedMembershipMs(start, end, joinedAt) === 0;
+}
+
+/** Story: Read the health numbers of an app / Proactive load uses observed member time (spec/consolePanels.md) */
+//@ pure
+export function lawMembershipTimeIsWithinTheReport(start: number, end: number, joinedAt: number): boolean {
+  //@ ensures \result === true
+  return observedMembershipMs(start, end, joinedAt) >= 0 && (!(start <= end) || observedMembershipMs(start, end, joinedAt) <= exact_consolePanels(end - start));
+}
+
+/** Story: Read the health numbers of an app / The simulated interruption proxy keeps each STOP window (spec/consolePanels.md) */
+//@ pure
+export function stopRejectsInterruption(sentAt: number, stopAt: number): boolean {
+  return sentAt <= stopAt && exact_consolePanels(stopAt - sentAt) <= interruptionProxyWindowMs;
+}
+
+/** Story: Read the health numbers of an app / The simulated interruption proxy keeps each STOP window (spec/consolePanels.md) */
+//@ pure
+export function lawStopOutsideInterruptionWindowDoesNotReject(sentAt: number, stopAt: number): boolean {
+  //@ ensures \result === true
+  return !(stopAt < sentAt || exact_consolePanels(stopAt - sentAt) > interruptionProxyWindowMs) || !stopRejectsInterruption(sentAt, stopAt);
 }
 
 /** Story: Follow events in the feed and the pipeline / The feed segments group the event kinds (spec/consolePanels.md) */

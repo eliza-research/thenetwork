@@ -10,13 +10,14 @@
 //   5. feedback, a possible second date, safety reports.
 // Caps: each member gets at most `capPerWeek` initial invites a week (first probe or partner probe;
 // decision 3) and at most one booked date a week. Proposals past a cap are dropped and counted.
+import { requireSimulationCount } from "../../input.ts";
 import { CITY_TZ, DAY, HOUR, canBeMatched, fromLocal, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
 import { signature } from "../../coins.ts";
 import { SlopBehavior, type HarmEvent } from "./behavior.ts";
 import type { SlopCity } from "./geo.ts";
-import { SlopOracle, type DateOutcome } from "./oracle.ts";
+import { isSafe, SlopOracle, type DateOutcome } from "./oracle.ts";
 import { SLOTS, SLOT_DAY, generateSlopPersonas, type DateActivity, type SlopGenOptions, type SlopPersona } from "./persona.ts";
 import { SLOP_WORLD_START, buildSlopSnapshot, reviewDecision, type PlatformModel, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
@@ -80,6 +81,7 @@ export interface SlopRunOptions extends Omit<SlopGenOptions, "seed"> {
 
 export interface SlopWorld {
   seed: number; weeks: number; personas: SlopPersona[]; oracle: SlopOracle; behavior: SlopBehavior;
+  initiallyFeasible: ReadonlySet<MemberId>;
   state: SlopNetworkState;
 }
 
@@ -101,10 +103,24 @@ const slotTime = (week: number, slot: number, city: SlopCity) => {
 
 export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const weeks = o.weeks ?? 4;
-  const personas = o.personas ?? generateSlopPersonas({ ...o, seed: o.seed, weeks });
+  requireSimulationCount(weeks, "weeks", 1);
+  const personas = o.personas ? structuredClone(o.personas) : generateSlopPersonas({ ...o, seed: o.seed, weeks });
   const oracle = new SlopOracle(personas, o.seed, o.bodyTypes);
+  const real = personas.filter(isSafe);
+  const initiallyFeasible = new Set<MemberId>();
+  // Check each unordered pair once, before a widening answer can change a filter.
+  for (let i = 0; i < real.length; i++) {
+    const first = real[i]!;
+    for (let j = i + 1; j < real.length; j++) {
+      const second = real[j]!;
+      if (initiallyFeasible.has(first.id) && initiallyFeasible.has(second.id)) continue;
+      if (!oracle.statedMutual(first, second, 0)) continue;
+      initiallyFeasible.add(first.id);
+      initiallyFeasible.add(second.id);
+    }
+  }
   return {
-    seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed),
+    seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed), initiallyFeasible,
     state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map(), ...(o.verification ? { verification: o.verification } : {}), ...(o.platform ? { platform: o.platform } : {}), ...(o.bodyTypes ? { bodyTypes: o.bodyTypes } : {}) },
   };
 }

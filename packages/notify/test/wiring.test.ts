@@ -7,7 +7,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
-import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
+import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { buttonPageLink, Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
@@ -42,6 +42,7 @@ async function setup(prefs: Recipient["prefs"] = { channel: "imessage" }) {
   const r: Recipient = { personId: person.id, to, timeZone: NY, prefs, proactiveAllowed: true };
   const notifier = new Notifier(store, { get: id => (id === r.personId ? r : undefined) }, { isQuiet: () => false });
   const queue = new OutboundQueue({
+    recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"),
     sql, clock, provider, line: "+12125550100", app: "friends",
     checks: { live: () => true, recipient: queuePolicy(notifier, clock) },
     leakAllow: Object.values(APPS).flatMap(a => [`https://${a.domain}`, a.domain]),
@@ -220,10 +221,14 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(await queue.statusOf(sent[0]!.deliveryId)).toBe("suppressed_ineligible");
   });
 
-  test("an assistant whose links went unused twice is pointed at again once the member uses it", async () => {
-    const { clock, now, notifier, sink, r } = await setup({ channel: "imessage", explicit: "claude" });
-    notifier.setAssistantUpdatesLookup(async (personId, app) => personId === r.personId && app === "friends" ? ["claude"] : []);
+  test.each(["imessage", "sms"] as const)("an assistant whose links went unused twice is pointed at again after use (%s)", async channel => {
+    // spec/notificationDelivery.md, "An assistant link records its selected surface"
+    const { clock, now, notifier, store, sink, r } = await setup({ channel, explicit: "claude" });
+    notifier.setAssistantUpdatesLookup(async (personId, app) => personId === r.personId && app === "friends" ? ["chatgpt", "claude"] : []);
+    await notifier.setActive(r.personId, "chatgpt", true);
     await notifier.setActive(r.personId, "claude", true);
+    const linked = channel === "imessage" ? { mode: "deeplink", assistant: "claude" }
+      : { mode: "button_page", assistants: ["claude", "chatgpt"] };
     const send = async (subject: string) => {
       await notifier.add(req(r.personId, subject), now());
       const { sent } = await notifier.dispatch(now(), sink);
@@ -232,18 +237,60 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     };
     // Two Claude links nobody tapped: each closes as ignored after the outcome window, so Claude drops out.
     for (const subject of ["u1", "u2"]) {
-      expect((await send(subject)).delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+      const update = await send(subject);
+      expect(update.delivery).toMatchObject(linked);
       clock.advance(notifier.cfg.outcomeWindowMs + 60_000);
       await notifier.sweep(now());
+      expect(await store.getDelivery(update.deliveryId)).toMatchObject({ target: "claude", outcome: "ignored" });
     }
+    const signals = await store.signals(r.personId);
+    expect(signals.find(signal => signal.surface === "claude")).toMatchObject({ ignored: 2, ignoredStreak: 2 });
+    expect(signals.find(signal => signal.surface === channel)?.ignored ?? 0).toBe(0);
+    expect(signals.find(signal => signal.surface === "chatgpt")?.ignored ?? 0).toBe(0);
     expect((await send("u3")).delivery).toMatchObject({ mode: "thread", reason: "explicit_link_unused" });
     // The member opens Claude and asks for their updates there (get_updates through the grant).
     clock.advance(60_000);
     await notifier.readUpdates(r.personId, "claude", now());
     // Claude is in use again: the next update points there.
     const next = await send("u4");
-    expect(next.delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
-    expect(next.text).toContain("https://claude.ai/new?q=");
+    expect(next.delivery).toMatchObject(linked);
+    if (channel === "imessage") expect(next.text).toContain("https://claude.ai/new?q=");
+  });
+
+  test.each(["acted", "ignored"] as const)("a failed signal write leaves the %s delivery open for retry", async outcome => {
+    // spec/notificationAcknowledgement.md, "Count a delivery action only when the store closes a pending delivery"
+    const { clock, now, store, notifier, r } = await setup();
+    const deliveryId = "fixture-surface-write-" + outcome;
+    await notifier.recordSent(req(r.personId, outcome), { deliveryId, channel: "imessage", countsTowardCap: false, sentAt: now() });
+    if (outcome === "ignored") clock.advance(notifier.cfg.outcomeWindowMs + 1);
+    const apply = () => outcome === "acted" ? notifier.threadReply(r.personId, "imessage", now()) : notifier.sweep(now());
+
+    await sql`create function notify.fixture_reject_surface_count() returns trigger language plpgsql as $$
+      begin
+        if new.acted > coalesce(old.acted, 0) or new.ignored > coalesce(old.ignored, 0) then
+          raise exception 'fixture surface count unavailable';
+        end if;
+        return new;
+      end;
+    $$`;
+    await sql`create trigger fixture_reject_surface_count before insert or update on notify.surface_signals
+      for each row execute function notify.fixture_reject_surface_count()`;
+    try {
+      await expect(apply()).rejects.toThrow("fixture surface count unavailable");
+      expect((await store.getDelivery(deliveryId))?.outcome).toBeUndefined();
+      expect((await store.signals(r.personId)).every(signal => signal.acted === 0 && signal.ignored === 0)).toBe(true);
+    } finally {
+      await sql`drop trigger fixture_reject_surface_count on notify.surface_signals`;
+      await sql`drop function notify.fixture_reject_surface_count()`;
+    }
+
+    await Promise.all([apply(), apply()]);
+    expect((await store.getDelivery(deliveryId))?.outcome).toBe(outcome);
+    expect((await store.signals(r.personId)).find(signal => signal.surface === "imessage")).toMatchObject({
+      acted: outcome === "acted" ? 1 : 0,
+      ignored: outcome === "ignored" ? 1 : 0,
+      ignoredStreak: outcome === "ignored" ? 1 : 0,
+    });
   });
 
   test("an SMS member with a linked assistant gets the button page, not the assistant's own link", async () => {

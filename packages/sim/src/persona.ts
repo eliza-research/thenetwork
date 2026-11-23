@@ -162,10 +162,10 @@ export interface IntentRecordTiming {
  * The Network's record of stated intent `index` at time `now`, or undefined if not yet stated.
  * `statedAt` defaults to `fallbackStatedAt` (the join time). Each check-in is answered with
  * probability 1 - responsiveness.ignoreProb, drawn deterministically per (persona, intent,
- * check-in), so the record is the same whenever it is rebuilt. `unresponsive`: the member is
- * ignoring the agent right now (no check-in counts).
+ * check-in), so the record is the same whenever it is rebuilt. A historical check-in uses
+ * the unanswered-message state at its own time.
  */
-export function intentRecordTiming(p: Persona, index: number, now: number, fallbackStatedAt: number, opts: { unresponsive?: boolean } = {}): IntentRecordTiming | undefined {
+export function intentRecordTiming(p: Persona, index: number, now: number, fallbackStatedAt: number, opts: { unresponsive?: boolean | ((at: number) => boolean) } = {}): IntentRecordTiming | undefined {
   const it = p.public.statedIntents[index];
   if (!it) return undefined;
   const stated = it.statedAt ?? fallbackStatedAt;
@@ -174,11 +174,10 @@ export function intentRecordTiming(p: Persona, index: number, now: number, fallb
   const lapse = p.hidden.desires.find(d => d.id === it.desireId)?.lapsesAt;
   const answer = 1 - p.hidden.responsiveness.ignoreProb;
   let createdAt = stated, reconfirmations = 0;
-  // A member who is currently ignoring the agent (2+ unanswered proactive messages, so "only when
-  // I ask") is not answering check-ins either: a fresh re-confirmation would read as a new ask.
-  if (opts.unresponsive) return { createdAt, status: "active", reconfirmations };
+  if (opts.unresponsive === true) return { createdAt, status: "active", reconfirmations };
   for (let k = 1; stated + k * INTENT_RECONFIRM_DAYS * DAY <= now; k++) {
     const t = stated + k * INTENT_RECONFIRM_DAYS * DAY;
+    if (typeof opts.unresponsive === "function" && opts.unresponsive(t)) continue;
     if (new Rng(hash32("reconfirm", p.id, index, k)).next() >= answer) continue;
     if (lapse !== undefined && t >= lapse) return { createdAt, status: "closed", reconfirmations };
     createdAt = t; reconfirmations++;

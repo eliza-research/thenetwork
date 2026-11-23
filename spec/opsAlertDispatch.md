@@ -6,6 +6,30 @@ The [runtime operations model](models/runtime_ops.md) includes alert dispatch al
 
 > As an operator, I want one batch of new, worse, repeated, or resolved notices in each eligible operations round.
 
+### Pending delivery does not affect the failure rate
+
+Keep queued, collected and unresolved delivery states outside the send
+outcome counts. Use the existing failure counts once the final outcome is
+available. Count each accepted SMS on its acceptance day and once in the
+app's rolling window. A legacy fallback can supply SMS evidence when the
+queue has no accepted receipt with a known transport. An accepted receipt
+supplies the acceptance time. The app-scoped Postgres query aggregates these
+facts. A runtime that reports an exact SMS total takes precedence over the
+older status-only total.
+
+```quint
+pure def countSendOutcome(waiting: bool): bool = not(waiting)
+
+pure def reportedSmsTotal(exactTotalAvailable: bool, exactTotal: int, legacyTotal: int): int =
+  if (exactTotalAvailable) exactTotal else legacyTotal
+
+pure def lawPendingDeliveryHasNoOutcome(waiting: bool): bool =
+  waiting implies not(countSendOutcome(waiting))
+
+pure def lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal: int): bool =
+  reportedSmsTotal(true, 0, legacyTotal) == 0
+```
+
 ### An alert sends when it starts, gets worse, or reaches its repeat time
 
 A closed or new key starts a fresh episode. While an episode is open, update the current level, count, and detail. Prepare a notice if it has never posted, if its latest level rose from warn to bad, if a bump-enabled count exceeds the last posted count, or if the repeat time has passed. Keep the last successful post as the comparison baseline.
@@ -26,15 +50,18 @@ pure def chooseFiringPlan(e: FiringEvidence): FiringPlan =
 
 ### An absent alert resolves after a successful notice
 
-The current alert list determines whether a key is still active. A missing key with an open episode and a prior successful post queues a resolved notice. A missing key with no successful post closes quietly. A closed key or a key still in the current list stays as it is.
+An absent key leaves its episode as it is when its source read fails. A completed read of another source can resolve that source's own alerts in the same round. An absent key with a readable source and a prior successful post queues a resolved notice. An absent key with a readable source and no successful post closes quietly. Closed keys and keys still in the current list stay as they are during this step.
 
 ```quint
 type MissingPlan = KeepEpisode | CloseQuietly | SendResolution
 
-pure def chooseMissingPlan(episodeOpen: bool, seenThisRound: bool, postedBefore: bool): MissingPlan =
-  if (not(episodeOpen) or seenThisRound) KeepEpisode
+pure def chooseMissingPlan(episodeOpen: bool, seenThisRound: bool, postedBefore: bool, sourceReadable: bool): MissingPlan =
+  if (not(episodeOpen) or seenThisRound or not(sourceReadable)) KeepEpisode
   else if (postedBefore) SendResolution
   else CloseQuietly
+
+pure def lawUnreadSourceKeepsEpisode(episodeOpen: bool, seenThisRound: bool, postedBefore: bool): bool =
+  chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, false) == KeepEpisode
 ```
 
 ### One batch consumes one attempt in the rolling hour
@@ -80,6 +107,9 @@ pure def sometimesRejected(s: AlertDispatch): bool = s.phase == PostRejected
 ### Collect scheduled rounds and reuse fresh metrics
 
 A new operations round starts when its configured interval has passed. A read request may use the latest metrics for less than 15 seconds after collection.
+The cache holds measured metrics. Each read adds the latest completed dispatch
+result if one exists. A metrics refresh leaves that result unchanged. A dispatch
+that is waiting for its webhook leaves the previous completed result visible.
 
 ```quint
 pure val metricsFreshMs = 15000

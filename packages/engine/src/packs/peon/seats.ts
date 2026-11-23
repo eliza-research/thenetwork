@@ -1,5 +1,5 @@
 import { canBeMatched, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence } from "@thenetwork/core";
-import { initial, remainingOpenings, seatRecordOccupies, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
+import { initial, normalJobSeatUsesOpenBudget, remainingOpenings, seatRecordOccupies, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
 import type { EngineInput } from "../../types.ts";
 import { JOB_INTENT, SAFETY, T } from "./schema.ts";
 
@@ -33,7 +33,10 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
     if (!canBeMatched(owner.age) || !Number.isInteger(owner.age)) continue;
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
-    members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
+    members.push({
+      ...owner, id, state: normalJobSeatUsesOpenBudget(owner.state) ? "open" : owner.state,
+      age: 18, joinedAt: p.createdAt, seatOwner: owner.id,
+    } as Member);
     edges.push({ from: owner.id, to: id, type: "avoid", strength: 1, explicit: false, createdAt: p.createdAt });
     let posted: number | undefined;
     for (const f of snap.facets) {

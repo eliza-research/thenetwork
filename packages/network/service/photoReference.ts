@@ -1,5 +1,6 @@
 import { classifyYesNo, DAY } from "@thenetwork/core";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
+import { parseRelayRequest, relayPhotoReferenceAllowed } from "../../engine/src/relay.ts";
 import { photoPickFor, photoSlotsMax, type PhotoPickResult } from "../../core/src/generated/photoRelayItem.ts";
 import { maskOf as numbersMask, numbersOf as maskNumbers } from "../../platform/src/photo-relay.ts";
 
@@ -513,28 +514,40 @@ function cutAlsoText(phrase: string[]): { phrase: string[]; alsoText: boolean } 
   return k < 0 ? { phrase, alsoText: false } : { phrase: phrase.slice(0, k), alsoText: true };
 }
 
+const PHOTO_REQUEST = "send them this photo";
+function markedLength(phrase: string[]): number {
+  const first = phrase.findIndex(w => NOUNS.has(w) || PLURALS.has(w) || w === "one" || w === "ones" || /^#\d/.test(w) || CODES.some(re => re.test(w)));
+  return first < 0 ? phrase.length : first + 1;
+}
+function asPhotoRequest(t: string, region: string[]): string {
+  const span = new RegExp(region.map(w => w.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")).join(String.raw`[\s,;:'"()\[\]?.!]*`)).exec(t);
+  return span ? t.slice(0, span.index) + PHOTO_REQUEST + t.slice(span.index + span[0].length) : t;
+}
+
 function sendOf(t: string, original: string, ctx: ReaderContext): PhotoReading | null {
   const words = wordsOf(t);
   for (let v = 0; v < words.length; v++) {
     if (!VERBS.has(words[v]!)) continue;
-    const options: { target: Target; phrase: string[]; alsoText: boolean }[] = [];
+    const options: { target: Target; phrase: string[]; alsoText: boolean; end: number }[] = [];
+    const after = (at: number, target: Target) => { const cut = cutAlsoText(words.slice(at)); return { target, ...cut, end: at + markedLength(cut.phrase) }; };
     const direct = targetAt(words, v + 1, ctx, false);
-    if (direct) options.push({ target: direct.target, ...cutAlsoText(words.slice(v + 1 + direct.len)) });
+    if (direct) options.push(after(v + 1 + direct.len, direct.target));
     if (TO_VERBS.has(words[v]!)) {
       for (let w = words.length - 2; w > v; w--) {
         if (words[w] !== "to" && words[w] !== "with") continue;
-        const after = targetAt(words, w + 1, ctx, true);
-        if (!after) continue;
-        const rest = words.slice(w + 1 + after.len);
+        const to = targetAt(words, w + 1, ctx, true);
+        if (!to) continue;
+        const rest = words.slice(w + 1 + to.len);
         if (rest.length && !cutAlsoText(rest).alsoText && rest[0] !== "please" && rest[0] !== "now") continue;
-        options.push({ target: after.target, phrase: cutAlsoText(words.slice(v + 1, w)).phrase, alsoText: cutAlsoText(rest).alsoText || cutAlsoText(words.slice(v + 1, w)).alsoText });
+        options.push({ target: to.target, phrase: cutAlsoText(words.slice(v + 1, w)).phrase, alsoText: cutAlsoText(rest).alsoText || cutAlsoText(words.slice(v + 1, w)).alsoText, end: w + 1 + to.len });
         break;
       }
     }
     const loose = direct ? null : targetAt(words, v + 1, ctx, true);
-    if (loose) options.push({ target: loose.target, ...cutAlsoText(words.slice(v + 1 + loose.len)) });
+    if (loose) options.push(after(v + 1 + loose.len, loose.target));
     const chosen = options.find(o => hasMarker(o.phrase, ctx));
     if (!chosen) continue;
+    if (!relayPhotoReferenceAllowed(asPhotoRequest(t, words.slice(v, chosen.end)))) return NONE;
     const target = chosen.target.kind === "one" ? chosen.target.thread.recipientMemberId : null;
     const s = scopeOf(ctx, target, false);
     const phraseText = chosen.phrase.join(" ");
@@ -695,6 +708,7 @@ export function readPhotoMessage(text: string, ctx: ReaderContext): PhotoReading
   if (!t) return NONE;
   if (/^photos ok$/.test(t)) return { kind: "photos_ok" };
   if (NO_MORE.test(t)) return { kind: "no_more_photos" };
+  const share = parseRelayRequest(text).kind === "contact_share";
   return holdingsOf(t, ctx) ?? nameOf(t, text, ctx) ?? deleteOf(t, text, ctx) ?? takeBackOf(t, text, ctx)
-    ?? (hedged(t) ? NONE : sendOf(t, text, ctx) ?? (ctx.draft ? draftOf(t, text, ctx, ctx.draft) : NONE));
+    ?? (hedged(t) || share ? NONE : sendOf(t, text, ctx) ?? (ctx.draft ? draftOf(t, text, ctx, ctx.draft) : NONE));
 }

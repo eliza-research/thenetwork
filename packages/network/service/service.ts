@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 import { DAY, judgeLLM, judgeModelOf, LLMBudget, providerKeyPresent, RealClock, recommenderLLM, type Clock, type City, type Intent, type LLM, type MemberId } from "@thenetwork/core";
 import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
 import { engineJudgeLimitsFromEnv, llmSpentMicros, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
-import { pendingReportReplyName, storedInviterCurrent, type ActionResult, type AgentStandingResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions, type StandingView } from "../src/network.ts";
+import { pendingReportReplyNames, storedInviterCurrent, type ActionResult, type AgentStandingResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions, type StandingView } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import { personMinorSignalEndsEverywhere, sharedReportRoute } from "../../core/src/generated/safetyCase.ts";
@@ -60,8 +60,8 @@ import { collectedReplyMayLeave, directReplyCollectable, openReplayAnswer, store
 import { openTurnAnswer, unavailableReplySent } from "../../core/src/generated/sharedContext.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
-  checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
-  namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
+  bindTextJoinMember, checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
+  namedOtherApp, networkEnrollmentAllowed, openRouteOpportunityStates, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
   sendAgeDecline, shouldReadPendingAnswer, step as stepTextJoin, textJoinKeepsMemberId, birthdayRecorded, joinBirthDateKept, joinTypedAgeKept, type JoinMembership, type MinorNotice,
 } from "../../core/src/generated/textEnrollment.ts";
 import { checkLineAge, checkLineBan, checkLineInviteDecline, checkLineNumberHold, initial as lineGateStart, leaveReply, lineHeldNumberGetsHelp, lineNumberHoldReadNeeded, readLineCommand, safetyAnswerClaims, safetyAppReadNeeded, safetyClaimLeads, safetyCommandClaims, safetyRouteReadNeeded, type LineCommand } from "../../core/src/generated/lineRouting.ts";
@@ -132,11 +132,12 @@ import { photoScreenFromEnv, type PhotoScreen } from "../../platform/src/photo-s
 import { PhotoUploadLinks } from "../../platform/src/photo-upload-link.ts";
 import { APPEARANCE_PREFIX, appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { memberExportFacetAllowed, memberExportGatheringsAllowed } from "../../core/src/generated/accountPrivacy.ts";
-import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
+import { fetchMediaCapped, PHOTO_APP, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
 import { phoneChangeLinkReply, phoneChangeLinkRequest } from "./phone-change-link.ts";
 import { sweepPhotos } from "./photoSweep.ts";
 import { PHOTO_RELAY_TEXT, PhotoRelayFlow, type PhotoRequestStatus } from "./photoRelayFlow.ts";
 import type { PhotoHoldingsView } from "../../mcp/src/hooks.ts";
+import { textPhotoLineAllowed } from "../../core/src/generated/photoPolicy.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
 import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
@@ -146,7 +147,7 @@ import { unshareRevokesGrant } from "../../core/src/generated/baseProfileShare.t
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
-import { gatewayReceiptMoves, type QueueRow } from "../../blooio/src/outbound-queue.ts";
+import { gatewayReceiptMoves, recipientWindowHasher, type QueueRow, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
@@ -209,7 +210,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices", "review_judgments", "review_judge_requests"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "outbound_recipient_window", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -403,6 +404,7 @@ export class NetworkService implements RuntimeHost {
   readonly apps: Record<AppId, AppInfo>;
   readonly people: PeopleStore;
   readonly accounts: Accounts;
+  readonly outboundRecipientKey: RecipientWindowKey;
   /** The single inbox and notification scheduler; undefined when turned off. */
   readonly notify?: Notifier;
   /** Address to (runtime, member) for the notify sink, filled by the notify directory. */
@@ -475,6 +477,7 @@ export class NetworkService implements RuntimeHost {
     const key = this.env.PLATFORM_HASH_KEY ?? (devShortcutsAllowed(this.env) ? DEV_HASH_KEY : undefined);
     if (!key) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
     this.hashKey = key;
+    this.outboundRecipientKey = recipientWindowHasher(key);
     this.expectedInvitations = new ExpectedMemberInvitations(key, () => this.clock.now(), app => this.apps[app]);
     this.seedInvitations = new SeedInvitations(key, () => this.clock.now());
     this.profileFactEdits = new ProfileFactEdits(key, () => this.clock.now());
@@ -1261,12 +1264,14 @@ export class NetworkService implements RuntimeHost {
   private async notifyRecipient(personId: string): Promise<Recipient | undefined> {
     const rts = [...this.runtimes.values()].sort((a, b) => Number(b.app.id === "ntwrk") - Number(a.app.id === "ntwrk"));
     for (const rt of rts) {
-      const rows = await rt.scoped(tx => tx`select id from network.members where app_id = ${rt.app.id} and person_id = ${personId} and not opted_out`);
-      for (const r of rows as any[]) {
+      const rows = await rt.scoped(tx => tx<{ id: MemberId; time_zone: string | null }[]>`select member.id,city.tz as time_zone
+        from network.members member left join platform.cities city on city.id=member.home_city
+        where member.app_id=${rt.app.id} and member.person_id=${personId} and not member.opted_out`);
+      for (const r of rows) {
         const to = rt.addressOf(r.id);
         if (!to) continue;
         this.notifyTargets.set(normalizeAddress(to), { rt, memberId: r.id });
-        return { personId, to, timeZone: resolveTimeZone(undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
+        return { personId, to, timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
       }
     }
     return undefined;
@@ -1389,8 +1394,11 @@ export class NetworkService implements RuntimeHost {
     };
     if (!(invitation ? await write(invitation.tx) : await rt.scoped(write))) return false;
     const turn = this.inboundTurn();
-    if (turn && (await this.accounts.personFor(turn.from))?.id === m.personId) {
-      turn.app = rt.app.id; turn.memberId = m.memberId;
+    if (turn) {
+      // spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
+      const sameApp = turn.app === rt.app.id;
+      const samePerson = sameApp && (await this.accounts.personFor(turn.from))?.id === m.personId;
+      if (bindTextJoinMember(sameApp, samePerson)) turn.memberId = m.memberId;
     }
     return true;
   }
@@ -1838,14 +1846,19 @@ export class NetworkService implements RuntimeHost {
     const survey = dedicated ? undefined : interruptionFeedbackAnswer(ev.text);
     const surveyApp = survey && isAppId(survey.app) ? survey.app : undefined;
     const keywordApp = dedicated || profileApp || surveyApp ? undefined : this.namedApp(ev.text);
-    const explicitFacts = { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp };
+    const e164 = normalizePhone(ev.from);
+    const bare = lower(ev.text.trim()).replace(/[.!?]+$/, "");
+    const pendingEnrollmentAnswer = !!keywordApp && bare === keywordApp && !!this.runtimeFor(keywordApp)
+      && lookingFor(ev.text).includes(keywordApp) && !!e164 && !!await this.pendingOf(e164, "looking_for", "ntwrk")
+      && !!await this.accounts.activeMembership(this.apps.ntwrk, { e164, personId: null });
+    const explicitFacts = { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, pendingEnrollmentAnswer, appKeyword: !!keywordApp };
     const explicit = checkExplicitRoute(initialRoute, explicitFacts);
     if (explicit.phase === "DedicatedRoute" && dedicated) return { app: dedicated, shared: false };
     if (explicit.phase === "ProfileRoute" && profileApp) return { app: profileApp, shared: true };
     if (explicit.phase === "SurveyRoute" && surveyApp) return { app: surveyApp, shared: true };
+    if (explicit.phase === "LookingForRoute") return { app: "ntwrk", shared: true };
     if (explicit.phase === "KeywordRoute" && keywordApp) return { app: keywordApp, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
-    const e164 = normalizePhone(ev.from);
     if (threadRead && e164) {
       const ranked = [...mine].sort((a, b) => (b.lastItem ?? 0) - (a.lastItem ?? 0) || (b.lastOut ?? 0) - (a.lastOut ?? 0));
       for (const { app, memberId } of ranked) {
@@ -1883,19 +1896,19 @@ export class NetworkService implements RuntimeHost {
 
   private async sharedReportReply(e164: string, ev: Extract<ChannelEvent, { kind: "message" }>,
     memberships: readonly { app: AppId; memberId: MemberId }[]): Promise<SharedReportReply | undefined> {
-    const name = memberships.length > 1 ? pendingReportReplyName(ev.text) : undefined;
-    if (!name || this.inboundTurn()?.from !== e164) return;
+    const names = memberships.length > 1 ? pendingReportReplyNames(ev.text) : [];
+    if (!names.length || this.inboundTurn()?.from !== e164) return;
     const person = await this.accounts.personFor(e164);
     if (!person) return;
     const matches = (await Promise.all(memberships.map(async ({ app, memberId }) => {
       const membership = await this.people.getMembership(person.id, app);
       if (membership?.memberId !== memberId || membership.state !== "active" || membership.review !== null) return [];
       const rt = await this.runtimeOfMember(app, memberId);
-      const choices = await rt?.readState(net => net.pendingReportChoices(memberId, name, ev.receivedAt)) ?? [];
+      const choices = await rt?.readState(net => net.pendingReportChoices(memberId, names, ev.receivedAt)) ?? [];
       return choices.map(choice => ({ app, personId: person.id, memberId, choice }));
     }))).flat();
     switch (sharedReportRoute(true, matches.length)) {
-      case "UniqueReportRoute": return matches[0];
+      case "UniqueReportRoute": return matches[0]?.choice.routable ? matches[0] : undefined;
       case "AmbiguousReportRoute": return "ambiguous";
       case "NoReportRoute": return;
     }
@@ -1928,7 +1941,9 @@ export class NetworkService implements RuntimeHost {
 
   /** The apps this address is a joined member of, across apps (platform.member_apps: ids and times only). */
   async memberApps(address: string): Promise<{ app: AppId; memberId: MemberId; lastOut: number | null; lastItem: number | null }[]> {
-    const rows = await this.sql`select app_id, member_id, last_out, last_item from platform.member_apps(${normalizeAddress(address)})`;
+    // spec/textEnrollment.md, "A pending join routes only a possible join answer"
+    const rows = await this.sql`select app_id, member_id, last_out, last_item
+      from platform.member_apps(${normalizeAddress(address)}, ${this.sql.array(openRouteOpportunityStates, "TEXT")})`;
     return (rows as any[]).filter(r => isAppId(r.app_id)).map(r => ({
       app: r.app_id as AppId, memberId: r.member_id, lastOut: r.last_out ? new Date(r.last_out).getTime() : null, lastItem: r.last_item ? new Date(r.last_item).getTime() : null,
     }));
@@ -2087,7 +2102,8 @@ export class NetworkService implements RuntimeHost {
       await this.direct(rt, ev.from, phoneChangeLinkReply(this.siteOrigin(app)), `sys:${rowId}`, "reply");
       return "handled";
     }
-    if (!banned && e164 && ev.mediaUrls?.length && !profileRead && !intentCommand) {
+    if (!banned && e164 && ev.mediaUrls?.length && !profileRead && !intentCommand &&
+        textPhotoLineAllowed(route.shared, route.app === PHOTO_APP)) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
@@ -3859,7 +3875,14 @@ export class NetworkService implements RuntimeHost {
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
         const member = binding?.membership.memberId === turn.memberId;
         const context = member ? await rt!.sharedContext(turn.memberId) : null;
-        if (openTurnAnswer(!!context) === "AnswerOpen" && context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
+        if (openTurnAnswer(!!context) === "AnswerOpen" && context) {
+          if (accountEligible && this.notify && binding) {
+            const channel = input.transport === "sms" ? "sms" : "imessage";
+            await this.notify.threadReply(binding.person.id, channel, this.clock.now())
+              .catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
+          }
+          return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
+        }
         const replyRuntime = rt ?? this.runtimeFor(turn.app);
         if (unavailableReplySent(policyAllowed, age !== undefined && !canJoin(age)) && replyRuntime) {
           const unavailable = contextUnavailableReply(turn.id);

@@ -17,7 +17,7 @@
 //                 the check-in. Every text still goes through the Network's leak guard.
 import { parseReply } from "@thenetwork/core";
 import type { Category, Facet, Intent, MemberId, WorldSnapshot } from "@thenetwork/core";
-import { maxOpenings, missingPostingFields, openingsInRange, payRangeAllowed } from "../../core/src/generated/postingPolicy.ts";
+import { maxOpenings, missingPostingFields, openingCountNeedsCorrection, openingsInRange, payRangeAllowed, postingNeedsArea } from "../../core/src/generated/postingPolicy.ts";
 import { isSeatId, postingIdOf, seatIdOf, seatOwnerOf } from "@thenetwork/engine";
 import type { EngineInput } from "@thenetwork/engine";
 import { JOB_INTENT, T, type PeonMode } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -51,7 +51,7 @@ export interface PostingDraft {
   /** Questions asked for this draft (at most 2 before it is dropped). */
   asks?: number;
   /** The field the last question asked for; only a reply to "What's the job title?" can be a bare title. */
-  asked?: "title" | "pay";
+  asked?: "title" | "pay" | "openings" | "area";
   /** Read back in full: the manager's yes saves it. */
   ready?: boolean;
 }
@@ -62,6 +62,11 @@ export interface PostingRef { id: string; seat: MemberId; title: string; active:
 export const MAX_OPENINGS = maxOpenings;
 const slug = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
 const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, an: 1 };
+const OPENING_NUMBER = "[+-]?\\d+(?:[.,/–—-]\\d+)*(?:e[+-]?\\d+)?";
+const OPENING_COUNT = `(?:${OPENING_NUMBER}|zero|no|one|two|three|four|five|six|seven|eight|nine|ten)`;
+const LABELED_OPENING_COUNT = new RegExp(`(?<![\\w.+/–—-])(${OPENING_COUNT})\\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\\b`, "i");
+const MULTIPLIED_OPENING_COUNT = new RegExp(`\\bx\\s*(${OPENING_NUMBER})(?![\\w+/-]|[.,]\\d)`, "i");
+const OPENING_COUNT_ANSWER = new RegExp(`^${OPENING_COUNT}$`, "i");
 const SENIORITY: [RegExp, number][] = [[/\b(intern|entry[- ]level|junior|jr)\b/i, 1], [/\b(mid[- ]level|mid)\b/i, 2], [/\b(senior|sr)\b/i, 3], [/\b(staff|lead)\b/i, 4], [/\bprincipal\b/i, 5]];
 const BOROUGHS = ["manhattan", "brooklyn", "queens", "bronx", "staten island"];
 const MODE = "remote|hybrid|on-?site|in[- ]office|in person";
@@ -85,6 +90,7 @@ function payRange(text: string): [number, number] | undefined {
 }
 
 const AREAS = [...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase())].sort((a, b) => b.length - a.length);
+const AREA_IDS = new Set(AREAS.map(slug));
 
 const START_POSTING = /^\s*(?:(?:we(?:'| a)?re|i(?:'| a)?m|we are|i am|now)\s+hiring\b|hiring\s*:|post(?:ing)?\s+(?:a\s+)?(?:new\s+)?job\b|new\s+job\s+post|job\s+post(?:ing)?\s*:)/i;
 const UPDATE_POSTING = /^\s*update\s+(?:my|our|the)\s+(.*?)\b(?:job(?:\s+post(?:ing)?)?|posting|post|role)\b(?=\s*(?:[:;,.!?]|$|[0-9]|to\b))/i;
@@ -98,6 +104,16 @@ export function isPostingCommand(body: string): boolean {
   return START_POSTING.test(t) || UPDATE_POSTING.test(t) || CLOSE_POSTING.test(t) || FILLED_POSTING.test(t);
 }
 
+// The location immediately named for a work mode takes priority over unrelated places.
+const POSTING_SITE = /\b(?:hybrid|on-?site)\s+(?:in|at|near)\s+([^,.;!?]+)|\b(?:job (?:site|location)|worksite|neighborhood)\s*[:=]\s*([^,.;!?]+)/i;
+const SITE_CLAUSE_END = /\b(?:but|where|paying|must have|nice to have|and (?:i|we|you|must))\b|\$/i;
+const exactPostingArea = (value: string) => AREAS.find(area => area === value.trim().toLowerCase());
+
+function readOpeningCount(text: string): number {
+  const count = WORDS[text.toLowerCase()] ?? Number(text);
+  return Number.isSafeInteger(count) ? count : 0;
+}
+
 /** Read job-post fields from one text (rules only). Fields not in the text stay undefined. */
 export function parsePosting(body: string): PostingDraft {
   const t = commandText(body).replace(/\s+/g, " ").trim();
@@ -107,8 +123,8 @@ export function parsePosting(body: string): PostingDraft {
     const raw = title[1]!.trim().replace(/\s+(?:role|position|job)$/i, "");
     if (!/^(?:a|an|the|job|post|posting|new|for|my|our)$/i.test(raw) && raw.length >= 2) d.title = raw.toLowerCase();
   }
-  const open = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\b/i.exec(t) ?? /\bx\s?(\d{1,2})\b/i.exec(t);
-  if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && openingsInRange(n)) d.openings = n; }
+  const open = LABELED_OPENING_COUNT.exec(t) ?? MULTIPLIED_OPENING_COUNT.exec(t);
+  if (open?.[1]) d.openings = readOpeningCount(open[1]);
   const pay = payRange(t);
   if (pay) [d.payMin, d.payMax] = pay;
   // A refused work mode ("not remote") is removed before the mode is read.
@@ -117,8 +133,15 @@ export function parsePosting(body: string): PostingDraft {
   else if (/\bhybrid\b/i.test(modeText)) d.mode = "hybrid";
   else if (/\b(on-?site|in[- ]office|in person)\b/i.test(modeText)) d.mode = "onsite";
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
-  const area = AREAS.find(a => lower.includes(` ${a} `));
-  if (area) d.area = slug(area);
+  const site = POSTING_SITE.exec(modeText);
+  if (site) {
+    const area = exactPostingArea((site[1] ?? site[2]!).split(SITE_CLAUSE_END, 1)[0]!);
+    // Keep an unreadable correction distinct from an omitted field when merging a stored draft.
+    d.area = area ? slug(area) : "";
+  } else {
+    const area = AREAS.find(a => lower.includes(` ${a} `));
+    if (area) d.area = slug(area);
+  }
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
   const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice[- ]to[- ]haves?\b|$)/i.exec(t);
   if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter(x => x.skill);
@@ -138,9 +161,12 @@ export function parsePosting(body: string): PostingDraft {
   return d;
 }
 
-/** The fields still missing before a draft can be read back (a title and a pay range). */
-export function missing(d: PostingDraft): ("title" | "pay")[] {
-  return missingPostingFields(!!d.close, !!d.title, d.payMin !== undefined && d.payMax !== undefined) as ("title" | "pay")[];
+/** The fields still missing before a draft can be read back. */
+export function missing(d: PostingDraft): NonNullable<PostingDraft["asked"]>[] {
+  const fields = missingPostingFields(!!d.close, !!d.title, d.payMin !== undefined && d.payMax !== undefined) as ("title" | "pay")[];
+  if (openingCountNeedsCorrection(!!d.close, d.openings !== undefined, d.openings ?? 0)) return [...fields, "openings"];
+  if (postingNeedsArea(!!d.close, (d.mode ?? "onsite") === "remote", AREA_IDS.has(d.area ?? ""))) return [...fields, "area"];
+  return fields;
 }
 
 const human = (s: string) => s.replace(/_/g, " ");
@@ -158,6 +184,8 @@ export const POSTING_COPY = {
   dropped: "OK, I didn't post anything.",
   askTitle: "What's the job title?",
   askPay: "What's the pay range for the role (for example $90k-$120k)? We only show jobs with a posted pay range.",
+  askArea: "Which neighborhood is the job in?",
+  askOpenings: `How many openings are there? Give a whole number from 1 to ${MAX_OPENINGS}.`,
   saved: (title: string) => `Posted: ${title}. An automatic check approves every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
@@ -295,11 +323,19 @@ export function readPostingText(body: string, ctx: {
     // A direct answer to "What's the job title?" ("Data analyst"). Any other text goes on to normal handling.
     const title = parsePosting(`title: ${t}`).title;
     if (title) read.title = title;
+  } else if (pending?.asked === "openings" && OPENING_COUNT_ANSWER.test(t.trim())) {
+    read.openings = readOpeningCount(t.trim());
+  }
+  if (pending?.asked === "area" && !read.mode && Object.keys(read).every(field => field === "area")) {
+    const area = exactPostingArea(t.replace(/^(?:in|at|near)\s+/i, "").replace(/[.!]+$/, ""));
+    if (area) read.area = slug(area);
+    else if (read.area !== undefined || parseReply(t).answer === "yes" || looksLikeTitle(t)) read.area = "";
   }
   if (!newPost && !update && !pending?.chooseUpdate && !Object.keys(read).length) return undefined;
   const { asked: _asked, ...merged }: PostingDraft = { ...base, ...read };
-  const need = missing(merged);
-  if (need.length) return { draft: { ...merged, asked: need[0]! }, text: need[0] === "title" ? POSTING_COPY.askTitle : POSTING_COPY.askPay, ready: false };
+  const [need] = missing(merged);
+  const questions = { title: POSTING_COPY.askTitle, pay: POSTING_COPY.askPay, openings: POSTING_COPY.askOpenings, area: POSTING_COPY.askArea };
+  if (need) return { draft: { ...merged, asked: need }, text: questions[need], ready: false };
   return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
 }
 
@@ -310,9 +346,12 @@ export function postingFromDraft(d: PostingDraft, managerId: MemberId, now: numb
   const title = d.title ?? prev?.title;
   const payMin = d.payMin ?? prev?.payMin, payMax = d.payMax ?? prev?.payMax;
   if (!title || payMin === undefined || payMax === undefined) return undefined;
+  const mode = d.mode ?? prev?.mode ?? "onsite";
+  const area = d.area ?? prev?.area;
+  if (postingNeedsArea(false, mode === "remote", AREA_IDS.has(area ?? ""))) return undefined;
   return {
     id: d.id, managerId, title, family: d.family ?? prev?.family ?? slug(title), ...(d.seniority ?? prev?.seniority ? { seniority: d.seniority ?? prev?.seniority } : {}),
-    openings: d.openings ?? prev?.openings ?? 1, payMin, payMax, mode: d.mode ?? prev?.mode ?? "onsite", ...(d.area ?? prev?.area ? { area: d.area ?? prev?.area } : {}),
+    openings: d.openings ?? prev?.openings ?? 1, payMin, payMax, mode, ...(area ? { area } : {}),
     must: d.must ?? prev?.must ?? [], nice: d.nice ?? prev?.nice ?? [], ...((d.sponsors ?? prev?.sponsors) !== undefined ? { sponsors: (d.sponsors ?? prev?.sponsors)! } : {}),
     status: "active", createdAt: prev?.createdAt ?? now, updatedAt: now,
   };
@@ -364,13 +403,14 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
   const tags = facets.filter(f => f.tags.includes(`${T.posting}${intent.id}`)).flatMap(f => f.tags);
   const one = (prefix: string) => tags.find(t => t.startsWith(prefix))?.slice(prefix.length);
   const [payMin, payMax] = (one(T.pay) ?? "0-0").split("-").map(Number) as [number, number];
+  const openings = Number(one(T.openings)?.trim() || "1");
   const seniority = one(T.seniority);
   const updatedAt = Number(one(T.postingUpdatedAt));
   const closedReason = one(T.postingClosedReason);
   return {
     id: intent.id, managerId: intent.memberId, title: intent.objective.replace(/^Hire:\s*/i, ""), family: one(T.family) ?? slug(intent.objective),
     ...(seniority ? { seniority: Number(seniority) } : {}),
-    openings: Number(one(T.openings) ?? 1) || 1, payMin, payMax, mode: (one(T.mode) ?? "onsite") as PeonMode, ...(one(T.area) ? { area: one(T.area)! } : {}),
+    openings: Number.isFinite(openings) ? openings : 1, payMin, payMax, mode: (one(T.mode) ?? "onsite") as PeonMode, ...(one(T.area) ? { area: one(T.area)! } : {}),
     must: tags.filter(t => t.startsWith(T.must)).map(t => { const [s, l] = t.slice(T.must.length).split(":"); return { skill: s!, level: Number(l ?? 2) }; }),
     nice: tags.filter(t => t.startsWith(T.nice)).map(t => t.slice(T.nice.length)),
     ...(one(T.sponsors) ? { sponsors: one(T.sponsors) === "yes" } : {}),

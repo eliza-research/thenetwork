@@ -24,9 +24,12 @@ import {
   applyCorrection, emptyOnboarding, extractSlopProfile, extractSlopProfileLLM, hardComplete, hasField, HARD_FIELDS, llmSlopReader, markAsked, nextQuestion, readBack, readBackFacts, seeksAnswerOf, transAnswerOf, transStatusOf,
   type OnboardField, type SlopOnboarding, type SlopReader,
 } from "../../packages/engine/src/packs/slop/index.ts";
+import { SLOP_READBACK, slopOnboarding } from "../../packages/network/service/packs.ts";
+import { agesStated } from "../../packages/network/src/classify.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { zipInfo } from "../../packages/sim/src/apps/slop/geo.ts";
-import { Block } from "./gate.ts";
+import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dirname}/../../evals/slop-onboarding`;
 const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
@@ -495,7 +498,140 @@ async function llmMergeGate(b: Block): Promise<void> {
   });
 }
 
+export async function currentAgeEvidenceGate(b: Block): Promise<void> {
+  await b.run("onboarding keeps the lowest current age through birthday, punctuation and read-back", async () => {
+    const texts = [
+      { text: "I'm 18 in two weeks", age: 17 },
+      { text: "I'm 18 y.o. in two weeks", age: 17 },
+      { text: "I'm eighteen next month", age: 17 },
+      { text: "I'm 18, in two weeks", age: 17 },
+      { text: "I'm 18 (on Friday)", age: 17 },
+      { text: "I'm still 17", age: 17, direct: 17 },
+      { text: "I'm currently seventeen", age: 17, direct: 17 },
+      { text: "I'm now 16", age: 16, direct: 16 },
+      { text: "I'm 15 y.o.", age: 15, direct: 15 },
+      { text: "I'm 15 y.o. I live in NYC", age: 15, direct: 15 },
+      { text: "I'm 15 y.o., next month", age: 14 },
+      { text: "I'm 18 y.o. in two years" },
+      { text: "I'm 15 y.o. in 2 years" },
+      { text: "I'm 18 y.o., in three years" },
+      { text: "15 y.o., in two years" },
+      { text: "My age is 12 y.o., in two years" },
+      { text: "I'm 18 in high school", age: 18, direct: 18 },
+      { text: "I'm still 5 minutes away" },
+      { text: "I'm currently 18 in the queue" },
+      { text: "I'm 18 in two weeks pregnant" },
+      { text: "I'm 18 for two weeks" },
+      { text: "I'm 18 years sober" },
+      { text: "She said, ‘I'm 18 in two weeks’" },
+      { text: "She said, ‘I'm still 17’" },
+      { text: "She wrote, ‘Hey. I'm 15 y.o.’" },
+      { text: "My child is 15 y.o." },
+    ];
+    for (const { text, age, direct } of texts) {
+      const world = new Mini([{ id: "member", name: "Tara Example", age: 30 }]);
+      await world.onboard("member");
+      await world.say("member", text);
+      const profile = extractSlopProfile([text]);
+      const member = world.net.memberList().find(m => m.id === "member")!;
+      const minor = age !== undefined && age < 18;
+      expect({ text, network: member.statedAge, slop: profile.age?.value, direct: agesStated(text, { directOnly: true }).age,
+        networkMinor: member.minor, slopMinor: profile.minor }).toEqual({ text, network: age, slop: age, direct, networkMinor: minor, slopMinor: minor });
+      if (profile.age) {
+        const { start, end, text: quote } = profile.age.evidence;
+        expect(quote).toBe(text.slice(start, end));
+      }
+    }
+    const world = new Mini([{ id: "member", name: "Tara Example", age: 30 }]);
+    await world.onboard("member");
+    const starting = extractSlopProfile(["I'm 30, a woman looking for men 28-38 within 5 mi of 11211"]);
+    expect(starting.age?.value).toBe(30);
+    expect(Boolean(readBack(starting))).toBe(true);
+    let profile = starting;
+    for (const [text, floor] of [["I'm 18 in two weeks", 17], ["Actually I'm 20", 17], ["I'm 15 y.o.", 15], ["I'm 30 now", 15]] as const) {
+      profile = applyCorrection(profile, text);
+      await world.say("member", text);
+      expect(profile.age?.value).toBe(floor);
+      expect(world.net.memberList().find(m => m.id === "member")?.statedAge).toBe(profile.age?.value);
+      expect([profile.matchable, readBack(profile), nextQuestion(profile)]).toEqual([false, undefined, undefined]);
+    }
+  });
+}
+
 export async function onboardBlock(b: Block, o: { quick: boolean; llm?: boolean }): Promise<void> {
+  await currentAgeEvidenceGate(b);
+  await b.run("Slop onboarding never saves the suffix of a decimal distance", () => {
+    const cases = [
+      [".5 miles", undefined],
+      ["0.5 miles", undefined],
+      ["half a mile", undefined],
+      ["Please stay within .25 miles of 11211", undefined],
+      ["Within 201 miles", undefined],
+      ["Within 1.5 miles of 11211", 2],
+      ["I ran .5 miles today. Within 1.5 miles is fine.", 2],
+    ] as const;
+    for (const [text, miles] of cases) {
+      const { state, tags } = slopOnboarding.read(undefined, text, ["slop_distance"], { now: 0, age: 30 });
+      const profile = state as SlopOnboarding;
+      const radiusTags = tags.filter(t => t.tag.startsWith("slop:scope:") || t.tag.startsWith("slop:max_miles:")).map(t => t.tag);
+      expect({ text, distance: profile.distance?.value, radiusTags }).toEqual({ text,
+        distance: miles === undefined ? undefined : { mode: "radius", miles },
+        radiusTags: miles === undefined ? [] : [`slop:scope:radius:${miles}`, `slop:max_miles:${miles}`],
+      });
+    }
+    const ctx = { now: 0, age: 30 };
+    const saved = slopOnboarding.read(undefined, "within 1.5 miles", ["slop_distance"], ctx).state;
+    const corrected = slopOnboarding.read(saved, "actually, within .5 miles", [SLOP_READBACK], ctx).state as SlopOnboarding;
+    expect(corrected.distance?.value).toEqual({ mode: "radius", miles: 2 });
+  });
+
+  // spec/memberAge.md, "A half age needs age wording to confirm an under-13 refusal".
+  await b.run("current half ages are distinct from measures, milestones, and sports records", () => {
+    const rows = [
+      { text: "I'm 12.5 years old", age: 12, explicit: true },
+      { text: "I'm 11 1/2 years old", age: 11, explicit: true },
+      { text: "I'm twelve and one half years old", age: 12, explicit: true },
+      { text: "I'm 12.5 y.o. I live in NYC.", age: 12, explicit: true },
+      { text: "I'm 18.5 years old", age: 18, explicit: true },
+      { text: "I'm 12.5", age: 12 },
+      { text: "I'm 11 1/2", age: 11 },
+      { text: "I'm 5 and a half", age: 5 },
+      { text: "I'm 12 and I like games", age: 12 },
+      { text: "I'm 38 and my team won", age: 38 },
+      { text: "I just turned 12 and I am undefeated", age: 12 },
+      { text: "I'm 12 and a half and I am undefeated", age: 12 },
+      { text: "I am 12 and my team won", age: 12 },
+      { text: "I am 12 and my team record is 12-0" },
+      { text: "I'm 12.5 minutes away" },
+      { text: "I'm 3.5 steps away" },
+      { text: "I'm 10.5 inches tall" },
+      { text: "I'm ten and a half weeks out" },
+      { text: "I'm 5 and a half months sober" },
+      { text: "I'm 3 and I am undefeated" },
+      { text: "I'm 5 and we won" },
+      { text: "I'm 5 and also my team won" },
+      { text: "I'm 3 and 0 this season" },
+      { text: "I'm 12.5 y.o. in two years" },
+      { text: "I'm 12 and a half y.o., next month" },
+      { text: "My child is 12.5 years old" },
+      { text: 'She said "I am 12.5 years old"' },
+    ];
+    for (const { text, age, explicit } of rows) {
+      const network = agesStated(text);
+      const direct = agesStated(text, { directOnly: true });
+      const slop = extractSlopProfile([text]);
+      const declaredMinor = age !== undefined && age < 18;
+      const underAge = age !== undefined && age < 13;
+      expect({
+        text, network: network.age, explicit: network.explicit, direct: direct.age,
+        slop: slop.age?.value, minor: slop.minor, declined: slop.declined,
+      }).toEqual({
+        text, network: age, explicit: explicit ? age : undefined,
+        direct: underAge && !explicit ? undefined : age,
+        slop: age, minor: declaredMinor, declined: underAge && explicit === true,
+      });
+    }
+  });
   await corpusGates(b, async (msgs, prior) => extractSlopProfile(msgs, prior));
   await llmMergeGate(b);
   await simGates(b, o, async (text, asked, p, market) => extractSlopProfile([{ text, asked }], p, { market: market as "nyc" }));

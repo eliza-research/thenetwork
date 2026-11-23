@@ -8,19 +8,25 @@ A member needs a plan to book only after enough eligible people accept.
 
 Check quorum, group size, deadlines, alternatives, and contact eligibility. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
+The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. Its weekly availability input contains windows after named day exclusions have been applied. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
 
 The [Friends partner time-choice spec](../friendsPlanTimeChoice.md) covers reviewed options and exact shared consent for weekly one-to-one plans. This model covers group quorum at a single fixed time.
+
+The [Observatory roster rules](../observatoryRoster.md) consume the recorded participant and alternate lists when this flow backfills or closes a proposal.
 
 The [candidate pool model](candidate_pool.md) covers the formation of a compatible circle and its alternates. This model starts with the resulting roster and follows changes to its eligibility through review, contact and booking.
 
 A group backfill skips an alternate who would change the probe words that a member already heard ([probe dispatch](../probeDispatch.md), "A group plan backfill keeps the words that each member heard"). The model does not render probe words: its bench takes the next adult alternate that the shell admits.
 
-The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
+The [original booking notice rule](../meetingReschedule.md#a-named-booking-notice-still-needs-every-recorded-seat) governs exact accepted seats in a staged notice and re-creation after quiet hours. `planReveal` abstracts the quiet-hours interval by disclosing the current accepted roster when it sends. The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
 
 A friends.help group plan can seat members aged 13 to 17 when every pair with a minor passes the teen pair rule, the roster has at most 6 people, and the activity and place are all-ages ([friend introductions with a minor](../friendIntroAge.md) `groupAgeAllowed`, `teenRosterSizeAllowed`, `teenPlaceAllowed`). The model chooses at the start whether the plan is a teen plan (`teenPlan`). In a teen plan every invited member and the alternate pass the rule at the start, and the set `minors` stands for the members who fail the rule now (19 on the meeting end day, a lost readiness, a report or a bar, a stop of teen introductions): the seat check, the close of the whole plan and the guards are then the same as the minors policy, so nobody is dropped (Q22). A teen plan gets no fallback: the smaller group, the partner plan, the solo event and the next-week offer are refused, and the plan closes when quorum fails (`planFallbackF`; network.ts `offerGroupReplacement` and the fallback return with no offer for a teen item). A late join from the plan's own reviewed alternate stays, with the rule run again. In a teen plan `noMinorContact` and `minorEndsBooking` are the teen plan rule, and `teenNoFallback` states the rest. Outside this model: the roster size (`teenRosterSizeAllowed`, checked when the item is submitted: the [opportunity](opportunity.md) run `teenGroupTooBigTest` (t7, 7 people) is refused), the place rule (`teenPlanPlace`, checked when the plan is submitted, before this model starts: `planCatalogPlace` refuses a venue or an activity that is not all-ages; the [opportunity](opportunity.md) model has the refusal, and [plan_crew](plan_crew.md) checks it for crew sessions), and organizing reach (`withReach` returns a plan with a minor unchanged; `teen-friend-intro.integration.test.ts`). While teen introductions are stopped, a teen plan has every minor in `minors`, so `noMinorContact` is the minors policy. Changed (owner decision 2026-11-22, answer A4): a friends.help group plan may seat a minor under the rule, because the owner chose "Also small teen groups".
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
+
+The copy check uses the plan dispatch rule for public wording. A venue word
+that coincides with a participant's name is allowed in the public frame.
+An identifying hint or menu label still makes its frame unusable.
 
 ```quint
 // -*- mode: Bluespec; -*-

@@ -504,11 +504,13 @@ module photos_rating {
     s.caPc == "idle" and s.cmdSaga == "idle" and not(s.leaveSaga != "idle" and s.leaveSrc == "text") and not(s.delSaga != "idle" and s.delSrc == "text")
   /**
    * A text with an attachment. path "turn": the Eliza gateway turn carries no attachment, so photosIn never
-   * runs (SD-097). path "webhook": PhotoIntake.photosIn: a live member, mayTake, the stored consent, then upload.
+   * runs (SD-097). path "webhook": PhotoIntake.photosIn on the shared and Slop lines: a live member, mayTake, the
+   * stored consent, then upload. path "otherAppWebhook": another app's dedicated line leaves Slop state as it was.
    */
   action textPhoto(u: int, path: str): bool = all {
     st.upl.get(u) == "idle", not(st.used.contains(u)), senderFree(st),
     if (path == "turn") st' = { ...st, turnPhotoDropped: true, last: "turnPhotoDropped" }
+    else if (path == "otherAppWebhook") st' = { ...st, last: "otherAppPhotoIgnored" }
     else if (not(LIVE.contains(st.membership)) or not(mayTakeNow(st))) st' = { ...st, last: "textPhotoRefused" }
     else if (not(st.profileConsent))
       st' = { ...st, pending: true, pendingAt: st.now, last: "textPhotoAsk" }
@@ -651,7 +653,7 @@ module photos_rating {
     nondet u = UPLOADS.oneOf()
     nondet h = HEADERS.oneOf()
     nondet e = ERASERS.oneOf()
-    nondet path = Set("turn", "webhook").oneOf()
+    nondet path = Set("turn", "webhook", "otherAppWebhook").oneOf()
     nondet box = Set(true, false).oneOf()
     nondet score = Set(true, false).oneOf()
     nondet focus = Set(true, false).oneOf()
@@ -1038,5 +1040,12 @@ module photos_rating {
 
   run sd097TurnPhotoDroppedTest =
     init.then(textPhoto(1, "turn")).expect(st.turnPhotoDropped and not(st.pending) and st.rows == Set())
+
+  run otherAppPhotoIgnoredTest =
+    init.then(textPhoto(1, "otherAppWebhook"))
+      .expect(st.last == "otherAppPhotoIgnored" and not(st.pending))
+      .then(textPhoto(1, "webhook")).then(consentYesRead).then(consentYesCheck).then(consentYesWrite)
+      .then(textPhoto(2, "otherAppWebhook"))
+      .expect(st.profileConsent and not(st.textStored) and st.used == Set() and st.rows == Set())
 }
 ```

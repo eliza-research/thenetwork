@@ -1,14 +1,14 @@
 // GENERATED from spec/textEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, minMemberAge as memberAge_minMemberAge, minLooseHeightAge as memberAge_minLooseHeightAge, minLooseTeamAge as memberAge_minLooseTeamAge, maxAge as memberAge_maxAge, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, adultAge as memberAge_adultAge, ageInRange as memberAge_ageInRange, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lowerAge as memberAge_lowerAge, ageOnDay as memberAge_ageOnDay, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, laterBirthKey as memberAge_laterBirthKey, readingsConflict as memberAge_readingsConflict, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, joinableAge as memberAge_joinableAge, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, birthKeyUsable as memberAge_birthKeyUsable, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, matchableAge as memberAge_matchableAge, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, mergeReading as memberAge_mergeReading, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, confirmedUnderage as memberAge_confirmedUnderage, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, effectiveAge as memberAge_effectiveAge, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
+import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, minMemberAge as memberAge_minMemberAge, minLooseHeightAge as memberAge_minLooseHeightAge, maxAge as memberAge_maxAge, minLooseTeamAge as memberAge_minLooseTeamAge, adultAge as memberAge_adultAge, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, ownAgeEvidenceAllowed as memberAge_ownAgeEvidenceAllowed, ownYouthCueAllowed as memberAge_ownYouthCueAllowed, ageInRange as memberAge_ageInRange, precedingBirthdayAge as memberAge_precedingBirthdayAge, ageQualifierFollows as memberAge_ageQualifierFollows, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lowerAge as memberAge_lowerAge, ageOnDay as memberAge_ageOnDay, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, laterBirthKey as memberAge_laterBirthKey, readingsConflict as memberAge_readingsConflict, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawQuotedWordsDoNotSetSenderAge as memberAge_lawQuotedWordsDoNotSetSenderAge, lawAnotherSpeakersYouthCueCannotRestrictSender as memberAge_lawAnotherSpeakersYouthCueCannotRestrictSender, lawDistantBirthdayQualifiesTheAge as memberAge_lawDistantBirthdayQualifiesTheAge, joinableAge as memberAge_joinableAge, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, birthKeyUsable as memberAge_birthKeyUsable, matchableAge as memberAge_matchableAge, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, mergeReading as memberAge_mergeReading, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, confirmedUnderage as memberAge_confirmedUnderage, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, lawBeforeAnEighteenthBirthdayIsNotAdult as memberAge_lawBeforeAnEighteenthBirthdayIsNotAdult, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, effectiveAge as memberAge_effectiveAge, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
 import { type AgeSide as friendIntroAge_AgeSide, teenRosterMaximum as friendIntroAge_teenRosterMaximum, teenFriendMinAge as friendIntroAge_teenFriendMinAge, teenBirthGap as friendIntroAge_teenBirthGap, teenFriendMaxAge as friendIntroAge_teenFriendMaxAge, teenReady as friendIntroAge_teenReady, teenBarOnConflict as friendIntroAge_teenBarOnConflict, teenFriendRole as friendIntroAge_teenFriendRole, teenFriendFormat as friendIntroAge_teenFriendFormat, teenRosterSizeAllowed as friendIntroAge_teenRosterSizeAllowed, teenPlaceAllowed as friendIntroAge_teenPlaceAllowed, allAgesMarkValid as friendIntroAge_allAgesMarkValid, teenActivityOffered as friendIntroAge_teenActivityOffered, relayKindAllowed as friendIntroAge_relayKindAllowed, singlePlayerMember as friendIntroAge_singlePlayerMember, minorSignalOpens as friendIntroAge_minorSignalOpens, friendsVerifyPasses as friendIntroAge_friendsVerifyPasses, birthKeysWithinTwoYears as friendIntroAge_birthKeysWithinTwoYears, rosterHasMinor as friendIntroAge_rosterHasMinor, teenIntroShape as friendIntroAge_teenIntroShape, lawTeenReadyNeedsExactBirthDate as friendIntroAge_lawTeenReadyNeedsExactBirthDate, lawContributorRolesAreNotTeenRoles as friendIntroAge_lawContributorRolesAreNotTeenRoles, lawTeenRosterIsSmall as friendIntroAge_lawTeenRosterIsSmall, lawAdultRosterSizeUnchanged as friendIntroAge_lawAdultRosterSizeUnchanged, lawTeenReadyWithoutStaffStep as friendIntroAge_lawTeenReadyWithoutStaffStep, lawTeenPlaceIsAllAges as friendIntroAge_lawTeenPlaceIsAllAges, lawAdultPlaceUnchanged as friendIntroAge_lawAdultPlaceUnchanged, lawAllAgesNeverABarOrHome as friendIntroAge_lawAllAgesNeverABarOrHome, lawAllAgesOpensAtThirteen as friendIntroAge_lawAllAgesOpensAtThirteen, lawAdultPlansKeepTheirCatalog as friendIntroAge_lawAdultPlansKeepTheirCatalog, lawTeenGroupsGetOnlyAllAges as friendIntroAge_lawTeenGroupsGetOnlyAllAges, lawNoNumberOrPhotoWithAMinor as friendIntroAge_lawNoNumberOrPhotoWithAMinor, lawAdultRelayUnchanged as friendIntroAge_lawAdultRelayUnchanged, lawAdultIsNeverSinglePlayerByAge as friendIntroAge_lawAdultIsNeverSinglePlayerByAge, lawAdultRecordOpensOnEvidence as friendIntroAge_lawAdultRecordOpensOnEvidence, lawAgreeingMinorStatementOpensNothing as friendIntroAge_lawAgreeingMinorStatementOpensNothing, lawAnyDoubtMakesUnready as friendIntroAge_lawAnyDoubtMakesUnready, lawTeenReadyNeedsNoStaffVerify as friendIntroAge_lawTeenReadyNeedsNoStaffVerify, lawUnreadyNeedsStaffVerify as friendIntroAge_lawUnreadyNeedsStaffVerify, teenPartnerAge as friendIntroAge_teenPartnerAge, viaAllowedForRoster as friendIntroAge_viaAllowedForRoster, teenSideFits as friendIntroAge_teenSideFits, lawTeenShapeNeedsFriendshipLane as friendIntroAge_lawTeenShapeNeedsFriendshipLane, lawTeenShapeNeverAnEvent as friendIntroAge_lawTeenShapeNeverAnEvent, lawTeenShapeNeverVia as friendIntroAge_lawTeenShapeNeverVia, teenFriendCandidate as friendIntroAge_teenFriendCandidate, teenPairAllowed as friendIntroAge_teenPairAllowed, lawViaNeverWithAMinor as friendIntroAge_lawViaNeverWithAMinor, lawStoppedMinorIsSinglePlayer as friendIntroAge_lawStoppedMinorIsSinglePlayer, lawUnreadyMinorIsSinglePlayer as friendIntroAge_lawUnreadyMinorIsSinglePlayer, pairAgeAllowed as friendIntroAge_pairAgeAllowed, lawTeenPairWitness as friendIntroAge_lawTeenPairWitness, lawNineteenEdgeRefused as friendIntroAge_lawNineteenEdgeRefused, sidesAllowed as friendIntroAge_sidesAllowed, lawAdultPairUnchanged as friendIntroAge_lawAdultPairUnchanged, lawStoppedIsTheAdultRule as friendIntroAge_lawStoppedIsTheAdultRule, lawMinorPairOnlyInFriendshipLanes as friendIntroAge_lawMinorPairOnlyInFriendshipLanes, lawMinorPartnerIsThirteenToEighteen as friendIntroAge_lawMinorPartnerIsThirteenToEighteen, lawNineteenNeverWithAMinor as friendIntroAge_lawNineteenNeverWithAMinor, lawMinorPairWithinTwoYears as friendIntroAge_lawMinorPairWithinTwoYears, lawMinorPairNeedsReadySides as friendIntroAge_lawMinorPairNeedsReadySides, lawPairAgeSymmetric as friendIntroAge_lawPairAgeSymmetric, sideAllowedWithAll as friendIntroAge_sideAllowedWithAll, groupAgeAllowed as friendIntroAge_groupAgeAllowed, lawGroupNineteenNeverWithAMinor as friendIntroAge_lawGroupNineteenNeverWithAMinor, lawGroupMinorWithinTwoYearsOfEveryone as friendIntroAge_lawGroupMinorWithinTwoYearsOfEveryone, lawGroupWithMinorEverySideFits as friendIntroAge_lawGroupWithMinorEverySideFits, lawGroupWithMinorHoldsOnlyTeenAges as friendIntroAge_lawGroupWithMinorHoldsOnlyTeenAges, lawGroupStoppedAdultsOnly as friendIntroAge_lawGroupStoppedAdultsOnly } from "./friendIntroAge.ts";
 import { type LaneShape as matchLane_LaneShape, type LaneSide as matchLane_LaneSide, type LaneWeights as matchLane_LaneWeights, type MatchLane as matchLane_MatchLane, type LaneLimits as matchLane_LaneLimits, standingCeiling as matchLane_standingCeiling, standingUncertaintyCeiling as matchLane_standingUncertaintyCeiling, teenFriendApp as matchLane_teenFriendApp, teenFriendCategory as matchLane_teenFriendCategory, teenGroupPlanApp as matchLane_teenGroupPlanApp, teenGenerator as matchLane_teenGenerator, laneWeights as matchLane_laneWeights, laneOffered as matchLane_laneOffered, lawEveryAppHasALane as matchLane_lawEveryAppHasALane, laneShape as matchLane_laneShape, teenFriendLane as matchLane_teenFriendLane, lawNtwrkTeenCategoryIsSocial as matchLane_lawNtwrkTeenCategoryIsSocial, lawTeenPlansOnlyOnFriends as matchLane_lawTeenPlansOnlyOnFriends, lawTeenGeneratorOnlyInFriendApps as matchLane_lawTeenGeneratorOnlyInFriendApps, lawNtwrkHasNoTeenPlans as matchLane_lawNtwrkHasNoTeenPlans, lawRepeatsAndContributorsNeverTeen as matchLane_lawRepeatsAndContributorsNeverTeen, lawTeenLanesOnlyInFriendApps as matchLane_lawTeenLanesOnlyInFriendApps, lawNoTeenOnSlopOrPeon as matchLane_lawNoTeenOnSlopOrPeon, lawTeenFriendLaneSameOnBothApps as matchLane_lawTeenFriendLaneSameOnBothApps, lawTeenFriendLaneIsOffered as matchLane_lawTeenFriendLaneIsOffered, lawNoTeenDateOrWork as matchLane_lawNoTeenDateOrWork, laneSidesCompatible as matchLane_laneSidesCompatible, laneLimits as matchLane_laneLimits, lawLaneWeightsWellFormed as matchLane_lawLaneWeightsWellFormed, lawLaneSidesSymmetric as matchLane_lawLaneSidesSymmetric, laneOffset as matchLane_laneOffset, lawLaneLimitsWellFormed as matchLane_lawLaneLimitsWellFormed, lawLaneOffsetAntisymmetric as matchLane_lawLaneOffsetAntisymmetric, lanePairValue as matchLane_lanePairValue, lawLanePairValueSymmetric as matchLane_lawLanePairValueSymmetric } from "./matchLane.ts";
 import { type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, type UtilityTerm as pairValue_UtilityTerm } from "./pairValue.ts";
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "KeywordRoute" | "SafetyRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
+export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "LookingForRoute" | "KeywordRoute" | "SafetyRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; appKeyword: boolean }
+export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; pendingEnrollmentAnswer: boolean; appKeyword: boolean }
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export interface TextRoute { phase: RoutePhase }
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
@@ -38,6 +38,8 @@ export type Event =
 
 /** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
 export const preparedPeonTextHeader: string = "join peon";
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
+export const openRouteOpportunityStates: string[] = ["PROPOSED", "SCHEDULED", "COMPLETED"];
 /** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 export const completedAnswer: JoinAnswerFacts = { hasAge: true, hasName: true, invalidHome: false, floorRefused: false };
 /** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
@@ -54,28 +56,35 @@ export function inv(current: TextJoin): boolean {
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
 export function checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute {
-  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp ? ({ phase: "ProfileRoute" } as TextRoute) : (explicitFacts.surveyApp ? ({ phase: "SurveyRoute" } as TextRoute) : (explicitFacts.appKeyword ? ({ phase: "KeywordRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)))));
+  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp ? ({ phase: "ProfileRoute" } as TextRoute) : (explicitFacts.surveyApp ? ({ phase: "SurveyRoute" } as TextRoute) : (explicitFacts.pendingEnrollmentAnswer ? ({ phase: "LookingForRoute" } as TextRoute) : (explicitFacts.appKeyword ? ({ phase: "KeywordRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute))))));
 }
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
-export function lawDedicatedLineTakesPrecedence(profileApp: boolean, surveyApp: boolean, appKeyword: boolean): boolean {
+export function lawDedicatedLineTakesPrecedence(profileApp: boolean, surveyApp: boolean, pendingEnrollmentAnswer: boolean, appKeyword: boolean): boolean {
   //@ ensures \result === true
-  return checkExplicitRoute(initialRoute, ({ dedicated: true, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "DedicatedRoute";
+  return checkExplicitRoute(initialRoute, ({ dedicated: true, profileApp: profileApp, surveyApp: surveyApp, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword } as ExplicitFacts)).phase === "DedicatedRoute";
 }
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
-export function lawProfileReadTakesPrecedence(surveyApp: boolean, appKeyword: boolean): boolean {
+export function lawProfileReadTakesPrecedence(surveyApp: boolean, pendingEnrollmentAnswer: boolean, appKeyword: boolean): boolean {
   //@ ensures \result === true
-  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "ProfileRoute";
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: true, surveyApp: surveyApp, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword } as ExplicitFacts)).phase === "ProfileRoute";
 }
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
-export function lawSurveyReplyTakesPrecedence(appKeyword: boolean): boolean {
+export function lawSurveyReplyTakesPrecedence(pendingEnrollmentAnswer: boolean, appKeyword: boolean): boolean {
   //@ ensures \result === true
-  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword } as ExplicitFacts)).phase === "SurveyRoute";
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: true, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword } as ExplicitFacts)).phase === "SurveyRoute";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawPendingEnrollmentAnswerTakesPrecedence(appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: false, pendingEnrollmentAnswer: true, appKeyword: appKeyword } as ExplicitFacts)).phase === "LookingForRoute";
 }
 
 /** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
@@ -89,6 +98,13 @@ export function preparedPeonTextNamesApp(header: string, profilePresent: boolean
 export function lawPreparedPeonTextRequiresExplicitHeader(header: string, profilePresent: boolean): boolean {
   //@ ensures \result === true
   return preparedPeonTextNamesApp(header, profilePresent) === (header === preparedPeonTextHeader && profilePresent);
+}
+
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
+//@ pure
+export function lawClosedOpportunityCannotSupplyRoute(opportunityState: string): boolean {
+  //@ ensures \result === true
+  return !(opportunityState === "CANCELLED" || opportunityState === "SKIPPED") || !openRouteOpportunityStates.includes(opportunityState);
 }
 
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
@@ -118,9 +134,9 @@ export function lawSafetyClaimRoutesFirst(hasPendingJoin: boolean, alreadyInPend
 
 /** Story: Text the Network to join an app / A safety claim routes before every other fallback (spec/textEnrollment.md) */
 //@ pure
-export function lawExplicitRouteKeepsSafetyClaimOut(dedicated: boolean, profileApp: boolean, surveyApp: boolean, appKeyword: boolean): boolean {
+export function lawExplicitRouteKeepsSafetyClaimOut(dedicated: boolean, profileApp: boolean, surveyApp: boolean, pendingEnrollmentAnswer: boolean, appKeyword: boolean): boolean {
   //@ ensures \result === true
-  return !(dedicated || profileApp || surveyApp || appKeyword) || checkFallbackRoute(checkExplicitRoute(initialRoute, ({ dedicated: dedicated, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)), ({ safetyClaim: true, hasPendingJoin: false, alreadyInPendingApp: false, hasMembership: true, answerHasAge: false, hasOpenItem: false } as FallbackFacts)).phase !== "SafetyRoute";
+  return !(dedicated || profileApp || surveyApp || pendingEnrollmentAnswer || appKeyword) || checkFallbackRoute(checkExplicitRoute(initialRoute, ({ dedicated: dedicated, profileApp: profileApp, surveyApp: surveyApp, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword } as ExplicitFacts)), ({ safetyClaim: true, hasPendingJoin: false, alreadyInPendingApp: false, hasMembership: true, answerHasAge: false, hasOpenItem: false } as FallbackFacts)).phase !== "SafetyRoute";
 }
 
 /** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
@@ -165,6 +181,12 @@ export function alwaysInviteRefusalKeepsStatedAge(joining: TextJoin): boolean {
 //@ pure
 export function sometimesInviteRefusalRecordsAge(joining: TextJoin): boolean {
   return joining.phase === "InviteRequired" && joining.ageRecorded;
+}
+
+/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
+//@ pure
+export function sometimesDeclinesRecordedFloor(joining: TextJoin): boolean {
+  return joining.phase === "RefuseAge" && joining.floorRefused && !joining.hasAge;
 }
 
 /** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
@@ -229,12 +251,6 @@ export function sometimesRecordsStatedAge(joining: TextJoin): boolean {
 
 /** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 //@ pure
-export function sometimesDeclinesRecordedFloor(joining: TextJoin): boolean {
-  return joining.phase === "RefuseAge" && joining.floorRefused && !joining.hasAge;
-}
-
-/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
-//@ pure
 export function alwaysStatedAgeRecordedFirst(joining: TextJoin): boolean {
   return !(joining.hasAge && joinAnswerSettled(joining.phase)) || joining.ageRecorded;
 }
@@ -249,13 +265,6 @@ export function alwaysRefusedFloorOnlyDeclines(joining: TextJoin): boolean {
 //@ pure
 export function textJoinKeepsMemberId(membership: JoinMembership): boolean {
   return membership === "InvitedMembership" || membership === "LiveMembership";
-}
-
-/** Story: Text the Network to join an app / A text join keeps the member id of a membership that is not removed (spec/textEnrollment.md) */
-//@ pure
-export function lawInvitedMembershipKeepsItsMemberId(membership: JoinMembership): boolean {
-  //@ ensures \result === true
-  return !(membership === "InvitedMembership") || textJoinKeepsMemberId(membership);
 }
 
 /** Story: Text the Network to join an app / A text join keeps the member id of a membership that is not removed (spec/textEnrollment.md) */
@@ -277,6 +286,13 @@ export function lawRemovedMembershipGetsNewMemberId(membership: JoinMembership):
 export function lawLiveMembershipKeepsItsMemberId(membership: JoinMembership): boolean {
   //@ ensures \result === true
   return !(membership === "LiveMembership") || textJoinKeepsMemberId(membership);
+}
+
+/** Story: Text the Network to join an app / A text join keeps the member id of a membership that is not removed (spec/textEnrollment.md) */
+//@ pure
+export function lawInvitedMembershipKeepsItsMemberId(membership: JoinMembership): boolean {
+  //@ ensures \result === true
+  return !(membership === "InvitedMembership") || textJoinKeepsMemberId(membership);
 }
 
 /** Story: Text the Network to join an app / A recorded-age decline without a stated age is sent at most once a day (spec/textEnrollment.md) */
@@ -381,8 +397,21 @@ export function otherAppAllowed(appName: string, adult: boolean): boolean {
 
 /** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
+export function bindTextJoinMember(sameRoutedApp: boolean, samePerson: boolean): boolean {
+  return sameRoutedApp && samePerson;
+}
+
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
+//@ pure
 export function otherAppEnrollment(existingMember: boolean, ageEligible: boolean): OtherAppOutcome {
   return existingMember ? "KeepOtherApp" : (ageEligible ? "CreateOtherApp" : "SkipOtherApp");
+}
+
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
+//@ pure
+export function lawAnotherAppCannotRebindTextJoin(samePerson: boolean): boolean {
+  //@ ensures \result === true
+  return !bindTextJoinMember(false, samePerson);
 }
 
 /** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */

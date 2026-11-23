@@ -31,6 +31,8 @@ export interface SimMeta {
     /** "Want to make this a weekly thing?" after a plan (SimMeta.crew). */
     | "crew_offer";
   proposalId?: string;
+  /** The delivered prompt for an inbound reply in a simulation log. */
+  inReplyTo?: string;
   participants?: MemberId[];
   /** Counts toward the interruption budget / two-unanswered rule. */
   proactive?: boolean;
@@ -74,6 +76,8 @@ export interface SimMeta {
    * only with PolicyOptions.timeAware.
    */
   booked?: { proposalId: string; at: number; optOutHours: number };
+  /** The new start and revision announced by a committed booking update. */
+  bookingUpdate?: { at: number; revision: number };
   /**
    * Outbound only, on a "plan_probe" (and optionally on the plan's "feedback_request"). The plan the
    * probe describes: activity, time window, size, area, and numbered options ("Reply 1, 2 or both").

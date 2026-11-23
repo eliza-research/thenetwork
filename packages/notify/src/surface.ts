@@ -35,7 +35,7 @@ export interface SurfacePrefs {
 export type Delivery =
   | { mode: "thread"; reason: string }
   | { mode: "deeplink"; assistant: Assistant; reason: string }
-  | { mode: "button_page"; assistants: Assistant[]; reason: string };
+  | { mode: "button_page"; assistants: [Assistant, ...Assistant[]]; reason: string };
 
 export const RECENT_MS = surfaceRecentMs;
 export const MAX_IGNORED_STREAK = maxIgnoredStreak;

@@ -9,6 +9,7 @@ import {
 } from "../../platform/src/photo-relay.ts";
 import type { PhotoService } from "../../platform/src/photos.ts";
 import type { PhotoHoldingsView } from "../../mcp/src/hooks.ts";
+import { parseRelayRequest } from "../../engine/src/relay.ts";
 import { localDay, readPhotoMessage, type PhotoReading, type PhotoSlot, type ReaderDraft, type ReaderThread } from "./photoReference.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
@@ -220,7 +221,7 @@ export class PhotoRelayFlow {
     }
 
     const spoken = await this.answerReading(who, scene);
-    if (!spoken) return false;
+    if (!spoken || (reading.kind === "take_back" && parseRelayRequest(text).kind === "contact_share")) return false;
     await say(await this.speak(who, spoken, prompt));
     return true;
   }

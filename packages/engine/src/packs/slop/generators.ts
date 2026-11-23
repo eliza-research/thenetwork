@@ -20,7 +20,7 @@ import { cellMiles, cellOfZip, ZIPS, type Cell } from "./zips.ts";
 export const SLOP_GENERATOR = "slop_reciprocal";
 
 const DATING: MemberCheck = { category: SLOP_LANE, role: "peer", format: "one_to_one", timeSensitive: false };
-const profilesOf = (w: World) => slopProfiles(w.input, w.canonical);
+const profilesOf = (w: World) => slopProfiles(w.input);
 
 export function firstOf(a: SlopProfile, b: SlopProfile, now: number): [SlopProfile, SlopProfile] {
   const fresh = (p: SlopProfile) => (p.history.lastAskAt !== undefined && now - p.history.lastAskAt < 7 * DAY ? p.history.lastAskAt : -Infinity);

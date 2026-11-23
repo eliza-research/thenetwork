@@ -78,6 +78,26 @@ export function lawExpiredActiveRowStopsSuperseding(expiresAt: number, asOf: num
   return !(asOf >= expiresAt) || !standingIntentSuppliesEvidence(classifyStandingIntent("active", expiresAt, asOf));
 }
 
+/** Story: Match only on a current standing intent / Use the matching category for known want evidence (spec/standingIntent.md) */
+//@ pure
+export function knownWantCategory(statedCategory: string, relabelledCategory: string): string {
+  return relabelledCategory === "" ? statedCategory : relabelledCategory;
+}
+
+/** Story: Match only on a current standing intent / Use the matching category for known want evidence (spec/standingIntent.md) */
+//@ pure
+export function lawKnownWantWithoutRelabelKeepsItsCategory(statedCategory: string): boolean {
+  //@ ensures \result === true
+  return knownWantCategory(statedCategory, "") === statedCategory;
+}
+
+/** Story: Match only on a current standing intent / Use the matching category for known want evidence (spec/standingIntent.md) */
+//@ pure
+export function lawKnownWantUsesEffectiveCategory(statedCategory: string, relabelledCategory: string): boolean {
+  //@ ensures \result === true
+  return !(relabelledCategory !== "") || knownWantCategory(statedCategory, relabelledCategory) === relabelledCategory;
+}
+
 /** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
 //@ pure
 export function standingIntentFacetEvidence(scope: string, fresh: boolean): boolean {

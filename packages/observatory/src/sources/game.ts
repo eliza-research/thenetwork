@@ -1,3 +1,5 @@
+import { staffSearchHitVisible } from "../../../core/src/generated/staffSearch.ts";
+import { gameResetControlsAllowed } from "../../../core/src/generated/gameReset.ts";
 import { setTimeout as waitForMs } from "node:timers/promises";
 // Game mode: a live simulated world (packages/sim) with engine-v1, made steppable and playable.
 // The player can play the Network (propose intros), play a member (take over a persona), play the
@@ -19,7 +21,8 @@ import { appBanner, APPS, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
 import { describe, eventOf, onTimeline, requestLabel, toMs } from "../events.ts";
 import { memberFacets } from "../appProfile.ts";
-import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard } from "../health.ts";
+import { welcomeMissionRecentAttendee } from "../../../core/src/generated/simulatedWelcomeMission.ts";
+import { ALERT_WINDOW, growthStats, healthAlerts, hours, safetyInfo, scorecard } from "../health.ts";
 import { Projector } from "../projector.ts";
 import { evaluateMissions, POINTS, scoreboard } from "../scoring.ts";
 import { emptyCounters, Store } from "../store.ts";
@@ -72,7 +75,6 @@ const ZERO: ScoreComponents = {
 };
 export const SPEEDS = { hour: HOUR, sixHours: 6 * HOUR, day: DAY, twoDays: 2 * DAY } as const;
 const MAX_STRIKES = 3;
-const NEWCOMER_DAYS = 30;
 
 interface Profile { bio?: string; occupation?: string; neighborhood?: string; pronouns?: string; availability?: string; datasetJoinedAt?: number }
 
@@ -88,6 +90,7 @@ export class GameSource implements DataSource {
   private communities = new Map<MemberId, string>();
   private listeners = new Listeners<ObsDelta>();
   private advancing: Promise<void> | null = null;
+  private draining = false;
   private timers: ReturnType<typeof setInterval>[] = [];
   private start = DEFAULT_START;
   private sparksUsed = new Map<number, number>();
@@ -111,7 +114,7 @@ export class GameSource implements DataSource {
   /** Recent refusals, guard blocks and review expiries (health alerts look at the last 24 h). */
   private recent: { t: number; key: string }[] = [];
   /** When each member texted STOP; who invited someone (scorecard, growth). */
-  private optOutAt = new Map<MemberId, number>();
+  private stopHistory = new Map<MemberId, number[]>();
   private inviters = new Set<MemberId>();
   /** Leak-guard fallbacks per member and time (the timeline marks those messages). */
   private guardFallback = new Set<string>();
@@ -196,7 +199,7 @@ export class GameSource implements DataSource {
     this.takeover = new TakeoverAgent(persona, this.start, () => { this.store.clock.waitingForPlayer = true; this.push(); });
     this.records = [];
     this.judgeHour = -1; this.healthHour = -1;
-    this.recent = []; this.optOutAt.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
+    this.recent = []; this.stopHistory.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
     this.consent = o.network === "consent" ? new ConsentNetwork({
       seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
       onEngineRun: (log, proposals, at) => {
@@ -238,19 +241,26 @@ export class GameSource implements DataSource {
     this.refreshGame();
     this.timers.push(setInterval(() => this.loop(), this.opts.tickMs));
     this.timers.push(setInterval(() => this.push(), this.opts.pushMs));
+    this.draining = false;
   }
 
   async dispose() {
+    this.draining = true;
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
     this.store.clock.playing = false;
+    const advancing = this.advancing;
     await this.takeover?.releaseAll();
+    await advancing?.catch(() => {});
   }
 
   private onRecord(r: RunRecord) {
     this.records.push(r);
-    if (r.type === "opt_out") this.optOutAt.set(r.memberId, r.t);
-    else if (r.type === "network_log") {
+    if (r.type === "opt_out") {
+      const stops = this.stopHistory.get(r.memberId);
+      if (stops) stops.push(r.t);
+      else this.stopHistory.set(r.memberId, [r.t]);
+    } else if (r.type === "network_log") {
       const d = r.detail as Record<string, any>;
       if (r.kind === "send_refused") this.recent.push({ t: r.t, key: `send_refused:${d.reason}` });
       else if (r.kind === "guard_blocked") { this.recent.push({ t: r.t, key: "guard_blocked" }); if (d.fallback) this.guardFallback.add(`${d.memberId}@${r.t}`); }
@@ -259,6 +269,7 @@ export class GameSource implements DataSource {
     }
     if (r.type === "persona" && !this.store.member(r.persona.id)) this.addSpawned(r.persona.id);
     this.projector.apply(r);
+    this.healthHour = -1; // Recorded actions can change requests and alerts while sim time is paused.
   }
 
   /** A member who joined mid-run (an invited friend): add them to the view and the graph. */
@@ -310,8 +321,8 @@ export class GameSource implements DataSource {
   }
 
   /**
-   * Health alerts, the scorecard and growth, at most once per sim hour and every 2 s of wall time
-   * while playing (the scorecard is a pass over every message).
+   * Health alerts, the scorecard and growth, after recorded changes or each new sim hour. Streamed
+   * updates remain limited to every 2 s of wall time (the scorecard is a pass over every message).
    */
   private updateHealth(live = false) {
     if (!this.world) return;
@@ -338,7 +349,7 @@ export class GameSource implements DataSource {
     const members = [...this.store.members.values()];
     const c = this.store.counts;
     const card = scorecard({
-      now, start: this.start, members, opps, requests, optOutAt: this.optOutAt, invites: c.invites, accepts: c.accepts,
+      now, start: this.start, members, opps, requests, stopHistory: this.stopHistory, invites: c.invites, accepts: c.accepts,
       messages: this.world.channel.all().filter(m => !m.system).map(m => ({ memberId: m.memberId, ts: m.ts, direction: m.direction, proactive: !!m.meta?.proactive, status: m.status })),
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0),
       sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated).length,
@@ -445,7 +456,10 @@ export class GameSource implements DataSource {
     this.missions = evaluateMissions(this.store.opps.values(), {
       now, start: this.start, scores,
       community: id => this.store.member(id)?.community,
-      newcomer: id => { const j = this.profiles.get(id)?.datasetJoinedAt; return j !== undefined ? this.start - j <= NEWCOMER_DAYS * DAY : (this.personas.get(id)?.joinDay ?? 0) > 0; },
+      newcomer: (id, at) => {
+        const joinedAt = this.profiles.get(id)?.datasetJoinedAt ?? this.store.member(id)?.joinedAt;
+        return joinedAt !== undefined && welcomeMissionRecentAttendee(joinedAt, at);
+      },
     }, this.missions);
     return {
       sparksLeft: Math.max(0, this.opts.sparksPerDay - (this.sparksUsed.get(this.dayIndex()) ?? 0)), sparksPerDay: this.opts.sparksPerDay,
@@ -551,7 +565,8 @@ export class GameSource implements DataSource {
       now: this.world.clock.now(), cases, members: [...this.store.members.values()], opps,
       watch: trust.filter(([, t]) => t.level === "watch").map(([id]) => id), hold: trust.filter(([, t]) => t.level === "hold").map(([id]) => id), canAct: !!n,
       // Hold and ban by phone or person act on the platform's people: the simulated world has none.
-      reports: reportsFromCases(cases, opps), canBan: false,
+      reports: n?.safetyReports().map(({ id, kind, reporterId, subjectId, opportunityId, at, status }) =>
+        ({ id, kind, reporterId, subjectId, opportunityId, at, status })) ?? [], canBan: false,
     });
   }
 
@@ -603,32 +618,43 @@ export class GameSource implements DataSource {
     const re = searchPattern(q);
     const hits: SearchHit[] = [];
     const name = (id: string) => this.store.member(id)?.name ?? id;
-    for (const m of this.world.channel.all()) {
-      if (hits.length >= limit) break;
-      if (m.direction !== "outbound" || m.system || m.meta?.type === "relay" || !re.test(m.body)) continue;
+    if (limit <= 0) return [];
+    const messages = this.world.channel.all();
+    for (let index = messages.length - 1; index >= 0 && hits.length < limit; index--) {
+      const m = messages[index]!;
+      if (!staffSearchHitVisible(m.direction === "outbound" && !m.system && m.meta?.type !== "relay" && m.status === "delivered", re.test(m.body))) continue;
       hits.push({ memberId: m.memberId, memberName: name(m.memberId), t: m.ts, kind: "message", snippet: snippet(m.body, re), type: m.meta?.type, ...(m.meta?.proposalId ? { opportunityId: m.meta.proposalId } : {}) });
     }
-    for (const r of this.records) {
-      if (hits.length >= limit) break;
-      const row = eventOf(r);
+    const initial = hits.length;
+    for (let index = this.records.length - 1; index >= 0 && hits.length - initial < limit; index--) {
+      const row = eventOf(this.records[index]!);
       if (!row) continue;
       const e = describe(row, name);
       if (!e.memberId || !(re.test(e.text) || re.test(e.type))) continue;
       hits.push({ memberId: e.memberId, memberName: name(e.memberId), t: e.t, kind: "event", snippet: e.text, type: e.type, ...(e.opportunityId ? { opportunityId: e.opportunityId } : {}) });
     }
-    return hits.sort((a, b) => b.t - a.t);
+    return hits.sort((a, b) => b.t - a.t).slice(0, limit);
   }
 
   // ------------------------------------------------------------------ controls
   async control(cmd: ControlCommand, actor?: string): Promise<ControlResult> {
-    const c = this.store.clock;
+    const world = this.world;
+    const draining = (): ControlResult => ({ ok: false, error: "The simulated world is resetting", code: "simulator_resetting" });
     try {
+      if (!gameResetControlsAllowed(this.draining, true)) return draining();
       if (WAITS_FOR_WORLD.has(cmd.type)) await this.idle();
+      if (!gameResetControlsAllowed(this.draining, this.world === world)) return draining();
+      const c = this.store.clock;
       switch (cmd.type) {
         case "play": if (this.over()) return { ok: false, error: "game over: reset to play again" }; c.playing = true; break;
         case "pause": c.playing = false; break;
-        case "speed": c.speed = Math.max(MINUTE, Math.min(7 * DAY, cmd.speed)); break;
+        case "speed": {
+          if (!Number.isFinite(cmd.speed)) return { ok: false, error: "speed must be a finite number", code: "invalid_speed" };
+          c.speed = Math.max(MINUTE, Math.min(7 * DAY, cmd.speed));
+          break;
+        }
         case "step": {
+          if (!Number.isFinite(cmd.ms)) return { ok: false, error: "step duration must be a finite number", code: "invalid_step" };
           if (this.advancing) return { ok: false, error: this.takeover.waiting ? "waiting for your reply" : "the world is busy" };
           if (this.over()) return { ok: false, error: "game over: reset to play again" };
           c.playing = false;
@@ -733,7 +759,7 @@ export class GameSource implements DataSource {
         case "refresh": break;
         default: return { ok: false, error: `${cmd.type} is not available in game mode` };
       }
-      this.push();
+      if (cmd.type === "reset" || gameResetControlsAllowed(this.draining, this.world === world)) this.push();
       return { ok: true };
     } catch (e) {
       return { ok: false, error: String((e as Error)?.message ?? e) };

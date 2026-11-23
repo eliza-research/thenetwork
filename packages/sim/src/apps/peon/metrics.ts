@@ -2,6 +2,7 @@
 // Per-candidate rates use REAL candidates: adults who are not fake and joined during the run.
 import type { MemberId } from "@thenetwork/core";
 import { gini } from "@thenetwork/engine/src/policy.ts";
+import { minimumObservedRatio } from "../gates.ts";
 import { sealedGroups } from "./persona.ts";
 import type { PeonRunResult } from "./world.ts";
 import { marketMeasures, type MarketMeasures } from "./yardstick.ts";
@@ -24,7 +25,7 @@ export const MIN_GROUP = 30;
 export interface ImpactTable {
   /** stage -> attr -> group -> counts and rate. */
   rates: Record<string, Record<string, Record<string, { n: number; selected: number; rate: number }>>>;
-  /** stage -> attr -> min/max rate over groups with n >= MIN_GROUP. */
+  /** stage -> attr -> min/max rate over qualifying groups, or NaN for an unavailable comparison. */
   ratio: Record<string, Record<string, number>>;
   minAutomated: number; minHuman: number;
 }
@@ -184,14 +185,19 @@ export function impactTable(r: PeonRunResult, ids: MemberId[]): ImpactTable {
       ratio[stage]![attr] = ratioOf(groups);
     }
   }
-  const minOver = (stages: readonly Stage[]) => Math.min(...stages.flatMap(s => Object.values(ratio[s]!)));
-  return { rates, ratio, minAutomated: minOver(AUTOMATED_STAGES), minHuman: minOver(STAGES.filter(s => !AUTOMATED_STAGES.includes(s))) };
+  return { rates, ratio, ...impactMinima(ratio) };
 }
 
-/** min / max selection rate over groups with n >= MIN_GROUP (1 when fewer than two such groups). */
-export function ratioOf(groups: Record<string, { n: number; selected: number }>): number {
-  const rs = Object.values(groups).filter(g => g.n >= MIN_GROUP).map(g => g.selected / g.n);
-  return rs.length >= 2 && Math.max(...rs) > 0 ? Math.min(...rs) / Math.max(...rs) : 1;
+/** Min / max selection rate. The comparison needs at least two qualifying groups and a positive maximum. */
+export function ratioOf(groups: Record<string, { n: number; selected: number }>, minN = MIN_GROUP): number {
+  const rs = Object.values(groups).filter(g => g.n >= minN).map(g => g.selected / g.n);
+  const max = Math.max(...rs);
+  return rs.length >= 2 && max > 0 ? Math.min(...rs) / max : NaN;
+}
+
+function impactMinima(ratio: ImpactTable["ratio"]): Pick<ImpactTable, "minAutomated" | "minHuman"> {
+  const minOver = (stages: readonly Stage[]) => minimumObservedRatio(stages.flatMap(stage => Object.values(ratio[stage]!)));
+  return { minAutomated: minOver(AUTOMATED_STAGES), minHuman: minOver(STAGES.filter(stage => !AUTOMATED_STAGES.includes(stage))) };
 }
 
 /** Pool impact tables over seeds (sum the counts, then take ratios). */
@@ -206,11 +212,8 @@ export function poolImpact(ts: ImpactTable[]): ImpactTable {
     for (const [attr, groups] of Object.entries(rates[stage]!)) {
       for (const g of Object.values(groups)) g.rate = div(g.selected, g.n);
       // Pooled over seeds: a group needs MIN_GROUP per seed on average.
-      const k = ts.length;
-      const big = Object.fromEntries(Object.entries(groups).filter(([, g]) => g.n >= MIN_GROUP * k));
-      ratio[stage]![attr] = ratioOf(Object.fromEntries(Object.entries(big).map(([kk, g]) => [kk, { n: MIN_GROUP, selected: (g.selected / g.n) * MIN_GROUP }])));
+      ratio[stage]![attr] = ratioOf(groups, MIN_GROUP * ts.length);
     }
   }
-  const minOver = (stages: readonly Stage[]) => Math.min(...stages.flatMap(s => Object.values(ratio[s]!)));
-  return { rates, ratio, minAutomated: minOver(AUTOMATED_STAGES), minHuman: minOver(STAGES.filter(s => !AUTOMATED_STAGES.includes(s))) };
+  return { rates, ratio, ...impactMinima(ratio) };
 }

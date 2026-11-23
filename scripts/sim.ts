@@ -66,15 +66,15 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
 const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
 
 const argv = process.argv.slice(2);
-const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);
-const only = values("only");
-const skip = values("skip");
-const unknown = [...only, ...skip].filter(x => !Object.hasOwn(BLOCKS, x));
+const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));
+const only = [...new Set(values("only").map(name => name.trim()))];
+const skip = [...new Set(values("skip").map(name => name.trim()))];
+const unknown = [...new Set([...only, ...skip])].filter(x => !Object.hasOwn(BLOCKS, x)).map(name => name || "<empty>");
 if (unknown.length) { console.error(`unknown block: ${unknown.join(", ")}; known: ${Object.keys(BLOCKS).join(", ")}`); process.exit(2); }
 if (only.length && skip.length) { console.error("Choose --only or --skip."); process.exit(2); }
 const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital") || argv.includes("--nightly") ? ["capital"] : [])].filter(name => !skip.includes(name));
 if (!run.length) { console.error("Select at least one simulation block."); process.exit(2); }
-const matchingPacks = values("matching-pack");
+const matchingPacks = values("matching-pack").filter(Boolean);
 const matchingPack = matchingPacks[0];
 const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), matchingPack };
 
@@ -109,6 +109,6 @@ const failed = all.filter(g => g.blocking && !g.pass);
 const total = Math.round((performance.now() - t0) / 100) / 10;
 console.log(`\n${failed.length ? "FAIL" : "PASS"}: ${all.filter(g => g.blocking).length - failed.length}/${all.filter(g => g.blocking).length} blocking gates, ${all.filter(g => !g.blocking && !g.pass).length} tracked off target, ${total}s (${Object.entries(timings).map(([k, v]) => `${k} ${v}s`).join(", ")})`);
 for (const g of failed) console.error(`  FAIL [${g.block}] ${g.name}${g.detail ? `: ${g.detail.split("\n")[0]}` : ""}`);
-const out = values("json")[0];
+const out = values("json").find(Boolean);
 if (out) await writePath(out, JSON.stringify({ quick: opts.quick, blocks: run, timings, total, gates: all }, null, 1));
 process.exit(failed.length ? 1 : 0);

@@ -1,8 +1,10 @@
+import { observatoryCompletionBooking, observatoryMeetingHeld } from "../../core/src/generated/observatoryRoster.ts";
 // Health alerts (admin-console 3.10), the PRD 28.2 scorecard and growth, computed the same way in
 // both modes. Each source gathers the inputs (game: run records and the Network; real: rows and
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
 import { matcherHeartbeatMillis, millisPerHour, missedMatcherHeartbeat, nearReviewDeadline, safetyDueAt, safetyOverdue, waitExceedsSla } from "../../core/src/generated/operationsTiming.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
+import { confirmsProactiveDelivery, interruptionProxyWindowMs, observedMembershipMs, stopRejectsInterruption } from "../../core/src/generated/consolePanels.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import { URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
@@ -87,8 +89,8 @@ export interface MsgMeta { memberId: MemberId; ts: number; direction: "inbound" 
 export interface ScoreInput {
   now: number; start: number;
   members: ObsMember[]; opps: ObsOpportunity[]; messages: MsgMeta[]; requests: ObsRequest[];
-  /** When each member opted out. */
-  optOutAt: Map<MemberId, number>;
+  /** Canonical STOP transitions for the simulated interruption proxy. */
+  stopHistory?: ReadonlyMap<MemberId, readonly number[]>;
   /** Current app's recorded yes/no survey responses, when the source measures them. */
   worthwhileAnswers?: { yes: number; total: number };
   invites: number; accepts: number;
@@ -99,8 +101,6 @@ export interface ScoreInput {
 }
 
 const HELD = new Set(["COMPLETED", "FEEDBACK_COLLECTED"]);
-const AGREED = new Set(["MUTUALLY_ACCEPTED", "QUORUM_MET", "SCHEDULED", "COMPLETED", "FEEDBACK_COLLECTED", "ABANDONED"]);
-const ANSWER_WINDOW = 72 * HOUR;
 const FIRST_VALUE_DAYS = 14;
 const REPEAT_DAYS = 60;
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -137,20 +137,19 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   for (const [id, ms] of byMember) {
     ms.sort((a, b) => a.ts - b.ts);
     const inbound = ms.filter(m => m.direction === "inbound").map(m => m.ts);
-    const stop = x.optOutAt.get(id);
+    const stops = x.stopHistory?.get(id) ?? [];
     for (const m of ms) {
-      if (m.direction !== "outbound" || !m.proactive || m.status !== "delivered") continue;
-      if (x.now - m.ts < ANSWER_WINDOW && !inbound.some(t => t > m.ts)) continue; // still inside its window
+      if (m.direction !== "outbound" || !m.proactive || !confirmsProactiveDelivery(m.status)) continue;
+      if (x.now - m.ts < interruptionProxyWindowMs && !inbound.some(t => t > m.ts)) continue; // still inside its window
       proactive++;
-      const answered = inbound.some(t => t > m.ts && t - m.ts <= ANSWER_WINDOW);
-      const stopped = stop !== undefined && stop >= m.ts && stop - m.ts <= ANSWER_WINDOW;
+      const answered = inbound.some(t => t > m.ts && t - m.ts <= interruptionProxyWindowMs);
+      const stopped = stops.some(stopAt => stopRejectsInterruption(m.ts, stopAt));
       if (answered && !stopped) worthwhile++;
     }
   }
 
-  // Completion: held meetings over mutually accepted opportunities whose meeting time has passed.
-  const agreed = opps.filter(o => AGREED.has(o.state) && !(o.state === "SCHEDULED" && (o.meetingAt ?? 0) > x.now) && o.state !== "MUTUALLY_ACCEPTED" && o.state !== "QUORUM_MET");
-  const held = opps.filter(o => HELD.has(o.state));
+  const agreed = opps.filter(o => observatoryCompletionBooking(o.state, o.meetingAt !== undefined, o.meetingAt ?? 0, x.now));
+  const held = agreed.filter(o => HELD.has(o.state) && observatoryMeetingHeld(o.participants.filter(id => o.status[id] === "attended").length));
 
   // Repeat edges: pairs whose first held meeting was positive for both, who met again within 60 days.
   const meetings = held.map(o => ({ t: o.meetingAt ?? o.updatedAt, ids: o.participants.filter(id => o.status[id] === "attended"), o })).sort((a, b) => a.t - b.t);
@@ -173,8 +172,8 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     && ((o.review.decision === "approve" && o.review.approver === "staff") || o.review.decision === "reject"));
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
-  const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
-  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && m.status === "delivered").length;
+  const memberWeeks = joined.reduce((sum, member) => sum + observedMembershipMs(x.start, x.now, member.joinedAt ?? x.start), 0) / (7 * DAY);
+  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && confirmsProactiveDelivery(m.status)).length;
   const optedOut = joined.filter(m => m.state === "opted_out").length;
 
   return [
@@ -191,8 +190,8 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
       how: "Pairs whose first meeting both enjoyed (>= 0.6) who met again through the Network within 60 days. Direct meetings are not seen, so this is a lower bound." }),
     metric({ key: "first_value_14d", label: "First outcome in 14 days", value: share(fast, due.length), unit: "share", n: due.length, target: { op: ">=", value: 0.6 },
       how: "Members who joined at least 14 days ago and attended a meeting, or had a request fulfilled or answered, within 14 days of joining." }),
-    metric({ key: "attention_burden", label: "Proactive messages per member per week", value: joined.length ? delivered / joined.length / weeks : null, unit: "per_member_week", n: delivered,
-      how: "Delivered agent-started messages, per joined member, per week of the period." }),
+    metric({ key: "attention_burden", label: "Proactive messages per member per week", value: share(delivered, memberWeeks), unit: "per_member_week", n: delivered,
+      how: "Delivered agent-started messages per observed member-week after joining." }),
     metric({ key: "reviewer_minutes", label: "Reviewer minutes per sent proposal", value: x.reviewSeconds > 0 && x.sentProposals > 0 ? x.reviewSeconds / 60 / x.sentProposals : null, unit: "minutes", n: x.sentProposals, target: { op: "<=", value: 2 },
       how: "Recorded staff review time over approved opportunities that started (the review judge or staff approved them). No value until reviewers record time." }),
     metric({ key: "shadow_precision", label: "Shadow precision (approved without edits)", value: share(clean, decided.length), unit: "share", n: decided.length, target: { op: ">=", value: 0.8 },
@@ -255,8 +254,8 @@ export interface SafetyInput {
 export { URGENT_REPORTS };
 
 /**
- * Post-date reports from the Network's safety cases, when no report store answers (game mode, or real
- * mode without the service): each report_received event whose reporter and subject were both in an
+ * Post-date reports from the Network's safety cases, in real mode without the service:
+ * each report_received event whose reporter and subject were both in an
  * opportunity that reached a meeting time (they had a date). The kind comes from the case's other
  * events (harassment, money scam), else "other".
  */

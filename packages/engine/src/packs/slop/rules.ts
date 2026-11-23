@@ -12,7 +12,7 @@ import { statedDealbreaker } from "./score.ts";
 
 export const SLOP_LANE = "romance" as const;
 export const SLOP_MATCH_LANE: MatchLane = "Date";
-const prof = (w: World) => slopProfiles(w.input, w.canonical);
+const prof = (w: World) => slopProfiles(w.input);
 
 export function ageRangeOf(p: SlopProfile, o: SlopPackOptions): [number, number] | undefined {
   if (p.ageRange) return p.ageRange;

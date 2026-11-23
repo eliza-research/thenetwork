@@ -172,6 +172,59 @@ export function lawEmergencyCheckInNeedsReceipt(attributedReport: boolean): bool
   return !emergencyCheckInReport(false, attributedReport);
 }
 
+/** Story: Block or report a person directly / Direct polite safety requests use the existing counterpart chooser (spec/safetyCase.md) */
+//@ pure
+export function safetyRequestMayResolveTarget(directCommand: boolean, conditionalOrDelayed: boolean): boolean {
+  return directCommand && !conditionalOrDelayed;
+}
+
+/** Story: Block or report a person directly / Direct polite safety requests use the existing counterpart chooser (spec/safetyCase.md) */
+//@ pure
+export function lawConditionalSafetyRequestCannotResolveTarget(directCommand: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyRequestMayResolveTarget(directCommand, true);
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function acceptsReportEvidence(affirmative: boolean, casualContact: boolean): boolean {
+  return affirmative && !casualContact;
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function lawCasualContactDoesNotEstablishHarm(affirmative: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsReportEvidence(affirmative, true);
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function lawDeniedEvidenceDoesNotEstablishHarm(casualContact: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsReportEvidence(false, casualContact);
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function acceptsMinorReportEvidence(eligibleSubject: boolean, minorAgeSignal: boolean, affirmative: boolean): boolean {
+  return eligibleSubject && minorAgeSignal && affirmative;
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function lawMinorReportNeedsAffirmation(eligibleSubject: boolean, minorAgeSignal: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsMinorReportEvidence(eligibleSubject, minorAgeSignal, false);
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function lawMinorReportNeedsAnEligibleSubject(minorAgeSignal: boolean, affirmative: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsMinorReportEvidence(false, minorAgeSignal, affirmative);
+}
+
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
 export function reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision, sameMember: boolean, reportMatches: boolean): ReportPhase {
@@ -213,15 +266,29 @@ export function lawArchivedHoldRequiresExactSubject(matchingRestriction: boolean
 
 /** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
 //@ pure
-export function carryReportOnAppLeave(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
-  return ordinaryLeave && reportRestrictsMatching(reportPhase, metBefore, urgent);
+export function carryReportOnAppLeave(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean, reportedMinor: boolean): boolean {
+  return ordinaryLeave && (reportRestrictsMatching(reportPhase, metBefore, urgent) || (reportPhase === "ReportOpen" && reportedMinor));
 }
 
 /** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
 //@ pure
-export function lawOnlyOpenReportsCarry(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
+export function lawOnlyOpenReportsCarry(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean, reportedMinor: boolean): boolean {
   //@ ensures \result === true
-  return !carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) || reportPhase === "ReportOpen";
+  return !carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent, reportedMinor) || reportPhase === "ReportOpen";
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawReportedMinorSignalSurvivesOrdinaryLeave(urgent: boolean): boolean {
+  //@ ensures \result === true
+  return carryReportOnAppLeave(true, "ReportOpen", false, urgent, true);
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawAccountErasureCarriesNoReport(reportPhase: ReportPhase, metBefore: boolean, urgent: boolean, reportedMinor: boolean): boolean {
+  //@ ensures \result === true
+  return !carryReportOnAppLeave(false, reportPhase, metBefore, urgent, reportedMinor);
 }
 
 /** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
@@ -248,6 +315,106 @@ export function lawReportReplyCannotPredateQuestion(askedAt: number, receivedAt:
 export function lawSharedReportRequiresOneChoice(signedMember: boolean, choices: number): boolean {
   //@ ensures \result === true
   return !(sharedReportRoute(signedMember, choices) === "UniqueReportRoute") || (signedMember && choices === 1);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function safetyQuestionIsCurrent(askedAt: number, oldestQuestion: number): boolean {
+  return askedAt >= oldestQuestion;
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function safetyQuestionAcceptsName(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
+  return !(confirmation || refusal || cancellation);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarget: boolean): boolean {
+  return allowedTarget && !excludesTarget;
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestion: number): boolean {
+  //@ ensures \result === true
+  return !(askedAt < oldestQuestion) || !safetyQuestionIsCurrent(askedAt, oldestQuestion);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawSafetyControlCannotNameTarget(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
+  //@ ensures \result === true
+  return !(confirmation || refusal || cancellation) || !safetyQuestionAcceptsName(confirmation, refusal, cancellation);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function safetyQuestionResolves(allowedTarget: boolean, competingPrompt: boolean, cancels: boolean, excludesTarget: boolean, shortReply: boolean): boolean {
+  return safetyQuestionAppliesTarget(allowedTarget, excludesTarget) || cancels || excludesTarget || (!competingPrompt && shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawCompetingPromptKeepsUnresolvedSafety(shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionResolves(false, true, false, false, shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawCancellationResolvesSafety(competingPrompt: boolean, shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return safetyQuestionResolves(false, competingPrompt, true, false, shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawAllowedTargetResolvesSafety(competingPrompt: boolean, cancels: boolean, shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return safetyQuestionResolves(true, competingPrompt, cancels, false, shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawTargetExclusionClosesWithoutFiling(allowedTarget: boolean, competingPrompt: boolean, shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return safetyQuestionResolves(allowedTarget, competingPrompt, false, true, shortReply) && !safetyQuestionAppliesTarget(allowedTarget, true);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawLongUnrelatedReplyKeepsSafety(competingPrompt: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionResolves(false, competingPrompt, false, false, false);
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function safetyQuestionUsesSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean, hasNamedMatch: boolean): boolean {
+  return soleOffer && !competingPrompt && exactConfirmation && !hasNamedMatch;
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true);
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: boolean, exactConfirmation: boolean, hasNamedMatch: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, true, exactConfirmation, hasNamedMatch);
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: boolean, competingPrompt: boolean, hasNamedMatch: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, false, hasNamedMatch);
 }
 
 /** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */
@@ -311,12 +478,6 @@ export function personMinorSignalOpen(signalKnown: boolean, signalAt: number, cl
 
 /** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
 //@ pure
-export function personMinorSignalEndsEverywhere(everyMembershipCleared: boolean, signalAt: number, earliestClearAt: number): boolean {
-  return everyMembershipCleared && !personMinorSignalOpen(true, signalAt, true, earliestClearAt);
-}
-
-/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
-//@ pure
 export function lawAnUnclearedMinorSignalHoldsThePerson(signalAt: number): boolean {
   //@ ensures \result === true
   return personMinorSignalOpen(true, signalAt, false, 0);
@@ -341,6 +502,12 @@ export function lawANewSignalAfterAClearHoldsAgain(signalAt: number, clearedAt: 
 export function lawNoSignalHoldsNobody(signalAt: number, clearedKnown: boolean, clearedAt: number): boolean {
   //@ ensures \result === true
   return !personMinorSignalOpen(false, signalAt, clearedKnown, clearedAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function personMinorSignalEndsEverywhere(everyMembershipCleared: boolean, signalAt: number, earliestClearAt: number): boolean {
+  return everyMembershipCleared && !personMinorSignalOpen(true, signalAt, true, earliestClearAt);
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */

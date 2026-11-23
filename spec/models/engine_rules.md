@@ -8,7 +8,7 @@ A member needs outreach and proposals to respect their settings, prior refusals,
 
 Check send budgets, cooldowns, adult mutual romance opt-in, and mutual travel radius. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [matching budgets spec](../matchingBudgets.md) generates the engine’s budget and cooldown predicates. The [dating radius spec](../datingRadius.md) generates the market and distance predicates.
+The [matching budgets spec](../matchingBudgets.md) generates the engine's budget and cooldown predicates. The [dating radius spec](../datingRadius.md) generates the market and distance predicates. The [travel presence spec](../travelPresence.md#shared-areas-lower-cost-only-during-the-meeting-window) supplies the interval calculation for area evidence in a city-bucket market.
 
 The core pair prefix of `pairReason` asks `pairAgeAllowed` ([friend introductions with a minor](../friendIntroAge.md)): an adult pair passes, and a pair with a minor passes only in a friendship category (`teenFriendCategory`: `social` or `hobby` on friends.help, `social` in the Friend lane of The Network), while staff have not stopped teen introductions (`teenStopped`, false at the start), with both sides teen ready (no staff step), both aged 13 to 18, and birth dates at most 2 calendar years apart. The model has the categories `social` and `romance` only, so `social` stands for every friendship category and `romance` for every category that is not one. `teenFriendAgeRule` states the rule, and `teenSwitchOffNoMinor` states it for every proposal made while teen introductions were stopped. The generator and shape checks of a candidate with a minor (`teenGenerator`, `teenIntroShape`) come after `pairReason` in `candidateAgeReason`; [candidate_pool](candidate_pool.md) models them. Changed (owner decision 2026-11-22, answers A1 to A5): a pair with a minor may pass in a friendship category, because the owner allowed teen friendship introductions on friends.help and ntwrk.party.
 
@@ -62,7 +62,8 @@ Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md
 //     the same way, over the budget window of the member's state; here there is one state).
 //   - Of the core pair prefix (filters.ts pairReason: duplicate, underage, blocked), the model keeps
 //     duplicate and underage. Blocks are in candidate_pool.
-//   - One market: the shared dating market is the one market, so the radius decision is
+//   - The state trace uses one market. A separate two-market trace covers the overlap filter.
+//     In the state trace, the shared dating market is the one market, so the radius decision is
 //     sharedDatingMarket and withinAdjustedRadius. Both members are known and have a limit (the geo
 //     pairReason results unknown_member and distance_unknown are not here).
 //   - A pair decline stands for every cooling outcome of the pair (pairInteractionCooling: declined,
@@ -125,6 +126,23 @@ module engine_rules {
     (aAdult and bAdult)
       or (teenOn and inFriendLane and aReady and bReady and teenAgesOk(aKey) and teenAgesOk(bKey)
           and (ageOnDay(aKey, DAY) < 18 or ageOnDay(bKey, DAY) < 18) and withinTwoYears(aKey, bKey))
+
+  // packs/slop/geo.ts passes only eligible markets to geo.ts overlapInMarkets.
+  // An eligible market still needs enough shared presence before the engine can use it.
+  pure def availableDatingMarkets(radiusEligible: Set[str], sharedPresence: Set[str]): Set[str] =
+    radiusEligible.intersect(sharedPresence)
+
+  type AreaWindow = { from: int, to: int }
+
+  // The score sees the members' resolved area intervals after applying their dated visits.
+  pure def meetingAreaInterval(presence: AreaWindow, requested: AreaWindow): AreaWindow = {
+    from: if (presence.from > requested.from) presence.from else requested.from,
+    to: if (presence.to < requested.to) presence.to else requested.to,
+  }
+
+  pure def sharesAreaInWindow(first: AreaWindow, second: AreaWindow, meeting: AreaWindow): bool =
+    val common = meetingAreaInterval(meetingAreaInterval(first, meeting), second)
+    common.from < common.to
 
   pure def absDiff(x: int, y: int): int = if (x >= y) x - y else y - x
   pure def samePair(a1: str, b1: str, a2: str, b2: str): bool = (a1 == a2 and b1 == b2) or (a1 == b2 and b1 == a2)
@@ -324,6 +342,16 @@ module engine_rules {
   pure val ALL_ADMIT = tuples(Set("A", "B", "K"), Set("A", "B", "K")).mapBy(t => true)
   pure val NEAR = Set("A", "B", "K").mapBy(m => 0)
   pure val WIDE = Set("A", "B", "K").mapBy(m => 4)
+
+  run datingMarketPresenceTest = initWith(ALL_IN, ALL_ADMIT, NEAR, WIDE)
+    .expect(availableDatingMarkets(Set("sf"), Set("nyc")) == Set())
+    .expect(availableDatingMarkets(Set("sf"), Set("sf", "nyc")) == Set("sf"))
+    .expect(availableDatingMarkets(Set("sf", "nyc"), Set("nyc")) == Set("nyc"))
+
+  run sharedAreaDuringMeetingTest = initWith(ALL_IN, ALL_ADMIT, NEAR, WIDE)
+    .expect(not(sharesAreaInWindow({ from: 0, to: 2 }, { from: 2, to: 5 }, { from: 1, to: 4 })))
+    .expect(not(sharesAreaInWindow({ from: 0, to: 2 }, { from: 0, to: 2 }, { from: 2, to: 4 })))
+    .expect(sharesAreaInWindow({ from: 0, to: 3 }, { from: 2, to: 5 }, { from: 1, to: 4 }))
 
   // The third send in the window is refused; after the window it is allowed again.
   run budgetTest = initWith(ALL_IN, ALL_ADMIT, NEAR, WIDE)

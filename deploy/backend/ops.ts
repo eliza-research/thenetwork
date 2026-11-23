@@ -1,6 +1,6 @@
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import {
-  cachedOpsMetricsFresh, catalogScanOverdue, judgeDownRaises, judgeRateRaises, opsRoundDue, roundReport, turnWatchAlertKey, turnWatchLeads, turnWatchLevel, turnWatchRaises, type TurnWatchCondition,
+  cachedOpsMetricsFresh, catalogScanOverdue, countSendOutcome, judgeDownRaises, judgeRateRaises, opsRoundDue, reportedSmsTotal, roundReport, turnWatchAlertKey, turnWatchLeads, turnWatchLevel, turnWatchRaises, type TurnWatchCondition,
 } from "../../packages/core/src/generated/opsAlertDispatch.ts";
 import {
   dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
@@ -9,6 +9,7 @@ import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { splitNetworkId } from "../../packages/network/src/store.ts";
 import { judgeModelOf } from "../../packages/core/src/llm.ts";
 import { qualifiedJudge, readJudgeQualifications } from "../../packages/network/service/review-qualified.ts";
+import { WAITING_STATUSES } from "../../packages/network/service/channel.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import type { TurnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
@@ -131,7 +132,7 @@ export interface NetworkProbe {
   id: string;
   app: string;
   health(): Promise<{ lastTick: { stored: number | null; savedAt: number | null }; backlog: NetworkMetrics["backlog"] }>;
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number }; judge?: { day: JudgeCounts; week: JudgeCounts } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number; last24h?: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number }; judge?: { day: JudgeCounts; week: JudgeCounts } }>;
 }
 
 export const PRECISION_MIN_DECIDED = 20;
@@ -139,15 +140,15 @@ export const PRECISION_TARGET = 0.8;
 
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
-const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled"]);
+const WAITING = new Set([...WAITING_STATUSES, "collected", "send_unknown"]);
 
 export function sendOutcomes(statuses: Record<string, number>): NetworkMetrics["sends24h"] {
   const out = { attempted: 0, failed: 0, refused: 0, dryRun: 0, smsFallback: 0 };
   for (const [s, n] of Object.entries(statuses)) {
+    if (!countSendOutcome(WAITING.has(s))) continue;
     if (s === "dry_run") out.dryRun += n;
     else if (FAILED.test(s)) { out.failed += n; out.attempted += n; }
     else if (REFUSED.test(s)) out.refused += n;
-    else if (WAITING.has(s)) continue;
     else { out.attempted += n; if (s === "fell_back") out.smsFallback += n; }
   }
   return out;
@@ -161,19 +162,22 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
   };
   try {
     const [h, s] = await Promise.all([p.health(), p.since(now - DAY, utcDayStart(now))]);
-    const last = Math.max(h.lastTick.stored ?? -Infinity, h.lastTick.savedAt ?? -Infinity);
+    // spec/models/runtime_ops.md, tickLateSeen: staff and inbound saves do not advance the matcher heartbeat.
+    const last = h.lastTick.stored ?? -Infinity;
     const ev = (type: string, action?: string) => s.events.filter(e => e.type === type && (action === undefined || e.action === action)).reduce((x, e) => x + e.n, 0);
+    const sends24h = sendOutcomes(s.statuses);
+    sends24h.smsFallback = reportedSmsTotal(s.sms.last24h !== undefined, s.sms.last24h ?? 0, sends24h.smsFallback);
     return {
       ...empty,
       lastTickAgoMs: Number.isFinite(last) ? Math.max(0, now - last) : null,
       backlog: { review: h.backlog.review, reviewOverdue: h.backlog.reviewOverdue, deferred: h.backlog.deferred, outboundWaiting: h.backlog.outboundWaiting },
-      sends24h: sendOutcomes(s.statuses),
+      sends24h,
       reviewExpired24h: ev("review_expired"),
       safety24h: {
         reports: s.reports.length, urgentReports: s.reports.filter(r => URGENT_REPORTS.has(r.kind as never)).length,
         minorAfterContact: ev("minor_after_contact"), holds: ev("safety_action", "hold"), bans: ev("safety_action", "ban"),
       },
-      smsByDay: s.sms,
+      smsByDay: { today: s.sms.today, yesterday: s.sms.yesterday },
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
       ...(s.precision7d ? { precision7d: s.precision7d } : {}),
@@ -201,8 +205,22 @@ export function runtimeProbe(rt: {
         where app_id = ${rt.app.id} and at > ${at} and type in ('review_expired', 'minor_after_contact', 'safety_action') group by 1, 2`) as { type: string; action: string | null; n: number }[];
       const reports = (await tx`select r->>'kind' as kind from network.network_state s, jsonb_array_elements(coalesce(s.state->'reports', '[]'::jsonb)) r
         where s.id = ${rt.id} and (r->>'at')::float8 > ${t}`) as { kind: string }[];
-      const [sms] = (await tx`select count(*) filter (where ts >= ${new Date(dayStart)})::int as today, count(*) filter (where ts < ${new Date(dayStart)})::int as yesterday
-        from network.messages where app_id = ${rt.app.id} and direction = 'outbound' and status = 'fell_back' and ts >= ${new Date(dayStart - DAY)}`) as { today: number; yesterday: number }[];
+      const costWindow = new Date(dayStart - DAY);
+      const [sms] = (await tx`with sms as (
+          select o.sent_at as accepted_at
+          from platform.outbound o join network.messages m on m.app_id = o.app_id and m.id = o.id
+          where o.app_id = ${rt.app.id} and o.transport = 'sms' and o.sent_at >= ${costWindow}
+            and m.direction = 'outbound'
+          union all
+          select coalesce(o.sent_at, m.ts) as accepted_at
+          from network.messages m left join platform.outbound o on o.app_id = m.app_id and o.id = m.id
+          where m.app_id = ${rt.app.id} and m.direction = 'outbound' and m.status = 'fell_back'
+            and (o.sent_at is null or o.transport is null) and coalesce(o.sent_at, m.ts) >= ${costWindow}
+        ) select count(*) filter (where accepted_at >= ${new Date(dayStart)})::int as today,
+          count(*) filter (where accepted_at < ${new Date(dayStart)})::int as yesterday,
+          count(*) filter (where accepted_at > ${at})::int as last24h
+        from sms`) as { today: number; yesterday: number; last24h: number }[];
+      // Counts only: a signal's evidence and a report's groups never leave the database here.
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
       const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
@@ -222,7 +240,7 @@ export function runtimeProbe(rt: {
           and (e.type = 'review_exception' or (e.type = 'review_decision' and e.payload->>'decision' = 'approve' and e.payload->>'approver' = 'judge')) group by 1`) as { day: boolean; approved: number; minor_approved: number; held: number; cannot_run: number }[];
       const counts = (rows: typeof judged): JudgeCounts => ({ approved: rows.reduce((x, r) => x + r.approved, 0), held: rows.reduce((x, r) => x + r.held, 0),
         cannotRun: rows.reduce((x, r) => x + r.cannot_run, 0), minorApproved: rows.reduce((x, r) => x + r.minor_approved, 0) });
-      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
+      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0, last24h: sms?.last24h ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
         precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 }, judge: { day: counts(judged.filter(r => r.day)), week: counts(judged) } };
     }),
   };
@@ -231,6 +249,24 @@ export function runtimeProbe(rt: {
 export type { Alert, AlertLevel, AlertState, AlertTx, DispatchResult, Notice } from "../../packages/core/src/vibe/opsAlertShell.js";
 
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
+
+interface UnreadAlertSources {
+  networks: ReadonlySet<string>;
+  line: boolean;
+  cost: boolean;
+  turns: boolean;
+  catalog: boolean;
+}
+
+function alertSourceReadable(key: string, unread: UnreadAlertSources): boolean {
+  if (key === "line_safety" || key.startsWith("leak_review:")) return !unread.line;
+  if (key.startsWith("budget:")) return !unread.cost;
+  if (key === "turn_unconfirmed" || key === "turn_unresolved" || key === "deliver_unknown") return !unread.turns;
+  if (key === "catalog_stale") return !unread.catalog;
+  if (key.startsWith("ops_read:")) return true;
+  const separator = key.indexOf(":");
+  return separator === -1 || !unread.networks.has(key.slice(separator + 1));
+}
 
 export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"]; turns?: OpsMetrics["turns"]; catalog?: OpsMetrics["catalog"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare"> & Partial<Pick<OpsConfig, "judgeMayApproveRate">>): Alert[] {
   const out: Alert[] = [];
@@ -243,7 +279,7 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
   }
   for (const n of m.networks) {
     const id = n.network;
-    if (n.error) { out.push({ key: `ops_read:${id}`, level: "warn", count: 1, text: `Could not read ${id} for monitoring: ${n.error}` }); continue; }
+    if (n.error !== undefined) { out.push({ key: `ops_read:${id}`, level: "warn", count: 1, text: `Could not read ${id} for monitoring: ${n.error}` }); continue; }
     if (n.lastTickAgoMs === null ? (m.uptimeMs ?? Infinity) > c.tickLateMs : n.lastTickAgoMs > c.tickLateMs) {
       out.push({ key: `tick_late:${id}`, level: "bad", count: n.lastTickAgoMs === null ? 0 : Math.round(n.lastTickAgoMs / MIN), text: n.lastTickAgoMs === null ? `${id}: no tick stored yet` : `${id}: last tick ${mins(n.lastTickAgoMs)} ago (expected every minute)` });
     }
@@ -362,9 +398,10 @@ export class AlertDispatcher {
     build: string;
   }) {}
 
-  dispatch(current: Alert[]): Promise<DispatchResult | undefined> {
+  dispatch(current: Alert[], unread?: UnreadAlertSources): Promise<DispatchResult | undefined> {
     return this.o.store.exclusive(tx => dispatchOperationsAlerts(current, tx, {
       now: this.o.now(), repeatMs: this.o.repeatMs, maxPostsPerHour: this.o.maxPostsPerHour,
+      sourceReadable: key => !unread || alertSourceReadable(key, unread),
       post: notices => this.o.post(this.body(notices)),
     }));
   }
@@ -408,13 +445,13 @@ export function createOps(d: OpsDeps) {
   });
   const dispatcher = new AlertDispatcher({ store: d.store, post, now: d.now, repeatMs: c.repeatMs, maxPostsPerHour: c.maxPostsPerHour, format: c.webhookUrl ? c.webhookFormat : "json", env: c.env, build: c.build });
   const ping = d.ping ?? (async (url: string) => (await fetch(url, { signal: AbortSignal.timeout(5_000) })).ok);
-  let last: { at: number; metrics: OpsMetrics } | undefined;
+  let last: Omit<OpsMetrics, "alerts"> | undefined;
   const startedAt = d.now();
   let lastRound = -Infinity;
   let lastAlerts: OpsMetrics["alerts"];
   let judgeInfoDay = "";
 
-  async function collect(accrue: boolean): Promise<OpsMetrics> {
+  async function collect(accrue: boolean): Promise<Omit<OpsMetrics, "alerts">> {
     const now = d.now();
     const networks = await Promise.all(d.probes().map(p => collectNetwork(p, now)));
     const line: OpsMetrics["line"] = d.line ? await d.line().catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
@@ -434,17 +471,16 @@ export function createOps(d: OpsDeps) {
       const totalUsd = Math.round(Object.values(byApp).reduce((s, x) => s + (x ?? 0), 0) * 10_000) / 10_000;
       cost = { day, totalUsd, byApp, budgets: budgetLines(byApp, c.budgets) };
     } catch (e) { cost = { error: (e as Error).message.slice(0, 200) }; }
-    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), ...(turns ? { turns } : {}), ...(catalog ? { catalog } : {}), cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
-    last = { at: now, metrics: m };
-    return m;
+    last = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), ...(turns ? { turns } : {}), ...(catalog ? { catalog } : {}), cost };
+    return last;
   }
 
   return {
     config: c,
     dispatcher,
     async metrics(): Promise<OpsMetrics> {
-      if (last && cachedOpsMetricsFresh(d.now() - last.at)) return last.metrics;
-      return collect(false);
+      const snapshot = last && cachedOpsMetricsFresh(d.now() - last.at) ? last : await collect(false);
+      return lastAlerts ? { ...snapshot, alerts: lastAlerts } : snapshot;
     },
     async tick(): Promise<DispatchResult | undefined> {
       const now = d.now();
@@ -457,7 +493,13 @@ export function createOps(d: OpsDeps) {
         for (const n of m.networks) if (n.judge24h) d.log.info("review judge minor-rubric approvals in 24 h", { network: n.network, minorApproved: n.judge24h.minorApproved, approved: n.judge24h.approved });
       }
       const alerts = evaluate(m, c);
-      const r = await dispatcher.dispatch(alerts);
+      const r = await dispatcher.dispatch(alerts, {
+        networks: new Set(m.networks.filter(n => n.error !== undefined).map(n => n.network)),
+        line: !!m.line && "error" in m.line,
+        cost: "error" in m.cost,
+        turns: !!m.turns && "error" in m.turns,
+        catalog: !!m.catalog && "error" in m.catalog,
+      });
       const report = roundReport(!!r?.notices.length, !!r?.posted, !!r?.ok, !!r?.held, !!c.heartbeatUrl);
       if (r) {
         lastAlerts = { open: r.open, postsLastHour: r.postsLastHour };

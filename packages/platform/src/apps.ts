@@ -99,18 +99,24 @@ export function lookingForReading(text: string): LookingForReading {
   const friends = "friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew";
   const dating = "dating|date|dates|for love|find love|in love|romance|romantic|relationship|partner|boyfriend|girlfriend";
   const work = "work|job|jobs|hiring|hire|career|employment|recruiting|clients|gigs?";
-  const neg = "not|no|never|nothing|none|neither|nor|without|except|don't want|dont want|do not want|don't need|dont need|anything but|everything but|all but";
-  const clause = `(?: (?!(?:,|but|just|only|though|however|instead|rather|yes|yeah|yep|maybe|so|also) )\\S+)*`;
+  const all = "all apps|all of (?:them|it|these|the apps)|everything|all three|anything (?:but|except)";
+  const namesAll = new RegExp(` (?:${all}) `).test(t);
+  const neg = "not|no|never|nothing|none|neither|nor|without|except|excluding|other than|minus|don't want|dont want|do not want|don't need|dont need";
+  const negBut = `anything but|everything but|all but${namesAll ? "|but" : ""}`;
+  const stops = "but|just|only|though|however|instead|rather|yes|yeah|yep|maybe|so|also";
+  const clause = `(?: (?!(?:,|${stops}) )\\S+)*`;
+  const butClause = `(?: (?!(?:,|${stops}|mostly|mainly|especially|particularly|primarily|ideally|preferably) )\\S+)*`;
   const list = `(?: , (?:or|nor)${clause})*`;
   const after = "no|nope|nah|never|not really|no thanks|not for me";
+  const refused = (words: string) => new RegExp(` (?:(?:${neg})${clause}|(?:${negBut})${butClause})${list} (?:${words}) `).test(t);
   const mention = (words: string): LookingForMention =>
-    new RegExp(` (?:${neg})${clause}${list} (?:${words}) `).test(t) || new RegExp(` (?:${words}) (?:, )?(?:${after}) (?:,|$)`).test(t)
+    refused(words) || new RegExp(` (?:${words}) (?:, )?(?:${after}) (?:,|$)`).test(t)
       ? "MentionRefused" : new RegExp(` (?:${words}) `).test(t) ? "MentionWanted" : "MentionAbsent";
   return {
     friends: mention(friends),
     dating: mention(dating),
     work: mention(work),
-    everything: / (all|all of (them|it|these)|everything|all three|anything (but|except)) /.test(t),
+    everything: namesAll && !refused(all),
   };
 }
 

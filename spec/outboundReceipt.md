@@ -48,6 +48,21 @@ pure def lawDeliveredIgnoresFailure(phase: ReceiptPhase): bool =
     not(canApplyReceipt({ phase: phase }, ProviderFailed))
 ```
 
+### A terminal receipt preserves the recipient cap after payload erasure
+
+A successful terminal receipt for a nonmember keeps counting toward the same line and recipient's hourly cap until one hour after provider acceptance. When the receipt removes the address and body, record a keyed digest scoped to the line and recipient and the original acceptance time in the same transaction. Use the outbound ID to count the receipt once. A late receipt outside the hour needs no entry. Remove expired entries during queue retention. A failed receipt creates no entry. Compliance still bypasses admission caps.
+
+```quint
+pure def keepScrubbedRecipientCount(phase: ReceiptPhase, nonmember: bool, hadAddress: bool, windowOpen: bool): bool =
+  (phase == ProviderDelivered or phase == ProviderRead) and nonmember and hadAddress and windowOpen
+
+pure def lawFailedReceiptHasNoScrubbedRecipientCount(nonmember: bool, hadAddress: bool, windowOpen: bool): bool =
+  not(keepScrubbedRecipientCount(ProviderFailed, nonmember, hadAddress, windowOpen))
+
+pure def lawScrubbedRecipientCountRequiresOpenWindow(phase: ReceiptPhase, nonmember: bool, hadAddress: bool): bool =
+  not(keepScrubbedRecipientCount(phase, nonmember, hadAddress, false))
+```
+
 ### An uncertain send waits for a receipt instead of sending again
 
 After an ambiguous provider response, wait for receipt lookup with the original idempotency key. If a response arrives but its acceptance cannot be validated or committed, retain the request for the same lookup. The queue updates only the send attempt whose lease still owns the row. If the outcome write also fails, leave the lease for recovery. If the provider confirms it never admitted the key, the queue can retry with that same key. If the lookup remains uncertain past the retention deadline, the queue fails the row without resending.
@@ -111,7 +126,7 @@ pure def lawUncertainSendKeepsSlot(phase: ReceiptPhase): bool =
 
 ### An acceptance records a send time only for a send that went out
 
-An acceptance whose provider status is failed gets no send time, because the caps and the leak guard's thread history read the send time. A row to someone who is not a member ends at acceptance when the provider owns the delivery receipts (Eliza Cloud sends none to the queue), and then keeps no address and no text. Changed 2026-11-18: a failed acceptance wrote a send time (SD-337), and under Cloud a row to a non-member kept its address and text after acceptance (SD-091).
+An acceptance whose provider status is failed gets no send time, because the caps and the leak guard's thread history read the send time. A row to someone who is not a member ends at acceptance when the provider owns the delivery receipts (Eliza Cloud sends none to the queue), and then keeps no address and no text. Changed 2026-11-18: a failed acceptance wrote a send time (SD-337), and under Cloud a row to a non-member kept its address and text after acceptance (SD-091). When acceptance removes the address and text of a send that went out, it keeps the recipient's hourly cap entry in the same way as a terminal receipt. Changed 2026-11-23: under Cloud an accepted send to a non-member lost its address at acceptance and left no cap entry, so the next send to the same number in the same hour went out.
 
 ```quint
 pure def acceptanceRecordsSend(phase: ReceiptPhase): bool = receiptRank(phase) > 0
@@ -125,6 +140,16 @@ pure def lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): bool =
 
 pure def lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): bool =
   receiptRank(phase) > 0 implies acceptanceEndsRow(phase, true, false)
+
+pure def keepAcceptedRecipientCount(phase: ReceiptPhase, receiptOwner: bool, nonmember: bool, hadAddress: bool, windowOpen: bool): bool =
+  keepScrubbedRecipientCount(phase, nonmember, hadAddress, windowOpen) or
+    (acceptanceEndsRow(phase, receiptOwner, not(nonmember)) and acceptanceRecordsSend(phase) and nonmember and hadAddress and windowOpen)
+
+pure def lawReceiptOwnerAcceptanceKeepsRecipientCount(phase: ReceiptPhase): bool =
+  receiptRank(phase) > 0 implies keepAcceptedRecipientCount(phase, true, true, true, true)
+
+pure def lawFailedAcceptanceHasNoRecipientCount(receiptOwner: bool, nonmember: bool, hadAddress: bool, windowOpen: bool): bool =
+  not(keepAcceptedRecipientCount(ProviderFailed, receiptOwner, nonmember, hadAddress, windowOpen))
 ```
 
 ### A gateway reply with no final receipt ends after the receipt deadline

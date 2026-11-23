@@ -2,7 +2,7 @@ import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
-import {SimClock,MINUTE,DAY} from "@thenetwork/core";
+import {SimClock,MINUTE,DAY,HOUR} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
@@ -40,11 +40,19 @@ const ask=async(who:"ari"|"bo",messageId:string,text:string):Promise<RelaySendRe
 const post=async(body:RelaySendRequest)=>signed(RELAY_PATH,`${body.messageId}:relay`,JSON.stringify(body));
 const staff=(path:string,token:string,method="GET",b?:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method,headers:{authorization:`Bearer ${token}`,...(b?{"content-type":"application/json"}:{})},...(b?{body:JSON.stringify(b)}:{})}));
 
+async function enrollRelayMember(phone: string, nameAndAge: string, prefix: string) {
+  for (const [index, text] of ["friends.help", nameAndAge, "I enjoy hiking and cooking",
+    "Saturday afternoons work for me", "Small groups are good"].entries()) {
+    clock.advance(MINUTE);
+    const id = prefix + "-" + index;
+    expect((await signed(TURN_PATH, id, JSON.stringify(turn(phone, id, text)))).status).toBe(200);
+  }
+}
+
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});await start();
-  for(const [who,name] of [["ari","Ari, 29"],["bo","Bo, 31"]] as const)for(const [index,text] of ["friends.help",name,"I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()){
-    clock.advance(MINUTE);expect((await signed(TURN_PATH,`${who}-setup-${index}`,JSON.stringify(turn(phones[who],`${who}-setup-${index}`,text)))).status).toBe(200);
-  }
+  for (const [who, name] of [["ari", "Ari, 29"], ["bo", "Bo, 31"]] as const)
+    await enrollRelayMember(phones[who], name, who + "-setup");
   ari=await open(phones.ari,"ari-open");bo=await open(phones.bo,"bo-open");
   // A plan both said yes to (the matching path itself is covered elsewhere): the relay opens on it.
   const now=clock.now();
@@ -183,25 +191,104 @@ test("the thread persists after the date: a text 9 days after the meeting is sti
   expect(rows[0]?.body).toContain("want to go again next weekend");
 },60_000);
 
+test("a polite signed relay keeps the payload's negation and uses the named match", async () => {
+  const modal = await post(await ask("ari", "relay-modal-text", "Could you tell Bo I don't eat dairy?"));
+  expect(modal.status).toBe(200);
+  expect(await modal.json()).toMatchObject({ decision: "pass", delivered: false });
+  const delivered = await sql<{ member_id: string; body: string }[]>`select member_id, body from network.messages
+    where app_id='friends' and direction='outbound' and body like '%dairy%'`;
+  expect([...delivered]).toEqual([{ member_id: bo, body: 'Ari says: "I don\'t eat dairy"' }]);
+
+  const wrong = await post(await ask("ari", "relay-named-other", "Could you tell Charlie I don't eat meat?"));
+  expect(wrong.status).toBe(200);
+  expect(await wrong.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%eat meat%'`).toHaveLength(0);
+});
+
 const sharesQueued = async () => (await sql`select id from network.messages where app_id='friends'
   and direction='outbound' and body like '%asked me to send you%'`).length;
 const pendingNumberSwaps = () => service.runtimeFor("friends")!.unitOfWork(net => net.exportState().relay?.swaps ?? []);
 let swapMatchTemplate: NetworkState["opps"][number] | undefined;
 
-async function startNumberSwap(id: string, who: "ari" | "bo") {
+async function resetSwapMatch(id: string) {
   await service.runtimeFor("friends")!.unitOfWork(net => {
     const state = net.exportState();
     swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
-    clock.advance(DAY);
+    // Keep at least one day between cases and start each one during New York daytime.
+    const earliest = clock.now() + DAY;
+    const daytime = Math.floor(earliest / DAY) * DAY + 16 * HOUR;
+    clock.set(daytime < earliest ? daytime + DAY : daytime);
     const now = clock.now();
     state.opps = [{ ...swapMatchTemplate, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
     if (state.relay) state.relay.swaps = [];
     net.importState(state);
   });
+}
+
+async function startNumberSwap(id: string, who: "ari" | "bo") {
+  await resetSwapMatch(id);
   const recipient = who === "ari" ? "Bo" : "Ari";
   expect(await (await post(await ask(who, id + "-first", "send " + recipient + " my number"))).json())
     .toMatchObject({ decision: "hold", delivered: false });
 }
+
+test.each([
+  "Give him my number if he asks.",
+  "Send him my number. Scratch that. Send it. If he asks.",
+  "Give Ari my number if Ari asks.",
+  "Give him my number unless he objects.",
+  "Give him my number if it's okay with him.",
+  "Give him my number if you can, after he asks.",
+  "Send him my number. If he asks.",
+  "Send him my number, please — if he asks.",
+  "Send him my number whenever he asks.",
+  "Give him my number every time he asks.",
+  "Send him my number each time he requests it.",
+  "Send him my number anytime he asks for it.",
+  "Send him my number. Let me think about it first",
+  "Send him my number. Let me think it over first.",
+  "Send him my number. Hmm idk.",
+  "Send him my number. Lol nevermind he's weird.",
+])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
+  const id = "conditional-swap-" + randomUUID();
+  await resetSwapMatch(id);
+  const before = await sharesQueued();
+  const conditional = await post(await ask("bo", id + "-conditional", text));
+  expect(conditional.status).toBe(200);
+  const requested = await conditional.json();
+  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
+  const counterpart = await post(await ask("ari", id + "-counterpart", "Send Bo my number."));
+  expect(counterpart.status).toBe(200);
+  expect({ requested, pending, counterpart: await counterpart.json(), newShares: await sharesQueued() - before })
+    .toMatchObject({ requested: { decision: "none", delivered: false }, pending: 0,
+      counterpart: { decision: "hold", delivered: false }, newShares: 0 });
+}, 60_000);
+
+test.each([
+  "Send him my number. He can have it if he asks.",
+  "Send him my number. Give it to him if he asks.",
+  "Send him my number. Give it to him when dinner is ready.",
+  "Send him my number. Send it to him after I finish work.",
+  "Send him my number. He can have it once Ari approves.",
+  "Send him my number. Only give it to him if he asks.",
+  "Send him my number. Give it to him on Friday.",
+  "Send him my number. Thanks. Give it to him once I confirm.",
+  "Send him my number. She can have it when she asks.",
+  "Send him my number. He can have it unless he says no.",
+])("a condition in the next sentence cannot arm or complete a signed number swap: %s", async text => {
+  const id = "conditional-next-sentence-" + randomUUID();
+  await resetSwapMatch(id);
+  const before = await sharesQueued();
+  const conditional = await post(await ask("bo", id + "-conditional", text));
+  expect(conditional.status).toBe(200);
+  const requested = await conditional.json();
+  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
+  const counterpart = await post(await ask("ari", id + "-counterpart", "Send Bo my number."));
+  expect(counterpart.status).toBe(200);
+  expect({ requested, pending, counterpart: await counterpart.json(), newShares: await sharesQueued() - before })
+    .toMatchObject({ requested: { decision: "none", delivered: false }, pending: 0,
+      counterpart: { decision: "hold", delivered: false }, newShares: 0 });
+}, 60_000);
 
 test.each([
   "I would not give Ari my number",
@@ -231,6 +318,25 @@ test.each([
   "Don't send it to them",
   "Don't send it please",
   "Please don't send it to them yet",
+  "Don't send it anymore",
+  "Don't send it any more",
+  "Don't send it now",
+  "Don't send it after all",
+  "Don't share it with them anymore",
+  "I don't want you to send it anymore",
+  "Never send it",
+  "Don't send them it",
+  "Don't send them anything",
+  "Don't you dare send it",
+  "Don't send my photo or number",
+  "Please don't send Ari my photos or cell yet",
+  "Ana says, send it now. Don't send it anymore.",
+  "Ana says, send it now, but I don't want you to send it anymore.",
+  "I say, don't send it now",
+  "As I said, don't send it now",
+  "Ana says, if you need to, send it now. Don't send it anymore.",
+  "Ana says, if it's urgent, send it now; Don't send it anymore.",
+  "Ana says, “don't send it now.” Don't send it anymore",
 ])("the signed turn withdraws a pending swap after %s", async (text) => {
   const id = "withdrawn-swap-" + randomUUID();
   const before = await sharesQueued();
@@ -335,6 +441,351 @@ test("a swap asked again less than 10 minutes after the same question went to th
   expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toHaveLength(1);
   expect(await swapQuestions()).toBe(before + 2);
   expect(await (await post(await ask("ari", id + "-end", "never mind, don't send my number"))).json()).toMatchObject({ decision: "none" });
+}, 60_000);
+test.each([
+  "Tell Ana to send him my number",
+  "Ask Ana to text him my number",
+  "Could you tell Ana to please give him my number?",
+  "Let Ana share my number with him",
+  "Ana says to send him my number",
+  "Ana tells me to send him my number",
+  "Ask Mary Jane to send him my number",
+  "Tell them you can send him my number",
+  "Tell Ana to show him this photo and send him my number",
+  "I want Ana to, send him my number",
+  "I would not want Ana to, send him my number",
+])("a signed delegated request cannot finish a number swap: %s", async text => {
+  const id = "delegated-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+
+  const refused = await post(await ask("bo", id + "-delegated", text));
+  expect(refused.status).toBe(200);
+  expect({ decision: (await refused.json()).decision, shares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
+    .toEqual({ decision: "none", shares: 0, pending: original });
+
+  const accepted = await post(await ask("bo", id + "-direct", "Please send Ari my number."));
+  expect(await accepted.json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test("an independent direct sentence can finish a signed number swap", async () => {
+  const id = "independent-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const text = "Tell Ana to send him my number. Please send Ari my number.";
+  expect(await (await post(await ask("bo", id + "-direct", text))).json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
+  "Don't forget to send it",
+  "Don't hesitate, send it now",
+  "I can't wait anymore",
+  "Don't send it to my old email anymore",
+  "Never forget to send it",
+  "Don't you dare forget to send it",
+  "Don't send them anything else",
+  "Never send them the invoice",
+  "Ari said “don't send it anymore.”",
+  "Ana says, don't send it now",
+  "Mary Jane told me, don't send it any more",
+  "Well, Ana says, don't send it yet",
+  "Ana says, if it's not urgent, don't send it now",
+  "Ana says, don't send my number",
+  "Ana says, don't send my photo or number",
+  "Don't send my photo or number, Ana said.",
+  "Don't send my photo or my coworker's number",
+  "Don't send my photo or email",
+  "Don't send my photo. My number is in the confirmation.",
+  "Wait.",
+])("the signed turn keeps a pending swap after a go-ahead or unrelated wording: %s", async text => {
+  const id = "unrelated-withdrawal-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "bo");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+
+  clock.advance(MINUTE);
+  const messageId = id + "-followup";
+  expect((await signed(TURN_PATH, messageId, JSON.stringify(turn(phones.bo, messageId, text)))).status).toBe(200);
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
+  expect(await (await post(await ask("ari", id + "-second", "send Bo my number"))).json())
+    .toMatchObject({ decision: "pass", delivered: false });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
+  { text: "Don't send him my photo. Send him my number.", shares: true },
+  { text: "I won't send my photo. Send him my number.", shares: true },
+  { text: "Don't send my photo. Could you kindly send him my number?", shares: true },
+  { text: "Scratch that. Send him my number.", shares: true },
+  { text: "Send him my number. Ana says, scratch that.", shares: true },
+  { text: "Send him my photo, Ana said. Please send him my number.", shares: true },
+  { text: "Send them my number, she already asked.", shares: true },
+  { text: "Send them my number if you can.", shares: true },
+  { text: "Send him my number whenever you can, thanks.", shares: true },
+  { text: "Send him my number every time you can, thanks.", shares: true },
+  { text: "Give him my number if it's okay.", shares: true },
+  { text: "Send him my number. If he asks where dinner is, the address is on the invite.", shares: true },
+  { text: "Send him my number, and if he asks about parking, tell him it's free.", shares: true },
+  { text: "Send him my number now. Whenever he replies, tell me.", shares: true },
+  { text: "Send him my number now. Every time he replies, tell me.", shares: true },
+  { text: "Send him my number now. Every time he reports a problem, tell me.", shares: true },
+  { text: "Send him my number. Give it to him every single time Ari asks.", shares: false },
+  { text: "Send him my number. Oh no, I'm late.", shares: true },
+  { text: "Send him my number now. Lol nevermind dinner, let's make coffee.", shares: true },
+  { text: "Send him my number whenever you can get approval.", shares: false },
+  { text: "Send him my number. Whenever he asks, tell me before you send it.", shares: false },
+  { text: "Send him my number. Every time he asks, tell me before you send it.", shares: false },
+  { text: "Send him my number. Every time he asks, tell me.", shares: false },
+  { text: "Send him my number. Every time he asks, he can have it.", shares: false },
+  { text: "Send him my number. Every time he asks, he can have my photo.", shares: true },
+  { text: "Send him my number. Every time he asks, he can have my photo and my number.", shares: false },
+  { text: "Send him my number. Let me think it over first.", shares: false },
+  { text: "Send him my number. Lemme think.", shares: false },
+  { text: "Send him my number. Let me think for a sec.", shares: false },
+  { text: "Send him my number. Let me think about it some more.", shares: false },
+  { text: "Send him my number. Haha nevermind he's weird.", shares: false },
+  { text: "Send him my number. Ok nevermind about the number.", shares: false },
+  { text: "Send him my number. Ok nevermind about the photo.", shares: true },
+  { text: "Send him my number. Ok nevermind about dinner.", shares: true },
+  { text: "Send him my number. He can have it if he asks.", shares: false },
+  { text: "Send him my number. Give it to him if he asks.", shares: false },
+  { text: "Send him my number. Give it to him when dinner is ready.", shares: false },
+  { text: "Send him my number. Give it to him after dinner.", shares: false },
+  { text: "Send him my number. Send it to him after I finish work.", shares: false },
+  { text: "Send him my number. He can have it once Ari approves.", shares: false },
+  { text: "He has to consent first. Share my number with him.", shares: false },
+  { text: "Wait until I confirm the number swap. Share my number with him.", shares: false },
+  { text: "Wait for Ana to approve sharing my number with Ari. Share my number with Ari.", shares: false },
+  { text: "Wait for Ana to approve sharing my number with Bo. Share my number with Ari.", shares: true },
+  { text: "Ari has to approve my number first. Ari already approved my photo. Share my number with him.", shares: false },
+  { text: "Ari has to approve my number first. Ari already approved my number. Share my number with him.", shares: true },
+  { text: "Ari must approve this first. Ari already approved that. Share my number with him.", shares: false },
+  { text: "Ari must approve sharing my number with him first. Ari already approved sharing my number with her. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree to share my number with Ari. Share my number with Ari.", shares: false },
+  { text: "Ana must approve sharing my number with Ari first. Ana already approved sharing my number with Ari. Share my number with Ari.", shares: true },
+  { text: "Ana has to agree first. Share my number with him.", shares: false },
+  { text: "Ana agrees first. Share my number with him.", shares: false },
+  { text: "Ana needs to say yes first. Share my number with him.", shares: false },
+  { text: "He has to ask first. Share my number with him.", shares: false },
+  { text: "He asks first. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree. Share my number with him.", shares: false },
+  { text: "Only after Ana agrees. Share my number with him.", shares: false },
+  { text: "Ana has to agree first; share my number with him.", shares: false },
+  { text: "Unless he asks first. Share my number with him.", shares: false },
+  { text: "Ana agrees. Share my number with him.", shares: true },
+  { text: "He asked already. Share my number with him.", shares: true },
+  { text: "No need to wait for Ana to agree. Please send Ari my number.", shares: true },
+  { text: "I heard Ana has to ask first about the venue. Please send Ari my number.", shares: true },
+  { text: "He has to ask the venue about opening hours. Please send Ari my number.", shares: true },
+  { text: "Ari said “Wait for Ana to agree.” Please send Ari my number.", shares: true },
+  { text: "He has to ask for my photo first. Share my number with him.", shares: false },
+  { text: "Wait for Ari to agree. Ari has already agreed. Share my number with him.", shares: true },
+  { text: "Wait for Ari to agree. Bo has already agreed. Share my number with him.", shares: false },
+  { text: "Wait for Ari to approve. Ari has already agreed. Share my number with him.", shares: false },
+  { text: "Wait for him to agree. He has already agreed. Share my number with him.", shares: false },
+  { text: "Wait for Ari to agree, please. Share my number with him.", shares: false },
+  { text: "Ana has to agree first, but I can send you the schedule. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree, but Ari said “I am at work.” Share my number with him.", shares: false },
+  { text: "Wait for Ari to agree. Ari has already agreed!? Share my number with him.", shares: false },
+  { text: "Wait for Ari to agree. Ari has already agreed. ? Share my number with him.", shares: false },
+  { text: "He has to ask me first. Share my number with him.", shares: false },
+  { text: "Ana must approve it first. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree to it. Share my number with him.", shares: false },
+  { text: "Send him my number. Give it to him, and tell me if he asks.", shares: true },
+  { text: "Send him my number. Give it to him, and tell me when dinner is ready.", shares: true },
+  { text: "Send him my number. Dinner will be ready after I finish work.", shares: true },
+  { text: "Send him my number. Let me know if he asks.", shares: true },
+  { text: "Send him my number. He asked if he can have it.", shares: true },
+  { text: "Send him my number. Don't send my photo. Or my number.", shares: false },
+  { text: "Don't send my photo. My number neither. Send him my number.", shares: false },
+  { text: "Send him my number. Don't send my photo. Same goes for my cell.", shares: false },
+  { text: "Send him my number. Scratch that.", shares: false },
+  { text: "Send him my number. Scratch that, I'll tell him myself.", shares: false },
+  { text: "Send him my number. Hold on, let me ask him first.", shares: false },
+  { text: "Send him my number. Hold on, send it.", shares: true },
+  { text: "Send him my number. Hold on, SEND IT!", shares: true },
+  { text: "Send him my number. Hold on, send it, no rush.", shares: true },
+  { text: "Send him my number. Hold on, please send him my number now.", shares: true },
+  { text: "Send him my number. No worries.", shares: true },
+  { text: "Send him my number. No rush at all.", shares: true },
+  { text: "Send him my number. Hold on, I'll send it myself.", shares: false },
+  { text: "Send him my number. Hold on, Ana said send it.", shares: false },
+  { text: "Send him my number. Hold on, \"send it\".", shares: false },
+  { text: "Send him my number. Hold on, maybe send it.", shares: false },
+  { text: "Send him my number. Hold on, send it if he asks.", shares: false },
+  { text: "Send him my number. Hold on, send it 'to me instead'.", shares: false },
+  { text: "Send him my number. Hold on, send him my photo.", shares: false },
+  { text: "Send him my number. Hold on, send her my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. I'm running late.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. I'm at work.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. Ok nevermind about the photo.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. Don't send my photo.", shares: true },
+  { text: "Send him my number. Scratch that. Send it, please.", shares: true },
+  { text: "Send him my number. Hold on. Send it.", shares: true },
+  { text: "Send him my number. Scratch that. Send him my number now.", shares: true },
+  { text: "Send him my number. Scratch that. Send him my number now. Tell him I'm running late.", shares: true },
+  { text: "Send him my number. Wait. Actually, send it.", shares: true },
+  { text: "Send him my number. Scratch that. Please send it.", shares: true },
+  { text: "Send him my number. No. Send it.", shares: true },
+  { text: "Send him my number. Scratch that. Hold on, send it.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. Scratch that.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. The photo.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. To me instead.", shares: false },
+  { text: "Send him my number. Scratch that. Ok nevermind about the photo. Send it.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Ok nevermind about my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Ok nevermind about the photo. Or my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Don't send my photo. Or my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. I will delay.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. I will get back to you.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. I will do the transfer myself.", shares: false },
+  { text: "Send him my number. Scratch that. Send it if he asks.", shares: false },
+  { text: "Send him my number. Scratch that. Send it?", shares: false },
+  { text: "Send him my number. Scratch that. Send it \"to me instead\".", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Whenever he asks.", shares: false },
+  { text: "Send him my number. Scratch that. I have a photo for him. Send it.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Maybe later.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Let me think it over first.", shares: false },
+  { text: "Send him my number. Scratch that. Send him my photo.", shares: false },
+  { text: "Send him my number. Never mind. Send it.", shares: false },
+  { text: "Send him my number. Haha nevermind. Send him my number now.", shares: false },
+  { text: "Send him my number. Wait.", shares: false },
+  { text: "Send him my number. Let me think.", shares: false },
+  { text: "Send him my number. Keep it private.", shares: false },
+  { text: "Send him my number. ??", shares: false },
+  { text: "Send him my number. Don't send my photo. ❌", shares: false },
+  { text: "Send him my number. ❌", shares: false },
+  { text: "Send him my number. Don't send my photo. 🚫📞", shares: false },
+  { text: "Send him my number. Don't send my photo. Instead, send her my email.", shares: false },
+  { text: "Send him my number, Ana said.", shares: false },
+  { text: "Don't send him my photo. I'm not sure what time it is. Send him my number.", shares: true },
+  { text: "Don't send him my photo. I'm not sure whether to send it. Send him my number.", shares: false },
+  { text: "Don't send my photo. I'm not sure about sending it while Dad is here. Send him my number.", shares: false },
+  { text: "Don't send my photo. I have second thoughts. Send him my number.", shares: false },
+  { text: "Don't send my photo. I'm not comfortable sharing my number. Send him my number.", shares: false },
+  { text: "Don't send my photo. I'm not comfortable. Send him my number.", shares: false },
+  { text: "Don't send my photo. I'm not sure about sending him this calendar invite. Send him my number.", shares: true },
+  { text: "Don't send him my number. Send him my number.", shares: false },
+  { text: "Don't send it while the photo is blurry. Send him my number.", shares: false },
+  { text: "Don't send him my photo, or the number. Send him my number.", shares: false },
+  { text: "Don't send anything except my photo. Send him my number.", shares: false },
+  { text: "Don't send the phone number on my photo. Send him my number.", shares: false },
+  { text: "Ana said, don't send it while the photo is blurry. Send him my number.", shares: false },
+  { text: "Don't send him my photo or the number. Send him my number.", shares: false },
+  { text: "Don't send it. Send him my number.", shares: false },
+  { text: "I won't. Send him my number.", shares: false },
+  { text: "Don't send him my photo. Send him my number tomorrow.", shares: false },
+  { text: "Don't send him my photo. If you want to, send him my number.", shares: false },
+  { text: "Don't send him my photo. Envíale mi número.", shares: false },
+])("a signed number request respects the intended item: $text", async ({ text, shares }) => {
+  const id = "scoped-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+
+  const response = await post(await ask("bo", id + "-action", text));
+  expect(response.status).toBe(200);
+  expect({ decision: (await response.json()).decision, newShares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
+    .toEqual({ decision: shares ? "pass" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
+}, 60_000);
+
+let ageEstimatePair = 0;
+test.each([
+  { label: "first-person near adult birthday on TURN", body: "I'm turning 18 next month", minor: true, incomingAge: 17 },
+  { label: "first-person mid-teen birthday on TURN", body: "I'm turning 16 next month", minor: true, incomingAge: 15 },
+  { label: "first-person school year on TURN", body: "I'm in seventh grade", minor: true, incomingAge: 13 },
+  { label: "adult teacher role", body: "I'm in 12th grade, as a teacher.", minor: false },
+  { label: "decimal measurement", body: "I'm turning 16.5 degrees", minor: false },
+  { label: "grouped measurement", body: "I'm almost 15,000 feet away", minor: false },
+  { label: "measurement beside genuine youth estimate", body: "I'm turning 16.5 degrees, but I'm almost 18.", minor: true, incomingAge: 17 },
+  { label: "grade followed by teacher attribution", body: "I'm in seventh grade, as a teacher told me.", minor: true, incomingAge: 13 },
+  { label: "short birthday today", body: "turning 18 today", minor: true },
+  { label: "short birthday this month", body: "turning 18 this month", minor: true },
+  { label: "measurement in miles", body: "I'm almost 150 miles away.", minor: false },
+  { label: "turn in degrees", body: "I'm turning 165 degrees clockwise.", minor: false },
+  { label: "quoted birthday", body: 'She said "I\'m turning 16 next month".', minor: false },
+  { label: "unfinished reported birthday", body: "She said “I'm turning 16 next month", minor: false },
+  { label: "indirect grade", body: "My cousin said I am in seventh grade.", minor: false },
+  { label: "quoted grade", body: "She said ‘I'm in seventh grade’.", minor: false },
+  { label: "adult school role", body: "I'm in 12th grade as a teacher.", minor: false },
+  { label: "distant birthday", body: "I'm turning 16 in two years.", minor: false },
+  { label: "hypothetical birthday", body: "What if I'm turning 16 next month?", minor: false },
+  { label: "short almost age", body: "almost 16", minor: true },
+  { label: "short turning age", body: "turning 16 next month", minor: true },
+  { label: "short birthday", body: "16 next month", minor: true },
+  { label: "own birthday quotation", body: "I said “I'm turning 16 next month”", minor: true },
+  { label: "own grade quotation", body: "I said ‘I'm in seventh grade’", minor: true },
+  { label: "own grade quotation with teacher attribution", body: "I said ‘I'm in seventh grade, as a teacher told me.’", minor: true },
+  { label: "own grade quotation with qualified teacher role", body: "I said ‘I'm in 12th grade, as a teacher at the school.’", minor: false },
+  { label: "another speaker quotes a grade with teacher attribution", body: "She said ‘I'm in seventh grade, as a teacher told me.’", minor: false },
+  { label: "unfinished casual birthday", body: "“I'm turning 16 next month", minor: true },
+])("signed TURN and relay classify age at their own boundary: $label", async ({ label, body, minor, incomingAge }) => {
+  const id = "relay-age-estimate-" + randomUUID();
+  const pair = ++ageEstimatePair;
+  const senderPhone = "+12125550" + (100 + 2 * pair);
+  const recipientPhone = "+12125550" + (101 + 2 * pair);
+  await enrollRelayMember(senderPhone, "Ari, 29", id + "-ari");
+  await enrollRelayMember(recipientPhone, "Bo, 29", id + "-bo");
+  const sender = await open(senderPhone, id + "-ari-open"), recipient = await open(recipientPhone, id + "-bo-open");
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
+    const now = clock.now();
+    state.opps.push({ ...swapMatchTemplate!, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY,
+      participants: [sender, recipient], status: [[sender, "yes"], [recipient, "yes"]], contacted: [sender, recipient] });
+    net.importState(state);
+  });
+  const before = (await service.accounts.personFor(senderPhone))?.lowestAge;
+  expect(before).toBe(29);
+
+  const text = "tell Bo " + body, messageId = id + "-text";
+  if (incomingAge !== undefined) {
+    clock.advance(MINUTE);
+    const response = await signed(TURN_PATH, messageId, JSON.stringify(turn(senderPhone, messageId, text)));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "handled" });
+    expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(incomingAge);
+    expect(await service.runtimeFor("friends")!.unitOfWork(net =>
+      net.exportState().opps.find(opp => opp.id === id)?.stage)).toBe("closed");
+    expect((await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text })).status).toBe(403);
+    clock.advance(MINUTE);
+    const followupId = id + "-minor-followup";
+    const followup = await signed(TURN_PATH, followupId, JSON.stringify(turn(senderPhone, followupId, "tell Bo the coffee shop is open.")));
+    expect(await followup.json()).toMatchObject({ outcome: "handled" });
+    expect(await sql`select id from network.messages
+      where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`).toHaveLength(0);
+    return;
+  }
+  expect(await open(senderPhone, messageId, text)).toBe(sender);
+  expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(before);
+  const response = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
+  expect(response.status).toBe(200);
+  const decision = minor ? "block" : "pass";
+  expect(await response.json()).toMatchObject({ decision, delivered: false });
+  const records = await sql`select decision, age_signal from network.relay_records
+    where app_id='friends' and opportunity_id=${id} and from_member=${sender}`;
+  expect([...records]).toEqual([{ decision, age_signal: minor }]);
+  const sent = await sql`select body from network.messages
+    where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`;
+  expect(sent).toHaveLength(minor ? 0 : 1);
+  expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(before);
+  const after = await service.runtimeFor("friends")!.unitOfWork(net => net.exportState());
+  expect(after.opps.find(opp => opp.id === id)?.stage).toBe(minor ? "closed" : "scheduled");
+  expect(!!after.members.find(member => member.id === sender)?.minorSignal).toBe(minor);
+  if (label === "short turning age") {
+    const messageId = id + "-followup", text = "tell Bo the coffee shop is open.";
+    expect(await open(senderPhone, messageId, text)).toBe(sender);
+    const followup = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
+    expect(await followup.json()).toMatchObject({ decision: "block", delivered: false });
+  }
 }, 60_000);
 test("a relayed text that says the sender is under 18 is blocked and starts the minors policy: the minor signal on the person, a safety case, and the match closed (audit ST-D2)",async()=>{
   await service.runtimeFor("friends")!.unitOfWork(net=>{

@@ -51,3 +51,18 @@ pure def stepPassedRequiresPresence(before: Screening, after: Screening): bool =
 pure def sometimesPassed(s: Screening): bool = s.phase == Passed
 pure def sometimesRefused(s: Screening): bool = s.phase == Refused
 ```
+
+### Every retained alternate passes the same safety floor
+
+An alternate must exist and have no active safety hold. Keep the lane's
+pair checks for the primary participants and the alternatives. The final
+judge checks every person named in any role for age, holds, and blocks.
+Its positive answer cannot restore an unsafe alternative.
+
+```quint
+pure def candidateBackfillAllowed(known: bool, held: bool): bool =
+  known and not(held)
+
+pure def lawCandidateBackfillNeedsAvailableMember(known: bool, held: bool): bool =
+  candidateBackfillAllowed(known, held) implies known and not(held)
+```

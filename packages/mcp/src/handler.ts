@@ -313,8 +313,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHost(u.hostname))) throw new Error(`the issuer for ${a.id} must be https (http only on a loopback host)`);
     if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
   }
-  const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
-  const browserCookie = (a: McpApp) => (secureCookies(a) ? "__Host-mcp_auth" : "mcp_auth");
+  const secureCookies = (a: McpApp) => new URL(issuerOf(a)).protocol === "https:";
+  const browserCookie = (a: McpApp) => secureCookies(a) ? "__Host-mcp_auth" : `mcp_auth_${a.id}`;
   let lastSweep = 0;
 
   const resourceFor = (issuer: string, surface: Surface) => `${issuer}${surface === "openai" ? "/mcp/openai" : "/mcp"}`;
@@ -638,7 +638,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function liveRequest(c: Ctx, form: URLSearchParams) {
     const rid = form.get("rid") ?? "";
     const r = rid ? await store.getAuthRequest(rid) : undefined;
-    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.app));
+    const cookies = c.req.headers.get("cookie");
+    const browser = cookieValue(cookies, browserCookie(c.app))
+      ?? (secureCookies(c.app) ? undefined : cookieValue(cookies, "mcp_auth"));
     if (!r) return undefined;
     const sameApp = r.app === c.app.id;
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
@@ -1385,13 +1387,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
           }
         }
-        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, scopes: auth?.token.scopes ?? [], store, now: now(), log, assistant: auth ? assistantOf(auth.client) : undefined });
-        if ((need === "profile:read" || need === "photos:use") && r.kind === "ok" && auth) {
+        const outcome = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, scopes: auth?.token.scopes ?? [], store, now: now(), log, assistant: auth ? assistantOf(auth.client) : undefined });
+        if (outcome.kind === "profile_refusal" || ((need === "profile:read" || need === "photos:use") && outcome.kind === "ok" && auth)) {
           const live = await bearer(c, resource);
           if (live === "unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
-          if (!live || live === "invalid" || live.grant.id !== auth.grant.id || !tokenCovers(tool, live.token.scopes))
+          if (!auth || !live || live === "invalid" || live.grant.id !== auth.grant.id || !tokenCovers(tool, live.token.scopes))
             return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
+        const r = outcome.kind === "profile_refusal" ? await outcome.read() : outcome;
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "grant_unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
         if (r.kind === "invalid_grant" || r.kind === "grant_held") {

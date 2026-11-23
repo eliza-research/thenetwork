@@ -1,6 +1,35 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+
+test("day-before reminders wait for fractional quiet hours on both sides of midnight", async () => {
+  // spec/quietHours.md, "A quiet window includes its start and excludes its end"
+  // spec/meetingSettlement.md, "A day-before reminder has its own send window"
+  const w = new Mini(["a", "b"].map((id, i) => ({
+    id, name: i ? "Ben Ito" : "Ana Diaz", age: 30, area: "Greenpoint",
+    interests: ["climbing", "hiking"], skills: ["belaying"], quietHours: [0, 0],
+  })), { plans: false, growth: false });
+  await w.onboard("a", "b");
+  const id = w.propose(["a", "b"]);
+  await w.answerProbes(["a", "b"]);
+  const state = w.net.exportState();
+  const reminderDue = Date.UTC(2026, 9, 10, 1, 30); // Friday 21:30 in New York.
+  state.opps.find(o => o.id === id)!.meetingAt = reminderDue + DAY;
+  w.net.importState(state);
+  w.members[0]!.prefs.quietHours = [21.5, 22.5];
+  w.members[1]!.prefs.quietHours = [21.5, 8.5];
+
+  const aOpen = reminderDue + HOUR;
+  const bOpen = reminderDue + 11 * HOUR;
+  const deliveries = [];
+  for (const at of [reminderDue, aOpen - MINUTE, aOpen, bOpen - MINUTE, bOpen]) {
+    const before = w.mark();
+    w.clock.set(at);
+    await w.net.tick(at);
+    deliveries.push(w.sent.slice(before).filter(s => s.meta.type === "reminder" && s.meta.proposalId === id).map(s => s.to));
+  }
+  expect(deliveries).toEqual([[], [], ["a"], [], ["b"]]);
+});
 
 test.each([false, true])("the day-before reminder and day-of check-in retain their windows after restart (STOP: %s)", async stop => {
   // spec/meetingSettlement.md, "A day-before reminder has its own send window"

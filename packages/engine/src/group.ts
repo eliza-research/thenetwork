@@ -5,6 +5,7 @@ import {
 } from "../../core/src/generated/groupFormation.ts";
 import { laneLimits, laneShape, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
+import { groupHostEligible } from "../../core/src/generated/groupHost.ts";
 import { isMinor, memberReason } from "./filters.ts";
 import { buildCircles, repeatTables, type Circle } from "./match/circles.ts";
 import { compareText, type EntityId, type MatchProfile } from "./match/profile.ts";
@@ -158,6 +159,10 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
   const affinity = new Map(pool.map(p => [p.id, p.affinity]));
   for (const f of forced) if (!affinity.has(f)) affinity.set(f, 0.5);
   const poolIds = pool.map(p => p.id).filter(id => !forced.includes(id));
+  const hosts = new Set([...forced, ...poolIds].filter(id => groupHostEligible(w.get(id)?.isHost === true,
+    forced.includes(id) && opts.forcedRole !== undefined && opts.forcedRole !== "host",
+    memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false }) === null)));
+  if (opts.forcedRole === "host" && forced.some(id => !hosts.has(id))) return null;
   const graph = poolGraph(w, lane, [...forced, ...poolIds]);
   const pairOf = (a: MemberId, b: MemberId) => (graph.value(a, b) ?? 0) / pairValueScale;
 
@@ -168,7 +173,7 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
     const us = ids.map(id => leastMiseryUtility(Math.max(0, Math.min(1, affinity.get(id) ?? 0)), ids.filter(x => x !== id).map(x => pairOf(id, x))));
     return [{
       circle, min: Math.min(...us), mean: us.reduce((s, u) => s + u, 0) / us.length,
-      city: ov.city, hours: ov.hours, hasHost: ids.some(id => w.get(id)!.isHost),
+      city: ov.city, hours: ov.hours, hasHost: ids.some(id => hosts.has(id)),
     }];
   }).sort((x, y) => y.min - x.min || y.mean - x.mean || compareText(circleKey(x.circle.members), circleKey(y.circle.members)));
   const admit = (ranked: readonly Ranked[]): ComposedGroup | null => {
@@ -198,10 +203,10 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
       formation = step(formation, { type: "finishGroup" });
 
       const roles: Record<MemberId, Role> = {};
-      let hostAssigned = false;
+      let hostAssigned = opts.forcedRole === "host" && forced.length > 0;
       for (const id of primary) {
         if (opts.forcedRole && forced.includes(id)) roles[id] = opts.forcedRole;
-        else if (!hostAssigned && w.get(id)!.isHost && !memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false })) {
+        else if (!hostAssigned && hosts.has(id)) {
           roles[id] = "host"; hostAssigned = true;
         }
         else roles[id] = "guest";
@@ -227,7 +232,7 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
   const group = admit(rank(poolCircles(graph, forced, opts.minSize, opts.maxSize)));
   if (group || !opts.needHost) return group;
   for (const host of poolIds) {
-    if (!w.get(host)!.isHost) continue;
+    if (!hosts.has(host)) continue;
     const hosted = admit(rank(poolCircles(graph, [...forced, host], opts.minSize, opts.maxSize)));
     if (hosted) return hosted;
   }

@@ -8,11 +8,13 @@ A person needs to join by text or web and have their lowest stated age apply acr
 
 Check membership creation, the age floor, under-13 erasure, and single-player access for minors. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and the signed turn journey cover the prepared Peon signup format.
+The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and signed turn journeys cover both the prepared Peon signup format and bare answers to a pending enrollment question.
 
 The person keeps age readings, and the join asks for the birthday ([member age](../memberAge.md), "Track age from a birth date"). The model abstracts a reading to the integer age it gives on the model's one day: `birthAge` is the age from the latest stated birth date (the youngest), and `ageHigh` and `floorHigh` are the highest stated ages of the person and of the phone floor (the lower bound of the readings). The readings agree when the youngest and the highest are the birth-date age. A member of friends.help or The Network aged 13 to 17 is a teen friend candidate only while staff have not stopped teen introductions and the readings agree ([friend introductions with a minor](../friendIntroAge.md) `teenReady`, `teenFriendCandidate`); readiness needs no staff step. `teenReadingsAgree` says that a teen candidate never stated an age that disagrees with the birth date. The pair and group rule `teenFriendAgeRule` is not in this model, because it has one person; the [candidate pool](candidate_pool.md), [engine rules](engine_rules.md) and [opportunity](opportunity.md) models check it. `minorNeverMatched` is the adult matching rule: a minor is never matchable in an adult lane. The stop has no invariant here, because `teenCandidate` reads the stop directly; `teenStopTest` shows that a stop makes the teen single-player and a resume makes the teen a candidate again. `minorFriendsOnly` states answer A5 for the looking-for answer: an enroll never makes a minor a member of slop.date (the model's apps have no peon.biz; the code refuses both through the generated `otherAppAllowed`). Delete everything clears the birth date. The one notice to an existing slop.date or peon.biz minor (`minorScopeNoticeDue`) is outside this model; `text-join-birthday.integration.test.ts` covers it. Changed (owner decision 2026-11-22, answers A1 to A5): the join asks for the birth date, and a minor of friends.help or The Network becomes a teen friend candidate with no staff step, because the owner chose "On at launch, no extra checks".
 
-The [fractional age and conjunction rule](../memberAge.md#a-half-age-needs-age-wording-to-confirm-an-under-13-refusal) supplies the current age and its explicit flag. The model takes these fields as input. A signed-turn regression checks how the readers produce the fields.
+The [near-birthday rule](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) supplies the parser's age estimate. This model uses 17 as the minor representative for a near eighteenth birthday, and retains the same adult and minimum-age boundaries.
+
+The [fractional age and conjunction rule](../memberAge.md#a-half-age-needs-age-wording-to-confirm-an-under-13-refusal) supplies the current age and its explicit flag. The model takes these fields as input. The signed relay cases check how the turn reader excludes a measurement or a complete adult role while retaining a separate credible youth disclosure.
 
 Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -80,7 +82,7 @@ Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) fo
 // presence check are oracles: a message carries their output as nondeterministic fields.
 //
 // Scope and abstractions: one phone, one person, three apps (ntwrk, slop, friends). Ages abstract to
-// {12, 15, 25} on the text path and {0, 12, 15, 25} on the web path (the text path refuses 0;
+// {12, 15, 17, 25} on the text path and {0, 12, 15, 25} on the web path (the text path refuses 0;
 // the web path accepts it). Join modes are the production values (AGENTS.md 2026-10-09: ntwrk invite-only on the web,
 // slop and friends open). Every text turn is a signed gateway turn (AGENTS.md decision 2). One turn runs at
 // a time: text and web joins share the `join:<phone>` lock, and the member path runs alone
@@ -93,7 +95,7 @@ module join_age {
   pure val OTHER_APPS = Set("slop", "friends")
   // A membership that is a live member (not invited, not removed): the code's own filter.
   pure val LIVE = Set("onboarding", "active", "paused")
-  pure val TEXT_AGES = Set(NONE, 12, 15, 25)
+  pure val TEXT_AGES = Set(NONE, 12, 15, 17, 25)
   pure val WEB_AGES = Set(0, 12, 15, 25)
   pure val MAX_CRASHES = 1
   pure val MAX_FAILS = 1
@@ -1267,6 +1269,12 @@ module join_age {
       .then(receive(M_SAM25, "ntwrk")).then(noticeStep).then(joinStep).then(personStep).then(ageStep)
       .then(memberStep).then(createStep).then(welcomeStep).then(afterStep).then(lfPendStep).then(doneStep(true))
       .expect(db.mstate.get("ntwrk") == "active" and safety)
+
+  run nextEighteenthBirthdayKeepsMinorFloorTest =
+    init.then(joinNtwrkByText(M_SAM15.with("age", 17).with("explicit", false)))
+      .expect(db.floor == 17 and db.net.get("ntwrk").minor)
+      .then(receive(M_SAM25, "ntwrk")).then(lfCloseStep).then(unitStep).then(flushStep).then(doneStep(true))
+      .expect(db.floor == 17 and APPS.forall(a => not(matchable(db, a))) and safety)
 
   // A 15-year-old joins by text: single-player, matchable nowhere, the minor looking-for question.
   run minorJoinTest =

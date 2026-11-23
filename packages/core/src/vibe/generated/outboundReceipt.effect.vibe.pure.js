@@ -18,6 +18,12 @@ export function stepReceiptsDoNotRegress(before, via, after) { return M.stepRece
 export function canApplyReceipt(outbound, providerPhase) { return M.canApplyReceipt(outbound, providerPhase); }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function lawDeliveredIgnoresFailure(phase) { return M.lawDeliveredIgnoresFailure(phase); }
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) @throws {never} */
+export function keepScrubbedRecipientCount(phase, nonmember, hadAddress, windowOpen) { return M.keepScrubbedRecipientCount(phase, nonmember, hadAddress, windowOpen); }
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) @throws {never} */
+export function lawFailedReceiptHasNoScrubbedRecipientCount(nonmember, hadAddress, windowOpen) { return M.lawFailedReceiptHasNoScrubbedRecipientCount(nonmember, hadAddress, windowOpen); }
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) @throws {never} */
+export function lawScrubbedRecipientCountRequiresOpenWindow(phase, nonmember, hadAddress) { return M.lawScrubbedRecipientCountRequiresOpenWindow(phase, nonmember, hadAddress); }
 /** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function canHoldUnrecordedReceipt(outbound) { return M.canHoldUnrecordedReceipt(outbound); }
 /** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
@@ -54,6 +60,12 @@ export function acceptanceEndsRow(phase, receiptOwner, member) { return M.accept
 export function lawFailedAcceptanceRecordsNoSend(phase) { return M.lawFailedAcceptanceRecordsNoSend(phase); }
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
 export function lawReceiptOwnerEndsNonMemberRow(phase) { return M.lawReceiptOwnerEndsNonMemberRow(phase); }
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
+export function keepAcceptedRecipientCount(phase, receiptOwner, nonmember, hadAddress, windowOpen) { return M.keepAcceptedRecipientCount(phase, receiptOwner, nonmember, hadAddress, windowOpen); }
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
+export function lawReceiptOwnerAcceptanceKeepsRecipientCount(phase) { return M.lawReceiptOwnerAcceptanceKeepsRecipientCount(phase); }
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
+export function lawFailedAcceptanceHasNoRecipientCount(receiptOwner, nonmember, hadAddress, windowOpen) { return M.lawFailedAcceptanceHasNoRecipientCount(receiptOwner, nonmember, hadAddress, windowOpen); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export function gatewayReceiptApplies(replyStatus, delivery) { return M.gatewayReceiptApplies(replyStatus, delivery); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */

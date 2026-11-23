@@ -16,7 +16,7 @@
     "spec:check-generated": "node scripts/spec-snapshots.ts --check",
     "spec:conformance": "node scripts/vibestack.ts conformance",
     "spec:explore": "corepack pnpm@10.24.0 run connector:css && node scripts/vibestack.ts explore",
-    "quint:check": "node --import tsx --env-file-if-exists=.env scripts/quint-check.ts",
+    "quint:check": "node --env-file-if-exists=.env scripts/quint-check.ts",
     "test:integration": "corepack pnpm@10.24.0 run connector:css && node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration",
     "test:e2e": "corepack pnpm@10.24.0 run connector:css && node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project e2e",
     "security": "corepack pnpm@10.24.0 run connector:css && node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration packages/platform/test/db.test.ts packages/platform/test/api-security.test.ts packages/platform/test/proxy.test.ts packages/platform/test/cloud-auth.pg.test.ts packages/platform/test/notify-retention.pg.test.ts packages/mcp/test/oauth.test.ts packages/mcp/test/pg.test.ts deploy/backend/backend.test.ts deploy/router.test.ts packages/network/test/shared-agent.integration.test.ts packages/observatory/test/staff.test.ts",

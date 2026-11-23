@@ -5,7 +5,7 @@
 // Each gate compares the pack with the keyword job board (and the oracle) on the SAME seeds.
 import { poolImpact, type PeonMetrics } from "./metrics.ts";
 
-import type { GateResult } from "../gates.ts";
+import { minimumObservedRatio, type GateResult } from "../gates.ts";
 export type { GateResult } from "../gates.ts";
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const M = (xs: PeonMetrics[], f: (m: PeonMetrics) => number) => mean(xs.map(f));
@@ -28,7 +28,7 @@ export function officialGates(p: PeonMetrics[], k: PeonMetrics[], o?: PeonMetric
     { id: "interviews_per_hire", gate: "Interviews per hire <= 0.75x keyword", value: `${ivX.toFixed(2)}x`, pass: ivX <= 0.75 },
     { id: "retention_90d", gate: "90-day retention within 2 points of keyword (or better)", value: `${(retD * 100).toFixed(1)} pt`, pass: retD >= -0.02 },
     { id: "under_applied", gate: "Under-applied hires >= 0.9x keyword, and Gini of applications per job below keyword's", value: `${uaX.toFixed(2)}x; Gini ${gP.toFixed(2)} vs ${gK.toFixed(2)}`, pass: uaX >= 0.9 && gP < gK },
-    { id: "impact_ratio", gate: "Impact ratio >= 0.8 for every sealed group at the automated stage (pooled; worst seed shown)", value: `${pooled.minAutomated.toFixed(2)} (worst seed ${Math.min(...p.map(m => m.impact.minAutomated)).toFixed(2)})`, pass: pooled.minAutomated >= 0.8 },
+    { id: "impact_ratio", gate: "Impact ratio >= 0.8 for every sealed group at the automated stage (pooled; worst seed shown)", value: `${pooled.minAutomated.toFixed(2)} (worst seed ${minimumObservedRatio(p.map(m => m.impact.minAutomated)).toFixed(2)})`, pass: pooled.minAutomated >= 0.8 },
     { id: "scam_reach", gate: "Median reach per scam employer that got an intro <= 1 (max shown)", value: reach.length ? `${median(reach)} (n=${reach.length}, max ${Math.max(...reach)})` : "0 (no scam got an intro)", pass: median(reach) <= 1 },
     { id: "minors", gate: "Minors matched = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.minorsMatched, 0)), pass: p.every(m => m.safety.minorsMatched === 0) },
     { id: "unverified", gate: "Unverified-employer intros = 0", value: String(p.reduce((s, m) => s + m.safety.unverifiedIntros, 0)), pass: p.every(m => m.safety.unverifiedIntros === 0) },

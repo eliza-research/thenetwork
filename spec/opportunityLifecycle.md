@@ -88,7 +88,7 @@ pure def lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, ac
 
 ### An explicit cancellation selects the named upcoming meeting
 
-Read the member's own explicit cancellation in the current app. A request with an exact date and time in New York local time selects that start before interpreting a reply to another booking or probe. Keep that other reply slot open. Consider only accepted bookings on the member's current roster with a known start later than now. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. A cancellation without a date keeps the normal routing for an active booked reply slot and for a probe answer.
+Read the member's own explicit cancellation in the current app. A request or direct attendance refusal with an exact date and time in New York local time selects that start before interpreting a reply to another booking or probe. A direct date-only cancellation can select a unique booking on the named local day. Read “today,” “tonight,” “tomorrow,” or a bare weekday from the signed receive date. When a natural-language activity name does not bind an exact start, ask for the full start before changing any booking. Keep that other reply slot open. Consider only accepted bookings on the member's current roster with a known start later than now. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. A cancellation without a date keeps the normal routing for an active booked reply slot and for a probe answer.
 
 ```quint
 type UnlinkedCancellation = NoCancellation | NoMatchingBooking | AskWhichBooking | CancelMatchingBooking
@@ -113,6 +113,49 @@ pure def lawNamedCancellationCanSelectWithPendingReply(activeBookedSlot: bool): 
 pure def lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRoster: bool, accepted: bool,
     startKnown: bool, startAt: int, now: int): bool =
   startAt <= now implies not(upcomingCancellationEligible(proposal, onRoster, accepted, startKnown, startAt, now))
+```
+
+### A number-swap refusal does not decline the booked meeting
+
+A statement that says the booking need not be cancelled preserves it. A conditional attendance statement cannot cancel on its own. Withdrawing a number swap changes number-sharing consent. Keep the booking unless the text separately and directly declines attendance. A separate affirmative booking answer can still confirm the plan. The text reader distinguishes that answer or refusal from the transfer clause before the booked reply uses it.
+
+```quint
+pure def bookedReplyDeclines(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool, keepsBooking: bool): bool =
+  not(keepsBooking) and (if (swapWithdrawal) directAttendanceDecline else ordinaryDecline)
+
+pure def lawSwapWithdrawalAloneDoesNotCancel(ordinaryDecline: bool): bool =
+  not(bookedReplyDeclines(ordinaryDecline, true, false, false))
+
+pure def lawKeepingTheBookingVetoesABookedDecline(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool): bool =
+  not(bookedReplyDeclines(ordinaryDecline, swapWithdrawal, directAttendanceDecline, true))
+```
+
+### A player can confirm the future booking in the prompt
+
+In the staff simulation, a clear yes sets the player's plan to attend the
+booking named in the current prompt. This applies before that booking starts.
+A cancellation request or a request that names a booking cannot confirm by
+the same reply. A mixed or unclear answer supplies no confirmation.
+An attendance commitment leaves the world's cancellation and attendance checks in force.
+
+```quint
+pure def playerBookingConfirmationAllowed(exactPromptBooking: bool, startAt: int, receivedAt: int,
+    cancellationRequest: bool, directYes: bool): bool =
+  exactPromptBooking and startAt > receivedAt and not(cancellationRequest) and directYes
+
+pure def lawPlayerCannotConfirmAStartedBooking(exactPromptBooking: bool, startAt: int, receivedAt: int,
+    cancellationRequest: bool, directYes: bool): bool =
+  startAt <= receivedAt implies
+    not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, directYes))
+
+pure def lawPlayerCanConfirmOnlyThePromptBooking(startAt: int, receivedAt: int, cancellationRequest: bool, directYes: bool): bool =
+  not(playerBookingConfirmationAllowed(false, startAt, receivedAt, cancellationRequest, directYes))
+
+pure def lawCancellationRequestCannotConfirmPlayerAttendance(exactPromptBooking: bool, startAt: int, receivedAt: int, directYes: bool): bool =
+  not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, true, directYes))
+
+pure def lawPlayerAttendanceConfirmationNeedsAClearYes(exactPromptBooking: bool, startAt: int, receivedAt: int, cancellationRequest: bool): bool =
+  not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, false))
 ```
 
 ### A new minor signal closes an opportunity involving that person

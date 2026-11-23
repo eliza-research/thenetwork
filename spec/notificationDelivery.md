@@ -81,6 +81,17 @@ pure def lawMixedDigestOrMissingGrantNeverLinks(singleApp: bool, hasReadableAssi
   (not(singleApp) or not(hasReadableAssistant)) implies not(assistantDigestCanLink(singleApp, hasReadableAssistant))
 ```
 
+### An assistant link records its selected surface
+
+Keep the push channel as the delivery target for a plain thread update. A direct assistant link records the named assistant. A button page records its first assistant, which is the one the picker selected. When that delivery expires as ignored, apply the outcome to that recorded target.
+
+```quint
+pure val primaryDigestAssistantIndex: int = 0
+
+pure def lawNonemptyButtonPageHasPrimaryTarget(assistantCount: int): bool =
+  assistantCount > 0 implies (0 <= primaryDigestAssistantIndex and primaryDigestAssistantIndex < assistantCount)
+```
+
 ### Ignore inactive assistants and assistants whose links went unused twice
 
 The automatic picker excludes an inactive assistant or one whose links went unused twice in a row. The explicit picker also falls back to the thread for those cases.

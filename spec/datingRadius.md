@@ -17,7 +17,7 @@ pure def sharedDatingMarket(inFirst: bool, inSecond: bool, listed: bool): bool =
 
 ### The distance and margin must fit both members' limits
 
-The engine adds the privacy margin to the distance between the two coarse cells. Equality with either limit is allowed. The engine handles an unknown limit separately and orders eligible markets by distance.
+The engine adds the privacy margin to the distance between the two coarse cells. Equality with either limit is allowed. The engine handles an unknown limit separately and orders eligible markets by distance. When resolving the proposal's time window, search only markets that fit both limits. The preferred market can fall back to another eligible market with enough shared presence. A market outside either limit cannot supply that presence.
 
 ```quint
 pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
@@ -50,6 +50,38 @@ pure def slopPairContactAllowed(approved: bool, pairCurrent: bool, reveal: bool,
 
 pure def lawSlopPairRevealNeedsCurrentConsent(approved: bool, pairCurrent: bool, bothConsented: bool): bool =
   slopPairContactAllowed(approved, pairCurrent, true, bothConsented) implies (approved and pairCurrent and bothConsented)
+```
+
+### Date planning uses the matched members' canonical profiles
+
+Apply the same input member aliases to matching and date planning. A current member ID takes priority over an alias with the same key. Follow at most eight links. An ID that still has no current member supplies no profile evidence. A caller that supplies its own resolver gets a separate profile view.
+
+```quint
+pure val maxMemberAliasHops = 8
+
+pure def mayFollowMemberAlias(currentMember: bool, aliasExists: bool, hops: int): bool =
+  not(currentMember) and aliasExists and hops < maxMemberAliasHops
+
+pure def lawCurrentMemberIdHasPriority(aliasExists: bool, hops: int): bool =
+  not(mayFollowMemberAlias(true, aliasExists, hops))
+
+pure def lawMemberAliasSearchIsBounded(currentMember: bool, aliasExists: bool, hops: int): bool =
+  hops >= maxMemberAliasHops implies not(mayFollowMemberAlias(currentMember, aliasExists, hops))
+```
+
+### A mutual named introduction stays in first-date history
+
+Use a positive receipt from each member's exact original named booking on the same reviewed Slop opportunity. Record one accepted introduction at the later receipt time. Keep it if the booking changes, is cancelled, or receives no feedback. Other receipts and anonymous probes leave first-date history open. An accepted introduction records exposure to the other member's name. Attended-meeting evidence and an explicit mutual request to meet again use their own rules.
+
+```quint
+pure def slopFirstIntroductionAt(firstCollected: int, firstReceived: int, secondCollected: int, secondReceived: int, asOf: int): int =
+  if (firstCollected >= 0 and secondCollected >= 0 and firstReceived >= firstCollected and
+      secondReceived >= secondCollected and firstReceived <= asOf and secondReceived <= asOf) {
+    if (firstReceived >= secondReceived) firstReceived else secondReceived
+  } else -1
+
+pure def lawSlopIntroductionNeedsBothReceipts(firstCollected: int, firstReceived: int, secondCollected: int, asOf: int): bool =
+  slopFirstIntroductionAt(firstCollected, firstReceived, secondCollected, -1, asOf) == -1
 ```
 
 ### Only encounter-backed blocks inform a member review

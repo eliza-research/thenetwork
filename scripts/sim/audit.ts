@@ -118,8 +118,8 @@ async function networkGates(b: Block) {
 
   await b.run("network-consent-5: after a probe \"no\", the pair is not probed again (no later opportunity holds the member and the person they declined)", () => {
     expect(rosterAtNo.size).toBeGreaterThan(5);
-    const started = new Set<string>();
-    const declined = new Map<string, string>();
+    const started = new Map<string, string>();
+    const declined = new Map<string, { id: string; at: number }>();
     const again: string[] = [];
     for (const l of R) {
       if (l.type !== "network_log") continue;
@@ -128,17 +128,17 @@ async function networkGates(b: Block) {
         const member = String(l.detail.memberId);
         expect(atNo.includes(member)).toBe(true);
         for (const peer of atNo) {
-          if (peer !== member) declined.set(pairKey(member, peer), String(l.detail.oppId));
+          if (peer !== member) declined.set(pairKey(member, peer), { id: String(l.detail.oppId), at: l.t });
         }
       }
       if ((l.kind !== "probe_started" && l.kind !== "probe_replaced") || l.detail.plan) continue;
       const { id, participants } = l.detail.proposal as { id: string; participants: MemberId[] };
-      if (l.kind === "probe_started") started.add(id);
+      if (l.kind === "probe_started") started.set(id, String(l.detail.origin));
       if (!started.has(id)) continue; // Plan replacements do not carry the plan flag.
       for (const [index, member] of participants.entries()) {
         for (const peer of participants.slice(index + 1)) {
           const source = declined.get(pairKey(member, peer));
-          if (source) again.push(`${source} -> ${id} (${member}, ${peer})`);
+          if (source) again.push(`${source.id} [${started.get(source.id)}] at ${source.at} -> ${id} [${started.get(id)}, ${l.kind}] at ${l.t} (${member}, ${peer})`);
         }
       }
     }

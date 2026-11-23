@@ -34,6 +34,15 @@ finding SHA65): unconfirmed turn replies, unresolved signed turns and
 deliveries with an unknown acceptance become one alert per condition. The
 model below does not include these inputs; the alerts reach the dispatcher
 it models like any other alert.
+A cached metrics response reads the last completed dispatch separately from the
+measured snapshot. A refresh during the webhook changes the snapshot timestamp
+and leaves the completed alert result visible until dispatch returns.
+
+Send failure counts use observed outcomes. The queue still owns pending
+receipts and reconciles them before their outcomes can affect the failure
+rate. The runtime SQL aggregates accepted SMS receipts by acceptance time.
+The signed synthetic queue tests cover the collected, resolved and expired
+states and the UTC boundary.
 
 [Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
 eligibility, and aggregate outcome rules. The backend reads saved

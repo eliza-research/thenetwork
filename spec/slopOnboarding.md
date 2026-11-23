@@ -6,6 +6,47 @@ The [matching engine model](models/matching_engine.md) follows answers, profile 
 
 > As a slop.date member, I want the agent to ask one relevant question at a time and let me confirm or correct the information it uses.
 
+### Keep a match preference separate from self-description
+
+A gender letter before an age range describes a possible match. A letter and
+age after an explicit seeking phrase also describe a possible match. Neither
+sets the member's own age or gender. A standalone self-description such as
+“F 17” still gives the member's age and gender. The reader supplies the
+surrounding words and the range boundary.
+
+```quint
+pure def slopSelfShorthandAllowed(namesTarget: bool, startsRange: bool): bool =
+  not(namesTarget or startsRange)
+
+pure def lawSlopTargetShorthandDoesNotDescribeMember(startsRange: bool): bool =
+  not(slopSelfShorthandAllowed(true, startsRange))
+
+pure def lawSlopRangeDoesNotSetOwnAge(namesTarget: bool): bool =
+  not(slopSelfShorthandAllowed(namesTarget, true))
+```
+
+### Read a spelled distance as the same numeric preference
+
+Spelled numbers that the reader knows, including “one hundred” and “a
+hundred,” can give a radius with a distance unit. Use the same distance
+context, unit conversion, and existing radius bounds as for a digit.
+
+```quint
+pure def slopRadiusContextAllowed(askedDistance: bool, distanceContext: bool, exerciseContext: bool, bareDigitRadius: bool): bool =
+  askedDistance or (distanceContext and not(exerciseContext)) or bareDigitRadius
+
+pure def slopRadiusMilesInBounds(miles: int): bool = miles >= 1 and miles <= 200
+
+pure def lawSlopExerciseDistanceNeedsAQueryOrBareRadius(distanceContext: bool): bool =
+  not(slopRadiusContextAllowed(false, distanceContext, true, false))
+
+pure def lawSlopRadiusRejectsMilesOutsideBounds(miles: int): bool =
+  (miles < 1 or miles > 200) implies not(slopRadiusMilesInBounds(miles))
+
+pure def lawSlopRadiusIncludesBoundaries(upper: bool): bool =
+  slopRadiusMilesInBounds(if (upper) 200 else 1)
+```
+
 ### Age restrictions stop dating onboarding before a prompt
 
 A minor or someone declined at signup receives no dating question or read-back. Otherwise, the router offers a read-back only when the required fields are complete, the profile awaits confirmation, and the read-back is within its ask limit and outside the immediate skip list. In all other cases it searches for a question.

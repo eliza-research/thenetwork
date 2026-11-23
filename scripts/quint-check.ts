@@ -6,7 +6,7 @@ import { availableParallelism, cpus, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
-const MODEL_DIR = "spec/models";
+export const MODEL_DIR = "spec/models";
 const OUTPUT_DIR = "runs/quint-models";
 const QUINT = join(ROOT, "tools/vibestack/node_modules/.bin/quint");
 const SIMULATOR = join(ROOT, "tools/vibestack/vibestack/simulator.ts");
@@ -14,7 +14,15 @@ const SEED = "0x5eed";
 // Match the pinned Quint CLI's Rust default, independently of the runner's --jobs setting.
 const RUST_THREADS = String(cpus().length);
 
-function tangle(name: string): string {
+export function modelName(file: string): string | undefined {
+  return /^[a-z][a-z0-9_]*\.md$/.test(file) ? basename(file, ".md") : undefined;
+}
+
+export function modelNames(): string[] {
+  return readdirSync(join(ROOT, MODEL_DIR)).sort().flatMap((file) => modelName(file) ?? []);
+}
+
+export function modelSource(name: string): string {
   if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid Quint model name: ${name}`);
   const spec = `${MODEL_DIR}/${name}.md`;
   const markdown = readFileSync(join(ROOT, spec), "utf8");
@@ -22,14 +30,19 @@ function tangle(name: string): string {
   if (blocks.length !== 1 || !new RegExp(`^module ${name}\\b`, "m").test(blocks[0][1])) {
     throw new Error(`${spec} must contain one complete Quint module named ${name}`);
   }
+  return blocks[0][1];
+}
+
+function tangle(name: string): string {
+  const source = modelSource(name);
   const file = `${OUTPUT_DIR}/${name}.qnt`;
-  writeFileSync(join(ROOT, file), blocks[0][1]);
+  writeFileSync(join(ROOT, file), source);
   return file;
 }
 
 type Bounds = { maxSteps: number; maxSamples: number; verifySteps: number };
 type Simulation = Pick<Bounds, "maxSteps" | "maxSamples"> & { invariant: string };
-type Step = { name: string; args: string[]; expectViolation: boolean; simulation?: Simulation };
+type Step = { name: string; args: string[]; expectViolation: boolean; simulation?: Simulation; expectRun?: string };
 
 function bounds(text: string): Bounds {
   const b: Bounds = { maxSteps: 20, maxSamples: 4000, verifySteps: 8 };
@@ -122,8 +135,25 @@ function stepsFor(file: string, text: string, verify: boolean, safetyCap: number
   } else problems.push(`${file} has no \`val safety\``);
   const witnesses = [...text.matchAll(/^\s*val\s+(witness_\w+)/gm)].map((m) => m[1]);
   if (!witnesses.length) problems.push(`${file} has no \`val witness_*\``);
-  for (const w of witnesses) {
-    addSimulation(w, b.maxSamples, true);
+  const traces = new Map<string, string>();
+  for (const [, witness, trace] of text.matchAll(/^\/\/\s*quint-witness:\s+(witness_\w+)\s+(\w+)\s*$/gm)) {
+    if (!witnesses.includes(witness) || traces.has(witness)) {
+      problems.push(`${file} has an unknown or repeated witness trace for ${witness}`);
+      continue;
+    }
+    const run = new RegExp(String.raw`^\s*run ${trace}\s*=(.*(?:\n[ \t]{4,}[^\n]*)*)`, "m").exec(text)?.[1];
+    if (!run?.includes(`.expect(not(${witness}))`)) {
+      problems.push(`${file} ${trace} must assert .expect(not(${witness}))`);
+      continue;
+    }
+    traces.set(witness, trace);
+  }
+  for (const witness of witnesses) {
+    const trace = traces.get(witness);
+    if (trace) steps.push({ name: `${witness} (replayed by ${trace})`,
+      args: ["test", file, "--main", main, "--seed", SEED, "--match", `^${trace}$`],
+      expectViolation: false, expectRun: trace });
+    else addSimulation(witness, b.maxSamples, true);
   }
   if (verify) {
     steps.push({ name: "verify safety", args: ["verify", file, "--main", main, "--invariant", "safety",
@@ -164,7 +194,8 @@ async function checkModel(file: string, verify: boolean, typecheckOnly: boolean,
         }
         // Use the same CLI result and diagnostics on errors, safety failures and unreached witnesses.
         const r = await command([QUINT, ...step.args]);
-        const ok = step.expectViolation ? r.code !== 0 && /invariant violated/i.test(r.out) : r.code === 0;
+        const ok = step.expectViolation ? r.code !== 0 && /invariant violated/i.test(r.out)
+          : r.code === 0 && (step.expectRun === undefined || r.out.includes(`${step.expectRun} passed 1 test(s)`));
         // A diagnostic retry cannot erase a counterexample the evaluator already found.
         const disagreement = ok && !step.expectViolation && simulated === "violation";
         const out = disagreement ? `Invariant violated in the compiled simulation. The CLI retry did not reproduce it.\n${r.out}` : r.out;
@@ -200,8 +231,7 @@ if (import.meta.main) {
     process.exit(1);
   }
   const named = argv.filter((a, i) => !a.startsWith("--") && argv[i - 1] !== "--jobs" && argv[i - 1] !== "--safety-samples");
-  const names = named.length ? [...new Set(named.map((a) => basename(a).replace(/\.(qnt|md)$/, "")))] : readdirSync(join(ROOT, MODEL_DIR))
-    .filter((f) => /^[a-z][a-z0-9_]*\.md$/.test(f)).sort().map((f) => basename(f, ".md"));
+  const names = named.length ? [...new Set(named.map((a) => basename(a).replace(/\.(qnt|md)$/, "")))] : modelNames();
   if (!names.length) {
     console.error(`No Quint models in ${MODEL_DIR}/`);
     process.exit(1);

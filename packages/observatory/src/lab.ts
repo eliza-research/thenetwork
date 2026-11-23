@@ -3,7 +3,10 @@
 // minor contacts). Each seed is one child process of packages/network/harness/experiment.ts (the
 // same arms and the same judge numbers as the results docs), at most 2 at a time; the rest wait in a
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
+import { labHasQueueCapacity } from "../../core/src/generated/labQueue.ts";
 import { spawnProcess } from "../../core/src/runtime/process.ts";
+import { labAcceptsWork, labRunInterrupted } from "../../core/src/generated/consolePanels.ts";
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { APP_IDS, DEFAULT_APP, isAppId, type AppId } from "./apps.ts";
@@ -13,7 +16,12 @@ import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 export const LAB_ARMS: readonly LabArm[] = ["push_baseline", "push_v2", "consent"];
 /** maxQueued: seeds that may wait at once (a full queue answers 429; audit observatory-14). */
 export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2, maxQueued: 20 } as const;
-const LAB_STOPPED = "the server stopped before the run finished";
+
+export class LabQueueFullError extends Error {
+  constructor() {
+    super(`The lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
+  }
+}
 
 /**
  * The child's environment: what Node needs to run, nothing else. API keys, database URLs and tokens
@@ -79,10 +87,11 @@ export class Lab {
   private runs = new Map<string, LabRun>();
   private queue: { run: LabRun; seed: number }[] = [];
   private active = 0;
-  private seq = 0;
   private loaded: Promise<void>;
   private children = new Set<ReturnType<typeof spawnProcess>>();
-  private stopped = false;
+  private jobs = new Set<Promise<void>>();
+  private stopping = false;
+  private closing?: Promise<void>;
   readonly dir: string;
   private script: string;
   private concurrency: number;
@@ -100,7 +109,7 @@ export class Lab {
     for (const f of (await readdir(this.dir)).filter(x => x.endsWith(".json"))) {
       try {
         const r = JSON.parse(await readFile(join(this.dir, f), "utf8")) as LabRun;
-        if (r.status === "queued" || r.status === "running") Object.assign(r, { status: "failed", error: LAB_STOPPED });
+        if (labRunInterrupted(r.status)) Object.assign(r, { status: "failed", error: "the server stopped before the run finished" });
         this.runs.set(r.id, r);
       } catch { /* a file that is not a run */ }
     }
@@ -126,10 +135,11 @@ export class Lab {
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
-    if (this.stopped) throw new Error(LAB_STOPPED);
-    if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
+    if (!labAcceptsWork(this.stopping)) throw new Error("the simulation lab has stopped");
+    if (!this.canQueue(req.seeds.length)) throw new LabQueueFullError();
     const now = Date.now();
-    const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
+    // spec/consolePanels.md, "A lab run starts only in the simulated world with a valid request"
+    const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${randomUUID()}`;
     const run: LabRun = {
       id, request: req, requestedBy, status: "queued", createdAt: now, progress: { done: 0, total: req.seeds.length }, results: [],
       file: join(this.dir, `${id}.json`),
@@ -143,22 +153,33 @@ export class Lab {
 
   /** Children running now. */
   get running() { return this.active; }
+  canQueue(seedCount: number): boolean {
+    return labHasQueueCapacity(this.queue.length, seedCount, LAB_LIMITS.maxQueued);
+  }
+
   /** Seeds waiting for a child. */
   get queued() { return this.queue.length; }
 
   private pump() {
-    while (this.active < this.concurrency && this.queue.length) {
+    while (labAcceptsWork(this.stopping) && this.active < this.concurrency && this.queue.length) {
       const job = this.queue.shift()!;
       this.active++;
-      this.exec(job.run, job.seed).finally(() => { this.active--; this.pump(); });
+      const active = this.exec(job.run, job.seed).finally(() => {
+        this.jobs.delete(active);
+        this.active--;
+        this.pump();
+      });
+      this.jobs.add(active);
+      void active.catch((error: unknown) => console.error("simulation lab could not save a run", error));
     }
   }
 
   private async exec(run: LabRun, seed: number) {
     if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
+    // The first status write can finish after the lab closes admission.
+    if (!labAcceptsWork(this.stopping)) return;
     const r = run.request;
     try {
-      if (this.stopped) throw new Error(LAB_STOPPED);
       const child = spawnProcess([process.execPath, "--import", "tsx", this.script, ...labArgs(r, seed)], {
         cwd: REPO, stdout: "pipe", stderr: "pipe", env: labEnv(),
       });
@@ -193,11 +214,26 @@ export class Lab {
     return next;
   }
 
-  /** Stop children (server shutdown). */
-  dispose() {
-    this.stopped = true;
+  /** spec/consolePanels.md, "Stopping the console closes the lab and finishes interrupted runs" */
+  dispose(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.stopping = true;
     this.queue = [];
     for (const child of this.children) child.kill();
-    this.children.clear();
+    this.closing = this.finishShutdown();
+    return this.closing;
+  }
+
+  private async finishShutdown(): Promise<void> {
+    await this.loaded;
+    await Promise.allSettled(this.jobs);
+    for (const run of this.runs.values()) {
+      if (!labRunInterrupted(run.status)) continue;
+      run.status = "failed";
+      run.error = [run.error, "the server stopped before the run finished"].filter(Boolean).join("; ");
+      run.finishedAt = Date.now();
+      await this.save(run);
+    }
+    await Promise.all(this.saving.values());
   }
 }

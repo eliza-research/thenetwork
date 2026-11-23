@@ -15,7 +15,7 @@
 // evals' historical replay, in packages/evals/src/historicalPrompts.ts.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { privateVocabulary } from "./explain.ts";
-import { candidateAgeReason, type AgeCheckedCandidate } from "./filters.ts";
+import { candidateAgeReason, involvedMembers, type AgeCheckedCandidate } from "./filters.ts";
 import {
   attendingRefs, checkMemberFacing, passMessages, ReplyFields, runPass, str,
   type CitedFact, type JudgeRequest, type PassVerdict,
@@ -89,8 +89,14 @@ export const deepDecision = (v: DeepVerdict) => v.verdict === "yes";
  * Returns the first failing reason or null.
  */
 export function hardGate(w: World, c: Omit<AgeCheckedCandidate, "alternates"> & { alternates?: MemberId[] }): string | null {
-  if (candidateAgeReason(w, { ...c, alternates: c.alternates ?? [] })) return "underage";
-  const everyone = [...c.participants, ...(c.via ? [c.via] : [])];
+  const roster = { participants: c.participants, alternates: c.alternates ?? [], via: c.via };
+  const canonicalRoles = c.roles && Object.fromEntries(Object.entries(c.roles).map(([id, role]) => [w.canonical(id), role]));
+  const canonical = {
+    ...c, participants: c.participants.map(w.canonical), alternates: roster.alternates.map(w.canonical),
+    ...(c.via !== undefined ? { via: w.canonical(c.via) } : {}), ...(canonicalRoles ? { roles: canonicalRoles } : {}),
+  };
+  if (candidateAgeReason(w, canonical)) return "underage";
+  const everyone = involvedMembers(roster).map(w.canonical);
   for (const id of everyone) if (!w.get(id)) return "unknown_member";
   for (const id of everyone) if (w.holds.has(id)) return "safety_hold";
   for (let i = 0; i < everyone.length; i++) for (let j = i + 1; j < everyone.length; j++) if (w.blocked.has(pairKey(everyone[i]!, everyone[j]!))) return "blocked";

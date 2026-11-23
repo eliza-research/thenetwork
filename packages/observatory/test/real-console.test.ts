@@ -94,6 +94,43 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     expect(rs.stats.alerts!.some(x => x.key === "matcher_heartbeat" && x.level === "bad")).toBe(false);
   });
 
+  test("a read receipt preserves the confirmed proactive count and staff attention score", async () => {
+    // spec/consolePanels.md, "Confirmed proactive delivery contributes to the staff rate"
+    const sql = new SQL(url);
+    let changed: string | undefined;
+    const attention = (s: ObsState) => s.stats.scorecard?.find(metric => metric.key === "attention_burden");
+    try {
+      const [message] = await sql<{ id: string; member_id: string }[]>`select id,member_id from network.messages
+        where app_id='ntwrk' and direction='outbound' and proactive and not system and status='delivered' order by id limit 1`;
+      if (!message) throw new Error("The running world produced no delivered proactive message");
+      const before = real.state();
+      const counts = (s: ObsState) => ({
+        total: s.stats.proactive,
+        member: s.members.find(member => member.id === message.member_id)?.counters.proactive,
+        attention: attention(s),
+      });
+      expect(counts(before).total).toBeGreaterThan(0);
+      expect(counts(before).member).toBeGreaterThan(0);
+      await sql`update network.messages set status='read' where app_id='ntwrk' and id=${message.id}`;
+      changed = message.id;
+      expect((await real.control({ type: "refresh" })).ok).toBe(true);
+      expect(counts(real.state())).toEqual(counts(before));
+
+      // An accepted outbound fixture with no delivery evidence does not contribute.
+      await sql`update network.messages set status='sent' where app_id='ntwrk' and id=${message.id}`;
+      expect((await real.control({ type: "refresh" })).ok).toBe(true);
+      const unconfirmed = counts(real.state()), delivered = counts(before);
+      expect(unconfirmed).toMatchObject({ total: delivered.total - 1, member: delivered.member! - 1,
+        attention: { n: delivered.attention!.n - 1 } });
+    } finally {
+      if (changed) {
+        await sql`update network.messages set status='delivered' where app_id='ntwrk' and id=${changed}`;
+        await real.control({ type: "refresh" });
+      }
+      await sql.close();
+    }
+  }, T);
+
   test("timeline: events between messages, inbound text hidden unless this member is revealed; opportunity history matches game mode", async () => {
     const opp = gs.opportunities.find(o => o.review?.decision === "approve" && o.participants.length === 2 && o.state !== "SKIPPED")!;
     const id = opp.participants[0]!;

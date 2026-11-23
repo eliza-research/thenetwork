@@ -592,6 +592,9 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     await text(s, clock, p, "slop");
     await text(s, clock, p, "Ren 32");
     const sl = (await memberOf("slop", p))!, fr = (await memberOf("friends", p))!;
+    const proposedAt = new Date(clock.now());
+    await sql`insert into network.opportunities (app_id,id,kind,state,city,objective,created_at,updated_at)
+      values ('slop','opp-1','intro','PROPOSED','nyc','Coffee date',${proposedAt},${proposedAt})`;
     await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts) values ('slop', 'probe-1', ${sl.id}, 'outbound', 'imessage', 'probe', 'dry_run', 'opp-1', true, false, ${new Date(clock.now())})`;
     await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, proactive, system, ts) values ('friends', 'note-1', ${fr.id}, 'outbound', 'imessage', 'note', 'dry_run', false, false, ${new Date(clock.now() + MINUTE)})`;
     clock.advance(2 * MINUTE);

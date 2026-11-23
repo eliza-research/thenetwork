@@ -91,8 +91,11 @@ describe("roles per app", () => {
   });
 
   test("lab runs match for the Slop pack and for Peon (spec/runtimeUnit.md: a lab run is a local simulation)", () => {
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).not.toContain("--max-new");
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).not.toContain("--max-new");
+    for (const app of ["peon", "slop"] as const) {
+      const args = labArgs({ arms: ["consent"], seeds: [1], days: 3, app }, 1);
+      expect(args).not.toContain("--max-new");
+      expect(args).not.toContain("--matching-off");
+    }
   });
 });
 

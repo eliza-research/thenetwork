@@ -13,7 +13,63 @@ import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
-const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability", "expired generic invite"] as const;
+test("a booked group that continues after a withdrawal records only its active participants", async () => {
+  const planned = ["ana", "ben", "cy", "dee"];
+  const remaining = planned.slice(0, 3);
+  const world = new Mini(planned.map(id => ({
+    id, name: id, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
+  })), { inlineJudge: holdEveryItem.inline, growth: false });
+  await world.onboard(...planned);
+  const id = world.propose(planned);
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
+  expect(world.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  await world.answerProbes(planned);
+  expect(world.meetings).toMatchObject([{ participants: planned }]);
+
+  await world.say("dee", "I can't make it anymore.");
+  const opportunity = () => world.net.exportState().opps.find(item => item.id === id)!;
+  expect(opportunity()).toMatchObject({ stage: "scheduled", participants: planned });
+  expect(opportunity().status.filter(([, status]) => status === "yes").map(([member]) => member)).toEqual(remaining);
+  for (const member of remaining) await world.say(member, "Thanks, still coming.");
+  world.restart();
+
+  const feedbackRecipients = () => world.sent.filter(item =>
+    item.meta.type === "feedback_request" && item.meta.proposalId === id).map(item => item.to);
+  await world.run(opportunity().meetingAt! - world.clock.now());
+  for (const member of remaining) await world.say(member, "Thanks.");
+  expect(await world.runUntil(() => feedbackRecipients().length >= remaining.length, DAY)).toBe(true);
+  expect(feedbackRecipients().toSorted()).toEqual(remaining);
+  for (const member of remaining) await world.say(member, member === "ben" ? "I couldn't make it." : "It was great!");
+
+  expect(opportunity()).toMatchObject({ stage: "done", participants: planned, feedbackFrom: remaining, post: {
+    ana: { came: true }, ben: { came: false }, cy: { came: true },
+  } });
+  expect(world.net.engineInput(world.clock.now()).feedback?.some(item => item.from === "dee" || item.about === "dee")).toBe(false);
+  const rows = () => world.net.exportState().interactions.filter(item => item.id.startsWith(`${id}:fb:`));
+  const history = [
+    { id: `${id}:fb:ana`, participants: remaining, outcome: "completed" },
+    { id: `${id}:fb:ben`, participants: remaining, outcome: "no_show" },
+    { id: `${id}:fb:cy`, participants: remaining, outcome: "completed" },
+  ];
+  expect(rows()).toMatchObject(history);
+  world.restart();
+  expect(rows()).toMatchObject(history);
+
+  const legacy = world.net.exportState();
+  for (const item of legacy.interactions) if (item.id.startsWith(`${id}:fb:`)) item.participants = planned;
+  world.net.importState(legacy);
+  expect(rows()).toMatchObject(history);
+  expect(opportunity().participants).toEqual(planned);
+
+  world.net.forgetMember("dee");
+  world.restart();
+  expect(opportunity()).toBeUndefined();
+  expect(rows()).toMatchObject(history);
+  world.net.forgetMember("ben");
+  expect(rows()).toEqual([]);
+});
+
+const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "deferred booking roster", "changed queued availability", "expired generic invite"] as const;
 
 test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current admission (%s)", async scene => {
   // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
@@ -108,7 +164,11 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     const [ari, blair, charlie, drew, elliot] = ids;
     if (!ari || !blair || !charlie || !drew || !elliot) throw new Error("The five fixture members did not join");
     const checksDisclosure = scene === "withdrawn identity";
-    const invited = checksDisclosure ? [ari, blair, charlie, elliot] : [ari, blair, charlie];
+    const deferBooking = scene === "deferred booking roster";
+    const fourSeats = checksDisclosure || deferBooking;
+    const invited = fourSeats ? [ari, blair, charlie, elliot] : [ari, blair, charlie];
+    const quietAri = () => sql`update network.members set prefs=prefs || ${{ quietHours: [14, 15] }}::jsonb
+      where app_id=${app.id} and id=${ari}`;
     const freshRoster = [ari, blair, elliot];
     const now = clock.now();
     const fixture = new Mini(members, { app: app.id, plans: false, growth: false });
@@ -118,7 +178,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     const plan: plans.Plan = {
       id: "booked_group_replacement_original", city: "nyc", activityId: "day_hike", venueId: "inwood-hill",
       place: { name: "Inwood Hill Park", area: "Inwood" }, window: { start: now + 5 * DAY, end: now + 5 * DAY + 4 * HOUR },
-      invited, alternates: checksDisclosure ? [] : [drew, elliot], partner: false, size: { min: 3, target: invited.length, max: invited.length }, quorum: 3,
+      invited, alternates: fourSeats ? [] : [drew, elliot], partner: false, size: { min: 3, target: invited.length, max: invited.length }, quorum: 3,
       probeDeadline: now + (scene === "expired generic invite" ? 2 * HOUR : 3 * DAY),
       score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
@@ -180,9 +240,40 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     const firstOriginalYes = turn("original-ari-yes", people[0].e164, "yes");
     const firstOriginalReply = await answer(firstOriginalYes);
     await answer(turn("original-blair-yes", people[1].e164, "yes"));
+    if (deferBooking) await quietAri();
     if (checksDisclosure) await adapter.lineSafety("review");
     const bookedYes = turn("original-charlie-yes", people[2].e164, "yes");
     const bookedReply = await answer(bookedYes);
+    if (deferBooking) {
+      // spec/meetingReschedule.md, "A named booking notice still needs every recorded seat"
+      await answer(turn("original-elliot-late-yes", people[4].e164, "yes"));
+      const booked = await booking(original.oppId);
+      expect(booked).toMatchObject({ stage: "scheduled", bookedTold: expect.arrayContaining([blair, charlie, elliot]) });
+      expect(booked?.bookedTold).not.toContain(ari);
+      expect((await runtime().pg.load())?.deferred).toContainEqual(expect.objectContaining({
+        memberId: ari, kind: "reveal", body: expect.stringContaining("Charlie"),
+      }));
+      expect(await delivered(original.oppId, "proposal")).toEqual([expect.objectContaining({ to: people[1].e164 })]);
+      // A saved assent without the current participant row cannot authorize a named reply.
+      await sql`update network.participations set role='alternate' where app_id=${app.id} and opportunity_id=${original.oppId} and member_id=${ari}`;
+      const replay = await post(TURN_PATH, bookedYes.messageId, bookedYes);
+      expect(replay.status).toBe(409);
+      expect(await replay.json()).toMatchObject({ error: "turn_booking_changed" });
+      await sql`update network.participations set role='participant' where app_id=${app.id} and opportunity_id=${original.oppId} and member_id=${ari}`;
+      await answer(turn("booked-charlie-steps-out", people[2].e164, "I can't make it."));
+      const ongoing = await booking(original.oppId);
+      expect(ongoing).toMatchObject({ stage: "scheduled" });
+      expect(ongoing?.status.filter(([, status]) => status === "yes").map(([id]) => id).sort()).toEqual([...freshRoster].sort());
+      clock.advance(HOUR);
+      await runtime().tick();
+      const refreshed = (await delivered(original.oppId, "proposal")).filter(call => call.to === people[0].e164);
+      expect(refreshed.map(call => call.text)).toEqual([expect.stringContaining("with Blair, Elliot")]);
+      expect(refreshed[0]?.text).not.toContain("Charlie");
+      const [recorded] = await sql`select booking_roster_member_ids from network.messages
+        where app_id=${app.id} and id=${refreshed[0]?.idempotencyKey.slice(3)} and member_id=${ari}`;
+      expect(recorded?.booking_roster_member_ids).toEqual(freshRoster);
+      return;
+    }
     if (checksDisclosure) {
       // spec/meetingReschedule.md, "A named booking notice still needs every recorded seat"
       // The reviewed fourth invitee accepts after booking. Their collected reply still names Charlie.

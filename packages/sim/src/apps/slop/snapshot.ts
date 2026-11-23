@@ -19,6 +19,7 @@
 //   fact        slop:occupation (shareable value)
 //   fact        safety:<signal> (agent_private, inferred: cues the agent observed in chat)
 //   Intent      category "romance", details "goal: <goal>"; Presence areas ["zip:<zip>"]
+import { slopSimulationFeedbackReceived } from "../../../../core/src/generated/slopSimulationFeedback.ts";
 import { DAY, canBeMatched, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
 import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
@@ -336,7 +337,7 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
   }
   return {
     now: state.now, members, facets, intents, presence, edges: state.edges.map(e => ({ ...e })), recentProposals: [],
-    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.map(f => ({ ...f })),
+    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.filter(f => slopSimulationFeedbackReceived(f.at, state.now)).map(f => ({ ...f })),
     safetyHolds: state.safetyHolds.map(h => ({ ...h })), inboundAsks: state.inboundAsks.map(a => ({ ...a })),
     asks: (state.asks ?? []).map(a => ({ ...a })),
   };

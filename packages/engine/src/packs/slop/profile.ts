@@ -1,12 +1,12 @@
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, CITY_TZ, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
-import { completedMeetingSlot } from "../../../../core/src/generated/meetingSettlement.ts";
+import { completedDateFeedbackMatches, completedDatePacingAt, completedMeetingSlot, slopCompletedDateCounts, slopNoShowCounts } from "../../../../core/src/generated/meetingSettlement.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import type { DatingStatement, StatedGender, TransOpenness } from "../../../../core/src/generated/mutualOpenness.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput, InteractionRecord } from "../../types.ts";
-import { pairKey } from "../../world.ts";
+import { memberIdResolver, pairKey, type MemberIdResolver } from "../../world.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
 
@@ -60,15 +60,22 @@ export interface SlopProfile {
   history: History;
 }
 
-const cache = new WeakMap<EngineInput, Map<MemberId, SlopProfile>>();
+type ProfileCache = { defaultProfiles?: Map<MemberId, SlopProfile>; byResolver: WeakMap<MemberIdResolver, Map<MemberId, SlopProfile>> };
+const cache = new WeakMap<EngineInput, ProfileCache>();
 const SILENT_AFTER_DAYS = 7;
 
-export function slopProfiles(input: EngineInput, canonical: (id: MemberId) => MemberId = x => x): Map<MemberId, SlopProfile> {
-  let out = cache.get(input);
-  if (out) return out;
-  out = buildProfiles(input, canonical);
-  cache.set(input, out);
-  return out;
+export function slopProfiles(input: EngineInput, canonical?: MemberIdResolver): Map<MemberId, SlopProfile> {
+  let entry = cache.get(input);
+  if (!entry) {
+    entry = { byResolver: new WeakMap() };
+    cache.set(input, entry);
+  }
+  const cached = canonical ? entry.byResolver.get(canonical) : entry.defaultProfiles;
+  if (cached) return cached;
+  const profiles = buildProfiles(input, canonical ?? memberIdResolver(input));
+  if (canonical) entry.byResolver.set(canonical, profiles);
+  else entry.defaultProfiles = profiles;
+  return profiles;
 }
 
 function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, SlopProfile> {
@@ -229,6 +236,7 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   const now = input.now;
   const zoneOf = new Map(input.members.map(m => [C(m.id), CITY_TZ[m.homeCity]]));
   const firstEncounter = new Map<string, number>();
+  const attendance = new Map<string, { completed?: InteractionRecord; absent: Set<MemberId> }>();
   for (const r of input.interactions ?? []) {
     if (r.at > now) continue;
     if (r.participants.length === 2 && slopRecordedBlockContext(r.outcome)) {
@@ -239,18 +247,47 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     if (r.outcome === "declined") for (const id of r.declinedBy ?? []) h(C(id)).no++;
     if (r.outcome === "cancelled") for (const id of r.declinedBy ?? []) h(C(id)).backouts++;
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
-    if (r.outcome === "completed") for (const id of r.participants) {
-      const x = h(C(id)); x.dates++;
-      const slot = attendedSlot(r, zoneOf.get(C(id)) ?? CITY_TZ.nyc);
-      if (slot >= 0) x.attendedSlots.push(slot);
+    if (r.outcome !== "completed" && r.outcome !== "no_show") continue;
+
+    const opportunityId = r.opportunityId ?? r.id;
+    const known = attendance.get(opportunityId) ?? { absent: new Set<MemberId>() };
+    attendance.set(opportunityId, known);
+    if (r.outcome === "completed") {
+      const previous = known.completed;
+      if (!previous || (previous.bookedMeeting == null && r.bookedMeeting != null)
+        || ((previous.bookedMeeting != null) === (r.bookedMeeting != null) && r.at < previous.at)) known.completed = r;
+    } else {
+      const roster = new Set(r.participants.map(C));
+      for (const id of r.noShowBy ?? []) {
+        const member = C(id);
+        if (slopNoShowCounts(true, roster.has(member))) known.absent.add(member);
+      }
     }
-    if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
   }
+
   const negFrom = new Map<MemberId, Set<MemberId>>();
-  const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
-  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.participants) {
-    const k = C(id), cur = lastDate.get(k);
-    if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
+  const lastDate = new Map<MemberId, { opportunityId: string; at: number; participants: MemberId[]; liked?: boolean }>();
+  for (const { completed, absent } of attendance.values()) {
+    for (const id of absent) h(id).noShows++;
+    if (!completed) continue;
+
+    // Pacing accepts the feedback reference on older direct engine inputs that lack a saved opportunity.
+    const marker = completed.id.lastIndexOf(":fb:");
+    const opportunityId = completed.opportunityId ?? (marker < 0 ? completed.id : completed.id.slice(0, marker));
+    const booked = completed.bookedMeeting;
+    const at = completedDatePacingAt(booked != null, booked?.at ?? 0, completed.at);
+    const participants = [...new Set(completed.participants.map(C))];
+    for (const id of participants) {
+      if (!slopCompletedDateCounts(true, absent.has(id))) continue;
+      const history = h(id);
+      history.dates++;
+      const slot = attendedSlot(completed, zoneOf.get(id) ?? CITY_TZ.nyc);
+      if (slot >= 0) history.attendedSlots.push(slot);
+      const cur = lastDate.get(id);
+      if (!cur || at > cur.at || (at === cur.at && opportunityId < cur.opportunityId)) {
+        lastDate.set(id, { opportunityId, at, participants });
+      }
+    }
   }
   const fbs = [...(input.feedback ?? [])].sort((x, y) => (x.at - y.at) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   for (const f of fbs) {
@@ -260,7 +297,10 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     h(from).rated.push({ about, v });
     if (f.sentiment === "negative") { const set = negFrom.get(about) ?? new Set(); set.add(from); negFrom.set(about, set); }
     const ld = lastDate.get(from);
-    if (ld && f.at >= ld.at) ld.liked = f.wouldMeetAgain === true;
+    if (ld && completedDateFeedbackMatches(f.at, ld.at, f.opportunityId !== undefined, f.opportunityId === ld.opportunityId,
+      from !== about && ld.participants.includes(about))) {
+      ld.liked = f.wouldMeetAgain === true;
+    }
   }
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;
   for (const [id, d] of lastDate) { const y = h(id); y.lastDateAt = d.at; y.lastDateLiked = d.liked; }

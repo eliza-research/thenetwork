@@ -9,6 +9,7 @@ export * from "./replies.ts";
 export * from "./fence.ts";
 export * from "./time.ts";
 export * from "./rng.ts";
+export * from "./abuse.ts";
 export * from "./network.ts";
 export * from "./runlog.ts";
 export * from "./pii.ts";

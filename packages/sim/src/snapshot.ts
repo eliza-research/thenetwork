@@ -4,6 +4,7 @@
 // the agent things in confidence) so engines can be tested for privacy leaks.
 import { DAY, HOUR, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
+import { matchingHistoryOutcome } from "../../core/src/generated/matchingHistory.ts";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
 import { hash32 } from "@thenetwork/core";
 import { desireById, SKILLS } from "./taxonomy.ts";
@@ -62,6 +63,7 @@ export interface SimInteraction {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[]; at: number;
   outcome: "pending" | "accepted" | "declined" | "expired" | "completed" | "no_show";
   declinedBy?: MemberId[]; acceptedBy?: MemberId[]; noResponse?: MemberId[];
+  declinedAt?: Record<MemberId, number>;
 }
 export interface SimFeedback { id: string; from: MemberId; about: MemberId; opportunityId: string; at: number; sentiment: "positive" | "neutral" | "negative"; wouldMeetAgain: boolean }
 export type SimOpenOpportunity = import("@thenetwork/core").OpenOpportunity;
@@ -86,7 +88,8 @@ export function memberOf(p: Persona, s: Pick<SnapshotState, "joined" | "optedOut
   // With a Knowledge profile only the intents the member actually told the agent count, and a
   // minimal-tier member never set a romance opt-in unless their one want was romance.
   const known = k ? k.chat.intents.map(i => p.public.statedIntents[i]!).filter(Boolean) : p.public.statedIntents;
-  const cats = Array.from(new Set(["social", ...known.map(i => i.category)])) as Member["prefs"]["categoriesOptIn"];
+  const cats = [...new Set<Category>(["social", ...known.map(i => i.category)])];
+  if (known.some(i => i.category === "growth" && desireById.get(i.desireId)?.category === "growth") && !cats.includes("hobby")) cats.push("hobby");
   const romance = p.public.claimedAge >= 18 && (known.some(i => i.category === "romance")
     || (p.hidden.romance.optIn && p.hidden.adversarial !== "minor" && k?.richness !== "minimal"));
   return {
@@ -109,7 +112,7 @@ export function memberOf(p: Persona, s: Pick<SnapshotState, "joined" | "optedOut
  * coverage) plus facets from their active connected sources. Hidden truth labels are stripped.
  * Minors (stated age < 18): every facet agent_private.
  */
-function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unresponsive: (id: string) => boolean, facets: Facet[], intents: Intent[], feat: SnapshotFeatures) {
+function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unresponsive: (id: MemberId, at: number) => boolean, facets: Facet[], intents: Intent[], feat: SnapshotFeatures) {
   const minor = p.public.claimedAge < 18;
   const c = k.chat;
   const said = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
@@ -126,7 +129,7 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
   k.observations.forEach((o, i) => facets.push({ ...o.facet, tags: [...o.facet.tags], id: `${p.id}:s${facets.length}:${i}`, memberId: p.id, scope: minor ? "agent_private" : o.facet.scope }));
   for (const i of c.intents) {
     const it = p.public.statedIntents[i];
-    const rec = it && intentRecordTiming(p, i, now, jt, { unresponsive: unresponsive(p.id) });
+    const rec = it && intentRecordTiming(p, i, now, jt, { unresponsive: at => unresponsive(p.id, at) });
     if (!it || !rec) continue;
     const def = desireById.get(it.desireId);
     intents.push({
@@ -137,7 +140,32 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
   }
 }
 
+/** The simulator's unanswered-message threshold at the time of each check-in. */
+function checkInSilence(s: SnapshotState): (id: MemberId, at: number) => boolean {
+  if (!s.records) return id => (s.unanswered.get(id) ?? 0) >= 2;
+  const counts = new Map<MemberId, number>();
+  const spans = new Map<MemberId, { from: number; to?: number }[]>();
+  for (const record of s.records) {
+    if (record.type !== "message" || record.msg.ts > s.now) continue;
+    const msg = record.msg, count = counts.get(msg.memberId) ?? 0;
+    if (msg.direction === "inbound") {
+      if (count >= 2) spans.get(msg.memberId)!.at(-1)!.to = msg.ts;
+      counts.set(msg.memberId, 0);
+    } else if (msg.status === "delivered" && msg.meta?.proactive) {
+      counts.set(msg.memberId, count + 1);
+      if (count === 1) {
+        const memberSpans = spans.get(msg.memberId) ?? [];
+        memberSpans.push({ from: msg.ts });
+        spans.set(msg.memberId, memberSpans);
+      }
+    }
+  }
+  return (id, at) => (spans.get(id) ?? []).some(span => span.from <= at && (span.to === undefined || at < span.to));
+}
+
 export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapshot {
+  let silence: ReturnType<typeof checkInSilence> | undefined;
+  const unresponsive = (id: MemberId, at: number) => (silence ??= checkInSilence(s))(id, at);
   const feat: SnapshotFeatures = { ...SNAPSHOT_FEATURES, ...(s.features ?? {}) };
   const joined = personas.filter(p => s.joined.has(p.id));
   const memberById = new Map<MemberId, Member>();
@@ -154,7 +182,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
     const jt = s.joined.get(p.id)!;
     const k = p.knowledge;
     if (p.public.verified) facets.push({ id: `${p.id}:verified`, memberId: p.id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "connected_source", confidence: 1, validFrom: jt });
-    if (k) pushKnownFacets(p, k, jt, s.now, id => (s.unanswered.get(id) ?? 0) >= 2, facets, intents, feat);
+    if (k) pushKnownFacets(p, k, jt, s.now, unresponsive, facets, intents, feat);
     else {
       const f = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
         ({ id: `${p.id}:f${facets.length}:${i}`, memberId: p.id, kind, value, tags, scope, provenance: "said", confidence: 0.8, validFrom: jt });
@@ -172,7 +200,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
       p.public.statedIntents.forEach((it, i) => {
         // Anchored to the snapshot's `now`: stated at join (or statedAt), re-confirmed at the
         // check-ins the member answered, withdrawn once the want lapsed (persona.ts).
-        const rec = intentRecordTiming(p, i, s.now, jt, { unresponsive: (s.unanswered.get(p.id) ?? 0) >= 2 });
+        const rec = intentRecordTiming(p, i, s.now, jt, { unresponsive: at => unresponsive(p.id, at) });
         if (!rec) return;
         const def = desireById.get(it.desireId);
         intents.push({
@@ -274,12 +302,14 @@ export function publicEvents(snap: Pick<WorldSnapshot, "now" | "members" | "face
 export function networkStateFromRecords(records: readonly RunRecord[], now: number): Required<Pick<SimSnapshot, "interactions" | "feedback" | "openOpportunities" | "unsentProposalIds">> {
   const props = new Map<string, Proposal>();
   const skipped = new Set<string>();
-  const declines = new Map<string, MemberId[]>(), yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
+  const declines = new Map<string, Map<MemberId, number>>();
+  const yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
   const scheduled = new Map<string, { at: number; participants: MemberId[] }>();
   const outcome = new Map<string, Extract<RunRecord, { type: "outcome" }>>();
   const answered = new Set<string>();
   // The open thread per member: the last delivered Network message that expects an answer.
-  const thread = new Map<MemberId, { type?: string; proposalId?: string }>();
+  const thread = new Map<MemberId, { memberId: MemberId; type?: string; proposalId?: string }>();
+  const sent = new Map<string, { memberId: MemberId; type?: string; proposalId?: string }>();
   const said: { from: MemberId; pid: string; at: number; text: string }[] = [];
   for (const r of records) {
     if (r.t > now) break;
@@ -288,17 +318,28 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
     else if (r.type === "message" && !r.msg.system) {
       const m = r.msg;
       if (m.direction === "outbound") {
+        if (m.status !== "delivered") continue;
         const pid = m.meta?.proposalId;
-        if (m.meta?.type === "proposal" && pid) { if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(m.memberId, m.ts); }
-        if (m.status === "delivered" && m.meta?.type && !["info", "confirmation"].includes(m.meta.type)) thread.set(m.memberId, { type: m.meta.type, proposalId: pid });
-      } else if (!m.keyword) {
-        const th = thread.get(m.memberId);
+        const outgoing = { memberId: m.memberId, type: m.meta?.type, proposalId: pid };
+        if (outgoing.type === "proposal" && pid) {
+          if (!invited.has(pid)) invited.set(pid, new Map());
+          invited.get(pid)!.set(m.memberId, m.ts);
+          sent.set(m.id, outgoing);
+        }
+        if (outgoing.type && !["info", "confirmation"].includes(outgoing.type)) thread.set(m.memberId, outgoing);
+      } else if (m.status === "delivered" && !m.keyword) {
+        const inReplyTo = m.meta?.inReplyTo;
+        const th = typeof inReplyTo === "string" ? sent.get(inReplyTo) : thread.get(m.memberId);
+        if (th?.memberId !== m.memberId) continue;
         const key = `${th?.proposalId}|${m.memberId}`;
         if (th?.type !== "proposal" || !th.proposalId || answered.has(key)) continue;
         const a = inviteAnswer(m.body);
         if (!a) continue;
         answered.add(key);
-        if (a === "no") { if (!declines.has(th.proposalId)) declines.set(th.proposalId, []); declines.get(th.proposalId)!.push(m.memberId); }
+        if (a === "no") {
+          if (!declines.has(th.proposalId)) declines.set(th.proposalId, new Map());
+          declines.get(th.proposalId)!.set(m.memberId, m.ts);
+        }
         else { if (!yes.has(th.proposalId)) yes.set(th.proposalId, new Set()); yes.get(th.proposalId)!.add(m.memberId); }
       }
     } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, { at: r.at, participants: r.participants });
@@ -315,23 +356,46 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
       if (answered.has(`${pid}|${id}`)) { if (yes.get(pid)?.has(id)) acceptedBy.push(id); }
       else if (now - ts > 48 * HOUR) noResponse.push(id); // an expired invite is an implicit no
     }
-    let out: SimInteraction["outcome"] = "pending";
     let at = p.createdAt;
     const dec = declines.get(pid);
     const o = outcome.get(pid);
     const sched = scheduled.get(pid);
-    if (dec?.length) out = "declined";
-    else if (o) {
-      const shows = Object.values(o.attendance).filter(a => a.showed).length;
-      out = shows >= 2 ? "completed" : "no_show"; at = o.at;
-    } else if (sched) {
-      out = "accepted";
-      if (sched.at > now) openOpportunities.push({ id: pid, participants: [...p.participants], stage: "scheduled", until: sched.at });
-    } else if (now - p.createdAt > 3 * DAY) out = "expired";
-    else openOpportunities.push({ id: pid, participants: [...p.participants], stage: "inviting", until: p.createdAt + 3 * DAY });
+    let participants = [...p.participants];
+    const roster = (ids: MemberId[]) => {
+      const included = new Set(ids);
+      return [...new Set([...p.participants, ...ids])].filter(id => included.has(id));
+    };
+    const shows = o ? Object.keys(o.attendance).filter(id => o.attendance[id]!.showed) : [];
+    const evidence = matchingHistoryOutcome(!!o, shows.length >= 2, !!sched, !!dec?.size, now - p.createdAt > 3 * DAY);
+    let out: SimInteraction["outcome"];
+    switch (evidence) {
+      case "HistoryCompleted":
+      case "HistoryNoShow":
+        out = evidence === "HistoryCompleted" ? "completed" : "no_show";
+        at = o!.at;
+        participants = roster(evidence === "HistoryCompleted" ? shows : Object.keys(o!.attendance));
+        break;
+      case "HistoryBooked":
+        out = "accepted";
+        participants = roster(sched!.participants);
+        if (sched!.at > now) openOpportunities.push({ id: pid, participants: [...participants], stage: "scheduled", until: sched!.at });
+        break;
+      case "HistoryDeclined":
+        out = "declined";
+        at = Math.max(...dec!.values());
+        break;
+      case "HistoryExpired":
+        out = "expired";
+        break;
+      case "HistoryInviting":
+        out = "pending";
+        openOpportunities.push({ id: pid, participants: [...participants], stage: "inviting", until: p.createdAt + 3 * DAY });
+        break;
+    }
     interactions.push({
-      id: pid, kind: p.kind, category: p.category ?? "social", participants: [...p.participants], at, outcome: out,
-      ...(dec?.length ? { declinedBy: dec } : {}), ...(acceptedBy.length ? { acceptedBy } : {}), ...(noResponse.length ? { noResponse } : {}),
+      id: pid, kind: p.kind, category: p.category ?? "social", participants, at, outcome: out,
+      ...(dec?.size ? { declinedBy: [...dec.keys()], declinedAt: Object.fromEntries(dec) } : {}),
+      ...(acceptedBy.length ? { acceptedBy } : {}), ...(out === "expired" || noResponse.length ? { noResponse } : {}),
     });
   }
   for (const f of said) {

@@ -137,13 +137,19 @@ pure def lawRecruitingIsNeverATeenItemKind(kind: str): bool =
 
 ### An eligible join receipt can ride on a current reply
 
-Tell the inviter when a person joins through their attributed invitation. Share the first name and join status only. The account, consent, age and block checks still apply when the notice goes out. If the notice cannot go out by itself, carry it on an existing reply to a direct member message. A relay or a safety message is not such a reply and cannot carry the notice. A notice never rides a reply about an opportunity in which the invitee has a role (a participant or an alternate): it would name the invitee there before every yes, so it waits. A provider, an assistant submitting a profile, or the passage of time does not create a reply. Clear stale receipts after 30 days.
+Tell the inviter when a person joins through their attributed invitation. Share the first name and join status only. The account, consent, age and block checks still apply when the notice goes out. If the notice cannot go out by itself, carry it on an existing reply to a direct member message. A relay or a safety message is not such a reply and cannot carry the notice. A notice never rides a reply about an opportunity in which the invitee has a role (a participant or an alternate): it would name the invitee there before every yes, so it waits. A notice also waits when its first name matches a participant or alternate. A provider, an assistant submitting a profile, or the passage of time does not create a reply. Clear stale receipts after 30 days.
 
 ```quint
 pure val inviteJoinNoticeLifetimeMs: int = 2592000000
 
 pure def inviteJoinNoticeCurrent(attributed: bool, inviteeConsents: bool, bothEligible: bool, ageMs: int): bool =
   attributed and inviteeConsents and bothEligible and ageMs >= 0 and ageMs < inviteJoinNoticeLifetimeMs
+
+pure def inviteJoinNoticeConflictsWithRole(sameMember: bool, sameFirstName: bool): bool =
+  sameMember or sameFirstName
+
+pure def lawInviteJoinNoticeWaitsForNamesake(sameMember: bool): bool =
+  inviteJoinNoticeConflictsWithRole(sameMember, true)
 
 pure def inviteJoinNoticeMayRideReply(directMemberTurn: bool, reply: bool, carriesMemberText: bool, inviteeHasRole: bool): bool =
   directMemberTurn and reply and not(carriesMemberText) and not(inviteeHasRole)

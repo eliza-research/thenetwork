@@ -1,6 +1,6 @@
 // GENERATED from spec/photoUploadLink.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { uploadMaxBytes as photoPolicy_uploadMaxBytes, uploadMaxPerPerson as photoPolicy_uploadMaxPerPerson, ratingMaxPhotos as photoPolicy_ratingMaxPhotos, ratingMaxBytes as photoPolicy_ratingMaxBytes, photoMaxPerMessage as photoPolicy_photoMaxPerMessage, photoSubjectAllowed as photoPolicy_photoSubjectAllowed, photoSlotsFull as photoPolicy_photoSlotsFull, lawRatingRequiresAdult as photoPolicy_lawRatingRequiresAdult } from "./photoPolicy.ts";
+import { uploadMaxBytes as photoPolicy_uploadMaxBytes, uploadMaxPerPerson as photoPolicy_uploadMaxPerPerson, ratingMaxPhotos as photoPolicy_ratingMaxPhotos, ratingMaxBytes as photoPolicy_ratingMaxBytes, photoMaxPerMessage as photoPolicy_photoMaxPerMessage, textPhotoLineAllowed as photoPolicy_textPhotoLineAllowed, photoSubjectAllowed as photoPolicy_photoSubjectAllowed, photoSlotsFull as photoPolicy_photoSlotsFull, lawDedicatedOtherLineCannotTakeSlopPhoto as photoPolicy_lawDedicatedOtherLineCannotTakeSlopPhoto, lawRatingRequiresAdult as photoPolicy_lawRatingRequiresAdult } from "./photoPolicy.ts";
 
 /** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
 export interface UploadLinkHolder { takesPhotos: boolean; adult: boolean; banned: boolean; held: boolean; liveMember: boolean }

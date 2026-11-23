@@ -29,6 +29,29 @@ describe("metadata", () => {
 });
 
 describe("authorization code with PKCE", () => {
+  test.each(["https", "HTTPS"])("pending browser cookies on %s stay secure and host-only", async scheme => {
+    const env = setup({ issuer: app => app.domain === PEON ? `${scheme}://${PEON}` : origin(app.domain) });
+    const reg = await register(env, PEON);
+    const query = new URLSearchParams({ response_type: "code", client_id: reg.body.client_id,
+      redirect_uri: "https://client.example/callback", code_challenge: CHALLENGE, code_challenge_method: "S256" });
+    const page = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${query}`));
+    expect(page.status).toBe(200);
+    const cookie = page.headers.getSetCookie().find(header => header.startsWith("__Host-mcp_auth="));
+    if (!cookie) throw new Error("Missing HTTPS pending request cookie");
+    expect(cookie).toContain("; Secure");
+    expect(cookie).toContain("; Path=/;");
+    expect(cookie).not.toContain("Domain=");
+    const rid = /name="rid" value="([^"]+)"/.exec(await page.text())?.[1];
+    expect(rid).toBeTruthy();
+    const cancel = (browser: string) => env.fetch(new Request(`${origin(PEON)}/oauth/authorize/cancel`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", cookie: browser, origin: origin(PEON) },
+      body: new URLSearchParams({ rid: rid! }),
+    }));
+    const browser = cookie.split(";", 1)[0]!;
+    expect((await cancel(browser.replace("__Host-", ""))).status).toBe(400);
+    expect((await cancel(browser)).status).toBe(303);
+  });
+
   test("full flow: sign in on the page, approve, exchange, check_status", async () => {
     const env = setup();
     await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);

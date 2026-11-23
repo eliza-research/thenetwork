@@ -8,7 +8,7 @@ import { staffRevealMayDisclose } from "../../core/src/generated/consoleMemberVi
 import { monthlyGatheringConsoleAllowed } from "../../core/src/generated/monthlyGathering.ts";
 import { identityServed, startRefused, tokensAccepted, type PlatformEnv } from "../../core/src/generated/staffSignIn.ts";
 import { readCappedText } from "../../platform/src/body.ts";
-import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
+import { Lab, LAB_LIMITS, LabQueueFullError, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
@@ -26,7 +26,7 @@ import {
 import type { GameOptions } from "./sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource, type RealOptions } from "./sources/real.ts";
 import { isTimeout, PreviewUnavailableError, SERVICE_TIMEOUT, ServiceUnreachableError } from "./sources/service.ts";
-import type { DataSource } from "./sources/source.ts";
+import { historyQuery, type DataSource } from "./sources/source.ts";
 import type { AppHealth, AuditEntry, ControlCommand, ControlResult, EnvInfo, Mode, ObsDelta, ObsMember, RevealGrant, SafetyAction, StaffRole, StaffUser } from "./types.ts";
 
 export interface ServerOptions {
@@ -481,10 +481,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
       },
       "/api/member/:id": guard(async (req, u, app) => {
+        const historyBefore = historyQuery(req.url);
+        if (historyBefore === null) return json({ error: "invalid history cursor" }, 400);
         const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_member");
         if (read instanceof Response) return read;
         const { id, readMode, grant } = read;
-        const d = await (await source(readMode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app) });
+        const d = await (await source(readMode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app), historyBefore });
         if (!d) return json({ error: "not found" }, 404);
         d.facets = memberFacets(app, d.facets, !!grant);
         if (grant) d.revealed = { until: grant.until };
@@ -495,10 +497,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         return memberReadRefusal(u, app, read) ?? json(d);
       }),
       "/api/member/:id/timeline": guard(async (req, u, app) => {
+        const historyBefore = historyQuery(req.url);
+        if (historyBefore === null) return json({ error: "invalid history cursor" }, 400);
         const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_timeline");
         if (read instanceof Response) return read;
         const { id, readMode, grant } = read;
-        const t = await (await source(readMode, app)).timeline(id, { reveal: !!grant });
+        const t = await (await source(readMode, app)).timeline(id, { reveal: !!grant, historyBefore });
         if (!t) return json({ error: "not found" }, 404);
         return memberReadRefusal(u, app, read) ?? json(grant ? { ...t, revealed: { until: grant.until } } : t);
       }),
@@ -536,12 +540,19 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }, ["safety"]),
       },
       "/api/opportunity/:id": guard(async (req, u, app) => {
+        const historyBefore = historyQuery(req.url);
+        if (historyBefore === null) return json({ error: "invalid history cursor" }, 400);
         const id = decodeURIComponent(req.params.id!);
         const no = await record(u, app, { action: "read_opportunity", targetType: "opportunity", targetId: id, ok: true });
         if (no) return no;
-        const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app) });
+        const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app), historyBefore });
         if (!d) return json({ error: "not found" }, 404);
-        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({ ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [] });
+        // An analyst sees the opportunity's shape, never the people in it or the texts written to them.
+        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({
+          ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [],
+          historyBefore: d.historyBefore?.events ? { events: d.historyBefore.events } : undefined,
+        });
+        // What a member wrote only for staff who may open that member (4.1); others get its length.
         const may = new Map<string, boolean>();
         for (const m of d.messages) {
           if (m.direction !== "inbound" || m.system || m.body === HIDDEN_MESSAGE) continue;
@@ -779,11 +790,17 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (body?.app !== undefined && body.app !== app) return json({ ok: false, error: `the run's app (${body.app}) is not the request's app (${app})`, code: "app_mismatch" }, 400);
           const v = validateLab({ ...body, app });
           if (typeof v === "string") return json({ ok: false, error: v }, 400);
-          if (lab.queued + v.seeds.length > LAB_LIMITS.maxQueued) return json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
+          const queueFull = () => json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
+          if (!lab.canQueue(v.seeds.length)) return queueFull();
           const no = await record(u, app, { action: "lab_run", targetType: "run", ok: true, detail: { arms: v.arms, seeds: v.seeds, days: v.days, app: v.app } });
           if (no) return no;
-          const run = await lab.start(v, u.id);
-          return json({ ok: true, run });
+          try {
+            const run = await lab.start(v, u.id);
+            return json({ ok: true, run });
+          } catch (error) {
+            if (error instanceof LabQueueFullError) return queueFull();
+            throw error;
+          }
         }, LAB_ROLES),
       },
       "/api/person/lookup": global(async (req, u) => {
@@ -876,14 +893,16 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     server, url, token: adminToken, openUrl: adminToken ? `${url}/#token=${encodeURIComponent(adminToken)}` : `${url}/`, mode: () => mode, source, setMode, audit, lab,
     async stop() {
       clearInterval(checkTimer);
-      lab.dispose();
-      stored?.stop();
-      for (const [k, s] of sources) { unsub.get(k)?.(); await s.dispose(); }
-      server.stop(true);
-      await audit.close();
-      await people?.close();
-      await costs.close();
-      await rolesSql?.close();
+      try { await lab.dispose(); }
+      finally {
+        stored?.stop();
+        for (const [k, s] of sources) { unsub.get(k)?.(); await s.dispose(); }
+        server.stop(true);
+        await audit.close();
+        await people?.close();
+        await costs.close();
+        await rolesSql?.close();
+      }
     },
   };
 }

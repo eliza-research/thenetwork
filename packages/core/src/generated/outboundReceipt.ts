@@ -74,6 +74,26 @@ export function lawDeliveredIgnoresFailure(phase: ReceiptPhase): boolean {
   return !(phase === "ProviderDelivered" || phase === "ProviderRead") || !canApplyReceipt(({ phase: phase } as ReceiptLifecycle), "ProviderFailed");
 }
 
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) */
+//@ pure
+export function keepScrubbedRecipientCount(phase: ReceiptPhase, nonmember: boolean, hadAddress: boolean, windowOpen: boolean): boolean {
+  return (phase === "ProviderDelivered" || phase === "ProviderRead") && nonmember && hadAddress && windowOpen;
+}
+
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) */
+//@ pure
+export function lawFailedReceiptHasNoScrubbedRecipientCount(nonmember: boolean, hadAddress: boolean, windowOpen: boolean): boolean {
+  //@ ensures \result === true
+  return !keepScrubbedRecipientCount("ProviderFailed", nonmember, hadAddress, windowOpen);
+}
+
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) */
+//@ pure
+export function lawScrubbedRecipientCountRequiresOpenWindow(phase: ReceiptPhase, nonmember: boolean, hadAddress: boolean): boolean {
+  //@ ensures \result === true
+  return !keepScrubbedRecipientCount(phase, nonmember, hadAddress, false);
+}
+
 /** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function canHoldUnrecordedReceipt(outbound: ReceiptLifecycle): boolean {
@@ -192,6 +212,26 @@ export function lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): boolean {
 export function lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): boolean {
   //@ ensures \result === true
   return !(receiptRank(phase) > 0) || acceptanceEndsRow(phase, true, false);
+}
+
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function keepAcceptedRecipientCount(phase: ReceiptPhase, receiptOwner: boolean, nonmember: boolean, hadAddress: boolean, windowOpen: boolean): boolean {
+  return keepScrubbedRecipientCount(phase, nonmember, hadAddress, windowOpen) || (acceptanceEndsRow(phase, receiptOwner, !nonmember) && acceptanceRecordsSend(phase) && nonmember && hadAddress && windowOpen);
+}
+
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function lawReceiptOwnerAcceptanceKeepsRecipientCount(phase: ReceiptPhase): boolean {
+  //@ ensures \result === true
+  return !(receiptRank(phase) > 0) || keepAcceptedRecipientCount(phase, true, true, true, true);
+}
+
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function lawFailedAcceptanceHasNoRecipientCount(receiptOwner: boolean, nonmember: boolean, hadAddress: boolean, windowOpen: boolean): boolean {
+  //@ ensures \result === true
+  return !keepAcceptedRecipientCount("ProviderFailed", receiptOwner, nonmember, hadAddress, windowOpen);
 }
 
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */

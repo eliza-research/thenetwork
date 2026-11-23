@@ -6,6 +6,83 @@ import { Mini, START } from "./mini.ts";
 
 const TZ = "America/New_York";
 
+test("friends: weekly standbys do not duplicate initial invitations", () => {
+  const venue = PLAN_VENUES.find(v => v.activities.includes("coffee_crawl"));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const climbing = { ...venue, id: "local-climbing", activities: ["bouldering"] };
+  const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  const mini = new Mini(ids.map(id => ({ id, name: id, age: 30, area: venue.area, interests: ["coffee", "climbing"] })));
+  for (const id of ids) mini.facets.push({
+    id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
+    scope: "agent_private", provenance: "said", confidence: 1,
+  });
+  const world = new World({ ...mini.ctx().snapshot(), interactions: [
+    { id: "earlier-activity", kind: "group", category: "social", participants: ids.slice(0, 4), at: START - 12 * DAY, outcome: "completed" },
+    { id: "earlier-table", kind: "group", category: "social", participants: ids.slice(4), at: START - 12 * DAY, outcome: "completed" },
+  ] }, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+  const start = Date.UTC(2026, 9, 10, 16);
+  const windows = [{ start, end: start + 5 * HOUR }];
+  const evidence = new Map(ids.map((id): [MemberId, plans.PlanEvidence] => [id, {
+    memberId: id, tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY },
+  }]));
+  const input = { now: START, tz: TZ, evidence, venues: [venue, climbing], crews: [], outcomes: [], offered: [] };
+  const plan = (openTable: boolean, partnerIntros = DEFAULT_FRIENDS_POLICY.partnerIntros) => planFriendsWeek(world, input, {
+    ...DEFAULT_FRIENDS_POLICY, crews: false, spreadNew: true, openTable, partnerIntros,
+  }, FRIENDS_PLANS);
+
+  const open = plan(true);
+  const overflow = open.plans.flatMap(table => table.alternates);
+  const partnerInvitees = open.partners.flatMap(pair => pair.invited);
+  expect(overflow).toHaveLength(2);
+  expect(partnerInvitees).toEqual(expect.arrayContaining(overflow));
+
+  const closed = plan(false);
+  expect(closed.plans.map(table => table.invited)).toEqual(open.plans.map(table => table.invited));
+  expect(closed.partners.flatMap(pair => pair.invited)).toEqual(partnerInvitees);
+  expect.soft(closed.plans.flatMap(table => table.alternates)).toEqual([]);
+  expect(plan(false, 0).plans.flatMap(table => table.alternates)).toEqual(overflow);
+
+  const outcome: plans.PlanOutcomeRecord = { planId: "previous-coffee", activityId: "coffee_crawl", venueId: venue.id,
+    city: "nyc", at: start - 7 * DAY, attended: ["a", "b", "c", "g"], positive: ["a", "b", "c"], recurringWant: [] };
+  const withRepeat = planFriendsWeek(world, { ...input, outcomes: [outcome] }, {
+    ...DEFAULT_FRIENDS_POLICY, crews: false, spreadNew: true, openTable: true,
+  }, FRIENDS_PLANS);
+  expect(withRepeat.partners.flatMap(pair => pair.invited)).toContain("g");
+  expect(withRepeat.repeats).toMatchObject([{ invited: ["a", "b", "c"], alternates: [] }]);
+});
+
+// spec/friendsWeek.md, "A standby has no initial invitation and holds one bench place"
+test("friends: two closed tables share at most one standby reservation for a member", () => {
+  const venue = PLAN_VENUES.find(candidate => candidate.activities.includes("coffee_crawl"));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const firstGroup = ["a0", "a1", "a2", "a3", "a4", "a5"];
+  const secondGroup = ["b0", "b1", "b2", "b3", "b4", "b5"];
+  const standby = "z";
+  const ids = [...firstGroup, ...secondGroup, standby];
+  const mini = new Mini(ids.map(id => ({ id, name: id, age: 30, area: venue.area, interests: ["coffee", "climbing"] })));
+  for (const id of ids) mini.facets.push({
+    id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
+    scope: "agent_private", provenance: "said", confidence: 1,
+  });
+  const edges = firstGroup.flatMap(from => secondGroup.map(to => ({
+    from, to, type: "blocked" as const, strength: 1, explicit: true, createdAt: START - DAY,
+  })));
+  const world = new World({ ...mini.ctx().snapshot(), edges }, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+  const start = Date.UTC(2026, 9, 10, 16);
+  const windows = [{ start, end: start + 5 * HOUR }];
+  const evidence = new Map<MemberId, plans.PlanEvidence>(ids.map(id => [id, {
+    memberId: id, tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY },
+  }]));
+  const week = planFriendsWeek(world, { now: START, tz: TZ, evidence, venues: [venue], crews: [], outcomes: [], offered: [] }, {
+    ...DEFAULT_FRIENDS_POLICY, crews: false, spreadNew: true, openTable: false, partnerIntros: 0,
+  }, FRIENDS_PLANS);
+
+  expect(week.plans.map(({ invited, alternates }) => ({ invited, alternates }))).toEqual([
+    { invited: firstGroup, alternates: [standby] },
+    { invited: secondGroup, alternates: [] },
+  ]);
+});
+
 test("friends: a fitting triangle survives an unavailable or isolated seat candidate", () => {
   // spec/friendsWeek.md and spec/groupFormation.md: circles form among the members a table can seat.
   // d pairs best with a and b, so the triangle a-b-d is the strongest; c and d have a block between

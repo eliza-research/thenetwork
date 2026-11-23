@@ -232,9 +232,11 @@ The server writes an audit row before it returns data or acts. If the row cannot
 | `POST /api/control` `{type: "review", oppId, decision, reason?, note?, secondsSpent?, explanations?, objective?, swapOut?}` | reviewer | A refusal returns `code`, for example `edit_leak`, `matching_paused`, `busy_elsewhere` |
 | `POST /api/control` `{type: "matching", on}` | admin | Turns proactive matching on or off (game mode; real mode through the service's `POST /matching`) |
 
+In real mode, member detail, timeline, and opportunity detail return the newest page of each history source in chronological order. If `historyBefore.messages` or `historyBefore.events` is present, pass it as `messagesBefore` or `eventsBefore` on a repeat request to read the previous page of that source. Every page uses the same authorization and text masking.
+
 ### 9.6 Simulation lab
 
-The Lab tab and `POST /api/lab/run` start child processes of `packages/network/harness/experiment.ts`, one per seed, at most 2 at a time. Each run records its app; the list shows the app's runs only. Every app runs The Network's NYC world; slop and peon runs get `--max-new 0` (matching off). The rest wait in a queue. Each run is saved to `runs/lab/<id>.json` (written to a temporary file, then renamed) and loaded again at startup. The experiment reports the judge counts per arm. You can run one seed alone:
+The Lab tab and `POST /api/lab/run` start child processes of `packages/network/harness/experiment.ts`, one per seed, at most 2 at a time. Each run records its app. The list shows only the app's runs. Every app runs The Network's NYC world. Apps with matching locked pass `--matching-off` to each arm. The rest wait in a queue. Each run is saved to `runs/lab/<id>.json` (written to a temporary file, then renamed) and loaded again at startup. The experiment reports the judge counts per arm. You can run one seed alone:
 
 ```bash
 node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --only consent --days 1 --seed 1

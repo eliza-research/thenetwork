@@ -2,7 +2,7 @@
 
 The [product stories](../product/stories.md) describe the member and staff flows. This directory holds their existing standalone Quint state machines. Each Markdown file contains the flow, its safety scope, and one executable `quint` block. Change the Markdown source when you update a model.
 
-The 30 modules came from `claude/quint-state-machines` at `30d950e1d6fa027a67b94cc6b03ba379dc923a63`. That source revision also contains the research plan and findings referenced in comments. Their comments document bounds, abstractions, excluded cases and drift. A code location in a comment names a file and a function. The chatjson_loop comments also give `llm.ts` line numbers, compared on 2026-11-18.
+The 30 modules came from `claude/quint-state-machines` at `30d950e1d6fa027a67b94cc6b03ba379dc923a63`. That source revision also contains the research plan and findings referenced in comments. Their comments document bounds, abstractions, excluded cases and drift. A code location in a comment names a file and a function. The chatjson_loop comments also give `llm.ts` line numbers, compared on 2026-11-18. The peon_manager_questions module was added later on develop.
 
 ## Run the models
 
@@ -14,7 +14,13 @@ pnpm run quint:check --tangle-only           # write the model blocks to runs/qu
 pnpm run quint:check --verify --jobs 2       # include bounded Apalache checks, requires Java 17+
 ```
 
-A `witness_*` assertion is the negation of an expected reachable state. A witness check passes when the simulator reaches that state and the assertion fails. Random simulation and bounded model checking cover the modeled states within the run bounds.
+The Whole-flow Quint workflow checks changed models at their configured
+bounds. It checks every model when a shared tool input changes, the
+comparison commit is unavailable, or it cannot restrict the input to
+independent modules. Run the workflow manually to check every model from
+an empty run directory. The local `--verify` option still adds Apalache.
+
+A `witness_*` assertion is the negation of an expected reachable state. A witness check passes when the simulator reaches that state and the assertion fails. A witness can also use a named trace declared by `// quint-witness: witness_name runName`. That trace must end with `.expect(not(witness_name))`, and the checker requires the named run to execute and pass. Random simulation and bounded model checking still check safety within the run bounds.
 
 These models use mutable variables, actions, nondeterministic environment steps, or executable traces. Vibespec generates TypeScript from pure definitions and guards in top-level `spec/*.md`. Keep whole-flow checks here while moving pure policy definitions into the Vibespec specs. When a generated policy takes over a production decision, compare its behavior with the corresponding action guard and keep the sequence, failures, and retry behavior in the flow model.
 
@@ -63,6 +69,7 @@ The last column identifies a generated production seam for that flow. A generate
 | [observatory_sync](observatory_sync.md) | Staff console synchronization. Open web defects SYNC-REVEAL and SYNC-ORIGIN | [Snapshot and delta lifecycle](../observatorySync.md) |
 | [opportunity](opportunity.md) | Proposal, automated review, and response | [Member requests](../memberRequest.md), [request and review journey](../memberRequestJourney.md), [review-to-contact journey](../reviewContactJourney.md), [mutual-consent booking journey](../mutualConsentJourney.md), [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch and settlement](../probeDispatch.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md), [booked meeting settlement](../meetingSettlement.md), [repeat encounter consent](../repeatEncounter.md), [automated review](../automatedReview.md) |
 | [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts. Open, needs a maintainer decision: Q-outbound_queue-5 (`unansweredAtMost` outside `safety`) | [Outbound admission](../outboundAdmission.md), [provider receipt lifecycle](../outboundReceipt.md), [outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
+| [peon_manager_questions](peon_manager_questions.md) | Manager posting and introduction questions | [Peon hire dispatch](../peonHireDispatch.md) |
 | [phone_identity](phone_identity.md) | Phone number identity | [Phone change lifecycle](../phoneChange.md) |
 | [photo_relay_item](photo_relay_item.md) | Photo relay offer: proposal, consent, receiver answer, automatic check with staff exceptions, bound-browser view with no time limit, link renewal, take-back and report | [Photo relay](../photoRelayItem.md), [photo consent and review](../photoRelayReview.md) |
 | [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md), [upload and retention](../photoRetention.md), [asynchronous rating lifecycle](../photoRating.md) |

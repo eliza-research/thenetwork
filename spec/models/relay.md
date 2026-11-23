@@ -8,7 +8,13 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. An operative condition before or after the request can supply uncertainty to the private request rule. A prior condition can still apply when a separate clause follows it or it names a private item that must come first. Reports, quotations, instructions to proceed and unrelated remarks supply no such evidence. A clear statement about the same named actor, action, and any specified item can settle a prior request to wait. The reader keeps the stated item and recipient words when it compares the condition with the completion. If the condition explicitly names the transfer recipient, the reader also compares that recipient with the request. A question leaves the condition open. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
+
+The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message when the sender gives a near-birthday or current school-year cue. The shell checks the cue's speaker and excludes another person's quoted or reported words, a hypothetical and a complete adult school role. A teacher's attribution can explain the speaker's own grade. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader. The model takes the evidence category as input.
+
+### Story: Keep an estimate in the relay item
+
+A member's own estimate makes the message unsafe to relay. The estimate does not lower the durable age, but it is an age signal of the item, so the desk starts the minors policy and closes the sender's open matches, as for any other age signal ([relay decision](../relayDecision.md)). The signed turn can independently record an age and close an unsafe match before the relay action. A member can report what another person said without that report becoming their own age. Changed (merge of develop, 2026-11-23): develop kept the match open after an estimate -> the estimate starts the minors policy, because the age signal rule of the relay decision (audit ST-D2) has no exception for an estimate.
 
 The rules and the relay classifier decide alone: every decided item is a pass or a block (`noRelayHold`), and the sender is told at once. The text outcome `flag` is a rule or classifier flag, and `unavailable` is a classifier that could not run (an error, a timeout, an answer that does not parse or a Clef cache miss gives `classifier:unavailable`); both block, and a text that the classifier could not read never gets an outbound row (`uncheckedNeverSent`). A rate limit or a safety hold on a member blocks the item as well; the sender asks again later. The model has a classifier in every run, as the service has in every environment: Clef with the Workers AI credentials, else a classifier that cannot run, or the simulated one that `platform:dev`, the simulator and the tests inject (`relayClassifierFromEnv`). Changed (owner decision 2026-11-22, D18, "Automate relay holds too"): a text that the rules or the classifier do not clear is blocked, because no relayed text waits for staff. A passed item can still wait in `Network.deferred` while the recipient is in quiet hours (a relay send has the timing `logistics` in `Network.timingOf`); that is a delay of a decided pass, not a hold, and the tick runs every send-time check again before it queues the item (`deferredFlushTest`, `witness_deferredFlushed`).
 
@@ -315,7 +321,11 @@ module relay {
   }
 
   // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
-  // signals after claiming the receipt. Only a private request the reader has identified as explicit gets here.
+  // signals after claiming the receipt. An operative unmet condition can supply uncertainty before
+  // the private request. The reader checks authorship, scope and any stated completion.
+  // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
+  // supplies none. A later independent directive can supply one, and an ordinary text envelope
+  // still follows the text path. Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 
@@ -866,6 +876,32 @@ module relay {
       .then(queueSend("a1")).then(queueSend("b2"))
       .expect(numberSent("A") and numberSent("B") and safety)
 
+  // The reader found a qualified contact request and separately an explicit text relay. The
+  // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.
+  run qualifiedRequestAndQuotedTextTest =
+    init
+      .then(claimPrivateContact("a1", false, true, false)).then(commitNone("a1")).then(answer("a1"))
+      .then(claim("a2", "text")).then(commitText("a2", "block", false)).then(answer("a2"))
+      .expect(desk.swaps.size() == 0 and desk.log.get("a2").decision == "block" and queue.rows.keys().size() == 0 and safety)
+
+  // The first reply contains an operative prior condition. The second records its specific
+  // completion and gives a fresh direct request. The model takes the reader's uncertainty as input.
+  run priorAssentBeforeSwapTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claimPrivateContact("b1", false, true, false)).then(commitNone("b1")).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
+
+  run delegatedShareKeepsSwapPendingTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claim("b1", "none")).then(commitNone("b1")).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
+
   run pendingSwapPronounWithdrawalTest =
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
@@ -895,6 +931,13 @@ module relay {
     init
       .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(postCommitDeliverError("a1"))
       .expect(queue.rows.keys().contains("a1") and ep.response.get("a1") == "ok" and failureMeansNoEffect)
+
+  // A member's own age estimate in a relay text is an age signal of the item: the item is blocked and the minors policy starts.
+  run estimatedMinorStartsMinorsPolicyTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "minorRules", false)).then(answer("a1"))
+      .expect(desk.log.get("a1").decision == "block" and desk.log.get("a1").ageSignal
+        and not(queue.rows.keys().contains("a1")) and w.minor.get("A") and not(w.matchOpen) and ageSignalStartsMinorsPolicy and safety)
 
   // SD-064 (fixed, flag half): Clef reads a minor's words; the item is blocked and the minors policy starts.
   run clefMinorNotKeptTest =
@@ -1043,6 +1086,13 @@ module relay {
       .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(answer("a1"))
       .then(queueSend("a1"))
       .expect(g.events.exists(e => e.minorParty and e.teenText) and safety)
+
+  // A safety hold on the recipient blocks a clean text: nothing is queued and nothing waits for staff.
+  run partyHoldBlocksTest =
+    init
+      .then(safetyHold("B"))
+      .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(answer("a1"))
+      .expect(desk.log.get("a1").decision == "block" and not(queue.rows.keys().contains("a1")) and noRelayHold and safety)
 
   // A teen pair: "send them my number" is refused and nothing is queued.
   run teenShareTest =

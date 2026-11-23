@@ -1,6 +1,6 @@
 // GENERATED from spec/outreachPolicy.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { maxOpenings as postingPolicy_maxOpenings, confirmPosting as postingPolicy_confirmPosting, postingDraftCurrent as postingPolicy_postingDraftCurrent, missingPostingFields as postingPolicy_missingPostingFields, openingsInRange as postingPolicy_openingsInRange, payRangeAllowed as postingPolicy_payRangeAllowed, inboundMayCommand as postingPolicy_inboundMayCommand, lawEditedPostingNeedsReadback as postingPolicy_lawEditedPostingNeedsReadback, lawStalePostingCannotBeConfirmed as postingPolicy_lawStalePostingCannotBeConfirmed, lawClosedPostingIsNeverCurrent as postingPolicy_lawClosedPostingIsNeverCurrent, lawAssistantProfileNeverCommands as postingPolicy_lawAssistantProfileNeverCommands, lawChangedPostingIsNeverCurrent as postingPolicy_lawChangedPostingIsNeverCurrent, lawNewDraftNeverOverwrites as postingPolicy_lawNewDraftNeverOverwrites, lawPayRangeIsOrdered as postingPolicy_lawPayRangeIsOrdered } from "./postingPolicy.ts";
+import { maxOpenings as postingPolicy_maxOpenings, payRangeAllowed as postingPolicy_payRangeAllowed, confirmPosting as postingPolicy_confirmPosting, postingDraftCurrent as postingPolicy_postingDraftCurrent, missingPostingFields as postingPolicy_missingPostingFields, postingNeedsArea as postingPolicy_postingNeedsArea, inboundMayCommand as postingPolicy_inboundMayCommand, openingsInRange as postingPolicy_openingsInRange, openingCountNeedsCorrection as postingPolicy_openingCountNeedsCorrection, lawPayRangeIsOrdered as postingPolicy_lawPayRangeIsOrdered, lawAssistantProfileNeverCommands as postingPolicy_lawAssistantProfileNeverCommands, lawEditedPostingNeedsReadback as postingPolicy_lawEditedPostingNeedsReadback, lawStalePostingCannotBeConfirmed as postingPolicy_lawStalePostingCannotBeConfirmed, lawClosedPostingIsNeverCurrent as postingPolicy_lawClosedPostingIsNeverCurrent, lawChangedPostingIsNeverCurrent as postingPolicy_lawChangedPostingIsNeverCurrent, lawNewDraftNeverOverwrites as postingPolicy_lawNewDraftNeverOverwrites, lawOnsiteDraftWithoutAreaNeedsAnswer as postingPolicy_lawOnsiteDraftWithoutAreaNeedsAnswer, lawOmittedCountUsesDefault as postingPolicy_lawOmittedCountUsesDefault, lawInvalidStatedCountNeedsCorrection as postingPolicy_lawInvalidStatedCountNeedsCorrection } from "./postingPolicy.ts";
 
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
@@ -179,8 +179,21 @@ export function inviteJoinNoticeCurrent(attributed: boolean, inviteeConsents: bo
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 //@ pure
+export function inviteJoinNoticeConflictsWithRole(sameMember: boolean, sameFirstName: boolean): boolean {
+  return sameMember || sameFirstName;
+}
+
+/** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
+//@ pure
 export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean, inviteeHasRole: boolean): boolean {
   return directMemberTurn && reply && !carriesMemberText && !inviteeHasRole;
+}
+
+/** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
+//@ pure
+export function lawInviteJoinNoticeWaitsForNamesake(sameMember: boolean): boolean {
+  //@ ensures \result === true
+  return inviteJoinNoticeConflictsWithRole(sameMember, true);
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */

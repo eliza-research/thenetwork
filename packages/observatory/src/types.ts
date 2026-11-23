@@ -393,6 +393,7 @@ export interface MemberDetail {
   edges: ObsEdge[];
   opportunities: ObsOpportunity[];
   messages: ObsMessage[];
+  historyBefore?: { messages?: string; events?: string };
   truth?: MemberTruth;
   /** Persona's private memory of proposals (game, truth lens): decision, plannedShow, enjoyment. */
   memory?: Record<string, { decision: string; plannedShow: boolean; enjoyment: number }>;
@@ -407,8 +408,9 @@ export interface OpportunityDetail {
   members: ObsMember[];
   messages: (ObsMessage & { memberId: MemberId })[];
   run?: EngineRunSummary;
-  /** Full event history of this opportunity, oldest first (gap 15). Never message text. */
+  /** This page of the opportunity's events, oldest first. Never message text. */
   events: SystemEvent[];
+  historyBefore?: MemberDetail["historyBefore"];
 }
 
 /**
@@ -436,6 +438,7 @@ export type TimelineEntry =
 export interface MemberTimeline {
   memberId: MemberId;
   entries: TimelineEntry[];
+  historyBefore?: MemberDetail["historyBefore"];
   /** Sends waiting for the member's sending window now (deferred; no time is recorded for when they were deferred). */
   pending: { kind: string; type?: string; opportunityId?: string }[];
   revealed?: { until: number };
@@ -517,7 +520,7 @@ export interface SafetyInfo {
   canBan?: boolean;
 }
 /** What a post-date report says happened. "other" when the reporter's words did not fit a kind. */
-export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "other";
+export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "older_than_stated" | "other";
 export interface SafetyReport {
   id: string;
   kind: ReportKind;

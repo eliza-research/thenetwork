@@ -27,6 +27,28 @@ export const catalogStaleAfterMs = exact_opsAlertDispatch(publicEventCatalog_pub
 export function inv(current) {
     return true;
 }
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function reportedSmsTotal(exactTotalAvailable, exactTotal, legacyTotal) {
+    return exactTotalAvailable ? exactTotal : legacyTotal;
+}
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function countSendOutcome(waiting) {
+    return !waiting;
+}
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawPendingDeliveryHasNoOutcome(waiting) {
+    //@ ensures \result === true
+    return !waiting || !countSendOutcome(waiting);
+}
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal) {
+    //@ ensures \result === true
+    return reportedSmsTotal(true, 0, legacyTotal) === 0;
+}
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
 //@ pure
 export function chooseFiringPlan(e) {
@@ -34,8 +56,14 @@ export function chooseFiringPlan(e) {
 }
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
 //@ pure
-export function chooseMissingPlan(episodeOpen, seenThisRound, postedBefore) {
-    return !episodeOpen || seenThisRound ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+export function chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, sourceReadable) {
+    return !episodeOpen || seenThisRound || !sourceReadable ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+}
+/** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawUnreadSourceKeepsEpisode(episodeOpen, seenThisRound, postedBefore) {
+    //@ ensures \result === true
+    return chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, false) === "KeepEpisode";
 }
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 //@ pure

@@ -1,6 +1,6 @@
 import type { Event, FailureKind, ReceiptLifecycle, ReceiptPhase } from "../../packages/core/src/generated/outboundReceipt.ts";
 import { DAY, HOUR, SimClock } from "../../packages/core/src/clock.ts";
-import { OutboundQueue } from "../../packages/blooio/src/outbound-queue.ts";
+import { OutboundQueue, recipientWindowHasher } from "../../packages/blooio/src/outbound-queue.ts";
 import { ChannelSendError, type DeliveryStatus, type FailureClass, type SendReceipt } from "../../packages/blooio/src/types.ts";
 import { withConformanceDatabase } from "./conformanceDatabase.ts";
 import { serveJourney } from "./serveJourney.ts";
@@ -42,6 +42,7 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const queue = new OutboundQueue({
       sql, clock, line: `+1212555${String(1000 + n).padStart(4, "0")}`, app: "friends", instance: `receipt-worker-${n}`,
+      recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"),
       maxAttempts: 2, baseBackoffMs: 0, unknownTtlMs, ttlMs: 3650 * DAY, ttlProactiveMs: 3650 * DAY,
       checks: {
         live: () => true,

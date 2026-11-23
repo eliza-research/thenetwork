@@ -143,6 +143,12 @@ pure def lawOptOutKeepsHeldTexts(stop: bool, leave: bool): bool =
 
 Line review pauses every row. A reply-only line holds agent-initiated and new conversations. A pause-new line holds new conversations. Compliance skips the hourly recipient, daily line, and new-conversation caps. The line and new-conversation caps apply to agent-initiated rows. A proactive message also needs its person-cap slot. A leak finding holds the text for staff review.
 
+The shared contact reader treats a plain handle as a leak when a person
+states it as their own, names it as a way to contact someone on a social
+app, or gives it after a direct invitation to find them on that app.
+Ordinary time words, state words and conjunctions after the app name
+do not count as handles without a handle marker.
+
 ```quint
 pure def linePolicy(lineAction: str, agent: bool, newConversation: bool): Admission =
   if (lineAction == "review" or (lineAction == "reply_only" and (agent or newConversation)) or (lineAction == "pause_new" and newConversation)) LinePaused

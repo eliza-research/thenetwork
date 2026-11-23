@@ -25,6 +25,7 @@
 //     declined / ignored roles and ghosted applications lower it, an employer yes raises it);
 //   - timing: stronger candidates leave the market faster (hired elsewhere); roles close at a
 //     deadline (8 / 6 / 4 weeks by urgency) or are filled through another channel (4% a week).
+import { requireSimulationCount } from "../../input.ts";
 import { DAY, canBeMatched, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
@@ -136,6 +137,7 @@ export interface PeonRunOptions extends Omit<PeonGenOptions, "seed"> {
 
 export function createPeonWorld(o: Omit<PeonRunOptions, "matcher">): PeonWorld {
   const weeks = o.weeks ?? 8;
+  requireSimulationCount(weeks, "weeks", 1);
   const pop = o.pop ?? generatePeonPopulation({ ...o, seed: o.seed });
   const oracle = new PeonOracle(pop, o.seed);
   const state: PeonNetworkState = {
@@ -253,7 +255,16 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     const offersByCand = new Map<MemberId, Flow[]>();
     const decided = flows.filter(f => f.interviewed && f.interviewWeek === week - 1 && f.passed !== undefined && f.offered === undefined);
     const byJob = new Map<MemberId, Flow[]>();
-    for (const f of decided) { if (!byJob.has(f.job)) byJob.set(f.job, []); byJob.get(f.job)!.push(f); }
+    for (const f of decided) {
+      if (state.exited.has(f.cand)) {
+        f.offered = false;
+        f.withdrawn = true;
+        f.rec!.outcome = "cancelled";
+        continue;
+      }
+      if (!byJob.has(f.job)) byJob.set(f.job, []);
+      byJob.get(f.job)!.push(f);
+    }
     for (const [jid, fs] of [...byJob.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       const j = oracle.job.get(jid)!;
       const left = state.openings.get(jid) ?? 0;
@@ -261,7 +272,15 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       const offered = held(jid) ? [] : passers.slice(0, left);
       for (const f of fs) {
         f.offered = offered.includes(f);
-        if (!f.offered) { f.rec!.outcome = "declined"; f.rec!.declinedBy = [jid]; }
+        if (!f.offered) {
+          if (f.passed && !state.hired.has(f.cand) && left <= 0) {
+            f.roleClosed = true;
+            f.rec!.outcome = "cancelled";
+          } else {
+            f.rec!.outcome = "declined";
+            f.rec!.declinedBy = [jid];
+          }
+        }
         else { if (!offersByCand.has(f.cand)) offersByCand.set(f.cand, []); offersByCand.get(f.cand)!.push(f); }
       }
       void j;
@@ -293,7 +312,15 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     for (const f of flows) {
       if (f.interviewWeek !== week || f.interviewed !== undefined) continue;
       const c = oracle.cand.get(f.cand)!, j = oracle.job.get(f.job)!;
-      if (state.hired.has(c.id) || (state.openings.get(j.id) ?? 0) <= 0 || held(j.id)) { f.interviewed = false; f.withdrawn = true; f.rec!.outcome = "cancelled"; continue; }
+      const inactive = state.hired.has(c.id) || state.exited.has(c.id);
+      const roleClosed = (state.openings.get(j.id) ?? 0) <= 0;
+      if (inactive || roleClosed || held(j.id)) {
+        f.interviewed = false;
+        f.withdrawn = true;
+        f.rec!.outcome = "cancelled";
+        if (!inactive && roleClosed) f.roleClosed = true;
+        continue;
+      }
       f.interviewed = u01(seed, "show", c.id, j.id) < oracle.P.showUp * Math.max(0.6, c.truth.replyProb);
       if (!f.interviewed) { f.rec!.outcome = "no_show"; continue; }
       f.passed = u01(seed, "pass", c.id, j.id) < oracle.pPass(c, j);
@@ -311,9 +338,10 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     for (const [jid, q] of [...queue.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       const j = oracle.job.get(jid)!, co = oracle.co(j);
       const pending = q.filter(f => f.reviewed === undefined && !f.expired);
-      for (const f of pending) if (week - f.week >= EXPIRE_WEEKS || state.hired.has(f.cand) || (state.openings.get(jid) ?? 0) <= 0) {
+      for (const f of pending) if (week - f.week >= EXPIRE_WEEKS || state.hired.has(f.cand) || state.exited.has(f.cand) || (state.openings.get(jid) ?? 0) <= 0) {
         f.expired = true;
-        if (state.hired.has(f.cand)) f.rec!.outcome = "cancelled";
+        if (state.exited.has(f.cand)) { f.withdrawn = true; f.rec!.outcome = "cancelled"; }
+        else if (state.hired.has(f.cand)) f.rec!.outcome = "cancelled";
         else if ((state.openings.get(jid) ?? 0) <= 0) { f.rec!.outcome = "cancelled"; f.roleClosed = true; }
         else { f.rec!.outcome = "expired"; f.rec!.noResponse = [jid]; ghost(f); }
       }
@@ -368,7 +396,7 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       const invite = (f: Flow) => { if (co.adversary !== "scam") { hours -= S.interviewHours; recruiterHours += S.interviewHours; } schedule(f); };
       for (const f of pending.filter(x => !x.expired && x.onFile).sort((a, b) => (looks(b) - looks(a)) || (a.cand < b.cand ? -1 : 1))) if (canInterview()) invite(f);
       const ats = u01(seed, "ats", co.id) < S.atsShare;
-      const unread = pending.filter(x => !x.expired && !x.onFile);
+      const unread = pending.filter(x => x.reviewed === undefined && !x.expired && !x.onFile);
       if (ats) unread.sort((a, b) => (looks(b) - looks(a)) || (a.week - b.week) || (a.cand < b.cand ? -1 : 1));
       const readCap = S.readBase + S.readPerUrgency * (j.urgency - 1);
       let reads = 0;
@@ -387,8 +415,8 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       if (u01(seed, "exit", c.id, week) < hazard) state.exited.add(c.id);
     }
 
-    // ---- 6. monthly adverse-impact audit (peon's monitor): flagged companies are held -------------
-    if (matcher.audit && matcher.audit !== "off" && (week === 3 || week === 7)) {
+    // ---- 6. monthly adverse-impact audit, after each completed four-week period ------------------
+    if (matcher.audit && matcher.audit !== "off" && (week + 1) % 4 === 0) {
       const flags = auditCompanies(flows, world);
       audits.push(flags);
       if (matcher.audit === "hold") for (const fl of flags) holdCompany(fl.company, `audit: ${fl.reason}`);

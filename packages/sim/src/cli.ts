@@ -8,6 +8,7 @@
 // Models (founder decision 2026-10-05): persona agents and LLM persona bios use defaultLLM()
 // (DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, default Surplus gpt-6-luna); judging uses judgeLLM()
 // (JUDGE_PROVIDER / JUDGE_MODEL, default Surplus gpt-6-luna).
+import { requirePositiveSimulationValue, requireSimulationCount, requireSimulationShare, simulationNumber, simulationSeed } from "./input.ts";
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { defaultLLM, judgeLLM } from "@thenetwork/core";
@@ -30,7 +31,7 @@ const { values: a } = parseArgs({
     days: { type: "string", default: "14" },
     mode: { type: "string", default: "discrete" },
     speed: { type: "string", default: "1440" },
-    seed: { type: "string", default: "1" },
+    seed: { type: "string" },
     network: { type: "string", default: "stub" },
     engine: { type: "string" },
     llm: { type: "boolean", default: false },
@@ -81,13 +82,13 @@ if (a.help) {
   process.exit(0);
 }
 
-const seed = Number(a.seed);
+const seed = simulationSeed(a.seed ?? "1");
 const mode = a.mode as RunMode;
 if (!["discrete", "accelerated", "realtime"].includes(mode)) throw new Error(`bad --mode ${mode}`);
 
-function makeNetwork(engine?: Engine, extra: Record<string, unknown> = {}): NetworkUnderTest {
+function makeNetwork(engine?: Engine, extra: Record<string, unknown> = {}, runSeed = seed): NetworkUnderTest {
   if (a.network !== "stub") throw new Error(`unknown --network ${a.network} (only "stub" is built in; inject others via the World API)`);
-  return new StubNetwork({ seed, randomIntros: !engine, ...extra });
+  return new StubNetwork({ randomIntros: !engine, ...extra, seed: runSeed });
 }
 
 async function loadEngine(): Promise<Engine | undefined> {
@@ -98,6 +99,19 @@ async function loadEngine(): Promise<Engine | undefined> {
   return engine;
 }
 
+const judgeCount = a.judge === undefined ? undefined : simulationNumber(a.judge);
+if (judgeCount !== undefined) requireSimulationCount(judgeCount, "--judge", 1);
+const n = simulationNumber(a.personas), days = simulationNumber(a.days), speed = simulationNumber(a.speed);
+const adversarialRate = a["adversarial-rate"] === undefined ? undefined : simulationNumber(a["adversarial-rate"]);
+const minorShare = a["minor-share"] === undefined ? undefined : simulationNumber(a["minor-share"]);
+if (!a.scenario) {
+  requireSimulationCount(n, "--personas", 0);
+  requirePositiveSimulationValue(days, "world days");
+  if (mode === "accelerated") requirePositiveSimulationValue(speed, "accelerated speed");
+  requireSimulationShare(adversarialRate, "adversarialRate");
+  requireSimulationShare(minorShare, "minorShare");
+}
+
 const engine = await loadEngine();
 const llm = a.llm || a["llm-personas"] ? defaultLLM() : undefined;
 const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["quality-churn"] || a["trip-clock"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: a["quality-churn"], tripClock: a["trip-clock"] }) : undefined;
@@ -105,7 +119,11 @@ const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["qualit
 if (a.scenario) {
   const s = await loadScenario(a.scenario);
   const k = Number(a.k);
-  const res = await runScenarioPassK(s, k, { network: sc => makeNetwork(engine, sc.stub), engine, agent, writeLog: !a["no-log"] });
+  const res = await runScenarioPassK(s, k, {
+    seed: a.seed === undefined ? undefined : seed,
+    network: (sc, runSeed) => makeNetwork(engine, sc.stub, runSeed),
+    engine, agent, writeLog: !a["no-log"],
+  });
   for (const run of res.runs) {
     console.log(`\n[${run.pass ? "PASS" : "FAIL"}] ${s.name} seed=${run.seed}${run.world.dir ? `  log=${run.world.dir}` : ""}`);
     for (const r of run.results) console.log(`  ${r.status.padEnd(7)} ${r.expectation.check}${"persona" in r.expectation ? `(${(r.expectation as any).persona})` : ""}: ${r.detail}`);
@@ -114,16 +132,14 @@ if (a.scenario) {
   process.exit(res.passK ? 0 : 1);
 }
 
-const n = Number(a.personas), days = Number(a.days);
 const genOpts = {
-  n, seed, adversarialRate: a["adversarial-rate"] ? Number(a["adversarial-rate"]) : undefined,
-  minorShare: a["minor-share"] !== undefined ? Number(a["minor-share"]) : undefined, joinSpreadDays: Math.min(7, days),
+  n, seed, adversarialRate, minorShare, joinSpreadDays: Math.min(7, days),
   ...(a.richness ? { richness: true } : {}),
 };
 const personas = a["llm-personas"] && llm ? await generateLLMPersonas({ ...genOpts, llm }) : generatePersonas(genOpts);
 
 const res = await runWorld({
-  seed, personas, days, mode, speed: Number(a.speed), network: makeNetwork(engine), app: "ntwrk", engine, agent,
+  seed, personas, days, mode, speed, network: makeNetwork(engine), app: "ntwrk", engine, agent,
   writeLog: !a["no-log"],
   ...(a["stable-decisions"] || a.logistics ? { oracle: { stableDecisions: a["stable-decisions"], logistics: a.logistics } } : {}),
   onDay: d => { if (!a.json) process.stderr.write(`  day ${d}/${days}\r`); },
@@ -135,7 +151,7 @@ else {
   console.log(`\nsim events=${res.events} wall=${res.wallMs}ms${agent ? ` llmCalls=${(agent as LLMPersonaAgent).calls} llmFailures=${(agent as LLMPersonaAgent).failures}` : ""}`);
   if (res.dir) console.log(`run log: ${res.dir}`);
 }
-if (a.judge) await judgeRun(res.records, Number(a.judge));
+if (judgeCount !== undefined) await judgeRun(res.records, judgeCount);
 
 /**
  * LLM judges over a deterministic, evenly spaced sample of every delivered Network message (not only

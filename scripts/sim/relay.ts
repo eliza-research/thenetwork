@@ -54,6 +54,17 @@ export async function relayBlock(b: Block): Promise<void> {
   b.gate("relay requests: 0 hedged, negated or question requests read as a contact share or photo send", falseConsent.length === 0, falseConsent.map(r => r.text).join(" | "));
 
   // ---- scenarios ------------------------------------------------------------------------------------
+  await b.run("relay: alternatives pass while terminal or explicit threats block", () => {
+    for (const body of ["Thursday works, or else Saturday", "I can do coffee or else we'll meet Thursday", "Tacos or else ramen is fine"]) {
+      expect([body, relayItem(text(body), baseCtx()).decision]).toEqual([body, "pass"]);
+    }
+    for (const body of ["Answer me or else.", "Reply or else you'll regret it"]) {
+      const result = relayItem(text(body), baseCtx());
+      expect(result).toMatchObject({ decision: "block", rendered: "" });
+      expect(result.reasons).toContain("harass_severe:threat");
+    }
+  });
+
   await b.run("relay: never to or from a minor or an unknown age; a minor's self-disclosure blocks and flags the age", () => {
     for (const age of [13, 16, 17, undefined, Number.NaN, -1, 400]) {
       for (const side of ["sender", "recipient"] as const) {
@@ -62,12 +73,34 @@ export async function relayBlock(b: Block): Promise<void> {
         for (const it of [text("see you at 7!"), share(), photo()]) { const r = relayItem(it, ctx); expect([age, side, r.decision]).toEqual([age, side, "block"]); expect(r.rendered).toBe(""); expect(r.reasons).toContain("minor:party"); }
       }
     }
-    for (const t of ["lol I'm 16 tho", "im 17 years old", "I'm still in high school", "not 18 yet but soon", "im a 16 year old guy", "15 y/o here"]) {
+    for (const t of ["my son is 15 years old", "my sister is 15 yo and loves the zoo", "you said you're 16?", "ben is 15 years old"]) expect([t, relayItem(text(t), baseCtx()).record.ageSignal]).toEqual([t, false]);
+    for (const t of ["lol I'm 16 tho", "im 17 years old", "I'm still in high school", "not 18 yet but soon", "im a 16 year old guy", "15 y/o here",
+      "im 12 is that ok", "i am 10 years old", "11 yo", "im 17m", "i'm 16f looking to meet",
+      "hey im 15f btw", "im 16/x from brooklyn", "17m here", "I'm 18 in two weeks",
+      "I'm turning 16 next month", "I'm turning 16 in May", "I turn 16 next month",
+      "I'll be 16 in May", "I'm almost 16", "I'm nearly 16", "almost 16",
+      "I'm turning 18 next month", "I'll be 18 in May", "turning 16 next month", "16 next month",
+      "I'm turning 18 today", "I'm turning 18 this month", "I'm in seventh grade and she works as a teacher",
+      'I said "I\'m turning 16 next month"', 'She said "hi" and I\'m turning 16 next month',
+      'I said "I\'m in seventh grade, as a teacher told me."',
+      "I'm in 7th grade", "I'm in seventh grade", "I'm a 7th grader",
+      "I'm a sophomore in high school", "I'm a high school junior",
+      "I'm 16.5 years old", "I'm 15.5 y.o. and I live in NYC"]) {
       const r = relayItem(text(t), baseCtx());
       expect([t, r.decision, r.record.ageSignal]).toEqual([t, "block", true]);
     }
-    for (const t of ["my son is 15 years old", "my sister is 15 yo and loves the zoo", "you said you're 16?", "ben is 15 years old"]) expect([t, relayItem(text(t), baseCtx()).record.ageSignal]).toEqual([t, false]);
-    for (const t of ["I'm 15 minutes away", "I'm 29", "we met when I was in high school"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
+    for (const t of ["I'm 15 minutes away", "I'm 29", "we met when I was in high school",
+      "I'm 17m away from the bar", "im 170m from home", "I'm 5'8", "I'm 3 years into my PhD",
+      "I'm 1 of 3 siblings", "I'm 2 drinks in", 'she said "I am 10 years old"',
+      "I'm 18.5 years old", "I'm 15.5 miles away", "I'm 15 y.o. in two years",
+      "I'm 15 years old in two years", "My child is 12.5 years old",
+      "I'm almost 30", "I'm in 12th grade as a teacher", "I'm in 12th grade, as a teacher",
+      'I said "I\'m in 12th grade, as a teacher at the school."', 'She said "I\'m in seventh grade, as a teacher told me."',
+      "As a teacher of biology, I'm in 12th grade",
+      "I'm almost 150 miles away", "I'm turning 165 degrees clockwise", "I'm turning 16.5 degrees",
+      "I'm turning sixteen degrees", "I'm turning 16 in two years", "Imagine I'm turning 15",
+      'She said "I\'m turning 16 next month"', "My cousin said I am in seventh grade",
+      "My race result is 29.15 years old"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
   });
 
   await b.run("relay teen_relay_contact: a teen friendship pair gets moderated text only; no number, photo or contact move ever passes", () => {
@@ -185,8 +218,20 @@ export async function relayBlock(b: Block): Promise<void> {
     expect(relayItem(num!, baseCtx()).decision).toBe("pass");
     expect(relayItem(pic!, baseCtx()).decision).toBe("pass");
     expect(relayItem(msg!, baseCtx()).rendered).toBe('Sam says: "I\'m running 10 min late"');
-    for (const t of ["should I send them my number?", "don't send my number yet", "how are you?"]) expect([t, mk(t, "r4")]).toEqual([t, null]);
+    for (const t of ["should I send them my number?", "don't send my number yet", "send them my number if she asks", "send them this photo next week", "how are you?"]) {
+      expect([t, mk(t, "r4")]).toEqual([t, null]);
+    }
     expect(relayItemFromRequest({ kind: "contact_share" }, { id: "r5", from: "a", to: "b", at })).toBeNull();
+
+    const quoted = '"I will send you my number when we meet."';
+    expect(mk(`tell them ${quoted}`, "quoted-shared-text")).toMatchObject({ kind: "text", text: quoted });
+    const scheduling = mk('tell them "I can meet Friday if that works for you."', "quoted-schedule");
+    expect(relayItem(scheduling!, baseCtx()).decision).toBe("pass");
+    const contactInQuote = mk('tell them "I will send you my number +1 (212) 555-0147 when we meet."', "quoted-private-contact");
+    expect(contactInQuote?.kind).toBe("text");
+    const checked = relayItem(contactInQuote!, baseCtx());
+    expect(checked.decision).not.toBe("pass");
+    expect(checked.rendered).toBe("");
   });
 
   await b.run("relay: the classifier hook runs only on items the rules pass; a flag, an error or an answer that does not parse blocks (owner decision 2026-11-22, D18)", async () => {
@@ -463,6 +508,19 @@ async function deskGates(b: Block): Promise<void> {
     expect(d.records().at(-1)).toMatchObject({ itemId: "sr1", decision: "block", reasons: ["send:refused"] });
     expect(await d.request({ itemId: "sr1", from: "a", kind: "text", text: "see you at 7!" }, { hook: simulatedRelayClassifier }))
       .toEqual({ itemId: "sr1", decision: "refused", delivered: false, reason: "I couldn't pass that on right now.", replayed: true });
+  });
+
+  await b.run("relay desk: a safety hold on either adult blocks the text, and the desk keeps no text of it (owner decision 2026-11-22, D18)", async () => {
+    for (const id of ["a", "b"]) {
+      const host = fakeHost(), desk = new RelayDesk(host);
+      host.members.get(id)!.held = true;
+      const request = { itemId: `held-${id}`, from: "a", kind: "text" as const, text: "see you at the cafe at 7" };
+      expect((await desk.request(request, { hook: simulatedRelayClassifier })).decision).toBe("refused");
+      expect(host.sent).toEqual([]);
+      expect(desk.records().at(-1)).toMatchObject({ itemId: request.itemId, decision: "block" });
+      expect(desk.records().at(-1)!.reasons).toContain(id === "a" ? "safety:sender_held" : "safety:recipient_held");
+      expect(JSON.stringify(desk.exportState())).not.toContain(request.text);
+    }
   });
 
   await b.run("relay desk: a number is shared only after both members asked; each gets the other's, once", async () => {
