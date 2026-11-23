@@ -103,6 +103,12 @@ export async function relayBlock(b: Block): Promise<void> {
       'I said "I\'m turning 16 next month"', 'She said "hi" and I\'m turning 16 next month',
       'I said "I\'m in seventh grade, as a teacher told me."',
       "I'm in 7th grade", "I'm in seventh grade", "I'm a 7th grader",
+      "I'm in 5th grade", "I'm in fifth grade", "I'm a 5th grader", "I'm a fifth grader",
+      "I'm a seventh grader", "I'm an eighth grader", "I'm a ninth grader", "I'm a tenth grader",
+      "I'm a high schooler", "I'm a middle schooler", "I'm a middle school student",
+      "I'm turning 12 next month", "I'm turning twelve next week", "I'll be 12 in May", "I turn 11 next week",
+      "I'm almost 12 years old", "turning 12 today", "turning 12 next month",
+      "I'm sixteen years old", "I'm fifteen", "I'm twelve years old", "I'm a 16-year-old",
       "I'm a sophomore in high school", "I'm a high school junior",
       "I'm 16.5 years old", "I'm 15.5 y.o. and I live in NYC"]) {
       const r = relayItem(text(t), baseCtx());
@@ -114,11 +120,17 @@ export async function relayBlock(b: Block): Promise<void> {
       "I'm 18.5 years old", "I'm 15.5 miles away", "I'm 15 y.o. in two years",
       "I'm 15 years old in two years", "My child is 12.5 years old",
       "I'm almost 30", "I'm in 12th grade as a teacher", "I'm in 12th grade, as a teacher",
+      "I'm in 5th grade as a teacher", "I'm a ninth grade teacher", "I'm a high school teacher", "I'm a middle school teacher",
       'I said "I\'m in 12th grade, as a teacher at the school."', 'She said "I\'m in seventh grade, as a teacher told me."',
       "As a teacher of biology, I'm in 12th grade",
       "I'm almost 150 miles away", "I'm turning 165 degrees clockwise", "I'm turning 16.5 degrees",
+      "I'm turning 12 degrees left", "I'm almost 12 miles away", "I'm fifteen minutes away",
       "I'm turning sixteen degrees", "I'm turning 16 in two years", "Imagine I'm turning 15",
-      'She said "I\'m turning 16 next month"', "My cousin said I am in seventh grade",
+      "Imagine I'm a tenth grader", "almost 12", "12 next month",
+      'She said "I\'m turning 16 next month"', 'She said "I\'m turning 12 next month"',
+      'She said "I\'m a tenth grader"', 'She said "I\'m sixteen years old"',
+      "My cousin said I am in seventh grade", "My kid is a ninth grader",
+      "My daughter is a high schooler", "My son is a 16-year-old", "I'm a 12-year veteran",
       "My race result is 29.15 years old"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
   });
 
