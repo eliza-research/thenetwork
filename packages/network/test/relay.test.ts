@@ -424,6 +424,15 @@ test("an independent direct sentence can finish a signed number swap", async () 
   expect(await sharesQueued()).toBe(before + 2);
 }, 60_000);
 
+test("a reported delegation beside a direct sentence can finish a signed number swap", async () => {
+  const id = "reported-delegation-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const text = "Tell them I asked Ana to send him my number. Please send Ari my number.";
+  expect(await (await post(await ask("bo", id + "-direct", text))).json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
 test.each([
   "Don't forget to send it",
   "Don't hesitate, send it now",

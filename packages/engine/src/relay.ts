@@ -911,7 +911,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const bodyStart = t.length - payload.length;
     const delegates = (candidate: RegExpMatchArray) => TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(bodyStart, start + candidate.index!));
     // An outer delegation does not subsume a later direct request. A declarative text body is separate.
-    if (!contacts.some(delegates) && !photos.some(delegates)) {
+    if (!contacts.some(delegates) && !photos.some(delegates) && !privateRequest) {
       const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(payload);
       const body = (modal && declarative ? payload.replace(/\?$/, "") : payload).trim();
       const target = envelope[2]!;

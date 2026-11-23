@@ -377,3 +377,7 @@
 {"text": "Send him my number. Thanks. Give it to him if he asks.", "want": "none"}
 {"text": "Send him my number. I am at work. Give it to him once I confirm.", "want": "none"}
 {"text": "Send him my number. Thanks. The restaurant is open at eight.", "want": "contact_share"}
+{"text": "Tell Ana that she should send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana she should send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell them I asked Ana to send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana to have Sam send him my number. Please send Ari my number.", "want": "contact_share"}
