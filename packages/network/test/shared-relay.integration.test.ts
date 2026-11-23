@@ -628,6 +628,7 @@ test("a signed photo request respects the intended item and separately preserves
     "Don't send him my number. I have second thoughts about sharing it. Send him my photo.",
     "Don't send him my number. I'm not sure. Send him my photo.",
     "Don't send him my number. I'm not comfortable showing my photo. Send him my photo.",
+    "Don't send him my number. I'm not certain. Send him my photo.",
   ].entries()) {
     expect(await send("scoped-photo-control-" + index, text), text).toMatchObject({ decision: "none", delivered: false });
     expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: null });

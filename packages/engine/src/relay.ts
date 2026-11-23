@@ -527,8 +527,11 @@ const PRIVATE_RELAY_REFERENCE = new RegExp(
   String.raw`\b(?:send(?:ing)?|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\s+` +
   String.raw`(?:${PENDING_SWAP_RECIPIENT}\s+)?(?:it\b|(?:that|this)\b(?=\s*(?:$|(?:to|with|yet|please|pls|now)\b)))`,
 );
-const PRIVATE_RELAY_UNCERTAIN = /\b(?:not sure|not certain|not comfortable|unsure|uncertain|undecided|second thoughts)\b/;
-const INCOMPLETE_PRIVATE_UNCERTAINTY = /^\s*(?:(?:i(?:'m| am| feel)\s+)?(?:not sure|unsure|uncertain|undecided)|i(?: have|'m having| am having)\s+second thoughts)\s*$/;
+const PRIVATE_RELAY_DOUBT = "not sure|not certain|not comfortable|unsure|uncertain|undecided";
+const PRIVATE_RELAY_UNCERTAIN = new RegExp(String.raw`\b(?:${PRIVATE_RELAY_DOUBT}|second thoughts)\b`);
+const INCOMPLETE_PRIVATE_UNCERTAINTY = new RegExp(
+  String.raw`^\s*(?:(?:i(?:'m| am| feel)\s+)?(?:${PRIVATE_RELAY_DOUBT})|i(?: have|'m having| am having)\s+second thoughts)\s*$`,
+);
 const uncertainPrivateTransfer = (clauses: readonly string[]): boolean => clauses.some(clause =>
   INCOMPLETE_PRIVATE_UNCERTAINTY.test(clause)
   || (PRIVATE_RELAY_UNCERTAIN.test(clause) && (PRIVATE_RELAY_ITEM.test(clause) || PRIVATE_RELAY_REFERENCE.test(clause))));

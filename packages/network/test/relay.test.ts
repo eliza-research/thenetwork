@@ -394,6 +394,7 @@ test.each([
   { text: "Don't send my photo. I'm not sure about sending it while Dad is here. Send him my number.", shares: false },
   { text: "Don't send my photo. I have second thoughts. Send him my number.", shares: false },
   { text: "Don't send my photo. I'm not comfortable sharing my number. Send him my number.", shares: false },
+  { text: "Don't send my photo. I'm not comfortable. Send him my number.", shares: false },
   { text: "Don't send my photo. I'm not sure about sending him this calendar invite. Send him my number.", shares: true },
   { text: "Don't send him my number. Send him my number.", shares: false },
   { text: "Don't send it while the photo is blurry. Send him my number.", shares: false },
