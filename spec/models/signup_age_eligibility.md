@@ -6,7 +6,7 @@ The browser confirms ownership before signup. The platform keeps the date only f
 
 ### Safety rules and reachability
 
-The model covers one verified person and their shared floor. `enroll` is the private write in the same database transaction as enrollment. The date is represented as a future tick. `recordIndependent` is the phone or person age floor. `erase` removes the private row and preserves the minimum numeric age, as account deletion does before release of a recycled number. The separate matching and staff reads return only numbers. The date calculation and cached minor check use the generated rules in [member age](../memberAge.md) and [connector authorization pages](../authorizationPages.md).
+The model covers one verified person and their shared floor. `enroll` is the private write in the same database transaction as enrollment. The date is represented as a future tick. `recordIndependent` is the phone or person age floor. `erase` removes the private row and preserves the minimum numeric age, as account deletion does before release of a recycled number. The separate matching and staff reads return only numbers. The signed learning routes also use the effective age, with their existing independent adult evidence requirement. Accepting a minor signup applies the existing cross-app photo and rating erasure. The date calculation and cached minor check use the generated rules in [member age](../memberAge.md) and [connector authorization pages](../authorizationPages.md).
 
 ```quint
 // quint-check: max-steps=14 max-samples=4000 verify-steps=8

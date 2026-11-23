@@ -983,6 +983,11 @@ test("membership context refuses bans, holds and minors and caps proof at parent
     await sql`update platform.people set lowest_age=17 where id=${owner.personId}`;
     expect((await t.http.context(t.input)).status).toBe(403);
     await sql`update platform.people set lowest_age=30 where id=${owner.personId}`;
+    await new PgPeopleStore(sql).saveSignupAge(owner.personId, { initialMinorAge: 17, eligibleAt: now + 1 });
+    expect((await t.http.context(t.input)).status).toBe(403);
+    expect(await store.propose(owner, input(), now)).toBeNull();
+    expect(await store.propose(owner, input(), now + 1)).toMatchObject({ status: "pending" });
+    await sql`delete from platform.signup_eligibility where person_id=${owner.personId}`;
     await sql`update platform.inbound set arrived_at=${new Date(now - 299_000)} where id='msg:blooio:consent-identity'`;
     expect((await t.http.context(t.input)).body.expiresAt).toBe(now+1000);
     await sql`update platform.inbound set arrived_at=${new Date(now)} where id='msg:blooio:consent-identity'`;

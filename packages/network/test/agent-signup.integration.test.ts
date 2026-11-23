@@ -392,10 +392,14 @@ test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup pag
 test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages while a lower recorded age stays binding", async () => {
   await withSignupWorld(["friends:nyc"], async w => {
     const site = "friends.help";
-    const firstNumber = "+12125550178", secondNumber = "+12125550179";
+    const firstNumber = "+12125550178", secondNumber = "+12125550179", previousAdultNumber = "+12125550180";
     await w.service.accounts.recordAge(secondNumber, undefined, 16);
 
-    for (const number of [firstNumber, secondNumber]) {
+    const previousAdult = await w.service.accounts.createPerson(previousAdultNumber, "otp_sms", 30);
+    await w.connector.store.sql`insert into platform.photos(id,person_id,app_id,storage_key,content_type,bytes,sha256,consent_version,created_at)
+      values ('fixture-private-photo',${previousAdult.id},'slop','fixture-private-storage','image/jpeg',1,'fixture-sha','fixture-consent',${new Date(w.clock.now())})`;
+
+    for (const number of [firstNumber, secondNumber, previousAdultNumber]) {
       const browser = browserOn(w, site);
       const opened = await openConnection(w, site, browser, `birthday-${number}`);
       const rid = hiddenField(opened.html, "rid");
@@ -404,6 +408,8 @@ test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages
       expect(joined.status).toBe(200);
       expect(joined.html).toContain("Signup confirmed.");
     }
+
+    expect(await w.connector.store.sql`select id from platform.photos where person_id=${previousAdult.id} and deleted_at is null`).toEqual([]);
 
     const runtime = w.service.runtimeFor("friends");
     if (!runtime) throw new Error("No Friends runtime after signup");
@@ -426,6 +432,7 @@ test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages
     w.clock.set(Date.UTC(2026, 9, 10, 11, 59, 59));
     expect(await agesFor(firstNumber)).toEqual({ account: 17, matching: 17 });
     expect(await cachedMinor()).toBe(true);
+    expect(await agesFor(previousAdultNumber)).toEqual({ account: 17, matching: 17 });
     w.clock.advance(1_000);
     expect.soft(await agesFor(firstNumber)).toEqual({ account: 18, matching: 18 });
     expect(await agesFor(secondNumber)).toEqual({ account: 16, matching: 16 });

@@ -875,9 +875,10 @@ export class NetworkService implements RuntimeHost {
       weeklyBiasDue(force, !!lastAt, !force && lastAt ? now - new Date(lastAt).getTime() : 0);
     const [last] = await rt.scoped(tx => tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`);
     if (!reportDue(last?.at)) return undefined;
-    const rows = await rt.scoped(tx => tx`select m.id, m.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
-      from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)} left join lateral unnest(f.tags) t on true
-      where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
+    const rows = await rt.scoped(tx => tx`select m.id, a.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
+      from network.members m join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
+      left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)} left join lateral unnest(f.tags) t on true
+      where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, a.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
     const opportunities = await rt.readState(n => [...n.opps.values()]);
     const r = biasReport(rt.id, rt.app.id, members, opportunities, now);
@@ -1285,6 +1286,11 @@ export class NetworkService implements RuntimeHost {
     };
   }
 
+  private async removeMinorMedia(personId: string) {
+    await this.photos.deleteFor(personId);
+    await this.dropRatings(personId);
+  }
+
   /**
    * The person's lowest age went down (an age stated on any app, in chat or on a web form): every app's
    * member follows, so a minor anywhere is single-player everywhere (founder decision 1).
@@ -1293,7 +1299,7 @@ export class NetworkService implements RuntimeHost {
     if (confirmedUnderage(age)) return this.finishUnderageCleanup(personId);
     // Photos and any rating of looks are for adults only: a person who is now under 18 on any app loses
     // every photo and every rating, on every app (also ratings whose photo is already gone).
-    if (age < 18) { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
+    if (age < ADULT_AGE) await this.removeMinorMedia(personId);
     for (const m of await this.people.memberships(personId)) {
       const rt = this.runtimeFor(m.app);
       if (!rt || m.state === "removed") continue;
@@ -1320,6 +1326,7 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
+    if (ctx.signupAge) await this.removeMinorMedia(ctx.person.id);
     if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, ageFromBirthday: ctx.signupAge !== undefined })) throw new JoinReviewRequired();
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
     await this.learnJoinProfile(rt, ctx.person.id, ctx.e164, ctx.membership);
@@ -1369,6 +1376,7 @@ export class NetworkService implements RuntimeHost {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
       }
     });
+    if (ctx.signupAge) await this.removeMinorMedia(ctx.person.id);
     // The token is consumed and attribution is durable. A failed welcome can retry independently,
     // and the joined profile follows whichever call sends the welcome.
     const project = memberReferral ? this.projectInvitationJoin(rt, ctx.membership.memberId) : this.projectSeedWelcome(rt, ctx.membership.memberId);
@@ -2877,12 +2885,13 @@ export class NetworkService implements RuntimeHost {
     const m = await people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
-    const read = (tx: SQL) => tx`select a.age, f.tags, f.valid_from from network.members m
+    const read = (tx: SQL) => tx`select a.age, (m.age is not null or exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id)) as age_source,
+        f.tags, f.valid_from from network.members m
       join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)}
       and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`;
     const rows = (transaction ? await read(transaction) : await rt.scoped(read)) as any[];
-    if (!rows.length || !(rows[0].age >= 18)) return false;
+    if (!rows.length || !rows[0].age_source || !(rows[0].age >= ADULT_AGE)) return false;
     // Founder decision 9 (AGENTS.md): no ID check; the stated age (18+ on the person and the member) is
     // enough. A staff-recorded failed age check still refuses.
     const last = rows.find(r => r.tags)?.tags as string[] | undefined;
