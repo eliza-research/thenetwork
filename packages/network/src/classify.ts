@@ -891,7 +891,7 @@ const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
  */
 const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
-const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
+const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|aren'?t\b|weren'?t\b|can'?t\b|cannot\b)/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -902,6 +902,31 @@ function negatedAt(t: string, i: number, len: number): boolean {
   for (const m of t.slice(0, i).matchAll(CLAUSE_START)) from = m.index! + m[0].length;
   return NEG_CUE.test(t.slice(from, i)) || NEG_AFTER.test(t.slice(i + len));
 }
+/** A bare join between two times: "and", "or", a comma, "&" or "/". Any other word ends the join. */
+const CONJUNCTION_JOIN = /^\s*(?:(?:,|&|\/)\s*)?(?:and|or)\s+|^\s*(?:,|&|\/)\s+/;
+/** The start of a time a join can lead to: a day, a clock time, a day group or a part of the day. */
+const CONJOINED_TIME = new RegExp(
+  String.raw`^(?:${DAY_TOKEN})\b|^\d{1,2}(?::[0-5]\d)?\s*[ap]m\b|^(?:noon|midnight)\b|^(?:weekdays?|weekends?|weeknights?|mornings?|afternoons?|lunch|evenings?|nights?|after work)\b`,
+);
+/**
+ * True when the words at `i` are refused through a joined time after them: a refusal after a
+ * conjunction covers every time the conjunction joins ("Saturday and Sunday don't work" refuses
+ * Sunday by the words after it, and Saturday through the join). The joins must be bare: a word
+ * between the times ("Saturday works, Sunday doesn't") ends the shared scope.
+ */
+function conjunctionRefused(t: string, i: number, len: number): boolean {
+  let rest = t.slice(i + len);
+  for (;;) {
+    const join = CONJUNCTION_JOIN.exec(rest);
+    if (!join) return false;
+    rest = rest.slice(join[0].length);
+    const head = CONJOINED_TIME.exec(rest);
+    if (!head) return false;
+    rest = rest.slice(head[0].length);
+    if (NEG_AFTER.test(rest)) return true;
+  }
+}
+
 /** The clause (between punctuation) around position i. */
 function clauseAt(t: string, i: number, len: number): string {
   let from = 0;
@@ -1218,7 +1243,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
         m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
-    const refused = exclusion || negatedAt(t, m.at, m.end - m.at);
+    const refused = exclusion || negatedAt(t, m.at, m.end - m.at) || conjunctionRefused(t, m.at, m.end - m.at);
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
     } else if (refused) {

@@ -79,3 +79,9 @@
 {"text":"Saturday works. I saw the sun both days.","answer":"yes","keys":["b"]}
 {"text":"Sunday works. We sat both times.","answer":"yes","keys":["c"]}
 {"text":"Saturday works. Ana said, Sat and Sun both.","answer":"yes","keys":["b"]}
+{"text":"Saturday and Sunday don't work for me","answer":"unclear","keys":[]}
+{"text":"Saturday and Sunday don't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Saturday and Sunday don't","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday aren't good","answer":"unclear","keys":[]}
+{"text":"Saturday and Sunday are out for me","answer":"unclear","keys":[]}
+{"text":"Saturday works, Sunday doesn't","answer":"yes","keys":["b"]}
