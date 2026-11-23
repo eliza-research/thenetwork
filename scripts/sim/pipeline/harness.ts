@@ -11,8 +11,8 @@ import { signBlooioPayload } from "../../../packages/blooio/src/blooio/webhook.t
 import { ChannelSendError, type ChannelAdapter, type SendReceipt, type SendRequest } from "../../../packages/blooio/src/types.ts";
 import { BlooioAdapter } from "../../../packages/network/service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../../packages/network/service/service.ts";
-import { DEV_PG_PORT, devPgUp } from "../../../packages/observatory/db/dev-pg.ts";
-import { migrate } from "../../../packages/observatory/db/migrate.ts";
+import { DEV_PG_PORT, devPgUp } from "../../../packages/db/dev-pg.ts";
+import { migrate } from "../../../packages/db/migrate.ts";
 
 /** 2026-10-05 13:00 New York (a Monday afternoon: every send window is open). */
 export const START = Date.UTC(2026, 9, 5, 17);

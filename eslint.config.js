@@ -16,7 +16,7 @@ const ui = ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}"]
 const design = "packages/design-system"
 const theme = JSON.parse(readFileSync(`${design}/package.json`, "utf8")).exports["./theme.css"]
 const tokens = designSystem({ tailwind, tokens: parseTokens(JSON.parse(readFileSync(`${design}/brands/network/tokens.json`, "utf8"))), entryPoint: `${import.meta.dirname}/${design}/${theme}` })
-const consoles = { "packages/observatory": ["packages/observatory/web/**/*.{ts,tsx}"], "packages/mcp": ["packages/mcp/src/pages/**/*.{ts,tsx}", "packages/mcp/src/pages.ts"] }
+const consoles = { "apps/observatory": ["apps/observatory/web/**/*.{ts,tsx}"], "packages/mcp": ["packages/mcp/src/pages/**/*.{ts,tsx}", "packages/mcp/src/pages.ts"] }
 
 export default defineConfig(
   globalIgnores(["**/node_modules/", "**/dist/", "**/generated/", "**/storybook-static/", "**/.cache/", "**/gen/"]),

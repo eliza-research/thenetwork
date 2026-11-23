@@ -4,7 +4,7 @@ import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { boundedHomeHelpConsentCard, boundedHomeHelpConsentCommand } from "../service/bounded-home-help-consent-command.ts";
 import type { HomeHelpConsentNotice } from "../src/bounded-home-help-consent.ts";
 import { NY } from "../src/outreach.ts";

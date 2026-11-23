@@ -5,7 +5,7 @@ import { COLLECTION_COMMAND_VECTORS } from "./fixtures/learning-collection-comma
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
+import { applySchema, devPgUp, DEV_PG_PORT } from "../../db/dev-pg.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { ProfileSuggestions, type SuggestionOwner, type SourceSuggestion, type SuggestionAuthorization } from "../service/profile-suggestions.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";

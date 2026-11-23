@@ -5,7 +5,7 @@ import type { SendRequest } from "../../blooio/src/types.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { type TurnRequest, TURN_PATH } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
-import { RealSource } from "../../observatory/src/sources/real.ts";
+import { RealSource } from "../../../apps/observatory/src/sources/real.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";

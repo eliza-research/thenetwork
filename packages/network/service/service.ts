@@ -144,7 +144,7 @@ import { fetchMediaCapped, PHOTO_APP, PhotoIntake, type PhotoIntakeDeps } from "
 import { textPhotoLineAllowed } from "../../core/src/generated/photoPolicy.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
-import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
+import { DEFAULT_SLA_HOURS } from "../../../apps/observatory/src/apps.ts";
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
@@ -166,8 +166,8 @@ import { applyPeonSearchCommand, namesPeonSearch, peonSearchCommand, peonSearchR
 import type { RelayClassifierHook } from "../../engine/src/relay.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
-import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../observatory/src/staff.ts";
-import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../observatory/src/types.ts";
+import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../../apps/observatory/src/staff.ts";
+import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
 
 /** The homes a conversation can have; each belongs to exactly one network of an app (runtimeForHome). */
 const CONVERSATION_CITIES: readonly City[] = ["nyc", "sf", "la"];

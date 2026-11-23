@@ -3,7 +3,7 @@ import { serveHttp } from "../../core/src/runtime/http.ts";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
+import { applySchema, devPgUp, DEV_PG_PORT } from "../../db/dev-pg.ts";
 import { SimClock } from "@thenetwork/core";
 import { svcSign, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH, PROFILE_REVIEW_WITHDRAWAL_PROOF_PATH,

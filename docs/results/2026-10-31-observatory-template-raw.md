@@ -7,7 +7,7 @@ reproductions are deterministic (the same test file, the same dev Postgres clust
 
 ## The problem
 
-`appSnapshotSql` (`packages/observatory/src/sources/real.ts`) wraps the snapshot builder's SQL client
+`appSnapshotSql` (`apps/observatory/src/sources/real.ts`) wraps the snapshot builder's SQL client
 so a query that names `platform.person_blocks` or `platform.matching_ages` reads the app's own
 restricted views instead. To reweave the select it fabricated a `TemplateStringsArray`:
 
@@ -39,7 +39,7 @@ documentation.
 
 ## The reproduction (before, on a0ed7bc)
 
-`pnpm exec vitest run --conditions eliza-source packages/observatory/test/real-fixes.test.ts` (dev Postgres on
+`pnpm exec vitest run --conditions eliza-source apps/observatory/test/real-fixes.test.ts` (dev Postgres on
 :54339 up):
 
 | the former runtime | Result on a0ed7bc (base) | Result with this change |

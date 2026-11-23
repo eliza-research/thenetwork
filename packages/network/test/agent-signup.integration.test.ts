@@ -4,7 +4,7 @@ import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
 import { serveHttp } from "../../core/src/runtime/http.ts";
 import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
 import { call, CHALLENGE, register, setup, tokenRequest, VERIFIER } from "../../mcp/test/harness.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { createServiceMcp } from "../service/serve.ts";
 import { NetworkService } from "../service/service.ts";
 

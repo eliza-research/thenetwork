@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { HOUR } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { findExecutable } from "../../core/src/runtime/process.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { Accounts } from "../../platform/src/accounts.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";

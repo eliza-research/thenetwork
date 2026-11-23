@@ -19,7 +19,7 @@ The browser calls the [staff review controller](../staffReview.md) for selected 
 // review_desk: the staff review desk and the matching switch of the Observatory, on the browser side.
 //
 // WHAT THIS MODELS
-//   - The review queue (ReviewQueue and ReviewActions in packages/observatory/web/review.tsx). Items
+//   - The review queue (ReviewQueue and ReviewActions in apps/observatory/web/review.tsx). Items
 //     arrive, close, expire and come back after a re-roll. The selected card is derived on each render
 //     (focus link, then the held selection, then the head of the list sorted by deadline). The
 //     reviewer presses keys (held keys give repeat events), clicks buttons, opens modes (reject, edit,
@@ -28,7 +28,7 @@ The browser calls the [staff review controller](../staffReview.md) for selected 
 //     in any order, or fail. A failed answer can follow a decision that the server applied.
 //   - The matching switch with two presses (Config in admin.tsx), for two admins. Each admin reads the
 //     switch value from a fetch that can be stale.
-//   Each LemmaScript step function in packages/observatory/web/logic/review.ts is a pure def here with
+//   Each LemmaScript step function in apps/observatory/web/logic/review.ts is a pure def here with
 //   the same name and the same decision: ctlOk, rebind, choose, leaveMode, keyStep, toggleMode, settle,
 //   moveOnAfter, approveBlock, flip. Each shell event is an action that calls it and does not decide again.
 //   The server and the other reviewer are a nondeterministic environment.
@@ -109,7 +109,7 @@ module review_desk {
     3 -> { minor: true, declined: false })
 
   // ---------------------------------------------------------------- core step functions
-  // Each def has the name and the decision of the function in packages/observatory/web/logic/review.ts.
+  // Each def has the name and the decision of the function in apps/observatory/web/logic/review.ts.
 
   pure def ctlOk(c: Ctl): bool =
     and {
