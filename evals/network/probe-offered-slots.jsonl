@@ -49,3 +49,4 @@
 {"text":"Either of those, but not both.","answer":"yes","keys":["a","b","c"]}
 {"text":"Either Saturday or Sunday, not either.","answer":"unclear","keys":[]}
 {"text":"\"Either Saturday or Sunday\", but not both.","answer":"unclear","keys":[]}
+{"text":"sat and sun both","answer":"unclear","keys":[]}
