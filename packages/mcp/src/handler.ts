@@ -305,7 +305,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
   }
   const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
-  const browserCookie = (a: McpApp) => (secureCookies(a) ? "__Host-mcp_auth" : "mcp_auth");
+  const browserCookie = (host: McpApp, app: McpAppId) => {
+    const name = host.id === app ? "mcp_auth" : `mcp_auth_${app}`;
+    return secureCookies(host) ? `__Host-${name}` : name;
+  };
   let lastSweep = 0;
 
   function resourceOf(issuer: string, host: McpAppId, app: McpAppId, surface: Surface): string {
@@ -538,7 +541,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       codeChallenge: challengeIn, scopes, resource, e164: null, personId: null, step: "phone" as const, createdAt: now(), expiresAt: now() + ttl.requestMs,
     };
     await store.putAuthRequest(r);
-    const cookie = `${browserCookie(c.host)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.host) ? "; Secure" : ""}`;
+    const cookie = `${browserCookie(c.host, r.app)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.host) ? "; Secure" : ""}`;
     const response = await authorizeEntry(c, r, client, false);
     response.headers.append("set-cookie", cookie);
     return response;
@@ -627,9 +630,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function liveRequest(c: Ctx, form: URLSearchParams) {
     const rid = form.get("rid") ?? "";
     const r = rid ? await store.getAuthRequest(rid) : undefined;
-    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host));
     if (!r) return undefined;
     const sameApp = r.app === c.app.id && canonicalResource(r.resource, c) === r.resource;
+    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host, r.app));
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
     const bound = stepBrowser(browserInitial, { type: "bindBrowser", matchesDigest: safeEqual(sha256hex(browser), r.browserHash) });
     if (bound.phase !== "CheckingClient") return undefined;
@@ -780,7 +783,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form || !live) return messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
     const { r, client, flow } = live;
     if (openAiUnavailable(c, client)) return messagePage(c, "Not available", "This assistant connection is not available on this site.", 403);
-    const clearCookie = `${browserCookie(c.host)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
+    const clearCookie = `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
 
     const approving = step === "consent" && form.get("decision") === "approve";
     const expired = () => messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
@@ -898,7 +901,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   /** Validate Cloud authority before the atomic issuance so outages remain retryable. */
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
-    const clearCookie = `${browserCookie(c.host)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
+    const clearCookie = `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
     const issued = await issueConnectorGrant<Grant>(r, {
       now,
       makeGrant: at => ({

@@ -72,6 +72,11 @@ export const CHALLENGE = pkceS256(VERIFIER);
 
 const ridOf = (html: string) => /name="rid" value="([^"]+)"/.exec(html)?.[1];
 
+export function pendingAuthorizationCookie(response: Response): string | undefined {
+  return response.headers.getSetCookie().map(header => header.split(";")[0]!)
+    .find(pair => /^(?:__Host-)?mcp_auth(?:_[a-z]+)?=.+$/.test(pair));
+}
+
 export interface FlowOpts { scope?: string; redirectUri?: string; verifier?: string; resource?: string; state?: string; extraQuery?: Record<string, string>; deny?: boolean; cookie?: string }
 
 /** The browser part: confirm the phone if needed, then explicitly approve this client. */
@@ -84,7 +89,7 @@ export async function browserFlow(env: Env, domain: string, clientId: string, ph
   const start = await env.fetch(new Request(`${origin(domain)}/oauth/authorize?${q}`, { headers: f.cookie ? { cookie: f.cookie } : {} }));
   let html = await start.text();
   if (start.headers.has("location")) return { start, html, location: start.headers.get("location"), status: start.status, siteCookie: start.headers.get("set-cookie") };
-  const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
+  const browser = pendingAuthorizationCookie(start);
   const rid = ridOf(html);
   if (!rid || !browser) return { start, html, location: null as string | null };
   let cookie = [browser, f.cookie].filter(Boolean).join("; ");
