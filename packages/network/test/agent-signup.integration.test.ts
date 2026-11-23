@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { SimClock } from "@thenetwork/core";
+import { HOUR, SimClock } from "@thenetwork/core";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
 import { serveHttp } from "../../core/src/runtime/http.ts";
@@ -506,7 +506,7 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
       (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
       values (${id}, ${person.id}, 'slop', ${id}, 'image/jpeg', 1, 'fixture-sha', 'fixture-consent', ${new Date(w.clock.now())})`;
     const openVerified = async (site: string, state: string) => {
-      w.clock.advance(31_000);
+      w.clock.advance(HOUR);
       const browser = browserOn(w, site);
       const opened = await openConnection(w, site, browser, state);
       const rid = hiddenField(opened.html, "rid");
@@ -526,6 +526,7 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
     expect(await privateRow()).toEqual([]);
     expect(await membership("friends")).toBeUndefined();
     expect(await sql`select id from network.members where person_id = ${person.id}`).toEqual([]);
+    expect(await sql`select state from platform.consent_events where e164 = ${number} and app_id = 'friends'`).toEqual([]);
     expect(await sql`select id from platform.photos where person_id = ${person.id}`).toEqual([{ id: "02-first-photo" }]);
 
     blockedPhoto = undefined;
@@ -539,6 +540,7 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
     expect(await privateRow()).toEqual([{ initial_minor_age: 17, eligible_at: new Date(firstDate) }]);
     expect(await membership("friends")).toMatchObject({ state: "active" });
     expect(await membership("slop")).toBeUndefined();
+    expect(await sql`select state from platform.consent_events where e164 = ${number} and app_id = 'slop'`).toEqual([]);
 
     blockedPhoto = undefined;
     expect((await signup("slop.date", "confirmed-later", "2009-10-10")).html).toContain("Signup confirmed.");
