@@ -176,3 +176,11 @@
 {"text": "Scratch that. Send him my number.", "want": "contact_share"}
 {"text": "Send him my number. Ana says, scratch that.", "want": "contact_share"}
 {"text": "Send him my photo, Ana said. Please send him my number.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that, I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, let me ask him first.", "want": "none"}
+{"text": "Send him my number. Wait, I changed my mind, I'll text him myself.", "want": "none"}
+{"text": "Send him my number. Cancel that, I need to check with him first.", "want": "none"}
+{"text": "Send him my photo. Scratch that, I'll show him in person.", "want": "none"}
+{"text": "Send him my number, scratch that, I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, send it.", "want": "contact_share"}
+{"text": "Send him my number. Wait, send it now.", "want": "contact_share"}

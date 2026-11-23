@@ -537,6 +537,12 @@ const LATE_PRIVATE_RETRACTION = new RegExp(
   "iu",
 );
 const LATE_ORPHAN_QUESTION = /[.!;…\n][ \t]*\?{2,}[ \t]*(?=$|[.!;…\n])/u;
+// A retraction can carry its reason in the same sentence ("Scratch that, I'll tell him myself").
+// The sentence still retracts unless the rest asks the agent to send the item again.
+const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
+  String.raw`^[,\s–—]*(?:and\s+)?(?:(?:actually|wait|sorry)[,\s]+)?(?:${RELAY_RETRACTION}|${RELAY_LATE_DOUBT})[,;:\s–—]+`,
+  "iu",
+);
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -588,10 +594,18 @@ function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean
   return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
 }
 
+function retractsPrivateSentence(sentence: string): boolean {
+  if (LATE_PRIVATE_RETRACTION.test(sentence)) return true;
+  const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence);
+  if (lead === null) return false;
+  const rest = sentence.slice(lead[0].length);
+  return !PRIVATE_RELAY_REFERENCE.test(rest) && rest.match(CONTACT_REQ) === null && rest.match(PHOTO_REQ) === null;
+}
+
 function retractsPrivateRequest(text: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
-  if (LATE_ORPHAN_QUESTION.test(tail) || tail.split(RELAY_SENTENCE).some(sentence => LATE_PRIVATE_RETRACTION.test(sentence))) return true;
+  if (LATE_ORPHAN_QUESTION.test(tail) || tail.split(RELAY_SENTENCE).some(retractsPrivateSentence)) return true;
   return privateRequests.some(candidate => {
     if (candidate.index! < end || candidate[0].toLowerCase() === request[0].toLowerCase() || reportsPrivateRequest(text, candidate)) return false;
     const lead = text.slice(end, candidate.index!).split(RELAY_SENTENCE).at(-1)!;
