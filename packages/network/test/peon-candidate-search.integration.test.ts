@@ -6,6 +6,8 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
+import { APPS } from "../../platform/src/apps.ts";
+import { STANDING_COPY } from "../src/standing-intents.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import { BlooioAdapter, DryRunAdapter, type Delivery, type Outbound } from "../service/channel.ts";
@@ -183,29 +185,50 @@ test.skipIf(!pgAvailable)("a signed Peon candidate read-back becomes a Hire prof
   expect((await turn("confirm-c", candidate, expiredProof)).body.replies[0]).toContain("no longer available");
   expect(await matching()).toEqual([]);
 
-  // A second candidate pauses through the normal owned-intent command while their first probe is queued.
+  // spec/standingIntentManagement.md: an owner pauses an intent while its first probe is queued.
   const pausedPhone = "+12125550186";
-  await turn("join-pause-candidate", pausedPhone, "join peon\nMy name is Vic. I am 31 years old.");
-  const [pausedOwner] = await service.memberApps(pausedPhone);
+  // Fix the membership and draft IDs so the legacy list reference contains a seven-digit run.
+  const memberId = "peon_00000000-0000-4000-8000-000000000003";
+  const invitation = await service.accounts.invite(APPS.peon, pausedPhone);
+  await db`update platform.memberships set member_id=${memberId} where app_id='peon' and member_id=${invitation!.memberId}`;
+  expect((await turn("join-pause-candidate", pausedPhone, "join peon\nMy name is Vic. I am 31 years old.")).body)
+    .toMatchObject({ reason: "joined", memberId });
   const pausingDraft = await turn("pause-candidate-draft", pausedPhone, search);
-  const pausingProof = pausingDraft.body.replies[0].match(/CONFIRM PEON JOB SEARCH search_[a-p]{16}/)[0];
-  expect((await turn("pause-candidate-confirm", pausedPhone, pausingProof)).status).toBe(200);
+  expect(pausingDraft.body.replies[0]).toMatch(/CONFIRM PEON JOB SEARCH search_[a-p]{16}/);
+  const draftReference = "search_abcdefghijklmnop";
+  await db`update network.peon_candidate_search_drafts set reference=${draftReference} where app_id='peon' and member_id=${memberId}`;
+  expect((await turn("pause-candidate-confirm", pausedPhone, `CONFIRM PEON JOB SEARCH ${draftReference}`)).body.replies)
+    .toEqual(["I saved your Peon job search. I'll ask you before any introduction."]);
   await queue.inbound(pausedPhone);
   clock.advance(24 * HOUR);
-  const pausedItem = await peonReviewItem(pausedOwner!.memberId);
+  const pausedItem = await peonReviewItem(memberId);
   expect(pausedItem).toBeDefined();
   holdPeonQueue = true;
   expect(await (await staff(`/review/${encodeURIComponent(pausedItem.oppId)}`, { decision: "approve", revision: pausedItem.revision })).json()).toEqual({ ok: true });
-  const pausedProbe = await queuedProbe(pausedItem.oppId, pausedOwner!.memberId);
+  const pausedProbe = await queuedProbe(pausedItem.oppId, memberId);
   expect(pausedProbe?.status).toBe("pending");
   const listed = await turn("list-search", pausedPhone, "LIST MY INTENTS");
+  const reference = "INT-MPGPEEACABCL";
+  const legacyReference = "I-CF6F4402012B";
   const searchLine = listed.body.replies.join("\n").split("\n").find((line: string) => line.includes("Find work as a data analyst"));
-  const searchRef = /I-[A-F0-9]{12}/.exec(searchLine ?? "")?.[0];
-  expect(searchRef).toBeDefined();
-  await turn("pause-search", pausedPhone, `PAUSE INTENT ${searchRef}`);
-  expect((await db`select status from network.intents where app_id='peon' and member_id=${pausedOwner!.memberId} and details='peon:search'`)[0]?.status).toBe("paused");
+  expect(searchLine).toMatch(/^\d+\. .* · active( · introduction in progress)?( · ends [^·]+)? · INT-[A-P]{12}$/);
+  expect(searchLine!.endsWith(` · ${reference}`)).toBe(true);
+  const status = async () => (await db`select status from network.intents where app_id='peon' and member_id=${memberId} and details='peon:search'`)[0]?.status;
+  for (const [id, otherReference] of [["new", reference], ["legacy", legacyReference]]) {
+    const denied = await turn(`pause-other-member-search-${id}`, manager, `PAUSE INTENT ${otherReference}`);
+    expect(denied.body.replies).toEqual([STANDING_COPY.unknown]);
+    expect(await status()).toBe("active");
+  }
+  const pausedReply = (await turn("pause-search", pausedPhone, `PAUSE INTENT ${reference}`)).body.replies;
+  expect(pausedReply).toHaveLength(1);
+  expect(pausedReply[0]).toMatch(/^Paused: “[^”]*Find work as a data analyst[^”]*”\. No new searches for it\./);
+  expect(await status()).toBe("paused");
   holdPeonQueue = false;
   await runtime.deliver();
   expect(accepted.has(`tn:${pausedProbe.id}`)).toBe(false);
-  expect((await queuedProbe(pausedItem.oppId, pausedOwner!.memberId))?.status).toMatch(/^(suppressed_ineligible|expired)$/);
+  expect((await queuedProbe(pausedItem.oppId, memberId))?.status).toMatch(/^(suppressed_ineligible|expired)$/);
+  const closedReply = (await turn("close-search-legacy", pausedPhone, `CLOSE INTENT ${legacyReference.toLowerCase()}`)).body.replies;
+  expect(closedReply).toHaveLength(1);
+  expect(closedReply[0]).toMatch(/^Closed: “[^”]*Find work as a data analyst[^”]*”/);
+  expect(await status()).toBe("closed");
 });

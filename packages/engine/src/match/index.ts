@@ -8,6 +8,7 @@ interface SegmentSpan extends Span { readonly segment: string | undefined; reado
 export interface CandidateBlock {
   readonly profiles: readonly MatchProfile[];
   readonly segments: readonly SegmentSpan[];
+  reachableSegments(partners: ReadonlySet<string> | undefined): readonly SegmentSpan[];
   readonly byOrdinal: ReadonlyMap<number, MatchProfile>;
   readonly offers: Postings;
   readonly seeks: Postings;
@@ -52,6 +53,30 @@ function segmentsOf(sorted: readonly MatchProfile[]): SegmentSpan[] {
   return spans;
 }
 
+function segmentLookup(segments: readonly SegmentSpan[]): CandidateBlock["reachableSegments"] {
+  const bySegment = new Map(segments.map(span => [span.segment, span]));
+  const unsegmented = bySegment.get(undefined);
+  const cached = new WeakMap<ReadonlySet<string>, readonly SegmentSpan[]>();
+  return partners => {
+    if (!partners) return segments;
+    const found = cached.get(partners);
+    if (found) return found;
+    let reachable: SegmentSpan[];
+    if (partners.size < segments.length) {
+      reachable = unsegmented ? [unsegmented] : [];
+      for (const name of partners) {
+        const span = bySegment.get(name);
+        if (span) reachable.push(span);
+      }
+      reachable.sort((a, b) => a.start - b.start);
+    } else {
+      reachable = segments.filter(span => span.segment === undefined || partners.has(span.segment));
+    }
+    cached.set(partners, reachable);
+    return reachable;
+  };
+}
+
 export function buildCandidateIndex(profiles: readonly MatchProfile[]): CandidateIndex {
   const groups = new Map<string, MatchProfile[]>();
   for (const p of profiles) {
@@ -62,9 +87,11 @@ export function buildCandidateIndex(profiles: readonly MatchProfile[]): Candidat
   const blocks = new Map<string, CandidateBlock>();
   for (const [key, group] of groups) {
     const sorted = [...group].sort((x, y) => compareSegment(x, y) || x.standing - y.standing || x.ordinal - y.ordinal);
+    const segments = segmentsOf(sorted);
     blocks.set(key, {
       profiles: sorted,
-      segments: segmentsOf(sorted),
+      segments,
+      reachableSegments: segmentLookup(segments),
       byOrdinal: new Map(sorted.map(p => [p.ordinal, p] as const)),
       offers: postingsOf(sorted, p => p.offers),
       seeks: postingsOf(sorted, p => p.seeks),

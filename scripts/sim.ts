@@ -40,42 +40,26 @@
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { writePath } from "../packages/core/src/runtime/files.ts";
-import { auditBlock } from "./sim/audit.ts";
-import { capitalBlock } from "./sim/capital.ts";
-import { clefBlock } from "./sim/clef.ts";
-import { evalsBlock } from "./sim/evals.ts";
-import { friendsBlock } from "./sim/friends.ts";
 import { Block, type Gate } from "./sim/gate.ts";
-import { MATCHING_PACKS, matchingBlock } from "./sim/matching.ts";
-import { onboardBlock } from "./sim/onboard.ts";
-import { networkBlock } from "./sim/network.ts";
-import { opsBlock } from "./sim/ops.ts";
-import { peonBlock } from "./sim/peon.ts";
-import { peonSeatsBlock } from "./sim/peon-seats.ts";
-import { pipelineBlock } from "./sim/pipeline.ts";
-import { pipelineSlopBlock } from "./sim/pipeline-slop.ts";
-import { safetyBlock } from "./sim/safety.ts";
-import { relayBlock } from "./sim/relay.ts";
-import { slopBlock } from "./sim/slop.ts";
 
 type Opts = { quick: boolean; llm: boolean; matchingPack?: string };
 const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
-  evals: b => evalsBlock(b),
-  network: networkBlock,
-  matching: matchingBlock,
-  slop: slopBlock,
-  onboard: onboardBlock,
-  relay: b => relayBlock(b),
-  peon: peonBlock,
-  "peon-seats": b => peonSeatsBlock(b),
-  friends: friendsBlock,
-  pipeline: b => pipelineBlock(b),
-  "pipeline-slop": b => pipelineSlopBlock(b),
-  safety: b => safetyBlock(b),
-  ops: b => opsBlock(b),
-  audit: b => auditBlock(b),
-  clef: b => clefBlock(b),
-  capital: capitalBlock,
+  evals: async (b) => (await import("./sim/evals.ts")).evalsBlock(b),
+  network: async (b, o) => (await import("./sim/network.ts")).networkBlock(b, o),
+  matching: async (b, o) => (await import("./sim/matching.ts")).matchingBlock(b, o),
+  slop: async (b, o) => (await import("./sim/slop.ts")).slopBlock(b, o),
+  onboard: async (b, o) => (await import("./sim/onboard.ts")).onboardBlock(b, o),
+  relay: async (b) => (await import("./sim/relay.ts")).relayBlock(b),
+  peon: async (b, o) => (await import("./sim/peon.ts")).peonBlock(b, o),
+  "peon-seats": async (b) => (await import("./sim/peon-seats.ts")).peonSeatsBlock(b),
+  friends: async (b, o) => (await import("./sim/friends.ts")).friendsBlock(b, o),
+  pipeline: async (b) => (await import("./sim/pipeline.ts")).pipelineBlock(b),
+  "pipeline-slop": async (b) => (await import("./sim/pipeline-slop.ts")).pipelineSlopBlock(b),
+  safety: async (b) => (await import("./sim/safety.ts")).safetyBlock(b),
+  ops: async (b) => (await import("./sim/ops.ts")).opsBlock(b),
+  clef: async (b) => (await import("./sim/clef.ts")).clefBlock(b),
+  audit: async (b) => (await import("./sim/audit.ts")).auditBlock(b),
+  capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
 const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
 
@@ -90,17 +74,20 @@ const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital"
 if (!run.length) { console.error("Select at least one simulation block."); process.exit(2); }
 const matchingPacks = values("matching-pack");
 const matchingPack = matchingPacks[0];
-if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pack=")) &&
-  (matchingPacks.length !== 1 || !MATCHING_PACKS.some(app => app === matchingPack) || !run.includes("matching"))) {
-  console.error(`--matching-pack requires the matching block and one of ${MATCHING_PACKS.join(", ")}.`);
-  process.exit(2);
-}
 const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), matchingPack };
 
 // Simulations never call a model: fail fast if any code path tries. The one exception is the
 // onboarding LLM arm, which runs only with --llm (and only in the onboard block).
 if (opts.llm) console.log("--llm: provider keys kept for the onboarding LLM arm (tracked gates only)");
 else for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
+
+if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pack="))) {
+  const { MATCHING_PACKS } = await import("./sim/matching.ts");
+  if (matchingPacks.length !== 1 || !MATCHING_PACKS.some(app => app === matchingPack) || !run.includes("matching")) {
+    console.error(`--matching-pack requires the matching block and one of ${MATCHING_PACKS.join(", ")}.`);
+    process.exit(2);
+  }
+}
 
 const all: Gate[] = [];
 const timings: Record<string, number> = {};

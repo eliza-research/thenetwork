@@ -306,7 +306,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const o2 = oracle.dateOutcome(a.id, b.id, pr.activity);
     f.outcome = o2; f.good = o2.good;
     f.harms.push(...behavior.harms(a.id, b.id, coin, "date"));
-    done("completed", { acceptedBy: [a.id, b.id], at });
+    done("completed", { acceptedBy: [a.id, b.id], at, bookedMeeting: { at, timeZone: CITY_TZ[pr.city] } });
     state.edges.push({ from: a.id, to: b.id, type: "met", strength: 1, explicit: true, createdAt: at });
     for (const [id, other, side] of [[a.id, b.id, "a"], [b.id, a.id, "b"]] as const) {
       const fb = behavior.feedback(id, coin, o2, side);

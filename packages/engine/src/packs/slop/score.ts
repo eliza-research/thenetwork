@@ -43,11 +43,22 @@ function revealedTaste(a: SlopProfile, b: SlopProfile): number {
   return s / (rs.length + 1);
 }
 
+const activityOrder = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
+function preferredActivity(current: string | undefined, activity: string): string {
+  if (current === undefined) return activity;
+  const rank = activityOrder.indexOf(activity) - activityOrder.indexOf(current);
+  return rank < 0 || (rank === 0 && activity < current) ? activity : current;
+}
+
 export function dateActivity(a: SlopProfile, b: SlopProfile): string {
-  const both = a.activities.filter(x => b.activities.includes(x));
-  const order = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
-  const pick = (xs: string[]) => [...xs].sort((x, y) => (order.indexOf(x) - order.indexOf(y)) || (x < y ? -1 : 1))[0];
-  return pick(both) ?? pick([...a.activities, ...b.activities].filter(x => order.indexOf(x) <= 3)) ?? pick([...a.activities, ...b.activities]) ?? "coffee";
+  let shared: string | undefined, first: string | undefined;
+  for (const activity of a.activities) {
+    first = preferredActivity(first, activity);
+    if (b.activities.includes(activity)) shared = preferredActivity(shared, activity);
+  }
+  if (shared !== undefined) return shared;
+  for (const activity of b.activities) first = preferredActivity(first, activity);
+  return first ?? "coffee";
 }
 
 function revealedBodyPref(a: SlopProfile, type: string, shrinkN: number): number | undefined {

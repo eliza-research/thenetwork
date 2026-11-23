@@ -51,7 +51,7 @@ export interface HookOpp {
 }
 
 /** A public meeting place. Never a home. */
-export interface HookVenue { id: string; name: string; neighborhood: string; lat: number; lng: number }
+export interface HookVenue { id: string; name: string; neighborhood: string; lat: number; lng: number; timeZone?: string }
 
 export interface AppHooks {
   /** The pack's input, from the Network's own (minors are already removed). Pure. */

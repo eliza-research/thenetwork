@@ -57,7 +57,8 @@ export function canCallTool(c: Connection, tool: ToolName): boolean {
   }
 }
 
-export const STANDING_REF = /^I-[A-F0-9]{12}$/;
+export const STANDING_REF = /^INT-[A-P]{12}$/;
+export const STANDING_INPUT_REF = /^(?:INT-[A-P]{12}|I-[A-F0-9]{12})$/;
 
 /** An update reference from a Network text (packages/notify task tokens): a pointer, never a credential. */
 export const UPDATE_TOKEN = /^T-[2-9A-HJKMNP-TV-Z]{6}$/;
@@ -105,7 +106,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
   });
   const checkItem = object({ ref: standingRef, summary: text, reason: { type: "string", enum: ["said_not_wanted", "ended_recently"] } });
   const lookingForInput = { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
-    ref: { type: "string", pattern: STANDING_REF.source, description: "The ref of one thing from list_looking_for, like I-3F9A00C1B2D4." } }, required: ["ref"], additionalProperties: false };
+    ref: { type: "string", pattern: STANDING_INPUT_REF.source, description: "The ref of one thing from list_looking_for, like INT-DPJKAAMBLCNE." } }, required: ["ref"], additionalProperties: false };
   const lookingForChangeOutput = object({
     app: ownApp, changed: { type: "boolean" }, item: { anyOf: [{ type: "null" }, lookingForSchema] },
     reason: { enum: [null, "unknown_ref", "daily_limit", "closed", "posting", "adults_only", "texts_off", "not_member"] }, next_step: text,
@@ -318,7 +319,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
     if (!changesLookingFor) return { ok: true, app: host.id };
     const ref = typeof a.ref === "string" ? a.ref.trim().toUpperCase() : "";
-    if (!STANDING_REF.test(ref)) return { ok: false, message: "ref must look like I-3F9A00C1B2D4, from list_looking_for." };
+    if (!STANDING_INPUT_REF.test(ref)) return { ok: false, message: "ref must look like INT-DPJKAAMBLCNE, from list_looking_for." };
     return { ok: true, app: host.id, ref };
   }
   if (name === "my_photos" || name === "photo_request") {

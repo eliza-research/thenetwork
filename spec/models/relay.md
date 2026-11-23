@@ -8,7 +8,7 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict and consent window](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. Phone swaps and durable queue acceptance remain separate.
 
 The text outcome `minorClef` is a block for a classifier `minor_signal` flag. The engine (`relayItemAsync`) records a classifier `minor_signal` flag, as a flag or a severe flag, as the age signal of the item record, and the relay desk (`RelayDesk.apply`) reads only that record: the blocked item keeps no text and the sender gets the minors policy. Changed (owner decision 2026-11-22): the desk read the flag again from the reason codes, and a caller of the engine other than the desk lost the signal. Changed: before this, a minor signal that only the classifier found kept the text and left the sender matchable, and the model disagreed with the code.
 
@@ -29,10 +29,12 @@ Comparison 2026-11-22 (owner decision of 2026-11-22, carry-over of the relay rev
 - The verdict. `stepRelay` of the generated [item lifecycle](../relayLifecycle.md) gives `Blocked` or `ReadyToSend`, as `apply` does (owner decision 2026-11-22, D18).
 - The classifier (owner decision 2026-11-22, D18). `relayItemAsync` asks the generated `relayClassifierReads` (the model's `classifierReads`) and `relayClassifierReading`; an error, a timeout, an answer that does not parse or a Clef cache miss gives `classifier:unavailable`, the model's `unavailable`, and blocks the text. A teen-pair text that no classifier read gets `teen:unclassified` and is blocked; the model has a classifier in every run, as the service has in every environment: Clef with the Workers AI credentials, else a classifier that cannot run (the model's `unavailable`), or the simulated one that `platform:dev`, the simulator and the tests inject (relay-endpoint.ts relayClassifierFromEnv; owner decision 2026-11-22, D18, refix). A desk call without a classifier still blocks a teen-pair text (`teen:unclassified`), because RelayDesk.decide always calls `relayItemAsync`.
 - The number swap. See the note at the top of the module.
+- The staff rejection. `relayAdmission` (`packages/network/service/runtime.ts`) still gives `relayRecordMayDispatch` the value `rec.review === "rejected"`, because the `review` column stays (migration 0086) and a record written before the owner decision of 2026-11-22 (D18) can carry it. No new record gets a review, so `queueSend` gives `false`: the model abstracts the legacy rejected rows away.
 
 Known drift (code defects; the model keeps the rule and this change does not fix the code, which another area owns):
 
-- SD-138, the swap question. `waitingSwapAsked` and `askInsideWindow` state that a swap waits only on a question that was not refused and that the question goes only inside its 15 minutes. `RelayDesk.swap` records the waiting swap before it sends the question and does not read the result of `host.send`, so a refused question still leaves a waiting swap and the member hears that the Network asked. In quiet hours the question is deferred, not refused. `relayAdmission` checks the question only with `relayPairAdmission`, not against the waiting swap, so a question that waited past the 15 minutes still goes. `askRefusedTest`, `askQuietTest` and `askLateTest` replay the rule, not this code.
+- SD-138, the swap question. `waitingSwapAsked` and `askInsideWindow` state that a swap waits only on a question that was not refused and that the question goes only inside its 15 minutes. `RelayDesk.swap` records the waiting swap before it sends the question and does not read the result of `host.send`, so a refused question still leaves a waiting swap and the member hears that the Network asked. In quiet hours the question is deferred, not refused. `askRefusedTest` and `askQuietTest` replay the rule, not this code. Fixed by the merge of the default branch (2026-11-23): `relayAdmission` now finds the live waiting swap of the question and refuses it after the consent window (`relayConsentStale`, `relay:ask_expired`), as `askInsideWindow` and `askLateTest` state, and `cancelSwaps` marks the passed shares of both directions `consent:withdrawn`, which the admission refuses through the generated `relayRecordMayDispatch` (`withdrawSwaps`, `withdrawAfterSwapTest`).
+- The direct self-age (merge of the default branch, 2026-11-23; [member age](../memberAge.md)). `RelayDesk.request` asks the host's `observeSenderAge` before the desk decides: a text in which the sender states their own age under 18 directly commits that age, starts the minors policy and is refused with no relay record and no case event of the desk. In a teen pair the desk asks it only when the stated age is younger than the record (`saysYounger`), and refuses only when the sender now has the minor signal (`minorSignalOpens`); an age that agrees with the record keeps the engine path (`teen:age_talk`, blocked with a record). The model's `minorRules` outcome stands for it, but the model logs a block record with the age signal, which the code does not write on this path.
 - Code locations. Many comments in the module body still give line numbers of the source revision. The functions they name are on this branch, but the numbers are stale ([model index](README.md)).
 
 ```quint
@@ -49,6 +51,8 @@ Known drift (code defects; the model keeps the rule and this change does not fix
 // member's own share only when the first one was not refused, and the queue admission (runtime.ts
 // relayAdmission) has no partner-share check. commitShare, tickFlush and queueSend follow that code, so
 // noOneWayNumber and the SD-007 run tests describe this branch.
+// A withdrawal now marks prepared shares in both directions. A swap question uses the live request's
+// window at final admission. The current code can still defer the initial question before it is queued.
 //
 // Machines in this model:
 //   relay-item            packages/network/src/relay.ts (RelayDesk.request, apply, deliver, forget)
@@ -125,7 +129,7 @@ module relay {
   type Endpoint = {
     receipt: str -> str,   // absent | processing | completed | unresolved
     phase: str -> str,     // idle | claimed | committed | answered | failed | dead
-    kind: str -> str,      // text | share | withdraw
+    kind: str -> str,      // text | share | withdraw | none
     commits: str -> int,   // ghost: committed unit effects for the key
     response: str -> str,  // ghost: "" | ok | 409
   }
@@ -323,10 +327,24 @@ module relay {
     w' = w, desk' = desk, queue' = queue, g' = g,
   }
 
+  // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
+  // signals after claiming the receipt. Only a private request the reader has identified as explicit gets here.
+  pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
+    not(refused) and not(uncertain)
+
+  action claimPrivateContact(k: str, refused: bool, uncertain: bool, withdraws: bool): bool =
+    claim(k, if (privateRelayRequestAllowed(refused, uncertain)) "share" else if (withdraws) "withdraw" else "none")
+
   // The unit commits its effects and the receipt in one transaction (runtime.ts writeUnit, completeAction last).
   pure def committed(e: Endpoint, k: str): Endpoint =
     e.with("receipt", e.receipt.set(k, "completed")).with("phase", e.phase.set(k, "committed"))
      .with("commits", e.commits.set(k, e.commits.get(k) + 1))
+
+  action commitNone(k: str): bool = all {
+    ep.phase.get(k) == "claimed", ep.kind.get(k) == "none",
+    ep' = committed(ep, k),
+    w' = w, desk' = desk, queue' = queue, g' = g,
+  }
 
   // The endpoint unit before the desk decides (relay-endpoint.ts:231-232): sync the unsent items, and record in the
   // ghost what a decision that can deliver still reads as delivered (Q-relay-1, SD-252).
@@ -431,21 +449,35 @@ module relay {
     }
   }
 
-  // "Don't send my number" (relay-endpoint.ts relayEndpoint, withdrawsSwap; RelayDesk.cancelSwaps). The same
-  // withdrawal runs on the /internal/turn path (network.ts:653). The answer is always "Okay, I won't share your number."
-  // The pending swap goes, and each passed share of theirs gets consent:withdrawn, which the queue admission refuses (SD-039).
+  // A member's own message can revoke consent before any signed relay action is made.
+  pure def pendingSwapWithdrawn(namesOwnContact: bool, withholdsContact: bool, declinesPendingSend: bool): bool =
+    declinesPendingSend or (namesOwnContact and withholdsContact)
+
+  pure def markWithdrawn(r: LogRec, member: str): LogRec =
+    if (r.kind == "share" and r.decision == "pass" and (r.src == member or r.dst == member)) r.with("withdrawn", true) else r
+
+  pure def withdrawSwaps(d: Desk, member: str): Desk = d
+    .with("swaps", d.swaps.filter(s => s.src != member))
+    .with("log", d.log.keys().mapBy(k => markWithdrawn(d.log.get(k), member)))
+    .with("verdict", d.verdict.keys().mapBy(k => markWithdrawn(d.verdict.get(k), member)))
+
+  action readPendingSwapReply(src: str, namesOwnContact: bool, withholdsContact: bool, declinesPendingSend: bool): bool = {
+    val withdraws = pendingSwapWithdrawn(namesOwnContact, withholdsContact, declinesPendingSend)
+    val nextDesk = if (withdraws) withdrawSwaps(desk, src) else desk
+    all {
+      MEMBERS.contains(src),
+      desk' = nextDesk,
+      g' = if (withdraws) g.with("consent", g.consent.set(src, g.consent.get(src).with("live", false))) else g,
+      queue' = if (withdraws) persist(nextDesk, queue) else queue,
+      w' = w, ep' = ep,
+    }
+  }
+
+  // The signed relay action responds "Okay, I won't share your number" for a recognized withdrawal.
+  // The pending request goes, and both directions of a prepared swap lose consent at admission (SD-039).
   action commitWithdraw(k: str): bool = {
     val src = owner(k)
-    val log1 = desk.log.keys().mapBy(i => {
-      val r = desk.log.get(i)
-      if (r.src == src and r.kind == "share" and r.decision == "pass") r.with("withdrawn", true) else r
-    })
-    // Ghost: the member withdrew every passed share of theirs, whether or not its row is still in the capped log.
-    val verdict1 = desk.verdict.keys().mapBy(i => {
-      val r = desk.verdict.get(i)
-      if (r.src == src and r.kind == "share" and r.decision == "pass") r.with("withdrawn", true) else r
-    })
-    val d1 = desk.with("swaps", desk.swaps.filter(s => s.src != src)).with("log", log1).with("verdict", verdict1)
+    val d1 = withdrawSwaps(desk, src)
     all {
       ep.phase.get(k) == "claimed", ep.kind.get(k) == "withdraw",
       not(w.erased.get(src)),
@@ -512,15 +544,18 @@ module relay {
     }
   }
 
-  // The outbound queue's final admission and send (runtime.ts relayAdmission, lines 257-302).
+  pure def relayRecordMayDispatch(passed: bool, rejected: bool, withdrawn: bool): bool =
+    passed and not(rejected) and not(withdrawn)
+
+  // The outbound queue's final admission and send (runtime.ts relayAdmission).
   action queueSend(key: str): bool = {
     val r = queue.rows.get(key)
     val s = r.send
     // The swap question goes only while its swap still waits inside its 15 minutes (runtime.ts:268-272, SD-138);
     // an item row needs a passed record for this recipient, not withdrawn (runtime.ts:274-276, SD-039).
     val recOk = if (s.ask) desk.swaps.exists(sw => sw.iid == s.iid and sw.src == s.src and sw.at <= w.now and w.now - sw.at <= TTL)
-      else (queue.records.keys().contains(s.iid) and queue.records.get(s.iid).decision == "pass"
-        and queue.records.get(s.iid).dst == s.dst and not(queue.records.get(s.iid).withdrawn))
+      else (queue.records.keys().contains(s.iid) and queue.records.get(s.iid).dst == s.dst
+        and relayRecordMayDispatch(queue.records.get(s.iid).decision == "pass", false, queue.records.get(s.iid).withdrawn))
     val ok = recOk and pairOkKind(w, s.src, s.dst, textSend(s))
     val c = g.consent.get(s.src)
     // Ground truth, apart from what the admission read: the desk's own last decision for the item (no log cap, no
@@ -653,12 +688,13 @@ module relay {
     if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
     else if (ep.kind.get(k) == "share")
       commitShare(k, fault == "rateTheirs", fault == "rateMine", fault == "refuseAsk", fault == "refuseTheirs", fault == "refuseMine")
-    else commitWithdraw(k)
+    else if (ep.kind.get(k) == "withdraw") commitWithdraw(k)
+    else commitNone(k)
 
   action step = any {
     nondet k = REQS.oneOf()
     nondet kind = Set("text", "share", "withdraw").oneOf()
-    claim(k, kind),
+    if (kind == "share") claimPrivateContact(k, false, false, false) else claim(k, kind),
     all {
       REQS.exists(k => ep.phase.get(k) == "claimed"),
       nondet k = REQS.filter(k => ep.phase.get(k) == "claimed").oneOf()
@@ -820,26 +856,37 @@ module relay {
       .expect(desk.swaps.size() == 1 and queue.rows.keys().contains("a1:ask"))
       .then(queueSend("a1:ask"))
       .then(timePass(5))
-      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
-      .then(queueSend("a1")).then(queueSend("b1"))
+      .then(readPendingSwapReply("A", true, false, false))
+      .then(claimPrivateContact("a2", false, true, false)).then(commitNone("a2")).then(answer("a2"))
+      .then(claimPrivateContact("b1", true, false, true)).then(commitWithdraw("b1")).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .then(queueSend("a1")).then(queueSend("b2"))
       .expect(numberSent("A") and numberSent("B") and safety)
 
-  // SD-039 (fixed): both shares pass at quiet hours and wait in Network.deferred; A says "don't send my number";
-  // in the morning the admission refuses A's share (consent:withdrawn). B's share still goes to A (SD-007, open).
+  run pendingSwapPronounWithdrawalTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(readPendingSwapReply("A", false, false, true))
+      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "B") and not(numberPending("A")) and not(numberPending("B")) and safety)
+
+  // A withdrawal recorded while both shares are queued stops both directions at final admission.
   run withdrawAfterSwapTest =
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
-      .then(setQuiet("B", true))
-      .then(setQuiet("A", true))
       .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
-      .expect(desk.deferred.size() == 2)
-      .then(claim("a2", "withdraw")).then(commitWithdraw("a2")).then(answer("a2"))
-      .expect(queue.records.get("a1").withdrawn)
-      .then(setQuiet("A", false)).then(setQuiet("B", false))
-      .then(tickFlush(Set()))
+      .expect(numberPending("A") and numberPending("B"))
+      .then(readPendingSwapReply("A", false, false, true))
+      .expect(queue.records.get("a1").withdrawn and queue.records.get("b1").withdrawn)
       .then(queueSend("a1")).then(queueSend("b1"))
-      .expect(queue.rows.get("a1").status == "ended" and not(numberSent("A")) and withdrawnNotSent and safety
-        and numberSent("B") and not(noOneWayNumber))
+      .expect(queue.rows.get("a1").status == "ended" and queue.rows.get("b1").status == "ended" and safety)
+
+  run withdrawBeforeSwapQuestionTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(readPendingSwapReply("A", false, false, true)).then(queueSend("a1:ask"))
+      .expect(queue.rows.get("a1:ask").status == "ended" and safety)
 
   // SD-137 (fixed): the unit commits, deliver() throws after the commit; the endpoint still answers the decision.
   run postCommitDeliverErrorTest =

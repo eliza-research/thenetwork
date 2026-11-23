@@ -8,7 +8,7 @@ name: quint-models
 
 on:
   push:
-    branches: [main, vibestack]
+    branches: [main, develop]
     paths:
       - 'spec/models/**'
       - 'scripts/quint-check.ts'

@@ -18,6 +18,7 @@ type InteractionOutcome =
 export interface InteractionRecord {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[];
   at: number; outcome: InteractionOutcome; declinedBy?: MemberId[]; contributors?: MemberId[];
+  bookedMeeting?: { at: number; timeZone: string } | null;
   acceptedBy?: MemberId[];
   noResponse?: MemberId[];
 }

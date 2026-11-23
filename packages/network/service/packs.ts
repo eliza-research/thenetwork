@@ -17,7 +17,7 @@
 // Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
 // (the stored switch starts off; the network's registry row only allows the switch). Minors
 // never enter a pack's input (ConsentNetwork.packInput). Nothing here reads hidden truth.
-import { canBeMatched, DAY, HOUR, type MemberId } from "@thenetwork/core";
+import { canBeMatched, CITY_TZ, DAY, HOUR, type MemberId } from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput, type World,
@@ -170,9 +170,10 @@ export function slotStart(slot: string, now: number): number | undefined {
 /** A public place near the midpoint of two members' cells that suits the activity. Never a home. */
 export function slopVenue(cells: { lat: number; lon: number }[], activity: string, at?: number): HookVenue | undefined {
   if (!cells.length) return undefined;
+  const timeZone = CITY_TZ.nyc;
   const want = new Set(ACTIVITY_TAGS[activity] ?? ["social"]);
   // After dark, a busy, lit public place (EVENING_VENUES), never a park or a waterfront.
-  const hour = at === undefined ? 12 : Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit" }).format(at));
+  const hour = at === undefined ? 12 : Number(new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit" }).format(at));
   const dark = hour >= 17 || hour < 9;
   const pool: (HookVenue & { tags: string[] })[] = dark
     ? EVENING_VENUES.map(v => ({ ...v, tags: ["social", "food"] }))
@@ -184,7 +185,7 @@ export function slopVenue(cells: { lat: number; lon: number }[], activity: strin
     const cost = worst - 1.2 * Math.min(2, v.tags.filter(t => want.has(t)).length);
     if (!best || cost < best.cost || (cost === best.cost && v.id < best.v.id)) best = { v, cost };
   }
-  return best && { id: best.v.id, name: best.v.name, neighborhood: best.v.neighborhood, lat: best.v.lat, lng: best.v.lng };
+  return best && { id: best.v.id, name: best.v.name, neighborhood: best.v.neighborhood, lat: best.v.lat, lng: best.v.lng, timeZone };
 }
 
 /** The slop hooks (exported for tests). */

@@ -1,10 +1,11 @@
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, CITY_TZ, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
+import { completedMeetingSlot } from "../../../../core/src/generated/meetingSettlement.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import type { DatingStatement, StatedGender, TransOpenness } from "../../../../core/src/generated/mutualOpenness.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
-import type { EngineInput } from "../../types.ts";
+import type { EngineInput, InteractionRecord } from "../../types.ts";
 import { pairKey } from "../../world.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
@@ -81,6 +82,19 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     l.push(f);
     facetsBy.set(id, l);
   }
+  const visitsByMember = new Map<MemberId, Set<City>>();
+  const visitAt = now + 2 * DAY;
+  for (const row of input.presence) {
+    const trip = temporaryPresenceWindow(row);
+    if (!trip || !presenceWindowContains(trip, visitAt)) continue;
+    const id = C(row.memberId);
+    let cities = visitsByMember.get(id);
+    if (!cities) {
+      cities = new Set();
+      visitsByMember.set(id, cities);
+    }
+    cities.add(row.city);
+  }
   const hist = histories(input, C);
   const silent = new Map<MemberId, string[]>();
   const answeredAny = new Map<string, boolean>();
@@ -128,11 +142,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const interestFacets = fs.filter(f => f.kind === "interest" && f.tags[0] && f.tags[0].trim().length > 0 && !NEVER_USED.test(f.tags[0]));
     const interestFacet = new Map<string, string>();
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
-    const visiting = [...new Set(input.presence.flatMap(p => {
-      if (C(p.memberId) !== m.id || p.city === m.homeCity) return [];
-      const trip = temporaryPresenceWindow(p);
-      return trip && presenceWindowContains(trip, now + 2 * DAY) ? [p.city] : [];
-    }))].sort();
+    const visiting = [...(visitsByMember.get(m.id) ?? [])].filter(city => city !== m.homeCity).sort();
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,
@@ -206,11 +216,10 @@ export function datingStatementOf(p: DatingFacts): DatingStatement {
 const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
-function slotOf(t: number, tz: string): number | undefined {
-  const { weekday, hour } = localParts(t, tz);
-  const eve = hour >= 17;
-  if (weekday <= 4) return eve ? weekday : undefined;
-  return weekday === 5 ? (eve ? 6 : 5) : (eve ? 8 : 7);
+function attendedSlot(r: InteractionRecord, homeZone: string): number {
+  if (r.bookedMeeting === null) return -1;
+  const parts = localParts(r.bookedMeeting?.at ?? r.at, r.bookedMeeting?.timeZone ?? homeZone);
+  return completedMeetingSlot(parts.weekday, parts.hour);
 }
 
 function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, History> {
@@ -231,8 +240,8 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
     if (r.outcome === "completed") for (const id of r.participants) {
       const x = h(C(id)); x.dates++;
-      const s = slotOf(r.at, zoneOf.get(C(id)) ?? CITY_TZ.nyc);
-      if (s !== undefined) x.attendedSlots.push(s);
+      const slot = attendedSlot(r, zoneOf.get(C(id)) ?? CITY_TZ.nyc);
+      if (slot >= 0) x.attendedSlots.push(slot);
     }
     if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
   }

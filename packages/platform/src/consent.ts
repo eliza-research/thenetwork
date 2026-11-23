@@ -1,5 +1,5 @@
 import { appMayText } from "../../core/src/generated/carrierConsent.ts";
-import { foldKeywordText as fold, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase } from "../../core/src/replies.ts";
+import { foldKeywordText as fold, hasStopWithCourtesy, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";
 
 export type ConsentState = "opted_in" | "opted_out";
@@ -50,17 +50,14 @@ const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopPolite]);
 const START_WORDS = new Set<string>(KEYWORDS.start);
 const HELP_WORDS = new Set<string>(KEYWORDS.help);
 const SPANISH_STOP_WORDS = new Set<string>(KEYWORDS.stopEs);
-// STOP (or STOP ALL) with only courtesy or urgency words around it, in any order: "PLS STOP NOW", "STOP RN",
-// "STOP ALL PLS". Only STOP: "cancel please" may mean a date, and "stop it" or "stop by" are not here.
 const STOP_TAIL = `(?:${KEYWORDS.stopTail.join("|")})`;
-const STOP_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP(?:(?: ${STOP_TAIL})* STOP)*(?: ${STOP_TAIL})*$`);
 const STOP_ALL_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP ?ALL(?:(?: ${STOP_TAIL})* STOP ?ALL)*(?: ${STOP_TAIL})*$`);
 const REPEATED_SPANISH_STOP = new RegExp(`^(${KEYWORDS.stopEs.join("|")})(?: \\1)+$`);
 
 function repeatedOrInsistedStop(key: string): "stop" | "stop_all" | undefined {
   const stop = key.replace(/^I (?:(?:ALREADY|JUST) )?SAID | I SAID$/g, "");
   if (STOP_ALL_TAIL_RX.test(stop)) return "stop_all";
-  if (STOP_TAIL_RX.test(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
+  if (hasStopWithCourtesy(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
   return undefined;
 }
 

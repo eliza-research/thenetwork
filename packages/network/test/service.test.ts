@@ -656,6 +656,35 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBe("approve");
   }, T);
 
+  test("staff health ignores a lock in another database and reports the current database owner", async () => {
+    await reset();
+    const clock = new SimClock(START);
+    const serviceA = service(clock, "health-reader"), serviceB = service(clock, "local-health-owner");
+    const otherDb = DB + "_foreign_health";
+    await admin(`create database ${otherDb} template template0`);
+    const url = new URL(URL_);
+    url.pathname = "/" + otherDb;
+    const foreign = new SQL({ url: url.href, max: 1, connection: { application_name: "foreign-health-owner" } });
+    const health = async () => {
+      const response = await staff(serviceA, "ana-tok", "GET", "/health");
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    try {
+      await foreign.begin(async tx => {
+        await tx`select pg_advisory_xact_lock(hashtext(${`network-tick-${serviceA.pg.id}`})::bigint)`;
+        expect((await health()).lockHolder).toBeNull();
+        await serviceB.pg.withLock(async () => {
+          expect((await health()).lockHolder).toMatchObject({ application: "network-service:local-health-owner", pid: expect.any(Number) });
+        });
+        expect((await health()).lockHolder).toBeNull();
+      });
+    } finally {
+      await foreign.close();
+      await admin(`drop database if exists ${otherDb} with (force)`);
+    }
+  }, T);
+
   test("two instances never tick at once; the second sees the lock holder and skips", async () => {
     await reset();
     const clock = new SimClock(START);

@@ -247,6 +247,21 @@ pure def lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: int, handledE
   not(meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs))
 ```
 
+### Learn a dating availability slot from the booked time
+
+Slop uses completed meeting evidence when it ranks future time options. Read the booked start in the time zone recorded at booking: the meeting venue's time zone, else the zone of the planned meeting, else the New York zone for a place that the Network picked in New York. Keep the time feedback was received for feedback history. An older interaction can use the booked start from its stored opportunity. A completed interaction whose booked meeting is not known gives no slot. An interaction without a booked meeting field (an input from an older caller) uses its own time in the time zone of the member's home city. The synthetic dating world records the booked start and the time zone of the date's city.
+
+```quint
+pure def completedMeetingSlot(localWeekday: int, localHour: int): int =
+  if (localWeekday < 0 or localWeekday > 6 or localHour < 0 or localHour > 23) -1
+  else if (localWeekday < 5) (if (localHour >= 17) localWeekday else -1)
+  else if (localWeekday == 5) (if (localHour >= 17) 6 else 5)
+  else if (localHour >= 17) 8 else 7
+
+pure def lawWeekdayMeetingSlotNeedsEvening(localWeekday: int, localHour: int): bool =
+  (localWeekday < 5 and localHour < 17) implies completedMeetingSlot(localWeekday, localHour) == -1
+```
+
 ### Classify each attendee from the available reports
 
 Only participants with an accepted invitation and a delivered booking count as booked. At settlement, use a positive receipt for the participant's exact current booking revision. A queued notice and an unresolved receipt are insufficient. A delayed positive receipt counts if available when attendance settles. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply.

@@ -247,6 +247,19 @@ export function lawNoRecurrenceThatAMinorKnows(roster: string[], knownMinors: st
   return !(minorWasTold || (roster.includes(member) && knownMinors.includes(member))) || !recurrenceAllowed(roster, knownMinors, minorWasTold);
 }
 
+/** Story: Book and conclude a proposal that comes together / A block closes an open opportunity for the active pair (spec/opportunityLifecycle.md) */
+//@ pure
+export function closesForBlock(proposal: OpportunityLifecycle, activeBlockedPair: boolean): boolean {
+  return canClose(proposal) && activeBlockedPair;
+}
+
+/** Story: Book and conclude a proposal that comes together / A block closes an open opportunity for the active pair (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawBlockClosesOnlyAnActivePair(proposal: OpportunityLifecycle, activeBlockedPair: boolean): boolean {
+  //@ ensures \result === true
+  return !closesForBlock(proposal, activeBlockedPair) || (canClose(proposal) && activeBlockedPair);
+}
+
 /** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function canComplete(proposal: OpportunityLifecycle, feedbackDue: boolean): boolean {

@@ -30,31 +30,34 @@ export function weightedTerms(weights: LaneWeights, hasTraits: boolean, hasPackV
   ];
 }
 
-function meanCloseness(distances: readonly number[], costs: readonly number[]): number {
+function closenessOf(a: MatchProfile, b: MatchProfile, costs: readonly number[]): number {
   if (costs.length === 0) return pairValueScale;
   let total = 0;
-  for (let d = 0; d < costs.length; d++) total += closenessValue(distances[d], costs[d]);
+  for (let d = 0; d < costs.length; d++) total += closenessValue(a.traits[d] - b.traits[d], costs[d]);
   return Math.floor(total / costs.length);
 }
 
 const complementOf = (a: MatchProfile, b: MatchProfile): number => coverageValue(intersectCount(a.seeks, b.offers), a.seeks.length);
 
-function utilityTerms(
-  a: MatchProfile, b: MatchProfile, weights: LaneWeights, traitCosts: readonly number[], packValue: number | undefined,
-): UtilityTerm[] {
-  return weightedTerms(weights, traitCosts.length > 0, packValue !== undefined, {
-    complement: complementOf(a, b),
-    affinity: coverageValue(intersectCount(a.interests, b.interests), a.interests.length),
-    closeness: meanCloseness(a.traits.map((x, d) => x - b.traits[d]), traitCosts),
+function sideTerms(a: MatchProfile, weights: LaneWeights, complement: number, sharedInterests: number, closeness: number, hasTraits: boolean, packValue: number | undefined): UtilityTerm[] {
+  return weightedTerms(weights, hasTraits, packValue !== undefined, {
+    complement,
+    affinity: coverageValue(sharedInterests, a.interests.length),
+    closeness,
     pack: packValue ?? pairValueScale,
   });
 }
 
-export function pairSideOf(a: MatchProfile, b: MatchProfile, traitCosts: readonly number[], packValue: number | undefined): PairSide {
+function side(a: MatchProfile, complement: number, sharedInterests: number, closeness: number, hasTraits: boolean, packValue: number | undefined): PairSide {
   return {
-    utility: directedUtility(utilityTerms(a, b, laneWeights(a.lane), traitCosts, packValue)),
-    standing: a.standing, uncertainty: a.uncertainty, exchange: complementOf(a, b),
+    utility: directedUtility(sideTerms(a, laneWeights(a.lane), complement, sharedInterests, closeness, hasTraits, packValue)),
+    standing: a.standing, uncertainty: a.uncertainty, exchange: complement,
   };
+}
+
+export function pairSideOf(a: MatchProfile, b: MatchProfile, traitCosts: readonly number[], packValue: number | undefined): PairSide {
+  return side(a, complementOf(a, b), intersectCount(a.interests, b.interests),
+    closenessOf(a, b, traitCosts), traitCosts.length > 0, packValue);
 }
 
 export const segmentReaches = (a: MatchProfile, b: MatchProfile): boolean =>
@@ -88,8 +91,13 @@ export function vectorsOf(w: World): PackVectors {
 export const packValueOf = (w: World, vectors: PackVectors, a: MatchProfile, b: MatchProfile): number | undefined =>
   vectors.packValue ? wholeNumber(vectors.packValue(w, a, b), "pack value") : undefined;
 
-export const pairArithmetic = (a: MatchProfile, b: MatchProfile, costs: readonly number[], packAB: number | undefined, packBA: number | undefined): number =>
-  lanePairValue(a.lane, pairSideOf(a, b, costs, packAB), a.side, pairSideOf(b, a, costs, packBA), b.side);
+export function pairArithmetic(a: MatchProfile, b: MatchProfile, costs: readonly number[], packAB: number | undefined, packBA: number | undefined): number {
+  const sharedInterests = intersectCount(a.interests, b.interests);
+  const closeness = closenessOf(a, b, costs);
+  const hasTraits = costs.length > 0;
+  return lanePairValue(a.lane, side(a, complementOf(a, b), sharedInterests, closeness, hasTraits, packAB), a.side,
+    side(b, complementOf(b, a), sharedInterests, closeness, hasTraits, packBA), b.side);
+}
 
 export interface PairCheck { readonly value: number; readonly refusal: string | null }
 

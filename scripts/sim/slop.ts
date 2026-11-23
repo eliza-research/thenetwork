@@ -23,7 +23,7 @@ import { runEngine, type EngineResult } from "../../packages/engine/src/engine.t
 import { privateVocabulary } from "../../packages/engine/src/explain.ts";
 import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
-import { cellIn } from "../../packages/engine/src/packs/slop/profile.ts";
+import { cellIn, datingMarkets } from "../../packages/engine/src/packs/slop/profile.ts";
 import { mutuallyOpen } from "../../packages/core/src/generated/mutualOpenness.ts";
 import { limitMiles } from "../../packages/engine/src/packs/slop/geo.ts";
 import { makeSlopPack, mutualMarkets, planFromInput, SLOP_ASK_QUESTIONS, SLOP_ENGINE_CONFIG, slopPack, slopProfiles } from "../../packages/engine/src/packs/slop/index.ts";
@@ -394,6 +394,30 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     expect(["nyc", "sf"]).toContain(both[0]!.city);
     const apart = (await run(two("city"))).proposals.filter(p => p.participants.includes(x) && p.participants.includes(y));
     expect(apart.length).toBe(0);
+  });
+
+  await b.run("conformance slop: a booked trip uses the canonical member and the half-open travel window", async () => {
+    const input = inputs.get(1)!;
+    const member = input.members.find(m => m.homeCity === "nyc" && canBeMatched(m.age))!;
+    const visitAt = input.now + 2 * DAY;
+    const alias = `trip:${member.id}`;
+    const trip: Presence = { memberId: alias, city: "sf", type: "temporary", from: visitAt, to: visitAt + DAY, areas: [] };
+    const snapshot: EngineInput = {
+      ...input,
+      idAliases: { ...input.idAliases, [alias]: member.id },
+      presence: [
+        ...input.presence.filter(row => row.memberId !== member.id),
+        trip,
+        { ...trip, to: visitAt + 2 * DAY },
+        { ...trip, city: member.homeCity },
+        { ...trip, city: "la", from: visitAt - DAY, to: visitAt },
+        { ...trip, city: "la", from: visitAt + 1 },
+      ],
+    };
+    const world = new World(snapshot, resolveConfig(cfg(1)), localEmbed, slopPack);
+    const profile = slopProfiles(world.input, world.canonical).get(member.id)!;
+    expect(profile.visiting).toEqual(["sf"]);
+    expect(datingMarkets(profile)).toContain("sf");
   });
 
   // Appearance ratings are used in matching and never shared (founder decision 2026-10-08).

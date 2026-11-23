@@ -1,5 +1,16 @@
 import { createHash } from "node:crypto";
 
+const referenceAlphabet = "ABCDEFGHIJKLMNOP";
+
+function encodeReference(hex: string): string {
+  return `INT-${Array.from(hex, digit => referenceAlphabet[Number.parseInt(digit, 16)]).join("")}`;
+}
+
+export function canonicalStandingReference(supplied: string): string {
+  const upper = supplied.toUpperCase();
+  return upper.startsWith("I-") ? encodeReference(upper.slice(2)) : upper;
+}
+
 export type StandingTarget = { kind: "reference"; reference: string } | { kind: "position"; position: number } | { kind: "pending" };
 
 export type StandingIntentCommand =
@@ -34,11 +45,11 @@ export function standingIntentCommand(text: string): StandingIntentCommand | und
   const list = /^(?:list|show) (?:my )?(?:standing )?intents(?: (?:page )?([1-9]\d{0,2}))?[.!?]?$/i.exec(body);
   if (list) return { kind: "ListIntents", page: Number(list[1] ?? "1") };
   if (/^(?:what am i looking for|what'?s active)[.!?]?$/i.test(body)) return { kind: "ListIntents", page: 1 };
-  const change = /^(pause|close|resume|keep) (?:my )?(?:standing )?(?:intent )?(I-[a-f\d]{12}|[1-9]\d?)[.!?]?$/i.exec(body);
+  const change = /^(pause|close|resume|keep) (?:my )?(?:standing )?(?:intent )?(INT-[a-p]{12}|I-[a-f\d]{12}|[1-9]\d?)[.!?]?$/i.exec(body);
   if (change) {
     const kind = CHANGE_VERBS[change[1]!.toLowerCase() as keyof typeof CHANGE_VERBS];
     const named = change[2]!;
-    return { kind, target: /^I-/i.test(named) ? { kind: "reference", reference: named.toUpperCase() } : { kind: "position", position: Number(named) } };
+    return { kind, target: /^I(?:NT)?-/i.test(named) ? { kind: "reference", reference: canonicalStandingReference(named) } : { kind: "position", position: Number(named) } };
   }
   if (/^close[.!?]?$/i.test(body)) return { kind: "CloseIntent", target: { kind: "pending" } };
   if (/^keep(?: it| looking)?[.!?]?$/i.test(body)) return { kind: "KeepIntent", target: { kind: "pending" } };
@@ -47,7 +58,7 @@ export function standingIntentCommand(text: string): StandingIntentCommand | und
 
 export function standingIntentReference(app: string, member: string, key: string): string {
   const digest = createHash("sha256").update(JSON.stringify([app, member, key])).digest("hex");
-  return `I-${digest.slice(0, 12).toUpperCase()}`;
+  return encodeReference(digest.slice(0, 12));
 }
 
 const dayFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });

@@ -150,6 +150,28 @@ pure def lawArchivedHoldRequiresExactSubject(matchingRestriction: bool): bool =
   not(archivedReportHoldAllowed(false, matchingRestriction))
 ```
 
+### A unique offered report name routes back to its app
+
+An explicit app choice or dedicated line sets the app. The shared-line fallback can use a current report question to route the verified member's own signed text. The text must name exactly one counterpart shown in the stored question across the member's app memberships. The counterpart must still belong to that question and be a current counterpart. The reply must arrive at or after the question and no later than processing, within one day of the question. Apply the report in the question's app only if the same member and choice remain current at the write. With no matching question, use the ordinary routing rules. With several matching questions, preserve them for an explicit app choice.
+
+```quint
+type SharedReportRoute = NoReportRoute | UniqueReportRoute | AmbiguousReportRoute
+
+pure def sharedReportRoute(signedMember: bool, choices: int): SharedReportRoute =
+  if (not(signedMember) or choices <= 0) NoReportRoute
+  else if (choices == 1) UniqueReportRoute
+  else AmbiguousReportRoute
+
+pure def reportClarificationTimeCurrent(askedAt: int, receivedAt: int, asOf: int, oldestPrompt: int): bool =
+  oldestPrompt <= askedAt and askedAt <= receivedAt and receivedAt <= asOf
+
+pure def lawSharedReportRequiresOneChoice(signedMember: bool, choices: int): bool =
+  sharedReportRoute(signedMember, choices) == UniqueReportRoute implies signedMember and choices == 1
+
+pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf: int, oldestPrompt: int): bool =
+  reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) implies receivedAt >= askedAt
+```
+
 ### A ban allows only carrier commands and app leave
 
 A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.
@@ -250,7 +272,7 @@ pure def lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: int, earliestClear
 
 ### A block or a report about a person closes every open opportunity of the pair
 
-A block, a report, and a check-in report about a person who met the reporter all block the pair. Each open opportunity that has both people on it closes: one in review, one that probes, and one that is booked. The members of a booked opportunity hear that it is off, and the message does not say who acted. A block made on another app reaches this app as a person block, and the next tick closes the open opportunities of that pair here too. A check-in report also counts toward the subject's trust score in the same way as a report in a message from someone who met the subject. Added in this revision: before, only a block in a message on the same app closed the pair's opportunities, so a booked opportunity of two people who blocked each other on another app or in a check-in stayed open, and check-in reports never moved the subject to watch or hold (audit ST-D1, ST-D7, SD-229). A group opportunity closes for all its members too, because a plan that keeps both people of a blocked pair would put them in one meeting, and a plan that drops only one of them would tell the others or the person who is dropped that something happened between them. A friends plan does not seat a member next to a person that the member blocked (`planFriendSeatFits`), so only a block made after the plan formed closes it. The pair's opportunities close before the report is filed, because a report from someone who met the subject can hold the subject, and that hold would otherwise close a shared booking as "participant dropped" with no word to the other person. The cancellation of a booked opportunity goes to every participant except the person who acted, when that person is known (a block or a report in a message, a check-in report); when the tick finds a block from the snapshot, the actor is not known and every participant hears it. Changed in this revision: the law that only repeated the decision is gone, and the cancellation recipient rule is now a checked decision (`pairBlockCancellationGoesTo`) that the network calls.
+A block, a report, and a check-in report about a person who met the reporter all block the pair. Each open opportunity that has both people on its active roster closes: one in review, one that probes, and one that is booked ([opportunity lifecycle](opportunityLifecycle.md), `closesForBlock`; on a booked opportunity the active roster is the people who said yes, and on an earlier stage it is the active participants). Changed in the merge of 2026-11-23: a person who had already left the opportunity no longer closes it for the others. The members of a booked opportunity hear that it is off, and the message does not say who acted. A block made on another app reaches this app as a person block, and the next tick closes the open opportunities of that pair here too. A check-in report also counts toward the subject's trust score in the same way as a report in a message from someone who met the subject. Added in this revision: before, only a block in a message on the same app closed the pair's opportunities, so a booked opportunity of two people who blocked each other on another app or in a check-in stayed open, and check-in reports never moved the subject to watch or hold (audit ST-D1, ST-D7, SD-229). A group opportunity closes for all its members too, because a plan that keeps both people of a blocked pair would put them in one meeting, and a plan that drops only one of them would tell the others or the person who is dropped that something happened between them. A friends plan does not seat a member next to a person that the member blocked (`planFriendSeatFits`), so only a block made after the plan formed closes it. The pair's opportunities close before the report is filed, because a report from someone who met the subject can hold the subject, and that hold would otherwise close a shared booking as "participant dropped" with no word to the other person. The cancellation of a booked opportunity goes to every participant except the person who acted, when that person is known (a block or a report in a message, a check-in report); when the tick finds a block from the snapshot, the actor is not known and every participant hears it. Changed in this revision: the law that only repeated the decision is gone, and the cancellation recipient rule is now a checked decision (`pairBlockCancellationGoesTo`) that the network calls.
 
 ```quint
 pure def pairOpportunityClosesOnBlock(open: bool, bothOnIt: bool): bool = open and bothOnIt

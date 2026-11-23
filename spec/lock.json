@@ -194,8 +194,8 @@
       ],
       "Story: Join through my agent and confirm my own phone / Each skill ends with a truthful report": [
         "e3b0c44298fc",
-        "2fd21761d1e2",
-        "e4b374d7c327"
+        "3b32195117c7",
+        "b7eaa3146a93"
       ]
     },
     "spec/authorizationPages.md": {
@@ -511,8 +511,8 @@
       ],
       "Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error": [
         "ee7c66ebbf40",
-        "0d2ebdc27bd8",
-        "acab75e70648"
+        "133a739be424",
+        "a679151263a3"
       ]
     },
     "spec/calendarFreeBusy.md": {
@@ -726,10 +726,18 @@
     },
     "spec/carrierConsent.md": {
       "@document": [
-        "3be3bb120ff4"
+        "92945d1a727f"
       ],
       "## Story: Stop texts across apps and resume an app": [
         "62cdc50d94a7"
+      ],
+      "Story: Stop texts across apps and resume an app / Courtesy and urgency can accompany STOP, QUIT or END": [
+        "95df2855467a",
+        "243c30d6580d"
+      ],
+      "Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect": [
+        "abe671d133fc",
+        "de79cdd58dc6"
       ],
       "Story: Stop texts across apps and resume an app / A global STOP beats an older or simultaneous app opt-in": [
         "468c8b7a3bbb",
@@ -1222,6 +1230,10 @@
         "535cd6ef03fd",
         "9c6efdf2851c"
       ],
+      "Story: Resolve a report with its own disposition / A unique offered report name routes back to its app": [
+        "417e6c44294d",
+        "873aff669d03"
+      ],
       "Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave": [
         "a0068a169ab4",
         "c32f1cdc792e"
@@ -1476,7 +1488,7 @@
         "5ce71ae12e9d"
       ],
       "Story: Take part in adult matching / Commit a stated age before projecting it across apps": [
-        "6fa4bd116a56",
+        "152e67610597",
         "b63c3a9cbbe1",
         "5ce71ae12e9d"
       ],
@@ -1493,6 +1505,11 @@
         "4657390f93e7",
         "e5b3f0de559d",
         "77952298c8b1"
+      ],
+      "Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal": [
+        "bc8962a085f1",
+        "eb3381a26d48",
+        "5ce71ae12e9d"
       ],
       "Story: Take part in adult matching / An older age cannot raise the effective age": [
         "2b2c9f15150b",
@@ -1693,6 +1710,11 @@
         "2cd521162665",
         "b63170e51aa6",
         "9724ae412cf3"
+      ],
+      "Story: Book and conclude a proposal that comes together / A block closes an open opportunity for the active pair": [
+        "4f146764adf9",
+        "a76ca8104f57",
+        "7f4e60d711de"
       ],
       "Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due": [
         "7e048edffcb6",
@@ -2287,6 +2309,10 @@
         "051dfaa316a0",
         "a1d280e4bdab",
         "60e2df1b1c4e"
+      ],
+      "Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time": [
+        "b1ab87f7b9a6",
+        "443efcb921a5"
       ],
       "Story: Ask for feedback and close attendance once / Classify each attendee from the available reports": [
         "9558b9b56009",
@@ -2941,6 +2967,10 @@
         "39c349199847",
         "97b92b593b81"
       ],
+      "Story: Recheck a queued message at send time / A STOP or an app leave does not release a text held for an answer": [
+        "324f27103fc5",
+        "65a96362b342"
+      ],
       "Story: Recheck a queued message at send time / Apply line controls and sending caps before checking the text": [
         "34d119f3ccd9",
         "7c3236cbdff4",
@@ -3592,7 +3622,7 @@
       ],
       "Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit": [
         "fa8612d30f69",
-        "c472951a0a30",
+        "c794d615d634",
         "cd9ad7da9176"
       ]
     },
@@ -3693,6 +3723,18 @@
       "Story: Share only the item I approved / Consent cannot come from the future or outlive the item window": [
         "00aabc25ac76",
         "6b5bf0b3dbba"
+      ],
+      "Story: Share only the item I approved / A refusal or uncertainty cannot authorize a private item": [
+        "59269e1f2c0c",
+        "eac2d30e3cd5"
+      ],
+      "Story: Share only the item I approved / A member can take back a pending number swap": [
+        "b1182bd82be6",
+        "fcbfdcb10af3"
+      ],
+      "Story: Share only the item I approved / A phone exchange must still have consent at dispatch": [
+        "0fa7c65f49fa",
+        "1d23b48509f5"
       ],
       "## Story: Keep unsafe items from reaching a match": [
         "049db9dba356"
@@ -3951,19 +3993,24 @@
     },
     "spec/sharedLineConsentJourney.md": {
       "@document": [
-        "e2f315a9edf8"
+        "c9c33b34b5dd"
       ],
       "## Story: Stop the shared line and resume one app": [
         "0095b436f896"
       ],
       "Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission": [
-        "7197b07d75a3",
-        "1d7d3aa08f65"
+        "52508ce181f2",
+        "13048942a1fd"
+      ],
+      "Story: Stop the shared line and resume one app / An ambiguous message leaves shared-line consent unchanged": [
+        "8f628b7aa335",
+        "db78417f0dd8",
+        "9a23693bc97f"
       ],
       "Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only": [
         "0f7a403c87df",
         "3d1585d75e36",
-        "fe27b0fdc199"
+        "bedd2cfd0f5c"
       ]
     },
     "spec/signedInbox.md": {
@@ -4394,11 +4441,11 @@
         "973df257583c"
       ],
       "Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents": [
-        "1389f2686dc9",
+        "811109e0aebf",
         "b50b2614a51b"
       ],
       "Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied": [
-        "7725b78e27df",
+        "762173fc6bfa",
         "4cfc7d164f42",
         "fce768137516"
       ],

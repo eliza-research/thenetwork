@@ -11,6 +11,8 @@ export type StaffActionResult = "AllowedAction" | "ActorRequired" | "NotOnHold" 
 export type ReportPhase = "ReportOpen" | "ReportHeld" | "ReportBanned" | "ReportDismissed";
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 export type ReportDecision = "HoldReport" | "BanReport" | "DismissReport";
+/** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
+export type SharedReportRoute = "NoReportRoute" | "UniqueReportRoute" | "AmbiguousReportRoute";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -220,6 +222,32 @@ export function lawOnlyOpenReportsCarry(ordinaryLeave: boolean, reportPhase: Rep
   return !carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) || reportPhase === "ReportOpen";
 }
 
+/** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
+//@ pure
+export function reportClarificationTimeCurrent(askedAt: number, receivedAt: number, asOf: number, oldestPrompt: number): boolean {
+  return oldestPrompt <= askedAt && askedAt <= receivedAt && receivedAt <= asOf;
+}
+
+/** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
+//@ pure
+export function sharedReportRoute(signedMember: boolean, choices: number): SharedReportRoute {
+  return !signedMember || choices <= 0 ? "NoReportRoute" : (choices === 1 ? "UniqueReportRoute" : "AmbiguousReportRoute");
+}
+
+/** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
+//@ pure
+export function lawReportReplyCannotPredateQuestion(askedAt: number, receivedAt: number, asOf: number, oldestPrompt: number): boolean {
+  //@ ensures \result === true
+  return !reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) || receivedAt >= askedAt;
+}
+
+/** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
+//@ pure
+export function lawSharedReportRequiresOneChoice(signedMember: boolean, choices: number): boolean {
+  //@ ensures \result === true
+  return !(sharedReportRoute(signedMember, choices) === "UniqueReportRoute") || (signedMember && choices === 1);
+}
+
 /** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */
 //@ pure
 export function inboundAllowedAfterBan(banned: boolean, compliance: boolean): boolean {
@@ -308,6 +336,13 @@ export function personMinorSignalEndsEverywhere(everyMembershipCleared: boolean,
 
 /** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
 //@ pure
+export function lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: number, earliestClearAt: number): boolean {
+  //@ ensures \result === true
+  return !(earliestClearAt >= signalAt) || personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
 export function lawAnUnclearedMembershipKeepsThePersonSignal(signalAt: number, earliestClearAt: number): boolean {
   //@ ensures \result === true
   return !personMinorSignalEndsEverywhere(false, signalAt, earliestClearAt);
@@ -318,13 +353,6 @@ export function lawAnUnclearedMembershipKeepsThePersonSignal(signalAt: number, e
 export function lawASignalAfterTheEarliestClearStays(signalAt: number, earliestClearAt: number): boolean {
   //@ ensures \result === true
   return !(signalAt > earliestClearAt) || !personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
-}
-
-/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
-//@ pure
-export function lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: number, earliestClearAt: number): boolean {
-  //@ ensures \result === true
-  return !(earliestClearAt >= signalAt) || personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */

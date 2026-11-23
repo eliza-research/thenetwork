@@ -14,9 +14,9 @@ export interface MeetingSettlement { phase: SettlementPhase }
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export type MeetingFeedbackClaim = "SendMeetingFeedback" | "WaitForMeetingBookingReceipt" | "RefuseMeetingFeedback";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
-export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
@@ -365,6 +365,19 @@ export function lawFeedbackReplyNeedsReceipt(ownText: boolean, currentCandidate:
 export function lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: number, handledElapsedMs: number): boolean {
   //@ ensures \result === true
   return !meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs);
+}
+
+/** Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time (spec/meetingSettlement.md) */
+//@ pure
+export function completedMeetingSlot(localWeekday: number, localHour: number): number {
+  return localWeekday < 0 || localWeekday > 6 || localHour < 0 || localHour > 23 ? -1 : (localWeekday < 5 ? (localHour >= 17 ? localWeekday : -1) : (localWeekday === 5 ? (localHour >= 17 ? 6 : 5) : (localHour >= 17 ? 8 : 7)));
+}
+
+/** Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time (spec/meetingSettlement.md) */
+//@ pure
+export function lawWeekdayMeetingSlotNeedsEvening(localWeekday: number, localHour: number): boolean {
+  //@ ensures \result === true
+  return !(localWeekday < 5 && localHour < 17) || completedMeetingSlot(localWeekday, localHour) === -1;
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */

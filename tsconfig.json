@@ -2,6 +2,7 @@
   "compilerOptions": {
     "target": "ES2023", "module": "ESNext", "moduleResolution": "Bundler",
     "strict": true, "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx",
+    "incremental": true, "tsBuildInfoFile": ".cache/typecheck/root.tsbuildinfo",
     "types": ["node"], "resolveJsonModule": true, "allowImportingTsExtensions": true
   },
   "include": ["design/**/*.ts", "packages/**/*.ts", "packages/ui/src/**/*.tsx", "deploy/**/*.ts", "tests/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts", "scripts/relay-eval.ts", "scripts/relay-clef-lib.ts"],

@@ -75,11 +75,6 @@ function compileVibeShells(generated: string): Map<string, string> {
 
 try {
   prepareProject(staging, files);
-  // Reuse Quint's content-keyed inputs across isolated generation directories.
-  // The compiler and comparison still run against the current spec sources.
-  const cache = join(root, ".spec-cache", "snapshots");
-  mkdirSync(cache, { recursive: true });
-  symlinkSync(cache, join(staging, ".spec-cache"), "junction");
   if (await runSpec(staging, ["gen"]) !== 0) throw new Error("Vibestack generation failed.");
   const generated = join(staging, "gen");
   const expected = new Map(readdirSync(generated).filter(file => /^[a-z]\w*\.ts$/.test(file))

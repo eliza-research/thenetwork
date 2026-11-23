@@ -55,8 +55,7 @@ function windowOf(block: CandidateBlock, profile: MatchProfile, band: number): S
   const standingAt = (i: number) => block.profiles[i].standing;
   const spans: Span[] = [];
   const packClasses = new Set<number>();
-  for (const segment of block.segments) {
-    if (profile.segment && segment.segment !== undefined && !profile.segment.partners.has(segment.segment)) continue;
+  for (const segment of block.reachableSegments(profile.segment?.partners)) {
     const start = lowerBound(segment.start, segment.end, standingAt, low);
     const end = lowerBound(start, segment.end, standingAt, high + 1);
     if (end === start) continue;
@@ -164,6 +163,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const known = memo?.begin(profile);
   const pending = new CandidateHeap();
   const touched = new Set<number>();
+  let untouched = untouchedBound();
   let touches = 0, walked = 0, walkSpent = false;
   const visit = (spans: readonly Span[], positionAt: (i: number) => number): boolean => {
     for (const { start, end } of spans) for (let i = start; i < end; i++) {
@@ -211,7 +211,6 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   };
 
   for (;;) {
-    const untouched = untouchedBound();
     const top = pending.peek();
     const topBound = top?.bound ?? noPairValue;
     const unseen = Math.max(topBound, untouched);
@@ -223,6 +222,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
         if (visit(range.spans, i => range.posting[i])) { open[range.group]--; walked++; } else walkSpent = true;
       } else if (visit(window, i => i)) windowWalked = true;
       else walkSpent = true;
+      if (!walkSpent) untouched = untouchedBound();
       continue;
     }
     const close: SearchEvent = { type: "closeBudgeted", unseenBound: unseen, walkSpent, touchedBound: topBound };

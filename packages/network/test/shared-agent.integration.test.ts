@@ -77,6 +77,35 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
   expect(escaped).toBe(0);
 },60_000);
 
+// spec/memberAge.md, "Commit a stated age before projecting it across apps"
+test("signed app turns distinguish a sports score and height from stated ages", async () => {
+  const phone = "+12125550198";
+  for (const app of [APPS.friends, APPS.slop]) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+  }
+  const score = turn("sports-score-keeps-adult", phone, "I am 3 and I am undefeated.", "friends");
+  expect((await post(score)).status).toBe(200);
+  const person = (await service.accounts.personFor(phone))!;
+  expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  const teamResult = turn("team-result-keeps-adult", phone, "I'm 5 and also my team won.", "friends");
+  expect((await post(teamResult)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  const height = turn("height-keeps-adult", phone, "I'm 5.5", "friends");
+  expect((await post(height)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  const age = turn("sports-real-age", phone, "I am 17 years old and my team won.", "friends");
+  expect((await post(age)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, (await service.accounts.personFor(phone))!)).toBe(17);
+  const fraction = turn("fractional-birthday-conflicts", phone, "I just turned 7.5.", "friends");
+  expect((await post(fraction)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, (await service.accounts.personFor(phone))!)).toBe(13);
+}, 60_000);
+
 // spec/travelPresence.md, "Tell the Network my travel dates"
 test("signed travel stores one coarse trip in the routed app and never guesses missing dates", async () => {
   const phone = "+12125550155";
@@ -1203,4 +1232,35 @@ test("account erasure clears the sender key of a signed turn that staff never re
     .toEqual([{ status: "unresolved", sender_hash: null, sender: null, event: null }]);
   await service.purge();
   expect(await sql`select id from platform.inbound where id='msg:blooio:erase-stuck'`).toEqual([{ id: "msg:blooio:erase-stuck" }]);
+}, 60_000);
+
+// spec/memberAge.md, "A half age needs age wording to confirm an under-13 refusal".
+test("a signed current half-age requires explicit age wording before removing a membership", async () => {
+  const phone = "+12125550196";
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 17, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  expect(joined.ok).toBe(true);
+
+  const current = async () => {
+    const floor = await service.accounts.lowestAge(phone, person);
+    const [member] = await sql`select state from platform.memberships where person_id=${person.id} and app_id='friends'`;
+    return { floor, state: member?.state };
+  };
+  for (const [i, text] of ["I'm 3 and I am undefeated", "I'm 12.5 miles away", "I'm 12.5 y.o., in two years"].entries()) {
+    clock.advance(MINUTE);
+    expect((await post(turn(`signed-half-age-negative-${i}`, phone, text, "friends"))).status).toBe(200);
+    expect(await current()).toEqual({ floor: 17, state: "active" });
+  }
+
+  clock.advance(MINUTE);
+  expect((await post(turn("signed-loose-half-age", phone, "I'm 12.5", "friends"))).status).toBe(200);
+  expect(await current()).toEqual({ floor: 13, state: "active" });
+
+  clock.advance(MINUTE);
+  expect((await post(turn("signed-explicit-half-age", phone, "I'm 12.5 years old", "friends"))).status).toBe(200);
+  expect(await current()).toEqual({ floor: 12, state: "removed" });
 }, 60_000);

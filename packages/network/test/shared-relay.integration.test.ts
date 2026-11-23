@@ -13,6 +13,7 @@ import {TURN_PATH,RELAY_PATH,DELIVER_PATH,type RelaySendRequest,type TurnRequest
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {loadSnapshot} from "../service/snapshot.ts";
 import {PgAudit} from "../../observatory/src/staff.ts";
 import type {AuditEntry} from "../../observatory/src/types.ts";
 import {meetingFeedbackKey,relayDispatchCheck,type NetworkState} from "../src/network.ts";
@@ -53,7 +54,7 @@ const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId
   state.opps.push(op);n.importState(state);
 });
 /** The pair as the stored state holds it now (a close commits before its own delivery, which waits for the held dispatch). */
-const pairClosed=async()=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==='string'?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id==='relay-pair')?.stage==='closed';};
+const pairClosed=async(matchId="relay-pair")=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==='string'?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id===matchId)?.stage==='closed';};
 const waitFor=async(cond:()=>Promise<boolean>)=>{for(let i=0;i<400;i++){if(await cond())return true;await sleep(5);}return false;};
 /** Hold the dispatch of the next relayed row right after its asynchronous gates (the leak check), before admission. */
 const gateDispatch=()=>{
@@ -67,7 +68,7 @@ beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218","+12125550219","+12125550220"]).toContain(input.to);
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218","+12125550219","+12125550220","+12125550221","+12125550222"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){
       posts++;sent.push(input);
     }else{expect(path).toBe(DELIVER_RECEIPT_PATH);polls++;}}
@@ -109,6 +110,48 @@ test("relay binds the original text and pair, sends only rendered wording, swaps
   expect((await(await post(RELAY_PATH,privateRequest)).json() as any).decision).not.toBe("pass");expect(posts).toBe(guardedBefore);
   const logs=JSON.stringify(await sql`select * from network.relay_records`);expect(logs).not.toContain(a.slice(2));expect(logs).not.toContain("running ten minutes late");
 },60_000);
+
+test.each(["question", "shares"])("a withdrawal that commits before dispatch suppresses queued swap %s", async stage => {
+  clock.advance(11 * MINUTE);
+  const pair = [fromId, toId];
+  const matchId = `withdraw-queued-${stage}`;
+  await fixturePair(true);
+  await fixturePair(false, "friends", pair, matchId);
+
+  const mine = await open(`${matchId}-ask`, "send Sam my number");
+  if (stage === "shares") {
+    const waiting = await post(RELAY_PATH, mine);
+    expect(await waiting.json()).toMatchObject({ decision: "hold" });
+  }
+  const request = stage === "shares" ? await open(`${matchId}-accept`, "send Ari my number", b) : mine;
+  const before = posts;
+  const dispatch = gateDispatch();
+  const sending = post(RELAY_PATH, request);
+  let withdrawal: Promise<Response> | undefined;
+  try {
+    const first = await Promise.race([dispatch.atGate.then(() => "gate"), sending.then(response => response.clone().text())]);
+    expect(first).toBe("gate");
+
+    clock.advance(MINUTE);
+    const messageId = `${matchId}-cancel`;
+    withdrawal = post(TURN_PATH, turn(a, messageId, "actually don't send it"));
+    const inboundId = `in:blooio:${messageId}`;
+    const withdrawalCommitted = async () => {
+      const [row] = await sql`select id from network.messages where id=${inboundId} and app_id='friends' and direction='inbound'`;
+      return row !== undefined;
+    };
+    expect(await waitFor(withdrawalCommitted)).toBe(true);
+    dispatch.resume();
+
+    expect((await withdrawal).status).toBe(200);
+    expect(await (await sending).json()).toMatchObject({ delivered: false });
+    expect(posts - before).toBe(0);
+  } finally {
+    dispatch.resume();
+    await Promise.allSettled([sending, withdrawal]);
+    await fixturePair(true, "friends", pair, matchId);
+  }
+}, 60_000);
 
 test("inside the match, asking for the match's number is a swap ask for the agent, never scored; anyone else's number still is",async()=>{
   await fixturePair();
@@ -496,3 +539,63 @@ test("a member with no open match who asks for 'her number' is scored",async()=>
   expect(((await r.json()) as any).outcome).not.toBe("open");expect(net.trust.get(thirdId).score).toBeGreaterThan(before);
 },60_000);
 
+test("a signed relay self-age closes the match and lowers the person's age across apps", async () => {
+  const sender = "+12125550217", recipient = "+12125550218";
+  async function join(app: "friends" | "slop", phone: string, name: string) {
+    const messages = [app === "friends" ? "friends.help" : "slop.date", name + ", 29",
+      "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
+    for (const [index, text] of messages.entries()) {
+      clock.advance(MINUTE);
+      const id = "relay-age-join:" + app + ":" + name + ":" + index;
+      expect((await post(TURN_PATH, { ...turn(phone, id, text), app })).status).toBe(200);
+    }
+    const person = await service.accounts.personFor(phone);
+    if (!person) throw new Error("Missing relay fixture person");
+    const membership = await service.people.getMembership(person.id, app);
+    if (!membership) throw new Error("Missing relay fixture membership");
+    return membership.memberId;
+  }
+  const senderFriends = await join("friends", sender, "Bo");
+  const recipientFriends = await join("friends", recipient, "Jae");
+  const senderSlop = await join("slop", sender, "Bo");
+  const matchId = "friends.relay-age-pair";
+  await fixturePair(false, "friends", [senderFriends, recipientFriends], matchId);
+  const controls = [
+    ["other", "tell them my 15 year old will be with me"],
+    ["eta", "tell them 15m from the bar"],
+  ] satisfies [string, string][];
+  for (const [suffix, phrase] of controls) {
+    clock.advance(11 * MINUTE);
+    const request = await open("relay-age-" + suffix, phrase, sender);
+    expect((await post(RELAY_PATH, request)).status).toBe(200);
+    expect((await service.accounts.personFor(sender))?.lowestAge).toBe(29);
+  }
+  expect(await pairClosed(matchId)).toBe(false);
+  const estimates = [
+    ["quote", "+12125550221", "Kit", "tell them I heard her say, \"I'm 16\""],
+    ["school", "+12125550222", "Lu", "tell them homeroom starts soon"],
+  ] satisfies [string, string, string, string][];
+  for (const [suffix, phone, name, phrase] of estimates) {
+    const estimator = await join("friends", phone, name), estimateId = "friends.relay-age-estimate-" + suffix;
+    await fixturePair(false, "friends", [estimator, recipientFriends], estimateId);
+    clock.advance(11 * MINUTE);
+    const request = await open("relay-age-estimate-" + suffix, phrase, phone);
+    expect(await (await post(RELAY_PATH, request)).json()).toMatchObject({ decision: "block", delivered: false });
+    expect((await service.accounts.personFor(phone))?.lowestAge).toBe(29);
+    expect(await pairClosed(estimateId)).toBe(true);
+  }
+  clock.advance(11 * MINUTE);
+  const request = await open("relay-age-self", "tell them 16f here", sender);
+  const before = posts;
+  const response = await post(RELAY_PATH, request);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false, replayed: false });
+  const replay = await post(RELAY_PATH, request);
+  expect(await replay.json()).toMatchObject({ decision: "block", delivered: false, replayed: true });
+  expect(posts).toBe(before);
+  expect(await pairClosed(matchId)).toBe(true);
+  expect((await service.accounts.personFor(sender))?.lowestAge).toBe(16);
+  const snapshot = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
+  expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
+  expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: 16 }]);
+}, 60_000);

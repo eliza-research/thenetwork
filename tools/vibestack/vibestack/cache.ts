@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { filesUnder, sha, tokenize, writeWhole } from "./util.ts";
+import { evaluatorIdentity } from "./installed.ts";
 import { NEEDS_DAFNY, exec, onPath, stamp } from "./run.ts";
 
 /** Load an operator's publishing credential only for the exact cache endpoint it belongs to. */
@@ -118,7 +119,12 @@ const dafnySaid = (version: string | undefined, stopped?: string, out = "") => {
  * Dafny's files and their stamps with Z3's on the PATH, as installed now: read once for each check (`steady`), and on
  * every call outside one.
  */
-const checking = new AsyncLocalStorage<{ installation?: { files?: string[]; at: string } }>();
+interface Check {
+  installation?: { files?: string[]; at: string };
+  evaluators: Map<string, string>;
+  evaluatorChanged?: boolean;
+}
+const checking = new AsyncLocalStorage<Check>();
 function installation() {
   const now = () => {
     const files = dafnyFiles();
@@ -134,7 +140,16 @@ function installation() {
   return scope ? (scope.installation ??= now()) : now();
 }
 /** Run a check, which reads Dafny's installation once: a reinstall during it is seen by the next check, and by `verifiedNow`. */
-export const steady = <T>(run: () => Promise<T>) => checking.run({}, run);
+export const steady = <T>(run: () => Promise<T>) => checking.run({ evaluators: new Map() }, run);
+
+export function evaluatorForCheck(root: string): string | undefined {
+  const scope = checking.getStore();
+  const known = scope?.evaluators.get(root);
+  if (known) return known;
+  const id = evaluatorIdentity(root);
+  if (id) scope?.evaluators.set(root, id);
+  return id;
+}
 
 /**
  * What is read of Dafny once for its installation as it is now: its launchers, its assemblies and Z3 on the PATH. A
@@ -319,23 +334,58 @@ async function toolchainId(stage: Stage): Promise<string> {
 }
 
 /** The remembered results of one check: whether it may read them, and every entry it read or wrote. */
-export interface Memory { root: string; fresh: boolean; used: Set<string> }
+export interface Memory {
+  root: string;
+  fresh: boolean;
+  used: Set<string>;
+  actionProjection?: { version: string; encode: (value: unknown) => unknown };
+}
 /** An entry of `.spec-cache`: JSON, compressed, since a run of the simulator says megabytes. */
-interface Entry { name: string; file: string }
-const cacheDir = (root: string) => path.join(root, ".spec-cache");
-export async function entry(root: string, stage: Stage, key: string[]): Promise<Entry> {
-  const name = `${stage}-${sha(await toolchainId(stage), ...key).slice(0, 24)}.json.gz`;
-  return { name, file: path.join(cacheDir(root), name) };
+interface Entry { name: string; file: string; evaluator?: string | null }
+const localCache = (root: string) => path.join(root, ".spec-cache");
+const actionEntry = /^action-[a-f0-9]{24}\.json\.gz$/;
+const formalCache = new AsyncLocalStorage<{ directory: string; used: Set<string> }>();
+const sharedCache = (name: string) => actionEntry.test(name) ? formalCache.getStore() : undefined;
+const cacheFile = (root: string, name: string) => path.join(sharedCache(name)?.directory ?? localCache(root), name);
+
+export async function withFormalCache<T>(directory: string, run: () => Promise<T>): Promise<T> {
+  const scope = { directory: path.resolve(directory), used: new Set<string>() };
+  try {
+    return await formalCache.run(scope, run);
+  } finally {
+    pruneCache(scope.directory, scope.used, true);
+  }
+}
+
+export async function entry(root: string, stage: Stage, key: string[], evaluates = ["simulate", "tests", "traces", "explore"].includes(stage)): Promise<Entry> {
+  const evaluator = evaluates ? evaluatorForCheck(root) ?? null : undefined;
+  const name = `${stage}-${sha(await toolchainId(stage), ...evaluator ? [evaluator] : [], ...key).slice(0, 24)}.json.gz`;
+  return { name, file: cacheFile(root, name), evaluator };
 }
 /** Entries are deleted when unused for a while (see collectGarbage), so a hit says the entry is in use. */
 function use(memory: Memory, name: string) {
   memory.used.add(name);
-  try { const now = new Date(); fs.utimesSync(path.join(cacheDir(memory.root), name), now, now); } catch { /* still a hit */ }
+  sharedCache(name)?.used.add(name);
+  try { const now = new Date(); fs.utimesSync(cacheFile(memory.root, name), now, now); } catch { /* still a hit */ }
 }
-/** What an entry holds, or undefined. An entry that cannot be read, cut short by a kill or a full disk, is deleted and is a miss. */
-export function recall<T>(memory: Memory, { name, file }: Entry): T | undefined {
-  memory.used.add(name);
-  if (memory.fresh) return undefined;
+function projectedEntry(memory: Memory, at: Entry): Entry | undefined {
+  if (!memory.actionProjection || !actionEntry.test(at.name)) return undefined;
+  const raw = at.name.slice(0, -".gz".length);
+  const name = `action-${sha("projection", raw, memory.actionProjection.version).slice(0, 24)}.json.gz`;
+  return { ...at, name, file: cacheFile(memory.root, name) };
+}
+/** Prefer the generator's compact receipt. A raw receipt remains valid for either caller. */
+export function recall<T>(memory: Memory, raw: Entry): T | undefined {
+  const projected = projectedEntry(memory, raw);
+  if (!projected) memory.used.add(raw.name);
+  if (memory.fresh || raw.evaluator === null) return undefined;
+  const compact = projected && readReceipt<T>(memory, projected);
+  if (compact !== undefined) return compact;
+  memory.used.add(raw.name);
+  return readReceipt<T>(memory, raw);
+}
+/** What an entry holds, or undefined. An unreadable entry is discarded. */
+function readReceipt<T>(memory: Memory, { name, file }: Entry): T | undefined {
   let bytes: Buffer;
   try {
     bytes = fs.readFileSync(file);
@@ -352,9 +402,21 @@ export function recall<T>(memory: Memory, { name, file }: Entry): T | undefined 
   }
 }
 /** Remember `value` under an entry, unless this process cannot say which tools computed it: then the next check computes it again. */
-export function store(memory: Memory, { name, file }: Entry, value: unknown) {
+export function store(memory: Memory, raw: Entry, value: unknown) {
+  const { evaluator } = raw;
+  const projected = projectedEntry(memory, raw);
+  if (!projected) memory.used.add(raw.name);
+  const scope = checking.getStore();
+  if (unsure || evaluator === null || (evaluator !== undefined && scope?.evaluatorChanged)) return;
+  if (evaluator !== undefined && evaluatorIdentity(memory.root) !== evaluator) {
+    if (scope) scope.evaluatorChanged = true;
+    return;
+  }
+  const compact = projected && memory.actionProjection?.encode(value);
+  const { name, file } = projected && compact !== undefined ? projected : raw;
   memory.used.add(name);
-  if (!unsure) writeWhole(file, gzipSync(JSON.stringify(value)));
+  writeWhole(file, gzipSync(JSON.stringify(compact === undefined ? value : compact)));
+  sharedCache(name)?.used.add(name);
 }
 
 /**
@@ -382,14 +444,19 @@ export async function remembered<T>(memory: Memory, at: Entry | Promise<Entry>, 
 const ENTRY = new RegExp(`^(${STAGES.join("|")})-(?:.*-)?[a-f0-9]{24}\\.json\\.gz$`);
 /** Keep recent branches and profiles for a month, within 256 MiB; never evict this check's entries. */
 export function collectGarbage(memory: Memory) {
-  const directory = cacheDir(memory.root);
+  pruneCache(localCache(memory.root), memory.used, false);
+}
+
+function pruneCache(directory: string, inUse: ReadonlySet<string>, shared: boolean) {
+  if (!fs.existsSync(directory)) return;
   const expired = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const retained: { file: string; size: number; touched: number; used: boolean }[] = [];
   for (const name of fs.readdirSync(directory)) {
-    if (name === "lock") continue;
+    if (name === "lock" || (shared && !actionEntry.test(name))) continue;
     const file = path.join(directory, name);
-    const stat = fs.lstatSync(file);
-    const used = memory.used.has(name);
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    if (!stat) continue;
+    const used = inUse.has(name);
     if (!used && (!ENTRY.test(name) || !stat.isFile() || stat.mtimeMs < expired))
       fs.rmSync(file, { recursive: true, force: true });
     else retained.push({ file, size: stat.size, touched: stat.mtimeMs, used });

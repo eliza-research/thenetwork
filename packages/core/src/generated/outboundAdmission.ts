@@ -157,6 +157,19 @@ export function lawClaimOnlyFromStoredVersion(storedVersion: string, viewVersion
   return !(viewPolicy(storedVersion, viewVersion) === "ViewCurrent") || (viewVersion !== "" && storedVersion === viewVersion);
 }
 
+/** Story: Recheck a queued message at send time / A STOP or an app leave does not release a text held for an answer (spec/outboundAdmission.md) */
+//@ pure
+export function inboundReleasesHeldTexts(stop: boolean, leave: boolean): boolean {
+  return !(stop || leave);
+}
+
+/** Story: Recheck a queued message at send time / A STOP or an app leave does not release a text held for an answer (spec/outboundAdmission.md) */
+//@ pure
+export function lawOptOutKeepsHeldTexts(stop: boolean, leave: boolean): boolean {
+  //@ ensures \result === true
+  return !(stop || leave) || !inboundReleasesHeldTexts(stop, leave);
+}
+
 /** Story: Recheck a queued message at send time / Apply line controls and sending caps before checking the text (spec/outboundAdmission.md) */
 //@ pure
 export function linePolicy(lineAction: string, agent: boolean, newConversation: boolean): Admission {

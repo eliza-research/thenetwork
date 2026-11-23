@@ -19,19 +19,28 @@ async function game(opts: ConstructorParameters<typeof GameSource>[0] = {}) {
 }
 afterEach(async () => { for (const g of live.splice(0)) await g.dispose(); });
 afterAll(async () => { await dropTestDb(); });
+
+async function captureSixDayGame() {
+  const g = await game();
+  const initial = structuredClone(g.state());
+  await g.control({ type: "step", ms: 6 * DAY });
+  return { initial, ...structuredClone({ state: g.state(), rows: rowsFromGame(g) }) };
+}
+
+// These two journeys read the same six-day result. The other games still have their own state.
+let sixDayGame: ReturnType<typeof captureSixDayGame> | undefined;
+const defaultGameFixture = () => sixDayGame ??= captureSixDayGame();
+
 /** Messages the Network sent a member about an opportunity (probe key or proposal id). */
 const about = (g: GameSource, memberId: string, oppId: string) =>
   g.world.channel.messagesFor(memberId).filter(m => m.direction === "outbound" && (m.meta?.proposalId === oppId || (m.meta?.probe as { key?: string } | undefined)?.key === oppId));
 
 describe("consent-first game mode (NYC)", () => {
   test("NYC only; probes come before reveals; meetings at real venues; engine runs linked", async () => {
-    const g = await game();
-    let s = g.state();
-    expect(s.members.length).toBe(250);
-    expect(s.members.every(m => m.city === "nyc")).toBe(true);
-    expect(s.env.label).toContain("consent-first");
-    await g.control({ type: "step", ms: 6 * DAY });
-    s = g.state();
+    const { initial, state: s } = await defaultGameFixture();
+    expect(initial.members.length).toBe(250);
+    expect(initial.members.every(m => m.city === "nyc")).toBe(true);
+    expect(initial.env.label).toContain("consent-first");
     expect(s.engineRuns.length).toBeGreaterThanOrEqual(5);
     expect(s.network?.kind).toBe("consent");
     expect(s.network!.counters.probesSent).toBeGreaterThan(20);
@@ -229,11 +238,9 @@ describe("consent-first game mode (NYC)", () => {
 
   test.skipIf(!pgAvailable)("consent game → Postgres → real parity", async () => {
     const url = await testDb();
-    const g = await game();
-    await g.control({ type: "step", ms: 6 * DAY });
-    const gs = g.state();
+    const { state: gs, rows } = await defaultGameFixture();
     const sql = new SQL(url);
-    await writeRows(sql, rowsFromGame(g), { truncate: true });
+    await writeRows(sql, rows, { truncate: true });
     await sql.close();
     const r = new RealSource({ url, pollMs: 3_600_000, pushMs: 3_600_000, service: false });
     await r.init();

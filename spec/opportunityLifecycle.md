@@ -173,6 +173,18 @@ pure def lawNoRecurrenceThatAMinorKnows(roster: List[str], knownMinors: List[str
     implies not(recurrenceAllowed(roster, knownMinors, minorWasTold))
 ```
 
+### A block closes an open opportunity for the active pair
+
+A block closes an open opportunity that still includes both people. Before booking, both must be on the current proposal roster. After booking, both must still accept the booking. A block from another app closes the affected opportunity when the runtime reads the block, before it sends reminders or records completion. A booked cancellation uses the existing neutral notice.
+
+```quint
+pure def closesForBlock(proposal: OpportunityLifecycle, activeBlockedPair: bool): bool =
+  canClose(proposal) and activeBlockedPair
+
+pure def lawBlockClosesOnlyAnActivePair(proposal: OpportunityLifecycle, activeBlockedPair: bool): bool =
+  closesForBlock(proposal, activeBlockedPair) implies (canClose(proposal) and activeBlockedPair)
+```
+
 ### A scheduled opportunity is done when feedback becomes due
 
 Once the feedback time arrives, the Network marks the scheduled opportunity done and records the feedback request. A refusal, cancellation, or expiry can close any open stage. Done and closed are terminal.

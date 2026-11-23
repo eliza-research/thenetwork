@@ -8,6 +8,7 @@ import {
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 
 export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
+export const SWAP_WITHDRAWN = "consent:withdrawn";
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
 const VERDICT = { block: "Block", pass: "Pass" } as const satisfies Record<RelayResult["decision"], RelayVerdict>;
@@ -39,6 +40,7 @@ export interface RelayHost {
   blocked(a: MemberId, b: MemberId): boolean;
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   ratesPhotos: boolean;
+  observeSenderAge?(memberId: MemberId, text: string): boolean;
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string }): "sent" | "deferred" | "refused";
   minorSignal(id: MemberId, saysYounger: boolean): void;
   saysYounger?(id: MemberId, text: string): boolean;
@@ -51,12 +53,7 @@ export interface RelayTargetResult { choice: RelayTargetChoice; match?: RelayMat
 export interface RelayThreadState { id: string; app: string; members: [MemberId, MemberId]; openedAt: number; messages: RelayThreadMessage[] }
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
-const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b/g;
-export function withdrawsSwap(text: string): boolean {
-  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(NOT_A_NO, " ");
-  return /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
-    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/.test(t);
-}
+export { withdrawsRelaySwap as withdrawsSwap } from "../../engine/src/relay.ts";
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], swaps: [] });
 
@@ -129,6 +126,10 @@ export class RelayDesk {
     if (ask.kind !== "text" && this.host.teenPair?.(match.id) === true) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.textOnly };
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
     const item: RelayItem = { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text: (ask.text ?? "").trim() };
+    const teenPair = this.host.teenPair?.(match.id) === true;
+    if (item.text && (!teenPair || this.host.saysYounger?.(item.from, item.text) === true) && this.host.observeSenderAge?.(item.from, item.text) && (!teenPair || this.host.member(item.from)?.markedMinor !== false)) {
+      return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+    }
     return this.apply(await this.decide(item, match, o), match, item);
   }
 
@@ -233,7 +234,13 @@ export class RelayDesk {
   cancelSwaps(from: MemberId): number {
     const before = this.s.swaps.length;
     this.s.swaps = this.s.swaps.filter(x => x.from !== from);
-    return before - this.s.swaps.length;
+    let changed = before - this.s.swaps.length;
+    this.s.log = this.s.log.map(record => {
+      if (record.kind !== "contact_share" || record.decision !== "pass" || (record.from !== from && record.to !== from) || record.reasons.includes(SWAP_WITHDRAWN)) return record;
+      changed++;
+      return { ...record, reasons: [...record.reasons, SWAP_WITHDRAWN].sort() };
+    });
+    return changed;
   }
 
   private share(id: string, from: MemberId, to: MemberId, at: number, value: string, consentAt = at): RelayItem {

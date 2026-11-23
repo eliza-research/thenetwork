@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.20@sha256:26147acbda4f14c5add9946e2fd2ed543fc402884fd75146bd342a7f6271dc1d
 # The shared backend (docs/deploy.md). Build from the repository root:
 #   docker build -f deploy/backend/Dockerfile -t network-backend .
 # One image serves both Railway services: the backend (default command) and the optional
@@ -6,10 +7,18 @@
 # Node 26.13.0 matches .nvmrc. Pin the official image to its multi-architecture index.
 ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68
 
-FROM ${NODE_IMAGE} AS build
+FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /app
-# Only what the processes run: the workspaces, the lockfile and the deploy entry (Dockerfile.dockerignore keeps the rest out).
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN npm install --global corepack@0.35.0 \
+    && corepack pnpm fetch --prod --ignore-scripts
+# Link the workspace on manifest changes. Source-only edits can reuse these links.
+COPY --parents packages/*/package.json ./
+RUN corepack pnpm install --offline --frozen-lockfile --prod --ignore-scripts
+
+FROM dependencies AS build
+# Only what the processes run: the workspaces and the deploy entry (Dockerfile.dockerignore keeps the rest out).
+COPY tsconfig.json ./
 COPY packages ./packages
 COPY deploy ./deploy
 COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
@@ -17,9 +26,6 @@ COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
 COPY evals/relay/clef-relay-weights.json ./evals/relay/clef-relay-weights.json
 # The review judge qualification record that health shows (reviewJudge.qualified); the packets and answers stay out.
 COPY evals/review/qualified.json ./evals/review/qualified.json
-# Link the workspaces and install their pinned runtime dependencies. No lifecycle scripts run.
-RUN npm install --global corepack@0.35.0 \
-    && corepack pnpm install --frozen-lockfile --prod --ignore-scripts
 # Build the CSS used in connector responses and in the staff console.
 RUN node packages/design-system/build.ts build \
     && node --import tsx packages/mcp/src/pages/build-css.ts \
@@ -30,7 +36,8 @@ RUN rm -rf packages/sim packages/judge packages/evals packages/worlds packages/p
 
 FROM ${NODE_IMAGE}
 WORKDIR /app
-COPY --from=build --chown=node:node /app /app
+COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node --exclude=node_modules /app /app
 USER node
 ENV PORT=8790 STAFF_PORT=4848
 EXPOSE 8790 4848

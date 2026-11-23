@@ -26,6 +26,52 @@ export function lawFutureConsentIsStale(consentAt: number, itemAt: number, lifet
   return !(consentAt > itemAt) || relayConsentStale(consentAt, itemAt, lifetime);
 }
 
+/** Story: Share only the item I approved / A refusal or uncertainty cannot authorize a private item (spec/relayDecision.md) */
+//@ pure
+export function privateRelayRequestAllowed(refused: boolean, uncertain: boolean): boolean {
+  return !refused && !uncertain;
+}
+
+/** Story: Share only the item I approved / A refusal or uncertainty cannot authorize a private item (spec/relayDecision.md) */
+//@ pure
+export function lawPrivateRelayRequiresUnqualifiedConsent(refused: boolean, uncertain: boolean): boolean {
+  //@ ensures \result === true
+  return !(refused || uncertain) || !privateRelayRequestAllowed(refused, uncertain);
+}
+
+/** Story: Share only the item I approved / A member can take back a pending number swap (spec/relayDecision.md) */
+//@ pure
+export function pendingSwapWithdrawn(namesOwnContact: boolean, withholdsContact: boolean, declinesPendingSend: boolean): boolean {
+  return declinesPendingSend || (namesOwnContact && withholdsContact);
+}
+
+/** Story: Share only the item I approved / A member can take back a pending number swap (spec/relayDecision.md) */
+//@ pure
+export function lawGoAheadKeepsPendingSwap(namesOwnContact: boolean): boolean {
+  //@ ensures \result === true
+  return !pendingSwapWithdrawn(namesOwnContact, false, false);
+}
+
+/** Story: Share only the item I approved / A member can take back a pending number swap (spec/relayDecision.md) */
+//@ pure
+export function lawDirectRefusalWithdrawsPendingSwap(namesOwnContact: boolean, withholdsContact: boolean): boolean {
+  //@ ensures \result === true
+  return pendingSwapWithdrawn(namesOwnContact, withholdsContact, true);
+}
+
+/** Story: Share only the item I approved / A phone exchange must still have consent at dispatch (spec/relayDecision.md) */
+//@ pure
+export function relayRecordMayDispatch(passed: boolean, rejected: boolean, withdrawn: boolean): boolean {
+  return passed && !rejected && !withdrawn;
+}
+
+/** Story: Share only the item I approved / A phone exchange must still have consent at dispatch (spec/relayDecision.md) */
+//@ pure
+export function lawWithdrawnRelayRecordsCannotDispatch(passed: boolean, rejected: boolean): boolean {
+  //@ ensures \result === true
+  return !relayRecordMayDispatch(passed, rejected, true);
+}
+
 /** Story: Keep unsafe items from reaching a match / Any reason from the relay checks blocks the item (spec/relayDecision.md) */
 //@ pure
 export function relayVerdict(hasReason: boolean): RelayVerdict {

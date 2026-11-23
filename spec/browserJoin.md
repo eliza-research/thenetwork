@@ -541,4 +541,43 @@ pure def sometimesRateLimited(page: JoinPage): bool = page.formError == RateLimi
 pure def sometimesInvalidCode(page: JoinPage): bool = page.formError == InvalidCode
 pure def sometimesNewCodeSent(page: JoinPage): bool = page.formError == NewCodeSent
 pure def sometimesPrefilledProfile(page: JoinPage): bool = page.screen == Profile and page.formHasValues
+
+pure val eval_witness_sometimesCodeFormat = (
+  ("openPage", false, false, false, 0, 0),
+  ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
+  ("readAuthMode", ModeOtp, false),
+  ("submitPhone", true),
+  ("answerCodeStart", CodeSent),
+  ("submitCode", 3)
+)
+
+pure val eval_witness_sometimesCheckAgain = (
+  ("openPage", false, false, false, 0, 0),
+  ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
+  ("readAuthMode", ModeOtp, true),
+  ("settleCheck", true),
+  ("submitPhone", true),
+  ("answerCodeStart", CodeSent),
+  "resendCode"
+)
+
+pure val eval_witness_sometimesInvalidCode = (
+  ("openPage", false, false, false, 0, 0),
+  ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
+  ("readAuthMode", ModeOtp, false),
+  ("submitPhone", true),
+  ("answerCodeStart", CodeSent),
+  ("submitCode", 4),
+  ("answerVerify", WrongCode)
+)
+
+pure val eval_witness_sometimesNewCodeSent = (
+  ("openPage", false, false, false, 0, 0),
+  ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
+  ("readAuthMode", ModeOtp, false),
+  ("submitPhone", true),
+  ("answerCodeStart", CodeSent),
+  "resendCode",
+  ("answerResend", CodeSent)
+)
 ```

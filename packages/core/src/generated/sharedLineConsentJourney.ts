@@ -1,19 +1,24 @@
 // GENERATED from spec/sharedLineConsentJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { appOptInBeatsStop as carrierConsent_appOptInBeatsStop, lawStopWinsATie as carrierConsent_lawStopWinsATie, appMayText as carrierConsent_appMayText, lawNoAppOptInMeansNoPermission as carrierConsent_lawNoAppOptInMeansNoPermission } from "./carrierConsent.ts";
+import { type StopConjunct as carrierConsent_StopConjunct, type CoordinatedStop as carrierConsent_CoordinatedStop, appOptInBeatsStop as carrierConsent_appOptInBeatsStop, stopWordAllowsCourtesy as carrierConsent_stopWordAllowsCourtesy, lawStopWinsATie as carrierConsent_lawStopWinsATie, appMayText as carrierConsent_appMayText, lawCourtesyCannotTurnCancelIntoStop as carrierConsent_lawCourtesyCannotTurnCancelIntoStop, coordinatedStopClause as carrierConsent_coordinatedStopClause, lawIncompleteNegationDoesNotMakeASeparateStop as carrierConsent_lawIncompleteNegationDoesNotMakeASeparateStop, lawNoAppOptInMeansNoPermission as carrierConsent_lawNoAppOptInMeansNoPermission } from "./carrierConsent.ts";
 
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
+export type StopWording = "StopKeyword" | "StopTextsKeepCalls" | "QuitNow" | "EndPlease";
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export type ConsentUpdate = "AllOptedOut" | "SlopOptedIn" | "FriendsOptedIn";
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-export interface LineConsent { slopMayText: boolean; friendsMayText: boolean }
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export type AppUnderObservation = "Slop" | "Friends";
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
+export interface LineConsent { slopMayText: boolean; friendsMayText: boolean }
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export interface Turn { state: LineConsent; out: ConsentUpdate[] }
+/** Story: Stop the shared line and resume one app / An ambiguous message leaves shared-line consent unchanged (spec/sharedLineConsentJourney.md) */
+export type OtherWording = "CoordinatedNegation" | "AppNamedInClause" | "ReportedUnsubscribe" | "CancelPlease";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "textStop" }
+  | { type: "textStop"; wording: StopWording }
+  | { type: "textOther"; other: OtherWording }
   | { type: "textStart"; app: AppUnderObservation; sentWithLastStop: boolean };
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
@@ -27,21 +32,28 @@ export function inv(current: LineConsent): boolean {
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
-export function canTextStop(s: LineConsent): boolean {
-  return true;
-}
-
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-//@ pure
 export function sometimesBothAppsStop(s: LineConsent): boolean {
   return !s.slopMayText && !s.friendsMayText;
 }
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
-export function textStop(s: LineConsent): Turn {
-  //@ ensures (inv(s) && canTextStop(s)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
+export function canTextStop(s: LineConsent, wording: StopWording): boolean {
+  return true;
+}
+
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
+//@ pure
+export function textStop(s: LineConsent, wording: StopWording): Turn {
+  //@ ensures (inv(s) && canTextStop(s, wording)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
   return { state: ({ slopMayText: false, friendsMayText: false } as LineConsent), out: (["AllOptedOut"] as ConsentUpdate[]) };
+}
+
+/** Story: Stop the shared line and resume one app / An ambiguous message leaves shared-line consent unchanged (spec/sharedLineConsentJourney.md) */
+//@ pure
+export function textOther(s: LineConsent, other: OtherWording): Turn {
+  //@ ensures (inv(s)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
+  return { state: s, out: ([] as ConsentUpdate[]) };
 }
 
 /** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
@@ -85,7 +97,8 @@ export function textStart(s: LineConsent, app: AppUnderObservation, sentWithLast
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: LineConsent, event: Event): boolean {
-  if (event.type === "textStop") return canTextStop(current);
+  if (event.type === "textStop") return canTextStop(current, event.wording);
+  if (event.type === "textOther") return true;
   if (event.type === "textStart") return canTextStart(current, event.app, event.sentWithLastStop);
   return false;
 }
@@ -95,7 +108,8 @@ export function enabled(current: LineConsent, event: Event): boolean {
 export function step(current: LineConsent, event: Event): Turn {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "textStop") return canTextStop(current) ? textStop(current) : { state: current, out: ([] as ConsentUpdate[]) };
+  if (event.type === "textStop") return canTextStop(current, event.wording) ? textStop(current, event.wording) : { state: current, out: ([] as ConsentUpdate[]) };
+  if (event.type === "textOther") return textOther(current, event.other);
   if (event.type === "textStart") return canTextStart(current, event.app, event.sentWithLastStop) ? textStart(current, event.app, event.sentWithLastStop) : { state: current, out: ([] as ConsentUpdate[]) };
   return { state: current, out: ([] as ConsentUpdate[]) };
 }
@@ -114,7 +128,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "textStop") return { type: "textStop" };
+  if (raw.type === "textStop" && (raw.wording === "StopKeyword" || raw.wording === "StopTextsKeepCalls" || raw.wording === "QuitNow" || raw.wording === "EndPlease")) return { type: "textStop", wording: raw.wording };
+  if (raw.type === "textOther" && (raw.other === "CoordinatedNegation" || raw.other === "AppNamedInClause" || raw.other === "ReportedUnsubscribe" || raw.other === "CancelPlease")) return { type: "textOther", other: raw.other };
   if (raw.type === "textStart" && (raw.app === "Slop" || raw.app === "Friends") && typeof raw.sentWithLastStop === "boolean") return { type: "textStart", app: raw.app, sentWithLastStop: raw.sentWithLastStop };
   return undefined;
 }

@@ -194,7 +194,7 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
   }
 
   // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
-  test("a committed block suppresses a reviewed invitation already queued in another app", async () => {
+  test("a committed block suppresses a queued invitation and closes its opportunity in another app", async () => {
     await closeAll();
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
@@ -248,6 +248,10 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
       expect(await friends.queue.statusOf("pending-unrelated-probe")).toBe("sent");
       expect(await friends.queue.statusOf("pending-blocked-probe")).toBe("suppressed_ineligible");
       expect(sends.map(send => send.idempotencyKey)).toEqual(["tn:pending-unrelated-probe"]);
+      expect(await rt.tick()).toBe(true);
+      const opportunities = rt.net.exportState().opps;
+      expect(opportunities.find(opp => opp.id === blockedMatch)?.stage).toBe("closed");
+      expect(opportunities.find(opp => opp.id === activeMatch)?.stage).toBe("probing");
     } finally { await closeAll(); }
   }, T);
 

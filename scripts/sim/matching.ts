@@ -9,7 +9,7 @@ import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { canonicalInput, runEngine } from "../../packages/engine/src/engine.ts";
 import { pairReason } from "../../packages/engine/src/filters.ts";
 import { bruteForceCandidates, laneCategory, pairSideOf, partnerBlock, type MatchProfile, type SearchResult } from "../../packages/engine/src/match/mod.ts";
-import { eligiblePair, vectorsOf } from "../../packages/engine/src/match/pair.ts";
+import { eligiblePair, segmentReaches, vectorsOf } from "../../packages/engine/src/match/pair.ts";
 import type { AppPack } from "../../packages/engine/src/pack.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
@@ -153,7 +153,14 @@ function exactness(w: World, s: LaneStats, at: string, st: Stated): void {
 // segments only as a superset of its pair rules, so no pair the segment check refuses is one that
 // the pack rules and geo rule (pairReason) admit. The oracle uses the same gate, so only this catches it.
 function segmentSuperset(w: World, s: LaneStats, p: MatchProfile, at: string): void {
-  for (const other of partnerBlock(w.match.index, p)?.profiles ?? []) {
+  const block = partnerBlock(w.match.index, p);
+  if (!block) return;
+  const expected = block.segments.filter(span => segmentReaches(p, block.profiles[span.start]!));
+  const indexed = block.reachableSegments(p.segment?.partners);
+  if (indexed.length !== expected.length || indexed.some((span, i) => span !== expected[i])) {
+    fault(s.segmentSuperset, `${at} ${p.id}: segment index differs from the ordered scan`);
+  }
+  for (const other of block.profiles) {
     if (eligiblePair(w, p, other) !== "segment_unreachable") continue;
     s.segmentRefused++;
     if (pairReason(w, p.memberId, other.memberId, laneCategory(p.lane), p.lane) === null) {
