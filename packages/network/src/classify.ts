@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, AGE_MONTHS, AGE_PART_TAIL, ARTICLE_AGE_END, ageBeforeConjunction, canJoin, parseReply, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, normalizeFractionalAgeInitialism, parseReply, quoteStillOpen, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
@@ -235,7 +235,9 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought)\s*$/;
 /** A clause break. The words before it do not apply to an age after it. */
 const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
-type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean; estimated?: boolean };
+type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean; estimated?: boolean; reading?: "part" | "conjunction" };
+const PART_CLAUSE_END = new RegExp(`^(?:${AGE_END}|${AGE_AND_CLAUSE})`);
+const NO_AGE_PART = `(?!${AGE_PART})`;
 const STATED_AGE = `\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)`;
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : AGE_WORDS[value] ?? NaN;
 
@@ -248,10 +250,10 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(\\d{1,2})\\s*${YEARS_OLD}(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b))`), age: m => Number(m[1]), explicit: true },
-  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(?:${AGE_HALF}(?:${AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageBeforeConjunction(ageNumber(m[1] ?? ""), m) },
-  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
-  // "I'm 17 and a half and ...", "I'm 16.5 now", "I'm 15 and 3 months": a part of a year, for 13 and up.
-  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(?:${AGE_HALF}|${AGE_MONTHS})(?=\\s*(?:${AGE_PART_TAIL}|${YEARS_OLD}))`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(${AGE_PART})`), age: m => ageNumber(m[1] ?? ""), reading: "part" },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NO_AGE_PART}${AGE_AND_CLAUSE}`), age: m => ageNumber(m[1] ?? ""), reading: "conjunction" },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NO_AGE_PART}${AGE_END}`), age: m => ageNumber(m[1] ?? "") },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NO_AGE_PART}${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
   { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
@@ -312,31 +314,6 @@ function allMatches(rx: RegExp, text: string): RegExpExecArray[] {
 }
 
 /**
- * True when `prefix` (the text before an age) leaves a quotation open, so the age is inside it
- * (`she said "I'm 15"`, `"I'm 15"`). Apostrophes in "I'm" and "don't", and a foot mark (`5'6`, `5'`),
- * are not quotes. A quote that has closed is not open: `he said "hi" I'm 15` is a real age.
- */
-function quoteStillOpen(prefix: string): boolean {
-  let double = false, single = false;
-  for (let i = 0; i < prefix.length; i++) {
-    const c = prefix[i]!;
-    const prev = i > 0 ? prefix[i - 1]! : "";
-    const next = i + 1 < prefix.length ? prefix[i + 1]! : "";
-    if (c === "\"") {
-      // 6" is inches, unless this mark closes a quote that is already open.
-      if (!double && /[0-9]/.test(prev)) continue;
-      double = !double;
-      continue;
-    }
-    if (c !== "'") continue;
-    if (/[a-z0-9]/.test(prev) && /[a-z0-9]/.test(next)) continue;
-    if (!single && (/[0-9]/.test(prev) || /[a-z]/.test(prev))) continue;
-    single = !single;
-  }
-  return double || single;
-}
-
-/**
  * The age is not the sender's age today when a not-now word sits immediately before it in the same
  * clause, or when the age is still inside a quote. Quote state is read from the whole message, so
  * a period inside quotes (`"Hey." I'm 15.`) does not turn the closing quote into a new opener.
@@ -360,19 +337,24 @@ function notNowBefore(text: string, at: number): boolean {
  * has closed does not hide the next statement (`he said "hi" I'm 15`).
  */
 export function agesStated(body: string, { directOnly = false } = {}): { age?: number; explicit?: number } {
-  const t = normText(body);
+  const t = normalizeFractionalAgeInitialism(normText(body));
   const out: { age?: number; explicit?: number } = {};
   // Rules that start at the beginning of the text ("age: 15", "15 y/o here", "15f", "f15", "15 here")
   // are read on each sentence. On the whole message they would see only the first sentence.
   for (const s of sentencesOf(t, true)) {
-    for (const { rx, age, explicit, estimated } of AGE_RX) {
+    for (const { rx, age, explicit, estimated, reading } of AGE_RX) {
       if (directOnly && estimated) continue;
       for (const m of allMatches(rx, s.text)) {
         if (notNowBefore(t, s.at + m.index)) continue;
-        const a = age(m);
-        if (!Number.isFinite(a)) continue;
+        const after = s.text.slice(m.index + m[0].length);
+        const rawAge = age(m);
+        const part = reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after), { reading: m[0] }) : undefined;
+        if (part === "FractionalAgeUnknown") continue;
+        const exact = explicit === true || part === "FractionalAgeExplicit";
+        const a = reading === "conjunction" ? ageBeforeConjunction(rawAge, m) : rawAge;
+        if (!Number.isFinite(a) || (directOnly && !exact && !canJoin(a) && reading !== undefined)) continue;
         if (out.age === undefined || a < out.age) out.age = a;
-        if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+        if (exact && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
       }
     }
   }
