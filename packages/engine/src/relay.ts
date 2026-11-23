@@ -472,8 +472,10 @@ const PRIVATE_RELAY_RECIPIENT = String.raw`(?:my (?:match|date)|${RELAY_NAME})`;
 const OTHER = String.raw`(?:them|him|her|${PRIVATE_RELAY_RECIPIENT})`;
 const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
 const RELAY_NAME_CONTINUATION = /^[\p{L}\p{M}\p{N}'-]/u;
-const RELAY_DESTINATION = String.raw`[\s,:–—]+(?:to|with)\b`;
-const UNPARSED_RELAY_DESTINATION = /^[\s,:;.!–—()[\]/]*(?:to|with)\b/iu;
+const RELAY_DESTINATION_WORDS = String.raw`(?:over\s+to|to|with)\b`;
+const RELAY_DESTINATION = String.raw`[\s,:–—-]+${RELAY_DESTINATION_WORDS}`;
+const UNPARSED_RELAY_DESTINATION = new RegExp(String.raw`^[\s,:;.!?–—()[\]/"'“”-]*(?:directly\s+to\b|${RELAY_DESTINATION_WORDS})`, "iu");
+const RELAY_WITH_THANKS = /^\s*,?\s*with\s+thanks\s*[.!]*\s*$/iu;
 const CONTACT_REQ = new RegExp(
   String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
   + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
@@ -911,9 +913,22 @@ function independentRenewalFollowup(sentence: string): boolean {
     && !UNRESOLVED_RENEWAL_PAYLOAD.test(statement);
 }
 
+function detachedRelayStatement(after: string): boolean {
+  const lead = /^\s*\.\s*(?:to be clear|with that settled),\s*/iu.exec(after);
+  if (!lead) return false;
+  const statement = after.slice(lead[0].length).trim().replace(/[.!]+$/, "").toLowerCase();
+  if (independentRenewalFollowup(statement)) return true;
+  const timeAt = statement.lastIndexOf(" at ");
+  const timing = statement.slice(timeAt);
+  return timeAt >= 0 && LINKED_PRIVATE_TIME.exec(timing)?.[0] === timing
+    && independentRenewalFollowup(statement.slice(0, timeAt));
+}
+
 function relayRecipientIsComplete(text: string, request: RegExpMatchArray, trailingRecipient: string | undefined): boolean {
   const after = text.slice(request.index! + request[0].length);
-  if (UNPARSED_RELAY_DESTINATION.test(after)) return false;
+  if (UNPARSED_RELAY_DESTINATION.test(after) && !detachedRelayStatement(after)) {
+    return trailingRecipient === undefined && RELAY_WITH_THANKS.test(after);
+  }
   if (trailingRecipient === undefined) return true;
   // The match still identifies a delegated instruction when its destination is incomplete.
   if (RELAY_NAME_CONTINUATION.test(after)) return false;

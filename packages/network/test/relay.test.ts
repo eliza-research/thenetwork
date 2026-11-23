@@ -230,6 +230,12 @@ test.each([
   ["Please send my number to Sam.", "block"],
   ["Yes, send it to Sam.", "block"],
   ["Yes, send it, to Sam.", "block"],
+  ["Yes, send it - to Sam.", "block"],
+  ["Yes, send it over to Sam.", "block"],
+  ["Yes, send it? To Sam.", "none"],
+  ["Yes, send it “to Sam”.", "none"],
+  ["Please send him my number. Directly to Sam.", "none"],
+  ["Please send Ari my number. To be clear, I'll be there at seven. To Sam.", "none"],
   ["Yes, send it to Herman.", "block"],
   ["Yes, send it to Ari9.", "none"],
   ["Yes, send it (to Sam).", "none"],
@@ -245,13 +251,15 @@ test.each([
   const id = "named-number-" + randomUUID();
   const before = await sharesQueued();
   await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
   const response = await post(await ask("bo", id + "-reply", text));
   expect(response.status).toBe(200);
   expect({
     response: await response.json(),
     newShares: await sharesQueued() - before,
-    pending: (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length,
-  }).toMatchObject({ response: { decision, delivered: false }, newShares: 0, pending: 1 });
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id),
+  }).toMatchObject({ response: { decision, delivered: false }, newShares: 0, pending: original });
 }, 60_000);
 
 test.each([
@@ -259,8 +267,13 @@ test.each([
   "Please send my number to Ari when you can.",
   "Yes, send it to Ari.",
   "Yes, send it: to Ari, thanks.",
+  "Yes, send it - to Ari.",
+  "Yes, send it over to Ari.",
+  "Please send Ari my number with thanks.",
+  "Please send Ari my number. To be clear, I'll be there at seven.",
+  "Please send Ari my number. With that settled, I'll be there at seven.",
   "Yes, send it to my match.",
-])("a complete trailing name can finish the selected swap: %s", async text => {
+])("a complete recipient can finish the selected swap: %s", async text => {
   const id = "named-number-match-" + randomUUID();
   const before = await sharesQueued();
   await startNumberSwap(id, "ari");
