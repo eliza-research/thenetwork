@@ -71,4 +71,34 @@ describe("get_updates", () => {
     expect(Object.keys(t.inputSchema.properties)).toEqual(["app", "update_token"]);
     expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
   });
+
+  test("withholds disguised phone and email summaries while passing benign updates and links", async () => {
+    const leaked = [
+      "Call Maya at 555-0102.",
+      "Call Maya at two one two five five five zero one zero two.",
+      "Call Maya at ٢١٢-٥٥٥-٠١٠٢.",
+      "Text Maya at 212·555·0102.",
+      "Reach Maya at sam[@]example[.]com.",
+      "Reach Maya at sam<at>example<dot>com.",
+      "Reach Maya at sam at gmail.",
+      "Reach Maya at sam . lee @ example . com.",
+    ];
+    const benign = [
+      "Dev is free Thursday.",
+      "Your plan is booked: Saturday 11 AM at McCarren Park (Williamsburg).",
+      "Your order #2026112401 is confirmed.",
+      "Open https://peon.biz to check your settings.",
+    ];
+    const e = setup({
+      updates: async (): Promise<PublicUpdate[]> => [
+        ...leaked.map(summary => ({ summary, at: "2026-10-08T12:00:00.000Z", kind: "plan_probe" })),
+        ...benign.map(summary => ({ summary, at: "2026-10-08T12:00:00.000Z", kind: "plan_probe" })),
+      ],
+    });
+    await addMember(e, PHONE_A, [{ app: "peon", state: "active" }]);
+    const c = await connect(e, "peon.biz", PHONE_A, { register: { redirect_uris: [CLAUDE_CB] }, redirectUri: CLAUDE_CB });
+    const r = await call(e, `${origin("peon.biz")}/mcp`, "get_updates", {}, { token: c.token.access_token });
+    expect(r.body!.result.isError).toBe(false);
+    expect(r.body!.result.structuredContent.updates.map((u: PublicUpdate) => u.summary)).toEqual(benign);
+  });
 });

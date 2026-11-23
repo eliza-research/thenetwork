@@ -228,6 +228,33 @@ export function contactVariants(s: string): string[] {
   return [...out];
 }
 
+export function findContactKinds(
+  text: string,
+  o: { kinds?: ReadonlySet<string>; allow?: readonly string[] } = {},
+): string[] {
+  const found = new Set<string>();
+  const allow = o.allow ?? [];
+  for (const p of contactVariants(text)) {
+    let c = p;
+    for (const a of allow) c = c.split(a).join(" ");
+    for (const { name, re } of CONTACT_PATTERNS) {
+      if ((o.kinds && !o.kinds.has(name)) || found.has(name)) continue;
+      if (re.global) {
+        re.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(c))) {
+          if (isPhone(c, m)) {
+            found.add(name);
+            break;
+          }
+        }
+        re.lastIndex = 0;
+      } else if (re.test(c)) found.add(name);
+    }
+  }
+  return [...found];
+}
+
 const YEAR = /^(?:19|20)\d\d$/;
 /** A phone-pattern match that is not an order number, a booking reference or a list of years. */
 function isPhone(text: string, m: RegExpExecArray): boolean {
@@ -609,19 +636,7 @@ export class LeakGuard {
     if (this.contacts) {
       const approved = o.contactAllow;
       const contactText = approved?.length ? text.replace(/\S+/gu, token => approved.includes(token) ? " " : token) : text;
-      for (const p of contactVariants(contactText)) {
-        let c = p;
-        for (const a of this.allow) c = c.split(a).join(" ");
-        for (const { name, re } of CONTACT_PATTERNS) {
-          if (reasons.has(`contact:${name}`)) continue;
-          if (re.global) {
-            re.lastIndex = 0;
-            let m: RegExpExecArray | null;
-            while ((m = re.exec(c))) { if (isPhone(c, m)) { reasons.add(`contact:${name}`); break; } }
-            re.lastIndex = 0;
-          } else if (re.test(c)) reasons.add(`contact:${name}`);
-        }
-      }
+      for (const name of findContactKinds(contactText, { allow: this.allow })) reasons.add(`contact:${name}`);
     }
     return [...reasons];
   }
