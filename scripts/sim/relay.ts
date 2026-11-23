@@ -193,11 +193,15 @@ export async function relayBlock(b: Block): Promise<void> {
 
   await b.run("relay: the plugin path (parseRelayRequest -> relayItemFromRequest -> relayItem) delivers only explicit requests", () => {
     const at = NOW;
-    const mk = (t: string, id: string) => relayItemFromRequest(parseRelayRequest(t), { id, from: "a", to: "b", at, contact: { kind: "phone", value: "+12125550147" }, photoIds: ["ph_abcdefgh"] });
+    const mk = (t: string, id: string, counterpartName?: string) => relayItemFromRequest(parseRelayRequest(t), { id, from: "a", to: "b", at, contact: { kind: "phone", value: "+12125550147" }, photoIds: ["ph_abcdefgh"], counterpartName });
     const num = mk("send them my number", "r1"), pic = mk("send her this photo", "r2"), msg = mk("tell them I'm running 10 min late", "r3");
     expect([num?.kind, pic?.kind, msg?.kind]).toEqual(["contact_share", "photo", "text"]);
     expect(relayItem(num!, baseCtx()).decision).toBe("pass");
     expect(relayItem(pic!, baseCtx()).decision).toBe("pass");
+    expect(mk("send Ari this photo", "matched-photo-recipient", "Ari")?.kind).toBe("photo");
+    expect(mk("send this photo to Ari", "other-photo-recipient", "Casey")).toBeNull();
+    expect(mk("send this photo to Hera", "complete-photo-recipient", "Hera")?.kind).toBe("photo");
+    expect(mk("send my number to Herman", "complete-contact-recipient", "Ari")).toBeNull();
     expect(relayItem(msg!, baseCtx()).rendered).toBe('Sam says: "I\'m running 10 min late"');
     for (const t of ["should I send them my number?", "don't send my number yet", "send them my number if she asks", "send them this photo next week", "how are you?"]) {
       expect([t, mk(t, "r4")]).toEqual([t, null]);

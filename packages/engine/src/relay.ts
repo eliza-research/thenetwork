@@ -32,7 +32,7 @@
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
-import { relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
+import { relayEnvelopeTextAllowed, relayIsIndirectQuestion, relayRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
@@ -458,14 +458,30 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
 }
 
 // --------------------------------------------------------------------------- member requests
-export type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string; targetName?: string } | { kind: "none" };
+export type RelayRequest =
+  | { kind: "contact_share"; targetName?: string }
+  | { kind: "photo"; targetName?: string }
+  | { kind: "text"; body: string; targetName?: string }
+  | { kind: "none" };
 
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|rather not|hold off|wait (?:to|before)|not until)\b/;
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
-const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass|forward|text)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "giu");
-const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward|pass|show)\\s+(?:this|that|the|these|my)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\s+(?:to|with)\\s+${OTHER}`, "giu");
+const PHONE_SWAP_NAME = "phone number|number|phone|digits|cell";
+const CONTACT_SWAP_NAME = PHONE_SWAP_NAME + "|contact(?: info)?";
+const PHONE_RELAY_ITEM = new RegExp(String.raw`\bmy\s+(?:${PHONE_SWAP_NAME})\b`, "i");
+const CONTACT_REQ = new RegExp(
+  String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${OTHER})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
+  + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${OTHER})(?![\p{L}\p{M}\p{N}'-])`
+  + String.raw`|^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+(?:it|my number|them my number)\b|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
+  "giu",
+);
+const PHOTO_REQ = new RegExp(
+  String.raw`\b(?:send|share|forward|pass|show)\s+(?<leadingRecipient>${OTHER})\s+(?:this|that|the|my|these)\s+(?:photos?|pics?|pictures?|selfies?|images?)\b`
+  + String.raw`|\b(?:send|share|forward|pass|show)\s+(?:this|that|the|these|my)\s+(?:photos?|pics?|pictures?|selfies?|images?)\s+(?:to|with)\s+(?<trailingRecipient>${OTHER})(?![\p{L}\p{M}\p{N}'-])`,
+  "giu",
+);
 const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
 const RELAY_ASIDE = /^\s*i(?:'ll\s+not|\s+(?:can'?t|cannot|couldn'?t|didn'?t|mustn'?t|won'?t|wouldn'?t|(?:can|could|did|will|would|must)\s+not))\s+\S/i;
 const INCOMPLETE_RELAY_ASIDE = /\b(?:to|that|if|and|or|because|for|with)\s*$/i;
@@ -475,6 +491,14 @@ const RELAY_MODAL = /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\s+(?:please\
 const TEXT_REQ = new RegExp(`^(?:please\\s+)?(tell|let|ask)\\s+(${OTHER})\\s+(know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
 const TEXT_PRIVATE_DIRECTIVE_LEAD = /^\s*(?:(?:\p{L}[\p{L}'-]*\s+)?to\s+|you\s+(?:can|may|should|must)\s+)?(?:(?:please|just|kindly|pls)\s+)*$/iu;
 const IMPLICIT_RELAY_TARGET = /^(?:them|him|her|my (?:match|date))$/i;
+const namedRelayTarget = (name: string | undefined): { targetName?: string } => name && !IMPLICIT_RELAY_TARGET.test(name) ? { targetName: name } : {};
+
+/** An explicit name confirms the selected counterpart. It does not select a different match. */
+export function relayRecipientMatches(targetName: string | undefined, counterpartName: string | undefined): boolean {
+  const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+  return relayRecipientAllowed(targetName !== undefined,
+    targetName !== undefined && counterpartName !== undefined && fold(targetName) === fold(counterpartName));
+}
 const SHARE_CONDITION = /\b(?:if|when)\s+(?:she|he|they|my (?:match|date))(?:(?:'s|'re)|\s+(?:is|are))?\s+(?:asks?|wants?|requests?|ready|interested|says?\s+(?:so|yes|ok(?:ay)?))\b/;
 const SHARE_DEFERRED = /\b(?:(?:when|once)\s+(?:we(?:'re)?|i)\s+(?:meet|see\s+(?:him|her|them|each other)|get together|together)|after\s+(?:our|my|the)\s+(?:first\s+)?date|next\s+(?:week|month)|this\s+(?:week|weekend)|in a (?:few days|week|month)|(?:on|this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/;
 const SHARE_QUALIFIER = new RegExp(String.raw`^[\s,:]*(?:(?:only|please)\s+)*(?:${SHARE_CONDITION.source}|${SHARE_DEFERRED.source})`);
@@ -495,7 +519,6 @@ function privateShareQualified(text: string, request: RegExpMatchArray): boolean
 
 const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|would|could|did|should|must|shall|'ll)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t|mustn'?t)\s+wait\b/g;
 const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
-const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
 const OWN_SWAP_ITEM = new RegExp(String.raw`\b(?:my (?:${CONTACT_SWAP_NAME})|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b`);
 const SWAP_PROPERTY = new RegExp(OWN_SWAP_ITEM.source + "\\s+(?:(?:is|stays?|remains?)\\s+(?:private|off limits)|can wait)\\b");
 const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to\s+)?(?:send|share|give|pass|forward|text)\b|(?:the|that|our)\s+(?:numbers?\s+)?swap\b)/;
@@ -821,6 +844,13 @@ function independentRenewalFollowup(sentence: string): boolean {
     && !UNRESOLVED_RENEWAL_PAYLOAD.test(statement);
 }
 
+function trailingRelayNameIsComplete(text: string, request: RegExpMatchArray): boolean {
+  const tail = text.slice(request.index! + request[0].length).split(RELAY_SENTENCE, 1)[0]!;
+  const continuation = tail.replace(/^[\s,:–—]+/u, "");
+  return continuation === "" || PRIVATE_RELAY_COURTESY.test(tail) || TRAILING_PRIVATE_CONDITION.test(tail)
+    || (/^\s*[,–—]/u.test(tail) && independentRenewalFollowup(continuation));
+}
+
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[], contact: boolean): boolean {
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
@@ -910,16 +940,17 @@ export function parseRelayRequest(text: string): RelayRequest {
     const payload = envelope[4]!;
     const bodyStart = t.length - payload.length;
     const delegates = (candidate: RegExpMatchArray) => TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(bodyStart, start + candidate.index!));
-    // An outer delegation does not subsume a later direct request. A declarative text body is separate.
-    if (!contacts.some(delegates) && !photos.some(delegates) && !privateRequest) {
+    const directNumberRequest = contact !== undefined && PHONE_RELAY_ITEM.test(contact[0]);
+    if (relayEnvelopeTextAllowed(contacts.some(delegates) || photos.some(delegates), directNumberRequest)) {
       const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(payload);
       const body = (modal && declarative ? payload.replace(/\?$/, "") : payload).trim();
-      const target = envelope[2]!;
-      if (body) return { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
+      if (body) return { kind: "text", body, ...namedRelayTarget(envelope[2]) };
     }
   }
 
   if (privateRequest) {
+    const trailingRecipient = privateRequest.groups?.trailingRecipient;
+    const target = namedRelayTarget(privateRequest.groups?.leadingRecipient ?? trailingRecipient);
     const privateModal = RELAY_MODAL.exec(spoken);
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
@@ -927,13 +958,14 @@ export function parseRelayRequest(text: string): RelayRequest {
       privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
     const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
-      || question || privateShareQualified(spoken, privateRequest);
+      || question || privateShareQualified(spoken, privateRequest)
+      || (trailingRecipient !== undefined && target.targetName !== undefined && !trailingRelayNameIsComplete(t.slice(start), privateRequest));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)
       || (!!contact && refusesNumberSwap(low, clauses));
     if (!privateRelayRequestAllowed(refused, uncertain)) return { kind: "none" };
-    return { kind: contact ? "contact_share" : "photo" };
+    return { kind: contact ? "contact_share" : "photo", ...target };
   }
   return { kind: "none" };
 }
@@ -942,9 +974,10 @@ export function parseRelayRequest(text: string): RelayRequest {
  * The item for a member's request, with the consent for THIS item (given at `at`). The plugin action
  * or the platform calls `parseRelayRequest`, then this, then `relayItem`. `contact` is the sender's
  * verified contact from the person record (never parsed from the message); `photoIds` are the photos
- * the member chose. Returns null for "none", a contact share without a contact, or a photo without ids.
+ * the member chose. For a named request, `counterpartName` is the selected counterpart's current first name.
  */
-export function relayItemFromRequest(req: RelayRequest, o: { id: string; from: MemberId; to: MemberId; at: number; contact?: RelayItem["contact"]; photoIds?: readonly string[] }): RelayItem | null {
+export function relayItemFromRequest(req: RelayRequest, o: { id: string; from: MemberId; to: MemberId; at: number; contact?: RelayItem["contact"]; photoIds?: readonly string[]; counterpartName?: string }): RelayItem | null {
+  if (req.kind === "none" || !relayRecipientMatches(req.targetName, o.counterpartName)) return null;
   const base = { id: o.id, from: o.from, to: o.to, at: o.at };
   if (req.kind === "text") return { ...base, kind: "text", text: req.body };
   if (req.kind === "contact_share") return o.contact ? { ...base, kind: "contact_share", contact: o.contact, consent: { kind: "contact_share", by: o.from, itemId: o.id, at: o.at } } : null;

@@ -304,9 +304,9 @@ module relay {
   // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
   // signals after claiming the receipt. It includes conditions and timing in the uncertainty signal.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
-  // supplies none. A later independent directive can supply one, and an ordinary text envelope
-  // still follows the text path unless a later independent directive supplies a private request.
-  // Signed tests cover this reader boundary.
+  // supplies none. An ordinary text envelope follows the text path unless a later independent
+  // directive asks to send the sender's number. For every relay kind the named recipient must be
+  // the counterpart of the selected match. Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 

@@ -24,11 +24,10 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
-import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
-  relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
+  relayGuard, relayItem, relayItemAsync, relayRecipientMatches, RELAY_LIMITS, RELAY_WORDING, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
 } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
@@ -182,12 +181,8 @@ export class RelayDesk {
     const match = this.matchFor(ask.from, ask.matchId);
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
-    if (ask.targetName !== undefined) {
-      const recipient = this.host.member(to)?.firstName;
-      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
-      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
-        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-      }
+    if (ask.targetName !== undefined && !relayRecipientMatches(ask.targetName, this.host.member(to)?.firstName)) {
+      return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     }
     const now = this.host.now();
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);

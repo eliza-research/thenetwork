@@ -433,6 +433,24 @@ test("a reported delegation beside a direct sentence can finish a signed number 
   expect(await sharesQueued()).toBe(before + 2);
 }, 60_000);
 
+test("a signed contact request checks the directive's named recipient before completing a swap", async () => {
+  const id = "named-recipient-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const pending = await pendingNumberSwaps();
+  const refused = await post(await ask("bo", id + "-other", "Tell Ari I'm on my way. Please send my number to Casey."));
+  expect(await refused.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await sharesQueued()).toBe(before);
+  expect(await pendingNumberSwaps()).toEqual(pending);
+  const incomplete = await post(await ask("bo", id + "-incomplete", "Please send my number to Ari Casey."));
+  expect(await incomplete.json()).toMatchObject({ decision: "none", delivered: false });
+  expect(await sharesQueued()).toBe(before);
+  expect(await pendingNumberSwaps()).toEqual(pending);
+  const accepted = await post(await ask("bo", id + "-direct", "Tell Casey I'm on my way. Please send my number to Ari."));
+  expect(await accepted.json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
 test.each([
   "Don't forget to send it",
   "Don't hesitate, send it now",

@@ -5,7 +5,7 @@
 
 /** Story: Ask the agent to relay my own words / Separate a direct request from its message (spec/relayRequestAddress.md) */
 //@ pure
-export function relayTextRecipientAllowed(named: boolean, counterpartMatches: boolean): boolean {
+export function relayRecipientAllowed(named: boolean, counterpartMatches: boolean): boolean {
   return !named || counterpartMatches;
 }
 
@@ -13,7 +13,7 @@ export function relayTextRecipientAllowed(named: boolean, counterpartMatches: bo
 //@ pure
 export function lawNamedRelayRequiresTheSelectedCounterpart(named: boolean): boolean {
   //@ ensures \result === true
-  return !named || !relayTextRecipientAllowed(named, false);
+  return !named || !relayRecipientAllowed(named, false);
 }
 
 /** Story: Ask the agent to relay my own words / Polite wording still needs a direct request to send a private item (spec/relayRequestAddress.md) */
@@ -27,4 +27,17 @@ export function relayIsIndirectQuestion(question: boolean, modalRequest: boolean
 export function lawIndirectPrivateRelayQuestionLeavesUncertainty(question: boolean, adviceQuestion: boolean): boolean {
   //@ ensures \result === true
   return !question || relayIsIndirectQuestion(question, true, false, adviceQuestion);
+}
+
+/** Story: Ask the agent to relay my own words / A separate direct phone request can take the place of a text envelope (spec/relayRequestAddress.md) */
+//@ pure
+export function relayEnvelopeTextAllowed(delegatedPrivateRequest: boolean, directNumberRequest: boolean): boolean {
+  return !(delegatedPrivateRequest || directNumberRequest);
+}
+
+/** Story: Ask the agent to relay my own words / A separate direct phone request can take the place of a text envelope (spec/relayRequestAddress.md) */
+//@ pure
+export function lawDirectNumberRequestTakesPrecedence(delegatedPrivateRequest: boolean): boolean {
+  //@ ensures \result === true
+  return !relayEnvelopeTextAllowed(delegatedPrivateRequest, true);
 }
