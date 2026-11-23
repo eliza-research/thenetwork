@@ -2438,8 +2438,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const target = named ?? confirmed;
     const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
     const cancels = CANCEL_SAFETY_QUESTION.test(text) || (!competing && NO_SAFETY_TARGET.test(text));
+    const rulesOutTarget = /\b(?:someone|somebody) else\b|^\W*(?:no|nope)?\W*not (?:him|her|them)\b/i.test(text);
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
-    if (!safetyQuestionResolves(!!allowedTarget, !!competing, cancels, text.split(/\s+/).length <= 4)) return false;
+    if (!safetyQuestionResolves(!!allowedTarget, !!competing, cancels, text.split(/\s+/).length <= 4 || rulesOutTarget)) return false;
     m.pendingSafety = undefined;
     if (allowedTarget) {
       this.applyBlock(m, p.verb, p.kind, allowedTarget);

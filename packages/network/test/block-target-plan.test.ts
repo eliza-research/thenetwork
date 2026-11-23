@@ -194,6 +194,26 @@ describe("block and report targets in a group plan", () => {
     expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
   });
 
+  test("a long reply that rules out the named person ends the question without filing", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    const from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+    const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pendingOf()).toBeDefined();
+    await w.say("a", "no it was someone else from last week");
+    expect(pendingOf()).toBeUndefined();
+    expect(w.net.safetyReports()).toHaveLength(0);
+    expect(w.to("a", from).some(s => /couldn't tell who you mean/i.test(s.body))).toBe(true);
+    // A later bare "yes" must not file against the person just ruled out.
+    await w.say("a", "yes");
+    expect(w.net.safetyReports()).toHaveLength(0);
+  });
+
   test.each([true, false])("an invitation survey considers only a current safety question (current: %s)", async current => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
     await w.onboard("a", "b");
