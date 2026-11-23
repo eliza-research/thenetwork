@@ -89,3 +89,22 @@
 {"text": "let Sam know I do not eat dairy", "want": "text"}
 {"text": "tell her I've never been here before", "want": "text"}
 {"text": "tell them don't wait for me", "want": "text"}
+{"text":"I would not give Ari my number","want":"none"}
+{"text":"I could not give Ari my number","want":"none"}
+{"text":"I did not give Ari my number","want":"none"}
+{"text":"I mustn't give Ari my number","want":"none"}
+{"text":"I'll not give Ari my number","want":"none"}
+{"text":"I won't lie, send Ari my number","want":"contact_share"}
+{"text":"I can't believe it, send Ari my number","want":"contact_share"}
+{"text":"I can't find my phone, but send Ari my number","want":"contact_share"}
+{"text":"I can't get my phone, but send Ari my number","want":"contact_share"}
+{"text":"My number is off limits, send Ari my number","want":"none"}
+{"text":"I can't believe it, “send Ari my number”","want":"none"}
+{"text":"Ari said “I would not send them my number.” Send Ari my number.","want":"contact_share"}
+{"text":"Ari said 'I won't send them my number.' Send Ari my number.","want":"contact_share"}
+{"text":"I would not send Ari my number. I can still make Saturday.","want":"none"}
+{"text":"I would not send that calendar invite, but send Ari my number.","want":"contact_share"}
+{"text":"I could not find parking, send Ari this photo","want":"photo"}
+{"text":"I would not send this calendar invite, but send Ari this photo.","want":"photo"}
+{"text":"I will not wait, send them my number","want":"contact_share"}
+{"text":"I would not wait, send them my number","want":"contact_share"}
