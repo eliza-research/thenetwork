@@ -365,7 +365,11 @@ test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup pa
     expect(refused.status).toBe(400);
     expect(refused.html).toContain("You can’t join this app with the birthday entered.");
     expect(refused.html).not.toContain('name="code"');
+    expect(refused.html).not.toContain("2014-01-15");
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
+    expect(await w.service.people.ageFloor(w.service.accounts.phoneHash(number))).toBe(12);
+    expect(await w.connector.store.sql`select first_name from platform.memberships where first_name = 'Kit'`).toEqual([]);
+    expect(await w.connector.store.sql`select person_id from platform.signup_eligibility`).toEqual([]);
 
     const retried = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "1996-01-15" });
     expect(retried.status).toBe(400);
@@ -382,8 +386,18 @@ test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup pag
     const opened = await openConnection(w, site, browser, "teen");
     const rid = hiddenField(opened.html, "rid");
     await confirmPhone(w, browser, rid, number);
+    const invalidBirthdays = ["", "2011-1-15", "2011-02-29", "2026-10-10", "1905-10-08"];
+    for (const birthdate of invalidBirthdays) {
+      const refused = await submitSignup(browser, rid, { firstName: "Jo", birthdate });
+      expect(refused.status).toBe(400);
+      expect(refused.html).toContain('id="signup-birthdate-error"');
+      if (birthdate) expect(refused.html).not.toContain(birthdate);
+      expect(await w.service.accounts.personFor(number)).toBeUndefined();
+    }
     const joined = await submitSignup(browser, rid, { firstName: "Jo", birthdate: "2011-01-15" });
     expect(joined.status).toBe(200);
+    expect(joined.form).toMatch(/<input\b(?=[^>]*\bname="birthdate")(?=[^>]*\btype="date")[^>]*>/);
+    expect(joined.form).not.toContain('name="age"');
     expect(joined.html).toContain("Signup confirmed.");
     const person = await w.service.accounts.personFor(number);
     if (!person) throw new Error("No person after a teen signup");
