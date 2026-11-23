@@ -299,3 +299,10 @@
 {"text": "Send him my number. My photo gets blurry when he asks me to zoom.", "want": "contact_share"}
 {"text": "Send him my number. Send him my photo if he asks for it.", "want": "contact_share"}
 {"text": "Send Sam my number. Give it to Alex if Alex asks.", "want": "contact_share"}
+{"text": "Send him my number. Give it to him on Friday.", "want": "none"}
+{"text": "Send him my photo. Give it to him next week.", "want": "none"}
+{"text": "Send him my number. Give it to him at eight.", "want": "none"}
+{"text": "Send him my number. Tell me when the cafe opens, then give it to him once he agrees.", "want": "none"}
+{"text": "Send him my number. Thanks. Give it to him if he asks.", "want": "none"}
+{"text": "Send him my number. I am at work. Give it to him once I confirm.", "want": "none"}
+{"text": "Send him my number. Thanks. The restaurant is open at eight.", "want": "contact_share"}

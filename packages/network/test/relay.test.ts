@@ -244,6 +244,8 @@ test.each([
   "Send him my number. Send it to him after I finish work.",
   "Send him my number. He can have it once Ari approves.",
   "Send him my number. Only give it to him if he asks.",
+  "Send him my number. Give it to him on Friday.",
+  "Send him my number. Thanks. Give it to him once I confirm.",
   "Send him my number. She can have it when she asks.",
   "Send him my number. He can have it unless he says no.",
 ])("a condition in the next sentence cannot arm or complete a signed number swap: %s", async text => {

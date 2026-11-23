@@ -596,6 +596,8 @@ const LINKED_PRIVATE_ACCESS = new RegExp(
 );
 const LINKED_PRIVATE_LEAD = /^[\s,:–—]*(?:(?:and|but|then|only)[,\s:–—]+)*/iu;
 const PRIVATE_RECIPIENT_REFERENCE = /^(?:he|she|they|him|her|them|my\s+(?:match|date))$/i;
+const PRIVATE_NOTICE_THEN = /^\s*(?:please\s+)?(?:tell\s+(?:me|us)|let\s+(?:me|us)\s+know)\s+[^,]+,\s*(?=then\b)/iu;
+const LINKED_PRIVATE_TIME = /^[\s,–—]*(?:on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+week|at\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|noon|midnight|(?:[01]?\d|2[0-3])(?::[0-5]\d)?(?:\s*[ap]m)?))\b/iu;
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -683,16 +685,19 @@ function namedPrivateRecipient(transfer: RegExpExecArray | undefined): string | 
 }
 
 function linkedTransferIsConditional(sentence: string, source: string, request: RegExpMatchArray, contact: boolean): boolean {
-  const transfer = linkedPrivateTransfer(sentence);
+  const lead = PRIVATE_NOTICE_THEN.exec(sentence)?.[0].length ?? 0;
+  const transfer = linkedPrivateTransfer(sentence.slice(lead));
   if (!transfer || (contact ? transfer.groups?.photo : transfer.groups?.contact)) return false;
   const recipient = namedPrivateRecipient(transfer);
   const selected = recipient && namedPrivateRecipient(linkedPrivateTransfer(request[0]));
   if (selected && selected !== recipient) return false;
-  const end = transfer.index + transfer[0].length;
+  const end = lead + transfer.index + transfer[0].length;
   const tail = sentence.slice(end);
   const attribution = /[,–—][^,–—]*$/u.exec(tail);
-  if (attribution && PRIVATE_RELAY_POST_ATTRIBUTION.test(attribution[0])) return false;
-  return sentence.slice(0, end) === source.slice(0, end) && privateClauseIsConditional(tail, source.slice(end), false);
+  if (sentence.slice(0, end) !== source.slice(0, end) || attribution && PRIVATE_RELAY_POST_ATTRIBUTION.test(attribution[0])) return false;
+  const time = LINKED_PRIVATE_TIME.exec(tail);
+  return privateClauseIsConditional(tail, source.slice(end), false)
+    || (time !== null && tail === source.slice(end) && PRIVATE_RELAY_COURTESY.test(tail.slice(time[0].length)));
 }
 
 function conditionsPrivateRequest(text: string, source: string, start: number, request: RegExpMatchArray, contact: boolean): boolean {
@@ -703,10 +708,18 @@ function conditionsPrivateRequest(text: string, source: string, start: number, r
   if (!boundary) return false;
   const adjacentStart = start + clause.length + boundary[0].length;
   const remaining = text.slice(adjacentStart);
-  const adjacent = remaining.split(RELAY_SENTENCE, 1)[0]!;
-  if (remaining[adjacent.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(adjacent)) return false;
-  const adjacentSource = source.slice(adjacentStart, adjacentStart + adjacent.length);
-  return privateClauseIsConditional(adjacent, adjacentSource, true) || linkedTransferIsConditional(adjacent, adjacentSource, request, contact);
+  let adjacent = true;
+  for (const part of remaining.matchAll(RELAY_SENTENCE_TEXT)) {
+    const sentence = part[0];
+    const offset = adjacentStart + part.index!;
+    const authored = source.slice(offset, offset + sentence.length);
+    if (adjacent && text[offset + sentence.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(sentence)) return false;
+    if (adjacent && privateClauseIsConditional(sentence, authored, true)
+      || linkedTransferIsConditional(sentence, authored, request, contact)) return true;
+    if (authored !== sentence || !independentRenewalFollowup(sentence)) return false;
+    adjacent = false;
+  }
+  return false;
 }
 
 function colloquialRetractionLead(sentence: string, contact: boolean): string | undefined {
