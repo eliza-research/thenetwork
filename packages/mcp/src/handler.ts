@@ -294,10 +294,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHost(u.hostname))) throw new Error(`the issuer for ${a.id} must be https (http only on a loopback host)`);
     if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
   }
-  const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
+  const secureCookies = (a: McpApp) => new URL(issuerOf(a)).protocol === "https:";
   const browserCookie = (host: McpApp, app: McpAppId) => {
-    const name = host.id === app ? "mcp_auth" : `mcp_auth_${app}`;
-    return secureCookies(host) ? `__Host-${name}` : name;
+    if (!secureCookies(host)) return `mcp_auth_${app}`;
+    return host.id === app ? "__Host-mcp_auth" : `__Host-mcp_auth_${app}`;
   };
   let lastSweep = 0;
 
@@ -622,7 +622,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const r = rid ? await store.getAuthRequest(rid) : undefined;
     if (!r) return undefined;
     const sameApp = r.app === c.app.id && canonicalResource(r.resource, c) === r.resource;
-    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host, r.app));
+    const cookies = c.req.headers.get("cookie");
+    const browser = cookieValue(cookies, browserCookie(c.host, r.app))
+      ?? (c.host.id === r.app && !secureCookies(c.host) ? cookieValue(cookies, "mcp_auth") : undefined);
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
     const bound = stepBrowser(browserInitial, { type: "bindBrowser", matchesDigest: safeEqual(sha256hex(browser), r.browserHash) });
     if (bound.phase !== "CheckingClient") return undefined;

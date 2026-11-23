@@ -33,7 +33,7 @@
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
 import { relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
-import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, relayMinorEstimate, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -260,7 +260,7 @@ export function classifyRelayText(text: string): { codes: string[]; minorSignal:
   const lower = normalized.toLowerCase();
   const ageText = normalizeAgeInitialism(lower);
   const ageVariants = ageText === lower ? vs : textVariants(ageText);
-  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
+  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
 }
 
 // ----------------------------------------------------------------------------------- photo ids
@@ -458,14 +458,36 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
 }
 
 // --------------------------------------------------------------------------- member requests
-export type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string; targetName?: string } | { kind: "none" };
+export type RelayRequest =
+  | { kind: "contact_share"; targetName?: string }
+  | { kind: "photo"; targetName?: string }
+  | { kind: "text"; body: string; targetName?: string }
+  | { kind: "none" };
 
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|rather not|hold off|wait (?:to|before)|not until)\b/;
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
-const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
-const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass|forward|text)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "giu");
-const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward|pass|show)\\s+(?:this|that|the|these|my)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\s+(?:to|with)\\s+${OTHER}`, "giu");
+const RELAY_NAME = String.raw`(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\b)\p{L}[\p{L}'-]{1,30}`;
+const PRIVATE_RELAY_RECIPIENT = String.raw`(?:my (?:match|date)|${RELAY_NAME})`;
+const OTHER = String.raw`(?:them|him|her|${PRIVATE_RELAY_RECIPIENT})`;
+const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
+const RELAY_NAME_CONTINUATION = /^[\p{L}\p{M}\p{N}'-]/u;
+const RELAY_DESTINATION_WORDS = String.raw`(?:over\s+to|to|with)\b`;
+const RELAY_DESTINATION = String.raw`[\s,:–—-]+${RELAY_DESTINATION_WORDS}`;
+const UNPARSED_RELAY_DESTINATION = new RegExp(String.raw`^[\s,:;.!?–—()[\]/"'“”-]*(?:directly\s+to\b|${RELAY_DESTINATION_WORDS})`, "iu");
+const RELAY_WITH_THANKS = /^\s*,?\s*with\s+thanks\s*[.!]*\s*$/iu;
+const CONTACT_REQ = new RegExp(
+  String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
+  + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
+  + String.raw`|^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
+  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
+  "giu",
+);
+const PHOTO_REQ = new RegExp(
+  String.raw`\b(?:send|share|forward|pass|show)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+(?:this|that|the|my|these)\s+(?:photos?|pics?|pictures?|selfies?|images?)\b`
+  + String.raw`|\b(?:send|share|forward|pass|show)\s+(?:this|that|the|these|my)\s+(?:photos?|pics?|pictures?|selfies?|images?)\s+(?:to|with)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`,
+  "giu",
+);
 const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
 const RELAY_ASIDE = /^\s*i(?:'ll\s+not|\s+(?:can'?t|cannot|couldn'?t|didn'?t|mustn'?t|won'?t|wouldn'?t|(?:can|could|did|will|would|must)\s+not))\s+\S/i;
 const INCOMPLETE_RELAY_ASIDE = /\b(?:to|that|if|and|or|because|for|with)\s*$/i;
@@ -495,7 +517,6 @@ function privateShareQualified(text: string, request: RegExpMatchArray): boolean
 
 const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|would|could|did|should|must|shall|'ll)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t|mustn'?t)\s+wait\b/g;
 const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
-const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
 const OWN_SWAP_ITEM = new RegExp(String.raw`\b(?:my (?:${CONTACT_SWAP_NAME})|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b`);
 const SWAP_PROPERTY = new RegExp(OWN_SWAP_ITEM.source + "\\s+(?:(?:is|stays?|remains?)\\s+(?:private|off limits)|can wait)\\b");
 const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to\s+)?(?:send|share|give|pass|forward|text)\b|(?:the|that|our)\s+(?:numbers?\s+)?swap\b)/;
@@ -551,6 +572,77 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 const RELAY_SENTENCE_MARKS = String.raw`.!?;…\n`;
 const RELAY_SENTENCE = new RegExp(`[${RELAY_SENTENCE_MARKS}]+`);
 const RELAY_SENTENCE_TEXT = new RegExp(`[^${RELAY_SENTENCE_MARKS}]+`, "g");
+const PRIOR_ASSENT_NAME = String.raw`(?!(?:i|we|you|me|us|it|this|that|she|he|they|them|him|her)\b)[\p{L}][\p{L}'-]{1,30}`;
+const PRIOR_ASSENT_ACTOR = String.raw`(?<actor>she|he|they|them|him|her|my\s+(?:match|date)|${PRIOR_ASSENT_NAME})`;
+const PRIOR_ASSENT_ACTION = String.raw`(?:(?<action>agree|approve|ask|request|consent)s?|says?\s+(?:yes|ok(?:ay)?|so))`;
+const PRIOR_ASSENT_ITEM = String.raw`(?:\s+(?!first\b)(?<item>.+?))?`;
+const PRIOR_ASSENT_CONDITIONS = [
+  String.raw`${PRIOR_ASSENT_ACTOR}\s+(?:(?:has|have)\s+to|needs?\s+to|must|has\s+got\s+to)\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}\s+first`,
+  String.raw`wait\s+for\s+${PRIOR_ASSENT_ACTOR}\s+to\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`(?:only\s+after|(?<unless>unless))\s+${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+].map(condition => new RegExp(`^(?:please\\s+)?${condition}$`, "iu"));
+const PRIOR_ASSENT_COMPLETED = new RegExp(String.raw`^(?<actor>${PRIOR_ASSENT_NAME})\s+(?:(?:has|have)\s+)?(?:already\s+)?(?:(?<shortAction>agree|approve)d|(?<longAction>ask|request|consent)ed)(?:\s+already)?${PRIOR_ASSENT_ITEM}$`, "iu");
+const PRIOR_SENDER_CONFIRM = /^(?:please\s+)?wait\s+until\s+i\s+(?:confirm|approve)\s+(?:(?:that\s+)?you\s+can\s+)?/u;
+const PRIOR_CONTACT_SWAP = /^(?:(?:the|this|our)\s+)(?:(?:phone\s+)?number\s+)?swap$/u;
+const PRIOR_ASSENT_CONTINUATION = /,\s*(?:and|but|however|yet)\b/iu;
+
+function priorAssentItemKey(value: string, request: RegExpMatchArray, contact: boolean): string | undefined {
+  const item = value.replace(/^(?:for|to)\s+/u, "");
+  if (/^(?:it|this|that|me|us)$/u.test(item) || (contact && PRIOR_CONTACT_SWAP.test(item))) return item;
+  const words = item.replace(/^(?:me\s+)?(?:shar(?:e|ing)|send(?:ing)?|giv(?:e|ing)|forward(?:ing)?|pass(?:ing)?|show(?:ing)?|text(?:ing)?)\s+/u, "");
+  const directive = "send " + words;
+  const transfer = linkedPrivateTransfer(directive);
+  if (!transfer || transfer[0] !== directive || !linkedTransferMatchesRequest(transfer, request, contact)) return;
+  // Use the transfer shape to check scope without replacing the member's item or recipient words.
+  return item;
+}
+
+function assentKey(actor: string, action: string, item: string): string {
+  return actor + " " + action + " " + item;
+}
+
+// spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
+function priorSentenceConditionsShare(source: string, request: RegExpMatchArray, contact: boolean): boolean {
+  const prefix = source.slice(0, request.index!).replace(/[“”]/g, '"')
+    .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length - 1) + quotedRelaySeparator(quotation));
+  const waits = new Set<string>();
+  for (const part of prefix.matchAll(RELAY_SENTENCE_TEXT)) {
+    const end = part.index! + part[0].length;
+    if (end === prefix.length) continue;
+    const continuation = part[0].search(PRIOR_ASSENT_CONTINUATION);
+    const opening = continuation < 0 ? part[0] : part[0].slice(0, continuation);
+    if (opening !== source.slice(part.index, part.index! + opening.length)) continue;
+    const sentence = opening.trim().toLowerCase().replace(/(?:,\s*|\s+)(?:please|thanks|thank you)$/, "");
+    const confirm = PRIOR_SENDER_CONFIRM.exec(sentence);
+    if (confirm) {
+      const item = sentence.slice(confirm[0].length);
+      const transfer = linkedPrivateTransfer(item);
+      if ((contact && PRIOR_CONTACT_SWAP.test(item))
+        || (transfer && transfer[0] === item && linkedTransferMatchesRequest(transfer, request, contact))) return true;
+    }
+    const condition = PRIOR_ASSENT_CONDITIONS.map(pattern => pattern.exec(sentence)?.groups).find(Boolean);
+    if (condition) {
+      const item = condition.item ? priorAssentItemKey(condition.item, request, contact) : "";
+      if (item === undefined) {
+        // A prerequisite involving another private item still holds this transfer.
+        if (priorAssentItemKey(condition.item!, request, !contact) !== undefined) return true;
+        continue;
+      }
+      if (condition.unless || !condition.action) return true;
+      waits.add(assentKey(condition.actor!, condition.action, item));
+      continue;
+    }
+    // A later assertion must identify the same actor and action to settle a wait.
+    const completed = continuation < 0 && PRIOR_ASSENT_COMPLETED.exec(sentence)?.groups;
+    if (completed && !/^[\s.!?;…]*\?/u.test(source.slice(end))) {
+      const item = completed.item ? priorAssentItemKey(completed.item, request, contact) : "";
+      if (item !== undefined) waits.delete(assentKey(completed.actor!, (completed.shortAction ?? completed.longAction)!, item));
+    }
+  }
+  return waits.size > 0;
+}
+
 const PRIVATE_RELAY_OBJECT = String.raw`(?:(?:(?:my|the|this|that|these|a|any)\s+)?(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})|it|this|that|them|either|both|anything(?:\s+else)?)`;
 const CONTINUES_PRIVATE_REFUSAL = new RegExp(
   String.raw`^\s*(?:(?:or|nor|neither)\b|(?:and|also|not|same(?:\s+goes)?\s+(?:for|with))\s+${PRIVATE_RELAY_OBJECT}\b|` +
@@ -809,16 +901,47 @@ function privateCourtesy(sentence: string): boolean {
     || (polite !== null && PRIVATE_RELAY_COURTESY.test(words.slice(polite[0].length)));
 }
 
+function normalizeRelayStatement(statement: string): string {
+  return statement.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are")
+    .replace(/^(i|we)'ve\b/u, "$1 have");
+}
+
 function independentRenewalFollowup(sentence: string): boolean {
   const words = sentence.trim().toLowerCase();
   if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
   const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
-  const body = envelope?.at(-1) ?? words;
-  const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+  const statement = normalizeRelayStatement(envelope?.at(-1) ?? words);
   if (!envelope) return INDEPENDENT_RENEWAL_STATUS.test(statement);
   return PRIVATE_CONDITION_STATEMENT.test(statement) && !PRIVATE_CONDITION_ITEM_NAME.test(statement)
     && !PRIVATE_RELAY_ACTION.test(statement) && !PRIVATE_RELAY_UNCERTAIN.test(statement)
     && !UNRESOLVED_RENEWAL_PAYLOAD.test(statement);
+}
+
+function detachedRelayStatement(after: string): boolean {
+  const lead = /^\s*\.\s*(?:to be clear|with that settled),\s*/iu.exec(after);
+  if (!lead) return false;
+  // The exception applies only to a complete standalone status and its optional time.
+  const statement = normalizeRelayStatement(after.slice(lead[0].length).trim().replace(/[.!]+$/, "").toLowerCase());
+  if (INDEPENDENT_RENEWAL_STATUS.test(statement)) return true;
+  const timeAt = statement.lastIndexOf(" at ");
+  if (timeAt < 0) return false;
+  const timing = statement.slice(timeAt);
+  return LINKED_PRIVATE_TIME.exec(timing)?.[0] === timing
+    && INDEPENDENT_RENEWAL_STATUS.test(statement.slice(0, timeAt));
+}
+
+function relayRecipientIsComplete(text: string, request: RegExpMatchArray, trailingRecipient: string | undefined): boolean {
+  const after = text.slice(request.index! + request[0].length);
+  if (UNPARSED_RELAY_DESTINATION.test(after) && !detachedRelayStatement(after)) {
+    return trailingRecipient === undefined && RELAY_WITH_THANKS.test(after);
+  }
+  if (trailingRecipient === undefined) return true;
+  // The match still identifies a delegated instruction when its destination is incomplete.
+  if (RELAY_NAME_CONTINUATION.test(after)) return false;
+  const tail = after.split(RELAY_SENTENCE, 1)[0]!;
+  const continuation = tail.replace(/^[\s,:–—]+/u, "");
+  return continuation === "" || privateCourtesy(tail) || TRAILING_PRIVATE_CONDITION.test(tail)
+    || (/^\s*[,–—]/u.test(tail) && independentRenewalFollowup(continuation));
 }
 
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[], contact: boolean): boolean {
@@ -920,6 +1043,9 @@ export function parseRelayRequest(text: string): RelayRequest {
   }
 
   if (privateRequest) {
+    const trailingRecipient = privateRequest.groups?.trailingRecipient ?? privateRequest.groups?.affirmedRecipient;
+    const recipient = privateRequest.groups?.leadingRecipient ?? trailingRecipient;
+    const targetName = recipient && !IMPLICIT_RELAY_TARGET.test(recipient) ? recipient : undefined;
     const privateModal = RELAY_MODAL.exec(spoken);
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
@@ -927,13 +1053,15 @@ export function parseRelayRequest(text: string): RelayRequest {
       privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
     const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
-      || question || privateShareQualified(spoken, privateRequest);
+      || question || privateShareQualified(spoken, privateRequest)
+      || !relayRecipientIsComplete(t.slice(start), privateRequest, trailingRecipient)
+      || priorSentenceConditionsShare(t.slice(start), privateRequest, !!contact);
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)
       || (!!contact && refusesNumberSwap(low, clauses));
     if (!privateRelayRequestAllowed(refused, uncertain)) return { kind: "none" };
-    return { kind: contact ? "contact_share" : "photo" };
+    return { kind: contact ? "contact_share" : "photo", ...(targetName === undefined ? {} : { targetName }) };
   }
   return { kind: "none" };
 }
