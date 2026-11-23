@@ -182,10 +182,10 @@ function excludesSoleSafetyTarget(text: string, names: readonly (string | undefi
   const reply = safetyName(text).replace(/^(?:no|nope)(?:[,.!?;:]\s*| )/, "");
   const clause = reply.split(/[,.!?;:]/, 1)[0]!.trim();
   if (names.some(name => name && clause === `not ${safetyName(name)}`)) return true;
-  if (competing) return false;
-  if (["not him", "not her", "not them"].includes(clause)) return true;
   const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
-  return ["someone else", "somebody else"].some(phrase => replacement === phrase || replacement.startsWith(`${phrase} `));
+  if (["someone else", "somebody else"].some(phrase => replacement === phrase || replacement.startsWith(`${phrase} `))) return true;
+  if (competing) return false;
+  return ["not him", "not her", "not them"].includes(clause);
 }
 
 const SAFETY_TARGET_PREFIX = /^(?:i (?:mean|meant)|it'?s)\s+/;
