@@ -466,7 +466,8 @@ const TEXT_REQ = new RegExp(`^\\s*(?:please\\s+)?(?:tell|let|ask)\\s+${OTHER}\\s
 
 const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|would|could|did|should|must|shall|'ll)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t|mustn'?t)\s+wait\b/g;
 const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
-const OWN_SWAP_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/;
+const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
+const OWN_SWAP_ITEM = new RegExp(String.raw`\b(?:my (?:${CONTACT_SWAP_NAME})|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b`);
 const SWAP_PROPERTY = new RegExp(OWN_SWAP_ITEM.source + "\\s+(?:(?:is|stays?|remains?)\\s+(?:private|off limits)|can wait)\\b");
 const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to\s+)?(?:send|share|give|pass|forward|text)\b|(?:the|that|our)\s+(?:numbers?\s+)?swap\b)/;
 const TRANSFER = "send|share|give|pass|forward|text|disclose|reveal";
@@ -480,7 +481,7 @@ const DECLINES_PENDING_SEND = new RegExp(
   String.raw`(?:(?:it|that)(?:\s+(?:to|with)\s+${PENDING_SWAP_RECIPIENT})?|${PENDING_SWAP_RECIPIENT}\s+(?:it|that|anything))` +
   String.raw`(?:\s+(?:yet|please|pls|any\s?more|now|after all))*\s*$`,
 );
-const CONTACT_RELAY_NAME = "phone number|number|phone|digits|cell|contact(?: info)?|email";
+const CONTACT_RELAY_NAME = CONTACT_SWAP_NAME + "|email";
 const PHOTO_RELAY_NAME = "photos?|pics?|pictures?|selfies?|images?";
 const CONTACT_RELAY_ITEM = String.raw`my\s+(?:${CONTACT_RELAY_NAME})`;
 const PHOTO_RELAY_ITEM = String.raw`(?:this|that|the|my|these)\s+(?:${PHOTO_RELAY_NAME})`;
@@ -498,6 +499,10 @@ function explicitPrivateItemRefusal(item: string): RegExp {
 }
 const CONTACT_ITEM_REFUSAL = explicitPrivateItemRefusal(CONTACT_RELAY_ITEM);
 const PHOTO_ITEM_REFUSAL = explicitPrivateItemRefusal(PHOTO_RELAY_ITEM);
+// The possessive also governs the bare contact item in "my photo or number".
+const PAIRED_CONTACT_REFUSAL = explicitPrivateItemRefusal(
+  String.raw`(?:either\s+)?my\s+(?:${PHOTO_RELAY_NAME})\s+(?:and|or|nor)\s+(?:${CONTACT_SWAP_NAME})`,
+);
 const PRIVATE_RELAY_ACTION = /\b(?:send(?:ing)?|sent|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\b/;
 const PRIVATE_RELAY_REFERENCE = new RegExp(
   String.raw`\b(?:send(?:ing)?|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\s+` +
@@ -556,8 +561,9 @@ function directRelayLead(prefix: string): boolean {
 }
 
 // spec/relayDecision.md, "A member can take back a pending number swap"
-function refusesNumberSwap(clauses: readonly string[]): boolean {
-  return clauses.some(clause => pendingSwapWithdrawn(
+function refusesNumberSwap(text: string, clauses = relayClauses(text)): boolean {
+  const pairedRefusal = text.split(RELAY_SENTENCE).some(sentence => PAIRED_CONTACT_REFUSAL.test(sentence));
+  return pendingSwapWithdrawn(pairedRefusal, pairedRefusal, false) || clauses.some(clause => pendingSwapWithdrawn(
     OWN_SWAP_ITEM.test(clause),
     SWAP_WITHHOLDING.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause)
       || SWAP_MODAL_REFUSAL.test(clause) || REFUSES_MATCH_ACCESS.test(clause),
@@ -606,7 +612,7 @@ export function withdrawsRelaySwap(text: string): boolean {
     const contrast = OWN_SWAP_CONTRAST.exec(report);
     return contrast ? boundary + report.slice(contrast.index) : boundary;
   });
-  return refusesNumberSwap(relayClauses(authored));
+  return refusesNumberSwap(authored);
 }
 
 /**
@@ -632,7 +638,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(spoken, privateRequest, [...contacts, ...photos])
-      || (!!contact && refusesNumberSwap(clauses));
+      || (!!contact && refusesNumberSwap(low, clauses));
     return privateRelayRequestAllowed(refused, hedged)
       ? { kind: contact ? "contact_share" : "photo" } : { kind: "none" };
   }
