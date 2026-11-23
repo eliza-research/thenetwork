@@ -1,8 +1,10 @@
 // OAuth 2.1 against the handler with the real platform OTP and a fake provider (no texts are sent).
 import { describe, expect, test } from "vitest";
 import type { PeopleStore } from "@thenetwork/platform";
+import { APPS } from "@thenetwork/platform";
 import { signProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
-import { redirectUriAllowed } from "../src/handler.ts";
+import { redirectUriAllowed, TTL } from "../src/handler.ts";
+import { platformHooks } from "../src/hooks.ts";
 import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, MemoryOAuthStore, type Grant } from "../src/store.ts";
 import { addMember, browserFlow, call, CHALLENGE, connect, origin, PHONE_A, PHONE_B, register, rpc, setup, tokenRequest, VERIFIER, type Env } from "./harness.ts";
 
@@ -762,5 +764,169 @@ describe("explicit client approval boundary", () => {
     expect(refresh.res.status).toBe(200);
     expect(refresh.body.scope).toBe("membership:read");
     expect((env.store as MemoryOAuthStore).grants.size).toBe(1);
+  });
+
+  test("SD-397: a denial that loses the race with an approval denies nothing", async () => {
+    const env = setup(); const who = await member(env); const client = await register(env, DOMAIN);
+    const request = await begin(env, client.body.client_id, who.cookie);
+    const mem = env.store as MemoryOAuthStore;
+    const origDelete = mem.deleteAuthRequest.bind(mem);
+    let commitDone!: () => void;
+    const committed = new Promise<void>(resolve => { commitDone = resolve; });
+    const commit = mem.commitConsentGrant.bind(mem);
+    mem.deleteAuthRequest = async id => {
+      await committed;
+      return origDelete(id);
+    };
+    mem.commitConsentGrant = async (id, at, confirm, writes) => {
+      try { return await commit(id, at, confirm, writes); } finally { commitDone(); }
+    };
+    const [approved, denied] = await Promise.all([
+      post(env, "/oauth/authorize/consent", request.rid, request.cookie, { decision: "approve" }),
+      post(env, "/oauth/authorize/consent", request.rid, request.cookie, { decision: "deny" }),
+    ]);
+    expect(approved.status).toBe(303);
+    expect(denied.status).toBe(400);
+    expect(denied.headers.has("location")).toBe(false);
+    expect(mem.grants.size).toBe(1);
+    expect(mem.rows.filter(r => r.kind === "consent_denied")).toHaveLength(0);
+    expect(mem.rows.filter(r => r.kind === "consent_granted")).toHaveLength(1);
+  });
+});
+
+describe("QSM regression fixes", () => {
+  test("SD-390: sweep keeps a client that got a grant after the grant is purged, while unused clients are swept", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const { client } = await connect(env, PEON, PHONE_A);
+    const unused = await register(env, PEON);
+    await env.handler.revokeAllFor(PHONE_A, "peon");
+    await env.store.sweep(env.clock.t + GRANT_KEEP_MS + 1);
+    const mem = env.store as MemoryOAuthStore;
+    expect(mem.grants.size).toBe(0);
+    expect(await env.store.getClient(unused.body.client_id)).toBeUndefined();
+    expect(await env.store.getClient(client.client_id)).toBeDefined();
+    const q = new URLSearchParams({
+      response_type: "code", client_id: client.client_id, redirect_uri: "https://client.example/callback",
+      code_challenge: CHALLENGE, code_challenge_method: "S256", state: "reauth",
+    });
+    const res = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`));
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain("not registered");
+  });
+
+  test("SD-394: owner change during bearer or tool execution revokes grant and writes consent_revoked audit", async () => {
+    const env1 = setup();
+    await addMember(env1, PHONE_A, [{ app: "peon", state: "active" }]);
+    const c1 = await connect(env1, PEON, PHONE_A);
+    await (env1.people as PeopleStore).setPhoneHold(PHONE_A, "recycled_number", env1.clock.t);
+    expect(await env1.accounts.clearHold(PHONE_A, "new_owner")).toBe(true);
+    expect((await call(env1, `${origin(PEON)}/mcp`, "check_status", {}, { token: c1.token.access_token })).res.status).toBe(401);
+    const mem1 = env1.store as MemoryOAuthStore;
+    const g1 = [...mem1.grants.values()][0]!;
+    expect(g1.revokedAt).not.toBeNull();
+    expect(mem1.rows.filter(r => r.kind === "consent_revoked" && r.grantId === g1.id)).toHaveLength(1);
+
+    const env2 = setup();
+    await addMember(env2, PHONE_A, [{ app: "peon", state: "active" }]);
+    const c2 = await connect(env2, PEON, PHONE_A);
+    const origHit = env2.store.hit.bind(env2.store);
+    let flipped = false;
+    env2.store.hit = async (bucket, windowMs, at) => {
+      const n = await origHit(bucket, windowMs, at);
+      if (!flipped && bucket.startsWith("status:grant:")) {
+        flipped = true;
+        await (env2.people as PeopleStore).setPhoneHold(PHONE_A, "recycled_number", env2.clock.t);
+        await env2.accounts.clearHold(PHONE_A, "new_owner");
+      }
+      return n;
+    };
+    expect((await call(env2, `${origin(PEON)}/mcp`, "check_status", {}, { token: c2.token.access_token })).res.status).toBe(401);
+    const mem2 = env2.store as MemoryOAuthStore;
+    const g2 = [...mem2.grants.values()][0]!;
+    expect(g2.revokedAt).not.toBeNull();
+    expect(mem2.rows.filter(r => r.kind === "consent_revoked" && r.grantId === g2.id)).toHaveLength(1);
+  });
+
+  test("SD-393: auth request expires in 10 minutes and handler.sweep() cleans it every minute without OAuth traffic", async () => {
+    expect(TTL.requestMs).toBe(10 * 60_000);
+    const env = setup();
+    const reg = await register(env, PEON);
+    const q = new URLSearchParams({
+      response_type: "code", client_id: reg.body.client_id, redirect_uri: "https://client.example/callback",
+      code_challenge: CHALLENGE, code_challenge_method: "S256", state: "s",
+    });
+    const start = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`));
+    const rid = /name="rid" value="([^"]+)"/.exec(await start.clone().text())![1]!;
+    const cookie = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")![1]!;
+    env.clock.t += 31_000;
+    await env.fetch(new Request(`${origin(PEON)}/oauth/authorize/phone`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", cookie, origin: origin(PEON) },
+      body: new URLSearchParams({ rid, phone: PHONE_A }).toString(),
+    }));
+    expect((await env.store.getAuthRequest(rid))?.e164).toBe(PHONE_A);
+    // Throttled within 1 minute of the initial sweep at t0.
+    await env.handler.sweep();
+    expect(await env.store.getAuthRequest(rid)).toBeDefined();
+    // 10 minutes + 1 ms after start (past initial requestMs), sweep deletes the row holding the phone number.
+    env.clock.t += 10 * 60_000 + 1;
+    await env.handler.sweep();
+    expect(await env.store.getAuthRequest(rid)).toBeUndefined();
+  });
+
+  test("SD-428: a member on a staff hold reads on_hold, refuses submit_profile, hides read_profile, and fails slop eligibility", async () => {
+    let held = true;
+    let submitted = 0;
+    const env = setup({
+      memberHeld: async () => held,
+      submitProfile: async () => { submitted++; return "accepted"; },
+    });
+    const personId = await addMember(env, PHONE_A, [{ app: "peon", state: "active" }, { app: "slop", state: "active" }]);
+    await env.accounts.recordConsent({ e164: PHONE_A, app: "peon", state: "opted_in", source: "keyword:start", at: env.clock.t });
+    await env.people.putMembership({
+      app: "peon", personId, memberId: `peon_${personId}`, state: "active", review: null,
+      firstName: "Rae", profile: { about: "Likes climbing" }, joinedAt: env.clock.t, leftAt: null,
+    });
+    const c = await connect(env, PEON, PHONE_A, { scope: "apps:read membership:read profile:write profile:read" });
+    const status = await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token });
+    expect(status.body!.result.structuredContent.status).toBe("on_hold");
+    const submit = await call(env, `${origin(PEON)}/mcp`, "submit_profile", { about: "Updated bio text for test." }, { token: c.token.access_token });
+    expect(submit.body!.result.structuredContent).toMatchObject({ submitted: false, status: "on_hold" });
+    expect(submitted).toBe(0);
+    const read = await call(env, `${origin(PEON)}/mcp`, "read_profile", {}, { token: c.token.access_token });
+    expect(read.body!.result.structuredContent.profile).toBeNull();
+    const directHooks = platformHooks({ store: env.people, otp: env.otp, accounts: env.accounts, app: id => APPS[id], memberHeld: async () => held });
+    expect(await directHooks.customChatGptSlopEligible!(personId, env.accounts.phoneHash(PHONE_A))).toBe(false);
+
+    held = false;
+    expect((await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token })).body!.result.structuredContent.status).toBe("active");
+    expect((await call(env, `${origin(PEON)}/mcp`, "read_profile", {}, { token: c.token.access_token })).body!.result.structuredContent.profile).toMatchObject({ about: "Likes climbing" });
+    expect(await directHooks.customChatGptSlopEligible!(personId, env.accounts.phoneHash(PHONE_A))).toBe(true);
+  });
+
+  test("malformed Basic auth returns 401 and a second authorize tab leaves the first tab working", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const basic = await env.fetch(new Request(`${origin(PEON)}/oauth/token`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${btoa("%E0:x")}` },
+      body: "grant_type=authorization_code",
+    }));
+    expect(basic.status).toBe(401);
+    const reg = await register(env, PEON);
+    const q = new URLSearchParams({
+      response_type: "code", client_id: reg.body.client_id, redirect_uri: "https://client.example/callback",
+      code_challenge: CHALLENGE, code_challenge_method: "S256", state: "s",
+    });
+    const first = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`));
+    const cookie = /((?:__Host-)?mcp_auth=[^;]+)/.exec(first.headers.get("set-cookie") ?? "")![1]!;
+    const rid = /name="rid" value="([^"]+)"/.exec(await first.text())![1]!;
+    const second = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`, { headers: { cookie } }));
+    const jar = /((?:__Host-)?mcp_auth=[^;]+)/.exec(second.headers.get("set-cookie") ?? "")![1]!;
+    const step = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize/phone`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", cookie: jar, origin: origin(PEON) },
+      body: new URLSearchParams({ rid, phone: PHONE_A }).toString(),
+    }));
+    expect(await step.text()).not.toContain("expired");
+    expect(step.status).toBe(200);
   });
 });

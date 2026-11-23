@@ -136,6 +136,8 @@ export interface PlatformParts {
   updates?: PlatformHooks["updates"];
   /** Surface signals for the inbox (NetworkService.assistantLinked). */
   assistantLinked?: PlatformHooks["assistantLinked"];
+  /** True when the app's Network holds this member (a staff or trust hold until a review). The membership row does not show it. */
+  memberHeld?: (app: AppInfo["id"], memberId: string) => Promise<boolean>;
 }
 
 function cookieValue(header: string | null, name: string): string | undefined {
@@ -216,7 +218,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const who = await p.accounts.byPhoneHash(key);
       if (!app || !who || who.person.id !== personId || await p.accounts.banned(who.e164, who.person)) return false;
       const m = await p.store.getMembership(personId, "slop");
-      return !!m && !m.review && ["active", "onboarding"].includes(m.state)
+      return !!m && !m.review && !(await p.memberHeld?.(app.id, m.memberId)) && ["active", "onboarding"].includes(m.state)
         && canMatchInApp(await p.accounts.lowestAge(who.e164, who.person), app);
     },
     ...(p.submitProfile ? {
@@ -237,15 +239,16 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const who = await p.accounts.byPhoneHash(key);
       if (!who || who.person.id !== personId) return "on_hold";
       const m = await p.store.getMembership(personId, app.id);
+      const held = m && m.state !== "removed" && m.state !== "invited" ? await p.memberHeld?.(app.id, m.memberId) : false;
       const optedOut = resolveConsent(await p.store.lastConsent(who.e164, app.id)) === "opted_out";
-      return publicStatus(m?.state, m?.review, optedOut);
+      return publicStatus(m?.state, m?.review ?? (held ? "hold" : null), optedOut);
     },
     async readProfile(personId, id, key) {
       const app = p.app(id);
       const who = await p.accounts.byPhoneHash(key);
       if (!app || !who || who.person.id !== personId) return;
       const own = await p.accounts.activeMembership(app, { e164: who.e164, personId });
-      if (!own) return;
+      if (!own || await p.memberHeld?.(app.id, own.membership.memberId)) return;
       const { firstName, profile } = own.membership;
       return { firstName, about: profile.about, interests: profile.interests, neighborhood: profile.neighborhood, homeCity: profile.homeCity };
     },

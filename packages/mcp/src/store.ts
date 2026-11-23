@@ -195,7 +195,8 @@ export interface OAuthStore {
   /** Check the current approval, then consume it and persist the grant, code and audit together.
    * False leaves no issuance. The callback must inspect the approval only. */
   commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites): Promise<boolean>;
-  deleteAuthRequest(id: string): Promise<void>;
+  /** Delete a sign-in request. True when this call deleted it (false: it was already taken or deleted). */
+  deleteAuthRequest(id: string): Promise<boolean>;
 
   putGrant(g: Grant): Promise<void>;
   getGrant(id: string): Promise<Grant | undefined>;
@@ -331,7 +332,7 @@ export class MemoryOAuthStore implements OAuthStore {
     this.rows.push(...prepared.audit);
     return true;
   }
-  async deleteAuthRequest(id: string) { this.requests.delete(id); }
+  async deleteAuthRequest(id: string) { return this.requests.delete(id); }
 
   private requireNewGrant(grant: Grant) {
     if (grant.id.startsWith("grant_cloud_") && grant.cloudAuthority?.version !== 1) throw new Error("Cloud grant authority required");
@@ -432,7 +433,10 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const [k, w] of this.windows) if (w.start + w.windowMs <= at) this.windows.delete(k);
     for (const [id, g] of this.grants) if (g.revokedAt !== null || g.expiresAt <= at) this.profileSubmissions.delete(id);
     for (const [k, g] of this.grants) if (Math.min(g.revokedAt ?? Infinity, g.expiresAt) <= at - GRANT_KEEP_MS) this.dropGrant(k);
-    const used = new Set([...this.grants.values()].map(g => g.clientId));
+    const used = new Set([
+      ...[...this.grants.values()].map(g => g.clientId),
+      ...this.rows.filter(r => r.kind === "consent_granted" && r.clientId !== null).map(r => r.clientId!),
+    ]);
     for (const [k, c] of this.clients) if (!used.has(k) && c.createdAt <= at - CLIENT_UNUSED_MS) this.clients.delete(k);
   }
 

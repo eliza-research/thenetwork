@@ -169,7 +169,7 @@ export class PgOAuthStore implements OAuthStore {
       return true;
     });
   }
-  async deleteAuthRequest(id: string) { await this.sql`delete from oauth.auth_requests where id = ${id}`; }
+  async deleteAuthRequest(id: string) { return (await this.sql`delete from oauth.auth_requests where id = ${id} returning id`).length > 0; }
 
   async putGrant(g: Grant) { await insertGrant(this.sql, g); }
   async getGrant(id: string) {
@@ -315,7 +315,8 @@ export class PgOAuthStore implements OAuthStore {
     await this.sql`delete from oauth.rate_limits where window_start + make_interval(secs => window_ms / 1000.0) <= ${t}`;
     // Codes and tokens of a deleted grant go with it (on delete cascade).
     await this.sql`delete from oauth.grants where least(coalesce(revoked_at, expires_at), expires_at) <= ${ts(at - GRANT_KEEP_MS)}`;
-    await this.sql`delete from oauth.clients c where c.created_at <= ${ts(at - CLIENT_UNUSED_MS)} and not exists (select 1 from oauth.grants g where g.client_id = c.id)`;
+    await this.sql`delete from oauth.clients c where c.created_at <= ${ts(at - CLIENT_UNUSED_MS)} and not exists (select 1 from oauth.grants g where g.client_id = c.id)
+      and not exists (select 1 from oauth.audit a where a.client_id = c.id and a.kind = 'consent_granted')`;
   }
 
   async forgetPhone(phoneKey: string, e164: string, app?: McpAppId) {
