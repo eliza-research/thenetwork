@@ -7,7 +7,7 @@ import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
-import {SimClock,MINUTE,DAY} from "@thenetwork/core";
+import {SimClock,MINUTE,DAY,HOUR} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
@@ -193,7 +193,10 @@ async function resetSwapMatch(id: string) {
   await service.runtimeFor("friends")!.unitOfWork(net => {
     const state = net.exportState();
     swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
-    clock.advance(DAY);
+    // Keep at least one day between cases and start each one during New York daytime.
+    const earliest = clock.now() + DAY;
+    const daytime = Math.floor(earliest / DAY) * DAY + 16 * HOUR;
+    clock.set(daytime < earliest ? daytime + DAY : daytime);
     const now = clock.now();
     state.opps = [{ ...swapMatchTemplate, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
     if (state.relay) state.relay.swaps = [];
@@ -210,14 +213,49 @@ async function startNumberSwap(id: string, who: "ari" | "bo") {
 
 test.each([
   "Give him my number if he asks.",
+  "Send him my number. Scratch that. Send it. If he asks.",
   "Give Ari my number if Ari asks.",
   "Give him my number unless he objects.",
   "Give him my number if it's okay with him.",
   "Give him my number if you can, after he asks.",
   "Send him my number. If he asks.",
   "Send him my number, please — if he asks.",
+  "Send him my number whenever he asks.",
+  "Give him my number every time he asks.",
+  "Send him my number each time he requests it.",
+  "Send him my number anytime he asks for it.",
+  "Send him my number. Let me think about it first",
+  "Send him my number. Let me think it over first.",
+  "Send him my number. Hmm idk.",
+  "Send him my number. Lol nevermind he's weird.",
 ])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
   const id = "conditional-swap-" + randomUUID();
+  await resetSwapMatch(id);
+  const before = await sharesQueued();
+  const conditional = await post(await ask("bo", id + "-conditional", text));
+  expect(conditional.status).toBe(200);
+  const requested = await conditional.json();
+  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
+  const counterpart = await post(await ask("ari", id + "-counterpart", "Send Bo my number."));
+  expect(counterpart.status).toBe(200);
+  expect({ requested, pending, counterpart: await counterpart.json(), newShares: await sharesQueued() - before })
+    .toMatchObject({ requested: { decision: "none", delivered: false }, pending: 0,
+      counterpart: { decision: "hold", delivered: false }, newShares: 0 });
+}, 60_000);
+
+test.each([
+  "Send him my number. He can have it if he asks.",
+  "Send him my number. Give it to him if he asks.",
+  "Send him my number. Give it to him when dinner is ready.",
+  "Send him my number. Send it to him after I finish work.",
+  "Send him my number. He can have it once Ari approves.",
+  "Send him my number. Only give it to him if he asks.",
+  "Send him my number. Give it to him on Friday.",
+  "Send him my number. Thanks. Give it to him once I confirm.",
+  "Send him my number. She can have it when she asks.",
+  "Send him my number. He can have it unless he says no.",
+])("a condition in the next sentence cannot arm or complete a signed number swap: %s", async text => {
+  const id = "conditional-next-sentence-" + randomUUID();
   await resetSwapMatch(id);
   const before = await sharesQueued();
   const conditional = await post(await ask("bo", id + "-conditional", text));
@@ -418,9 +456,43 @@ test.each([
   { text: "Send him my photo, Ana said. Please send him my number.", shares: true },
   { text: "Send them my number, she already asked.", shares: true },
   { text: "Send them my number if you can.", shares: true },
+  { text: "Send him my number whenever you can, thanks.", shares: true },
+  { text: "Send him my number every time you can, thanks.", shares: true },
   { text: "Give him my number if it's okay.", shares: true },
   { text: "Send him my number. If he asks where dinner is, the address is on the invite.", shares: true },
   { text: "Send him my number, and if he asks about parking, tell him it's free.", shares: true },
+  { text: "Send him my number now. Whenever he replies, tell me.", shares: true },
+  { text: "Send him my number now. Every time he replies, tell me.", shares: true },
+  { text: "Send him my number now. Every time he reports a problem, tell me.", shares: true },
+  { text: "Send him my number. Give it to him every single time Ari asks.", shares: false },
+  { text: "Send him my number. Oh no, I'm late.", shares: true },
+  { text: "Send him my number now. Lol nevermind dinner, let's make coffee.", shares: true },
+  { text: "Send him my number whenever you can get approval.", shares: false },
+  { text: "Send him my number. Whenever he asks, tell me before you send it.", shares: false },
+  { text: "Send him my number. Every time he asks, tell me before you send it.", shares: false },
+  { text: "Send him my number. Every time he asks, tell me.", shares: false },
+  { text: "Send him my number. Every time he asks, he can have it.", shares: false },
+  { text: "Send him my number. Every time he asks, he can have my photo.", shares: true },
+  { text: "Send him my number. Every time he asks, he can have my photo and my number.", shares: false },
+  { text: "Send him my number. Let me think it over first.", shares: false },
+  { text: "Send him my number. Lemme think.", shares: false },
+  { text: "Send him my number. Let me think for a sec.", shares: false },
+  { text: "Send him my number. Let me think about it some more.", shares: false },
+  { text: "Send him my number. Haha nevermind he's weird.", shares: false },
+  { text: "Send him my number. Ok nevermind about the number.", shares: false },
+  { text: "Send him my number. Ok nevermind about the photo.", shares: true },
+  { text: "Send him my number. Ok nevermind about dinner.", shares: true },
+  { text: "Send him my number. He can have it if he asks.", shares: false },
+  { text: "Send him my number. Give it to him if he asks.", shares: false },
+  { text: "Send him my number. Give it to him when dinner is ready.", shares: false },
+  { text: "Send him my number. Give it to him after dinner.", shares: false },
+  { text: "Send him my number. Send it to him after I finish work.", shares: false },
+  { text: "Send him my number. He can have it once Ari approves.", shares: false },
+  { text: "Send him my number. Give it to him, and tell me if he asks.", shares: true },
+  { text: "Send him my number. Give it to him, and tell me when dinner is ready.", shares: true },
+  { text: "Send him my number. Dinner will be ready after I finish work.", shares: true },
+  { text: "Send him my number. Let me know if he asks.", shares: true },
+  { text: "Send him my number. He asked if he can have it.", shares: true },
   { text: "Send him my number. Don't send my photo. Or my number.", shares: false },
   { text: "Don't send my photo. My number neither. Send him my number.", shares: false },
   { text: "Send him my number. Don't send my photo. Same goes for my cell.", shares: false },
@@ -441,6 +513,39 @@ test.each([
   { text: "Send him my number. Hold on, send it 'to me instead'.", shares: false },
   { text: "Send him my number. Hold on, send him my photo.", shares: false },
   { text: "Send him my number. Hold on, send her my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. I'm running late.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. I'm at work.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. Ok nevermind about the photo.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. Don't send my photo.", shares: true },
+  { text: "Send him my number. Scratch that. Send it, please.", shares: true },
+  { text: "Send him my number. Hold on. Send it.", shares: true },
+  { text: "Send him my number. Scratch that. Send him my number now.", shares: true },
+  { text: "Send him my number. Scratch that. Send him my number now. Tell him I'm running late.", shares: true },
+  { text: "Send him my number. Wait. Actually, send it.", shares: true },
+  { text: "Send him my number. Scratch that. Please send it.", shares: true },
+  { text: "Send him my number. No. Send it.", shares: true },
+  { text: "Send him my number. Scratch that. Hold on, send it.", shares: true },
+  { text: "Send him my number. Scratch that. Send it. Scratch that.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. The photo.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. To me instead.", shares: false },
+  { text: "Send him my number. Scratch that. Ok nevermind about the photo. Send it.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Ok nevermind about my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Ok nevermind about the photo. Or my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Don't send my photo. Or my number.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. I will delay.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. I will get back to you.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. I will do the transfer myself.", shares: false },
+  { text: "Send him my number. Scratch that. Send it if he asks.", shares: false },
+  { text: "Send him my number. Scratch that. Send it?", shares: false },
+  { text: "Send him my number. Scratch that. Send it \"to me instead\".", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Whenever he asks.", shares: false },
+  { text: "Send him my number. Scratch that. I have a photo for him. Send it.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Maybe later.", shares: false },
+  { text: "Send him my number. Scratch that. Send it. Let me think it over first.", shares: false },
+  { text: "Send him my number. Scratch that. Send him my photo.", shares: false },
+  { text: "Send him my number. Never mind. Send it.", shares: false },
+  { text: "Send him my number. Haha nevermind. Send him my number now.", shares: false },
   { text: "Send him my number. Wait.", shares: false },
   { text: "Send him my number. Let me think.", shares: false },
   { text: "Send him my number. Keep it private.", shares: false },

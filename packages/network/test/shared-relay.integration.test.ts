@@ -255,8 +255,18 @@ test("closing the pair or a recipient STOP after classification and the async di
       const pending=post(RELAY_PATH,request);await Promise.race([reached,pending.then(async r=>{throw new Error(`answered before classification: ${await r.clone().text()}`);})]);
       let closedEarly=false;const closing=fixturePair(true).then(()=>{closedEarly=true;});
       await sleep(50);expect(closedEarly).toBe(false);
-      release();await dispatch.atGate;expect(await waitFor(pairClosed)).toBe(true);dispatch.resume();
-      expect(await(await pending).json()).toMatchObject({decision:"pass",delivered:false});await closing;expect(posts).toBe(before);
+      release();
+      const reachedDispatch=await Promise.race([dispatch.atGate.then(()=>true),pending.then(()=>false)]);
+      expect(await waitFor(pairClosed)).toBe(true);
+      dispatch.resume();
+      expect(await(await pending).json()).toMatchObject({decision:"pass",delivered:false});
+      await closing;
+      const [outbound]=await sql`select o.status from platform.inbound i
+        cross join lateral jsonb_each(i.action_receipts) receipt
+        join platform.outbound o on o.id=receipt.value->'response'->>'outboundId'
+        where i.id=${`msg:${request.channel}:${request.messageId}`}`;
+      expect(outbound?.status).toBe(reachedDispatch?"suppressed_ineligible":"expired");
+      expect(posts).toBe(before);
     } finally {classifyGate=undefined;classifyEntered=undefined;release?.();dispatch.resume();}
   }
   for(const scenario of ['close','recipient-stop'] as const) {
@@ -562,8 +572,18 @@ test("a signed photo request respects the intended item and separately preserves
     return response.json();
   };
   for (const [index, text] of [
+    "Send him my photo. Let me think it over first.",
+    "Send him my photo. Lol nevermind the photo.",
+    "Send him my photo. Whenever Ari asks, send it.",
+    "Send him my photo. Scratch that. Send it?",
+    "Send him my photo. Scratch that. Send it. Whenever he asks.",
+    "Send him my photo. Scratch that. Send it. To me instead.",
     "Send him my photo. Don't send my number. Or this photo.",
     "Send him my photo if he asks.",
+    "Send him my photo. He can have it if he asks.",
+    "Send him my photo every time he asks.",
+    "Send him my photo. She can have it any time she approves.",
+    "Send him my photo. Each time he asks, he can have it.",
     "Show him my photo when Pat agrees.",
     "Send Élodie my photo when Élodie asks.",
     "Send him my photo; When Alex asks.",
@@ -611,7 +631,8 @@ test("a signed photo request respects the intended item and separately preserves
   clock.advance(MINUTE);
   expect((await post(TURN_PATH, { ...turn(recipient, "scoped-photo-recipient-ack", "I read the note. Thanks."), app: "slop" })).status).toBe(200);
   const beforeShare = posts;
-  const text = "Don't send him my number. I am unsure what time it is. Please send him my photo when you get a chance. Hold on, send my photo.";
+  const text = "Don't send him my number. I am unsure what time it is. Please send him my photo whenever you get a chance. "
+    + "Hold on, send my photo. Oh no, I'm late. Lol nevermind the number.";
   const messageId = "scoped-photo-share";
   clock.advance(MINUTE / 6);
   const opened = await post(TURN_PATH, { ...turn(sender, messageId, text), app: "slop" });
@@ -624,4 +645,13 @@ test("a signed photo request respects the intended item and separately preserves
   expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: "photo-selection:" + selected.itemId });
   expect(await sql`select status from platform.outbound where id=${`relay:${selected.itemId}`}`).toEqual([{ status: "accepted" }]);
   expect(posts).toBe(beforeShare + 1);
+
+  clock.advance(MINUTE);
+  const renewed = await service.photoRelay.select("slop", person.id, match, upload.value.id, "relay-fixture-v1", true, "fixture-renewed-photo-selection");
+  if (!renewed) throw new Error("Photo fixture renewal selection failed");
+  expect(await service.photoRelay.review(renewed.itemId, staffId, "safe")).toBe(true);
+  expect(await send("scoped-photo-renewed", "Send him my photo. Scratch that. Send it.")).toMatchObject({ decision: "pass", delivered: true });
+  expect(await service.photoRelay.item(renewed.itemId)).toMatchObject({ state: "approved", actionId: "photo-selection:" + renewed.itemId });
+  expect(await sql`select status from platform.outbound where id=${`relay:${renewed.itemId}`}`).toEqual([{ status: "accepted" }]);
+  expect(posts).toBe(beforeShare + 2);
 }, 120_000);
