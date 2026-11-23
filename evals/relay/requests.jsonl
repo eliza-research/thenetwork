@@ -286,8 +286,16 @@
 {"text": "Send him my number. He can have it if he's interested.", "want": "none"}
 {"text": "Send him my number. Give it to him if we both agree.", "want": "none"}
 {"text": "Send him my number. Give it to him, and tell me if he asks.", "want": "contact_share"}
-{"text": "Send him my number. Give it to him when dinner is ready.", "want": "contact_share"}
+{"text": "Send him my number. Give it to him when dinner is ready.", "want": "none"}
 {"text": "Send him my number. Let me know if he asks.", "want": "contact_share"}
 {"text": "Send him my number. Call me when he asks.", "want": "contact_share"}
 {"text": "Send him my number. He asked if he can have it.", "want": "contact_share"}
 {"text": "Send him my number. Tell me if he asks, and give it to him.", "want": "contact_share"}
+{"text": "Send him my photo. Show it to him after work.", "want": "none"}
+{"text": "Send him my number, and give it to him after work.", "want": "none"}
+{"text": "Send him my number. Scratch that. Send it. He can have it once I agree.", "want": "none"}
+{"text": "Send him my number. Ana says he can have it if he asks.", "want": "contact_share"}
+{"text": "Send him my number. Give it to him if he asks, Ana said.", "want": "contact_share"}
+{"text": "Send him my number. My photo gets blurry when he asks me to zoom.", "want": "contact_share"}
+{"text": "Send him my number. Send him my photo if he asks for it.", "want": "contact_share"}
+{"text": "Send Sam my number. Give it to Alex if Alex asks.", "want": "contact_share"}
