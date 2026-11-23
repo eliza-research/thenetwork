@@ -876,6 +876,11 @@ const TRAILING_BOTH_DAY_PAIR = new RegExp(
     + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+both\b`,
   "dgu",
 );
+const TRAILING_EITHER_DAY_PAIR = new RegExp(
+  String.raw`(?:^|[.;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
+    + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+either\b`,
+  "dgu",
+);
 const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
 const EXPLICIT_PAIR_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:either|both) of (?:them|those|these)(?: (?:times|options|slots))?(?: (?:works?|will work)(?: for me)?)?[.!\s]*$/;
 const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
@@ -959,7 +964,7 @@ function probeTimeIsRecurring(text: string, at: number, end: number): boolean {
 function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] {
   const days: TimeMention[] = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
   if (recoverTrailingPair) {
-    for (const pair of text.matchAll(TRAILING_BOTH_DAY_PAIR)) {
+    for (const trailingPair of [TRAILING_BOTH_DAY_PAIR, TRAILING_EITHER_DAY_PAIR]) for (const pair of text.matchAll(trailingPair)) {
       if (!probeChoiceAuthored(text.slice(0, pair.index + 1))) continue;
       const tail = text.slice(pair.index + pair[0].length);
       if (!BOTH_TIME_QUALIFIER.test(tail) && !BOTH_TIME_TAIL.test(tail.split(BOTH_TIME_BOUNDARY, 1)[0]!)) continue;
@@ -1066,7 +1071,7 @@ const ORDINAL_WORD = String.raw`(?:${Object.keys(ORDINAL_POSITION).join("|")})\b
 const ORDINAL_SUFFIX = /^\s+(?:one|option|time|slot)\b/;
 const ORDINAL_ITEM = String.raw`(?:the\s+)?${ORDINAL_WORD}(?:\s+(?:one|option|time|slot)\b)?`;
 const ORDINAL_JOIN = String.raw`(?:\s*(?:,\s*(?:and\s+|or\s+)?|\band\b|\bor\b|&|\/)\s*)`;
-const ORDINAL_AFFIRMATIVE = String.raw`\s+(?:works?|will work|is (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`;
+const ORDINAL_AFFIRMATIVE = String.raw`\s+(?:either\s+)?(?:works?|will work|is (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`;
 const DIRECT_ORDINAL = new RegExp(
   String.raw`(?:^|[.,;!]\s*|\bbut\s+)\s*(?<items>${ORDINAL_ITEM}(?:${ORDINAL_JOIN}${ORDINAL_ITEM})*)(?:(?<affirmative>${ORDINAL_AFFIRMATIVE})|(?=${OFFERED_TIME_REFUSAL}))`,
   "dg",
@@ -1383,6 +1388,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       return probeChoiceAuthored(t.slice(0, cue.index!));
     });
     if (bothCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
+    const eitherCues = weakCues.filter(cue => {
+      if (cue.index! >= weakLimit || !cue[0].startsWith("either")) return false;
+      return probeChoiceAuthored(t.slice(0, cue.index!));
+    });
+    if (eitherCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
     const namesPair = bothCues.some(cue => {
       const clause = clauseAt(t, cue.index!, cue[0].length);
       if (pickedClauses.has(clause) && BOTH_TIME_LEAD.test(clause)) return true;
