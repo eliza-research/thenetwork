@@ -16,6 +16,8 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 
 ```quint
 // quint-check: max-steps=25 max-samples=10000 verify-steps=3
+// quint-witness: witness_bothNumbersGo swapBothAskTest
+// quint-witness: witness_deferredFlushed deferredTextFlushedTest
 //
 // Relay between two matched members (PRD 40.5; AGENTS.md founder decision 9 and "Relay (#7)").
 // Module plan: docs/research/2026-11-07-state-machines.md section 6.8. Findings: docs/research/quint-findings/relay.md.
@@ -967,7 +969,17 @@ module relay {
       .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
       .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
       .then(queueSend("a1")).then(queueSend("b2"))
-      .expect(numberSent("A") and numberSent("B") and safety)
+      .expect(safety)
+      .expect(not(witness_bothNumbersGo))
+
+  run deferredTextFlushedTest =
+    init
+      .then(setQuiet("B", true))
+      .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(answer("a1"))
+      .expect(desk.deferred.exists(s => s.key == "a1"))
+      .then(setQuiet("B", false)).then(tickFlush(Set())).then(queueSend("a1"))
+      .expect(safety)
+      .expect(not(witness_deferredFlushed))
 
   // The reader found a qualified contact request and separately an explicit text relay. The
   // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.
@@ -988,7 +1000,7 @@ module relay {
   run namedPrivateRecipientMismatchKeepsSwapPendingTest =
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
-      .then(claim("b1", "share")).then(commitPrivateRecipientMismatch("b1", true, false)).then(answer("b1"))
+      .then(claim("b1", "share")).then(commit("b1", "pass", "wrongRecipient")).then(answer("b1"))
       .expect(ep.receipt.get("b1") == "completed" and desk.swaps.exists(sw => sw.src == "A")
         and not(numberPending("A")) and not(numberPending("B")) and safety)
       .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
