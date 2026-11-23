@@ -672,13 +672,33 @@ function retractsPrivateSentence(sentence: string, source: string, request: RegE
     || !PRIVATE_RELAY_COURTESY.test(rest.slice(renewal.index! + renewal[0].length));
 }
 
+function renewsPrivateSentence(sentence: string, source: string, request: RegExpMatchArray): boolean {
+  if (LATE_PRIVATE_RETRACTION_LEAD.exec(sentence) !== null) return !retractsPrivateSentence(sentence, source, request);
+  const head = /^(?:(?:actually|wait|sorry|please|pls|yes|yeah|yep|ok|okay|sure|just|no)[,\s:]+)*/i.exec(sentence.trim())!;
+  const rest = sentence.trim().slice(head[0].length);
+  const repeated = [...rest.matchAll(CONTACT_REQ), ...rest.matchAll(PHOTO_REQ)]
+    .find(candidate => candidate[0].toLowerCase() === request[0].toLowerCase());
+  const requestedItem = PRIVATE_RELAY_ITEM.exec(request[0].toLowerCase())?.[0];
+  const renewal = repeated ?? [...rest.matchAll(RENEW_PRIVATE_ITEM)].find(candidate => {
+    const item = candidate[1]!.toLowerCase();
+    return item === "it" || item === requestedItem;
+  });
+  return !!renewal && DIRECT_RELAY_LEAD.test(rest.slice(0, renewal.index!))
+    && PRIVATE_RELAY_COURTESY.test(rest.slice(renewal.index! + renewal[0].length));
+}
+
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
-  if (LATE_ORPHAN_QUESTION.test(tail) || [...tail.matchAll(RELAY_SENTENCE_TEXT)].some(part => {
+  if (LATE_ORPHAN_QUESTION.test(tail)) return true;
+  let retracted = false;
+  for (const part of tail.matchAll(RELAY_SENTENCE_TEXT)) {
     const start = end + part.index!;
-    return retractsPrivateSentence(part[0], source.slice(start, start + part[0].length), request);
-  })) return true;
+    const sentenceSource = source.slice(start, start + part[0].length);
+    if (retractsPrivateSentence(part[0], sentenceSource, request)) retracted = true;
+    else if (renewsPrivateSentence(part[0], sentenceSource, request)) retracted = false;
+  }
+  if (retracted) return true;
   return privateRequests.some(candidate => {
     if (candidate.index! < end || candidate[0].toLowerCase() === request[0].toLowerCase() || reportsPrivateRequest(text, candidate)) return false;
     const lead = text.slice(end, candidate.index!).split(RELAY_SENTENCE).at(-1)!;
