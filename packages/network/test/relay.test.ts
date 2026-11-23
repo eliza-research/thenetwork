@@ -236,6 +236,7 @@ test.each([
   ["Yes, send it “to Sam”.", "none"],
   ["Please send him my number. Directly to Sam.", "none"],
   ["Please send Ari my number. To be clear, I'll be there at seven. To Sam.", "none"],
+  ["Please send Ari my number. To be clear, tell them I'll be there at seven. To Sam.", "none"],
   ["Yes, send it to Herman.", "block"],
   ["Yes, send it to Ari9.", "none"],
   ["Yes, send it (to Sam).", "none"],

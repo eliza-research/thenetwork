@@ -901,12 +901,16 @@ function privateCourtesy(sentence: string): boolean {
     || (polite !== null && PRIVATE_RELAY_COURTESY.test(words.slice(polite[0].length)));
 }
 
+function normalizeRelayStatement(statement: string): string {
+  return statement.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are")
+    .replace(/^(i|we)'ve\b/u, "$1 have");
+}
+
 function independentRenewalFollowup(sentence: string): boolean {
   const words = sentence.trim().toLowerCase();
   if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
   const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
-  const body = envelope?.at(-1) ?? words;
-  const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+  const statement = normalizeRelayStatement(envelope?.at(-1) ?? words);
   if (!envelope) return INDEPENDENT_RENEWAL_STATUS.test(statement);
   return PRIVATE_CONDITION_STATEMENT.test(statement) && !PRIVATE_CONDITION_ITEM_NAME.test(statement)
     && !PRIVATE_RELAY_ACTION.test(statement) && !PRIVATE_RELAY_UNCERTAIN.test(statement)
@@ -916,12 +920,14 @@ function independentRenewalFollowup(sentence: string): boolean {
 function detachedRelayStatement(after: string): boolean {
   const lead = /^\s*\.\s*(?:to be clear|with that settled),\s*/iu.exec(after);
   if (!lead) return false;
-  const statement = after.slice(lead[0].length).trim().replace(/[.!]+$/, "").toLowerCase();
-  if (independentRenewalFollowup(statement)) return true;
+  // The exception applies only to a complete standalone status and its optional time.
+  const statement = normalizeRelayStatement(after.slice(lead[0].length).trim().replace(/[.!]+$/, "").toLowerCase());
+  if (INDEPENDENT_RENEWAL_STATUS.test(statement)) return true;
   const timeAt = statement.lastIndexOf(" at ");
+  if (timeAt < 0) return false;
   const timing = statement.slice(timeAt);
-  return timeAt >= 0 && LINKED_PRIVATE_TIME.exec(timing)?.[0] === timing
-    && independentRenewalFollowup(statement.slice(0, timeAt));
+  return LINKED_PRIVATE_TIME.exec(timing)?.[0] === timing
+    && INDEPENDENT_RENEWAL_STATUS.test(statement.slice(0, timeAt));
 }
 
 function relayRecipientIsComplete(text: string, request: RegExpMatchArray, trailingRecipient: string | undefined): boolean {
