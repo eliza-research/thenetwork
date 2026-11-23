@@ -151,6 +151,7 @@
 {"text": "Send him my number. Cancel.", "want": "none"}
 {"text": "Send him my photo. On second thought.", "want": "none"}
 {"text": "Send him my number. Let me think.", "want": "none"}
+{"text": "Send him my number. Lol nevermind he's weird.", "want": "none"}
 {"text": "Send him my number. Keep it private.", "want": "none"}
 {"text": "Send him my photo. Reconsidering.", "want": "none"}
 {"text": "Send him my number. Ugh actually.", "want": "none"}
@@ -211,6 +212,7 @@
 {"text": "Send him my photo. Wait, send it, she said.", "want": "none"}
 {"text": "Send him my photo. 🚫📸 I'll show him myself.", "want": "none"}
 {"text": "give him my number if he asks", "want": "none"}
+{"text": "send him my number whenever he asks", "want": "none"}
 {"text": "send them my number if they ask for it", "want": "none"}
 {"text": "share my number with him if he wants it", "want": "none"}
 {"text": "give her my number only if she asks", "want": "none"}
@@ -255,3 +257,18 @@
 {"text": "Send him my photo.\nIf he wants recommendations on coffee, let me know.", "want": "photo"}
 {"text": "Send him my number, and if he asks about parking, tell him it's free.", "want": "contact_share"}
 {"text": "Send him my number, and if he asks about parking, tell him my number.", "want": "none"}
+{"text": "Send him my number. Scratch that. Send it.", "want": "contact_share"}
+{"text": "Send him my number. Hold on. Send it.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that. Send him my number now.", "want": "contact_share"}
+{"text": "Send him my number. Wait. Actually, send it.", "want": "contact_share"}
+{"text": "Send him my photo. Scratch that. Send it.", "want": "photo"}
+{"text": "Send him my number. Scratch that. Please send it.", "want": "contact_share"}
+{"text": "Send him my number. No. Send it.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that. Hold on, send it.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that. Send it. Scratch that.", "want": "none"}
+{"text": "Send him my number. Scratch that. Send it if he asks.", "want": "none"}
+{"text": "Send him my number. Scratch that. Send him my photo.", "want": "none"}
+{"text": "Send him my number. Scratch that. Ana said send it.", "want": "none"}
+{"text": "Send him my number. Scratch that. Send it, she said.", "want": "none"}
+{"text": "Send him my number. Scratch that. No, don't send it.", "want": "none"}
+{"text": "Send him my number. Never mind. Send it.", "want": "none"}
