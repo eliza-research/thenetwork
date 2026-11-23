@@ -446,3 +446,10 @@
 {"text": "Yes, send it to Ari Smith.", "want": "none"}
 {"text": "Yes, send it to my match.", "want": "contact_share"}
 {"text": "Tell Ari I am running late. Please send my number to Ari9.", "want": "none"}
+{"text": "Tell Ari I will be there tomorrow. Please send my number to Ari9.", "want": "none"}
+{"text": "Tell Ari I will be there tomorrow. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ari I will be there tomorrow at seven. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ari I will be there tomorrow. Please send Ari my number tomorrow.", "want": "text"}
+{"text": "Tell Ari to send it. Please send Ari my number if he asks.", "want": "none"}
+{"text": "Tell Ari “Send it.” Please send Ari my number if he asks.", "want": "text"}
+{"text": "Tell Ari I will be there tomorrow. Wait for Ari to agree. Share my number with Ari.", "want": "none"}

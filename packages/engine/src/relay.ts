@@ -466,7 +466,8 @@ export type RelayRequest =
 
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|rather not|hold off|wait (?:to|before)|not until)\b/;
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
-const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
+const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:should i|or not)\b/;
+const PRIVATE_TIMING_HEDGE = /\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b/iu;
 const RELAY_NAME = String.raw`(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\b)\p{L}[\p{L}'-]{1,30}`;
 const PRIVATE_RELAY_RECIPIENT = String.raw`(?:my (?:match|date)|${RELAY_NAME})`;
 const OTHER = String.raw`(?:them|him|her|${PRIVATE_RELAY_RECIPIENT})`;
@@ -964,6 +965,21 @@ function detachedRelayStatement(after: string): boolean {
     && independentRenewalFollowup(statement.slice(0, timeAt));
 }
 
+function privateRelayTimingIsUncertain(text: string, ordinaryBody: { start: number; end: number } | undefined): boolean {
+  if (!ordinaryBody) return PRIVATE_TIMING_HEDGE.test(text);
+  if (PRIVATE_TIMING_HEDGE.test(text.slice(0, ordinaryBody.start)) || PRIVATE_TIMING_HEDGE.test(text.slice(ordinaryBody.end))) return true;
+  // Only an ordinary scheduling statement can speak about a different time from the private transfer.
+  return text.slice(ordinaryBody.start, ordinaryBody.end).split(RELAY_SENTENCE).some(sentence => {
+    if (!PRIVATE_TIMING_HEDGE.test(sentence)) return false;
+    const status = sentence.toLowerCase().replace(PRIVATE_TIMING_HEDGE, "").trim().replace(/\s+/g, " ")
+      .replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+    if (INDEPENDENT_RENEWAL_STATUS.test(status)) return false;
+    const timeAt = status.lastIndexOf(" at ");
+    const time = status.slice(timeAt);
+    return !(timeAt >= 0 && LINKED_PRIVATE_TIME.exec(time)?.[0] === time && INDEPENDENT_RENEWAL_STATUS.test(status.slice(0, timeAt)));
+  });
+}
+
 function relayRecipientIsComplete(text: string, request: RegExpMatchArray, trailingRecipient: string | undefined): boolean {
   const after = text.slice(request.index! + request[0].length);
   if (UNPARSED_RELAY_DESTINATION.test(after) && !detachedRelayStatement(after)) {
@@ -1079,6 +1095,7 @@ export function parseRelayRequest(text: string): RelayRequest {
   if (markedEnvelope?.[1]!.toLowerCase() === "let" && !markedEnvelope[3]) return { kind: "none" };
   const envelope = markedEnvelope ?? TEXT_REQ.exec(afterModal);
   let ordinaryText: Extract<RelayRequest, { kind: "text" }> | undefined;
+  let ordinaryBody: { start: number; end: number } | undefined;
   let delegatedPrivate = false;
   let independentNumber = false;
   let leadingCondition = false;
@@ -1108,7 +1125,10 @@ export function parseRelayRequest(text: string): RelayRequest {
     const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(message);
     const body = (modal && declarative ? message.replace(/\?$/, "") : message).trim();
     const target = envelope[2]!;
-    if (body) ordinaryText = { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
+    if (body) {
+      ordinaryText = { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
+      if (end !== undefined) ordinaryBody = { start: bodyStart - start, end: bodyStart - start + end };
+    }
     if (ordinaryText && relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, false, false, false, false)) return ordinaryText;
   }
 
@@ -1123,7 +1143,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
       privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
     const priorCondition = priorSentenceConditionsShare(t.slice(start), privateRequest, !!contact);
-    const uncertain = leadingCondition || HEDGE.test(low) || uncertainPrivateTransfer(clauses)
+    const uncertain = leadingCondition || HEDGE.test(low) || privateRelayTimingIsUncertain(spoken, ordinaryBody) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
       || question || privateShareQualified(spoken, privateRequest)
       || priorCondition;
@@ -1135,8 +1155,8 @@ export function parseRelayRequest(text: string): RelayRequest {
       const body = ordinaryText.body.toLowerCase();
       const numberWithdrawn = !!contact && refused && withdrawsRelaySwap(t);
       const containsPrivateInstruction = priorCondition || (PRIVATE_CONDITION_ITEM_NAME.test(body) && PRIVATE_RELAY_ACTION.test(body))
-        || (numberWithdrawn && (withdrawsRelaySwap(body)
-          || relayClauses(ownRelayWords(body)).some(clause => PRIVATE_RELAY_REFERENCE.test(clause.trim()))));
+        || relayClauses(ownRelayWords(body)).some(clause => PRIVATE_RELAY_REFERENCE.test(clause.trim()))
+        || (numberWithdrawn && withdrawsRelaySwap(body));
       if (relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, uncertain, refused, containsPrivateInstruction, numberWithdrawn)) return ordinaryText;
     }
     if (!privateRelayRequestAllowed(refused, uncertain) || !relayRecipientIsComplete(t.slice(start), privateRequest, trailingRecipient)) {
