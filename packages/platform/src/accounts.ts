@@ -27,7 +27,7 @@ import {
   initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
 } from "../../core/src/generated/phoneChange.ts";
 import { joinConsentEvidenceAllowed, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
-import { validAge } from "../../core/src/policy.ts";
+import { canJoin, validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
@@ -178,7 +178,8 @@ export interface AccountHooks {
   profileAges?(text: string): number[];
 }
 
-export interface Who { e164: string; personId: string | null }
+/** `session`: the token hash of the web session that acts (a web join binds only that session to the person). */
+export interface Who { e164: string; personId: string | null; session?: string }
 
 /** The public shape of a membership: this app only. */
 export const publicMembership = (m: Membership | undefined) =>
@@ -193,6 +194,8 @@ export class Accounts {
   private now() { return (this.opts.now ?? Date.now)(); }
   private get hooks() { return this.opts.hooks ?? {}; }
   phoneHash(e164: string) { return keyedHash(this.opts.hashKey, `phone:${e164}`); }
+  /** The key of the number's one-time Eliza notice row (platform.eliza_notices). */
+  noticeHash(e164: string) { return keyedHash(this.opts.hashKey, `eliza_notice:${e164}`); }
 
   /** Private connector receipt key. Keep the approved profile text out of OAuth storage. */
   profileSubmissionFingerprint(app: AppId, grantId: string, profile: string): string {
@@ -258,7 +261,6 @@ export class Accounts {
     if (!ph || ph.hold === null) return false;
     if (decision === "same_owner") {
       await this.store.setPhoneHold(e164, null, at);
-      await this.store.touchPhone(e164, at);
       return true;
     }
     for (const m of await this.store.memberships(ph.personId)) {
@@ -334,7 +336,8 @@ export class Accounts {
       const policy = blocked ? "MoveBlocked" : await this.store.findPhone(newE164) ? "NumberTaken" : "MoveAllowed";
       const allowed = stepPhoneChange(verified, { type: "checkMovePolicy", policy });
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
-      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), now: () => this.now() });
+      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164),
+        oldNoticeHash: this.noticeHash(who.e164), newNoticeHash: this.noticeHash(newE164), now: () => this.now() });
       const moveResult = {
         ok: "MoveApplied", number_in_use: "MoveNumberTaken", no_phone: "MoveMissingPhone", banned: "MoveBanned",
         stale_request: "MoveRequestStale",
@@ -393,9 +396,16 @@ export class Accounts {
     }
   }
 
-  /** A new person for a verified phone (or the tombstone of this phone's earlier person, revived). */
-  createPerson(e164: string, method: PhoneMethod, lowestAge: number | null) {
-    return this.store.createPerson({ id: randomUUID(), e164, method, at: this.now(), lowestAge, phoneHash: this.phoneHash(e164) });
+  /**
+   * A new person for a verified phone (or the tombstone of this phone's earlier person, revived). Web
+   * sessions of the number with no person end, except `session` (the web join's own): one of them may
+   * belong to an earlier holder of the number, and it must never act for this person.
+   */
+  async createPerson(e164: string, method: PhoneMethod, lowestAge: number | null, session: string | null = null) {
+    const at = this.now();
+    const person = await this.store.createPerson({ id: randomUUID(), e164, method, at, lowestAge, phoneHash: this.phoneHash(e164) });
+    await this.store.bindSessions(e164, person.id, session, at);
+    return person;
   }
 
   /**
@@ -478,13 +488,19 @@ export class Accounts {
     const ageCheck = stepEnrollment(membershipCheck, { type: "checkJoinAge", ageEligible: age.ok });
     if (ageCheck.phase === "BelowJoinAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
+      // A number with no person keeps no web session either (the session row holds the number in plain text).
       if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
+      await this.declineUnderAge(who.e164, person);
+      if (!person) await this.store.forgetPersonlessSessions(who.e164);
       return { ok: false, error: "under_age" };
     }
-    if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing, created: false };
+    if (ageCheck.phase === "ReturnExisting" && existing) {
+      if (who.session && who.personId === null && person) await this.store.bindSessions(who.e164, person.id, who.session, at);
+      return { ok: true, membership: existing, created: false };
+    }
     if (ageCheck.phase === "InvalidInvitation") return { ok: false, error: "invalid_invitation" };
     if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
-    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge);
+    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge, who.session ?? null);
     await this.recordAge(who.e164, person, statedAge);
     const membership: Membership = {
       // An invited membership keeps its member id (the invite may already name it).
@@ -495,9 +511,12 @@ export class Accounts {
       joinedAt: at, leftAt: null,
     };
     const referredJoin = ageCheck.referred && referral;
+    const suppressed = !referredJoin && await this.store.isSuppressed(this.phoneHash(who.e164));
     if (!referredJoin) {
       const consent = { e164: who.e164, app: app.id, state: "opted_in" as const, source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
-      if (!await this.store.admitMembership(membership, consent, this.phoneHash(who.e164))) return { ok: false, error: "review" };
+      if (!await this.store.admitMembership(membership, consent, this.phoneHash(who.e164), who.session ?? null)) return { ok: false, error: "review" };
+    } else {
+      await this.store.bindSessions(who.e164, person.id, who.session ?? null, at);
     }
     let hook: { ok: true } | { ok: false; error: unknown };
     try {
@@ -515,8 +534,13 @@ export class Accounts {
       if (referredJoin) {
         if (hook.error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
       } else {
-        await this.store.forgetMembership(person.id, app.id, at, membership.memberId);
-        await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
+        try {
+          await this.hooks.onForget?.({ app, personId: person.id, memberId: membership.memberId, e164: who.e164 }, "leave");
+        } finally {
+          await this.store.forgetMembership(person.id, app.id, at, membership.memberId);
+          await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
+          if (suppressed) await this.store.suppress(this.phoneHash(who.e164), "deleted", at);
+        }
       }
       throw hook.error;
     }
@@ -527,17 +551,37 @@ export class Accounts {
   /** The site's stop button: every app on this number (PRD 40.3), unless PLATFORM_STOP_SCOPE=app. */
   async stop(app: AppInfo, who: Who, source = "web_form"): Promise<void> {
     const scope = stopScope(this.opts.env);
-    await this.store.addConsent({ e164: who.e164, app: scope === "global" ? null : app.id, state: "opted_out", source, at: this.now() });
+    // The person is read first: a number change that commits before the write below does not lose the STOP.
+    const person = await this.personFor(who.e164);
+    await this.store.addConsent({ e164: who.e164, app: scope === "global" ? null : app.id, state: "opted_out", source, at: this.now() }, person?.id);
     // The ledger above is what the send path reads. The hooks pause the person's members: on a global
     // stop every app's, even when the person has no membership on the app they stopped from.
-    const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
     const live = m && m.state !== "removed" ? m : undefined;
     if (person && (live || scope === "global")) await this.hooks.onStop?.({ app, personId: person.id, memberId: live?.memberId, e164: who.e164, scope });
   }
 
-  /** Record any consent event (keywords on a line, staff). */
-  async recordConsent(e: ConsentEvent) { await this.store.addConsent(e); }
+  /**
+   * Under 13 cannot use any app (core canJoin): when the phone's lowest age is under 13, a text join the
+   * phone started (its pending row) is deleted, and every non-removed membership of the person goes
+   * through the forget path with an opt-out in the ledger.
+   */
+  async declineUnderAge(e164: string, person: Person | undefined): Promise<void> {
+    const lowest = await this.lowestAge(e164, person);
+    if (lowest === undefined || canJoin(lowest)) return;
+    await this.store.deletePending(this.phoneHash(e164), "join");
+    if (!person) return;
+    const at = this.now();
+    for (const m of await this.store.memberships(person.id)) {
+      if (m.state === "removed") continue;
+      await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164 }, "account_erasure");
+      await this.store.forgetMembership(person.id, m.app, at, m.memberId);
+      await this.store.addConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
+    }
+  }
+
+  /** Record any consent event (keywords on a line, staff). `personId`: see PeopleStore.addConsent. */
+  async recordConsent(e: ConsentEvent, personId?: string) { await this.store.addConsent(e, personId); }
 
   /**
    * True if the number may get messages from this app now. A number that deleted everything has no
