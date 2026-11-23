@@ -311,7 +311,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHost(u.hostname))) throw new Error(`the issuer for ${a.id} must be https (http only on a loopback host)`);
     if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
   }
-  const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
+  const secureCookies = (a: McpApp) => new URL(issuerOf(a)).protocol === "https:";
   const browserCookie = (a: McpApp) => secureCookies(a) ? "__Host-mcp_auth" : `mcp_auth_${a.id}`;
   let lastSweep = 0;
 

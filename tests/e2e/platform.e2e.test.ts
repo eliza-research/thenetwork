@@ -898,13 +898,15 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         if (!rid) throw new Error(`Missing pending request for ${app}`);
         pending.push({ app, rid });
       }
-      const first = pending[0]!;
+      const first = pending[0]!, second = pending[1]!;
       const pendingCookie = browser.jar.get(`mcp_auth_${first.app}`);
       if (!pendingCookie) throw new Error("Missing loopback authorization cookie");
       const legacyBrowser = new Browser();
       legacyBrowser.jar.set("mcp_auth", pendingCookie);
       const legacyRetry = await st.site(first.app, `/oauth/retry?rid=${first.rid}`, { browser: legacyBrowser });
       expect((await legacyRetry.text()).includes('action="/oauth/authorize/phone"')).toBe(true);
+      expect((await st.site(second.app, `/oauth/retry?rid=${first.rid}`, { browser: legacyBrowser })).status).toBe(400);
+      expect((await st.site(second.app, `/oauth/retry?rid=${second.rid}`, { browser: legacyBrowser })).status).toBe(400);
 
       for (const { app, rid } of pending) {
         const retry = await st.site(app, `/oauth/retry?rid=${rid}`, { browser });
