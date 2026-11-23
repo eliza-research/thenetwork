@@ -853,6 +853,7 @@ const DAY_NAMES = [
   ["Thursday", "thu|thur|thurs"], ["Friday", "fri"], ["Saturday", "sat"],
 ] as const;
 const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|works?\b|`
+  + String.raw`doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|can'?t\b|cannot\b|wouldn'?t\b|would not\b|isn'?t\b|is not\b|aren'?t\b|are not\b|is bad\b|`
   + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
 const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
