@@ -545,24 +545,37 @@ const uncertainPrivateTransfer = (clauses: readonly string[]): boolean => clause
 
 const INCOMPLETE_SHARE_REFUSAL = new RegExp(SHARE_NEG.source + "\\s*$");
 const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
-const RELAY_SENTENCE = /[.!?;…\n]+/;
+const RELAY_SENTENCE_MARKS = String.raw`.!?;…\n`;
+const RELAY_SENTENCE = new RegExp(`[${RELAY_SENTENCE_MARKS}]+`);
+const RELAY_SENTENCE_TEXT = new RegExp(`[^${RELAY_SENTENCE_MARKS}]+`, "g");
 const PRIVATE_RELAY_OBJECT = String.raw`(?:(?:(?:my|the|this|that|these|a|any)\s+)?(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})|it|this|that|them|either|both|anything(?:\s+else)?)`;
 const CONTINUES_PRIVATE_REFUSAL = new RegExp(
   String.raw`^\s*(?:(?:or|nor|neither)\b|(?:and|also|not|same(?:\s+goes)?\s+(?:for|with))\s+${PRIVATE_RELAY_OBJECT}\b|` +
   String.raw`(?:nothing else|likewise|${PRIVATE_RELAY_OBJECT}\s+(?:either|neither|too|as well))\s*$)`,
   "u",
 );
-const RELAY_RETRACTION = "no|wait|scratch that|cancel(?: that)?|take that back|(?:hold|hang) on|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
+const RELAY_SHORT_RETRACTION = "no|wait|cancel|(?:hold|hang) on";
+const RELAY_EXPLICIT_RETRACTION = "scratch that|cancel that|take that back|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
 const RELAY_LATE_DOUBT = "maybe|hmm|idk|(?:i(?:'m| am) )?(?:not ready|reconsidering)|on second thought|let me think|ugh actually";
 const RELAY_STOP_SYMBOL = String.raw`[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*`;
 const RELAY_ITEM_SYMBOL = String.raw`[📞📸][\p{M}]*`;
+const RELAY_MARKED_STOP = String.raw`(?:${RELAY_STOP_SYMBOL}(?:\s*${RELAY_ITEM_SYMBOL})?|${RELAY_ITEM_SYMBOL}\s*${RELAY_STOP_SYMBOL})`;
 const LATE_PRIVATE_RETRACTION = new RegExp(
-  String.raw`^[,\s–—]*(?:(?:actually|wait|sorry)[,\s]+)?(?:${RELAY_RETRACTION}|${RELAY_LATE_DOUBT}|` +
-  String.raw`(?:(?:${RELAY_STOP_SYMBOL}(?:\s*${RELAY_ITEM_SYMBOL})?|${RELAY_ITEM_SYMBOL}\s*${RELAY_STOP_SYMBOL})\s*)+)` +
+  String.raw`^[,\s–—]*(?:(?:actually|wait|sorry)[,\s]+)?(?:${RELAY_SHORT_RETRACTION}|${RELAY_EXPLICIT_RETRACTION}|${RELAY_LATE_DOUBT}|` +
+  String.raw`(?:${RELAY_MARKED_STOP}\s*)+)` +
   String.raw`(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$`,
   "iu",
 );
 const LATE_ORPHAN_QUESTION = /[.!;…\n][ \t]*\?{2,}[ \t]*(?=$|[.!;…\n])/u;
+// Short cues need punctuation to mark a retraction. "Wait in the lobby" is a different request.
+const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
+  String.raw`^[,\s–—]*(?:and\s+)?(?:(?:actually|wait|sorry)[,\s]+)?(?:(?:${RELAY_SHORT_RETRACTION}|${RELAY_LATE_DOUBT})\s*[,;:–—]\s*|` +
+  String.raw`(?:${RELAY_EXPLICIT_RETRACTION})[,;:\s–—]+)`,
+  "iu",
+);
+const LATE_PRIVATE_STOP_LEAD = new RegExp(String.raw`^[,\s–—]*${RELAY_MARKED_STOP}[,;:\s–—]+`, "u");
+const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
+const RENEW_PRIVATE_END = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -614,10 +627,31 @@ function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean
   return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
 }
 
-function retractsPrivateRequest(text: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
+function retractsPrivateSentence(sentence: string, source: string, request: RegExpMatchArray): boolean {
+  if (LATE_PRIVATE_RETRACTION.test(sentence) || LATE_PRIVATE_STOP_LEAD.test(sentence)) return true;
+  const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence);
+  if (lead === null) return false;
+  // Quotation masking must not turn a partial repeat into a complete request.
+  if (sentence !== source) return true;
+  const rest = sentence.slice(lead[0].length);
+  const repeated = [...rest.matchAll(CONTACT_REQ), ...rest.matchAll(PHOTO_REQ)]
+    .find(candidate => candidate[0].toLowerCase() === request[0].toLowerCase());
+  const requestedItem = PRIVATE_RELAY_ITEM.exec(request[0].toLowerCase())?.[0];
+  const renewal = repeated ?? [...rest.matchAll(RENEW_PRIVATE_ITEM)].find(candidate => {
+    const item = candidate[1]!.toLowerCase();
+    return item === "it" || item === requestedItem;
+  });
+  return !renewal || !DIRECT_RELAY_LEAD.test(rest.slice(0, renewal.index!))
+    || !RENEW_PRIVATE_END.test(rest.slice(renewal.index! + renewal[0].length));
+}
+
+function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
-  if (LATE_ORPHAN_QUESTION.test(tail) || tail.split(RELAY_SENTENCE).some(sentence => LATE_PRIVATE_RETRACTION.test(sentence))) return true;
+  if (LATE_ORPHAN_QUESTION.test(tail) || [...tail.matchAll(RELAY_SENTENCE_TEXT)].some(part => {
+    const start = end + part.index!;
+    return retractsPrivateSentence(part[0], source.slice(start, start + part[0].length), request);
+  })) return true;
   return privateRequests.some(candidate => {
     if (candidate.index! < end || candidate[0].toLowerCase() === request[0].toLowerCase() || reportsPrivateRequest(text, candidate)) return false;
     const lead = text.slice(end, candidate.index!).split(RELAY_SENTENCE).at(-1)!;
@@ -681,7 +715,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses) || question || privateShareQualified(spoken, privateRequest);
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
-      || retractsPrivateRequest(spoken, privateRequest, [...contacts, ...photos])
+      || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos])
       || (!!contact && refusesNumberSwap(low, clauses));
     if (!privateRelayRequestAllowed(refused, uncertain)) return { kind: "none" };
     return { kind: contact ? "contact_share" : "photo" };

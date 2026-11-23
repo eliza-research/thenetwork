@@ -217,3 +217,37 @@
 {"text": "Scratch that. Send him my number.", "want": "contact_share"}
 {"text": "Send him my number. Ana says, scratch that.", "want": "contact_share"}
 {"text": "Send him my photo, Ana said. Please send him my number.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that, I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, let me ask him first.", "want": "none"}
+{"text": "Send him my number. Wait, I changed my mind, I'll text him myself.", "want": "none"}
+{"text": "Send him my number. Cancel that, I need to check with him first.", "want": "none"}
+{"text": "Send him my photo. Scratch that, I'll show him in person.", "want": "none"}
+{"text": "Send him my number, scratch that, I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, send it.", "want": "contact_share"}
+{"text": "Send him my number. Wait, send it now.", "want": "contact_share"}
+{"text": "Send him my number. Hold on, SEND IT!", "want": "contact_share"}
+{"text": "Send him my number. Hold on, send it, no rush.", "want": "contact_share"}
+{"text": "Send him my number. Hold on, please send him my number now.", "want": "contact_share"}
+{"text": "Please send him my photo. Hold on, send my photo.", "want": "photo"}
+{"text": "Send him my photo. Hold on, send him my photo now.", "want": "photo"}
+{"text": "Send him my number. No worries.", "want": "contact_share"}
+{"text": "Send him my number. No rush at all.", "want": "contact_share"}
+{"text": "Send him my number. No problem on my end.", "want": "contact_share"}
+{"text": "Send him my number. Wait in the lobby till I get there.", "want": "contact_share"}
+{"text": "Send him my number. Hold on to the receipt.", "want": "contact_share"}
+{"text": "Send him my number. Cancel my dinner reservation.", "want": "contact_share"}
+{"text": "Send him my number. Maybe he already has the restaurant address.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that because I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, I'll send it myself.", "want": "none"}
+{"text": "Send him my number. Hold on, Ana said send it.", "want": "none"}
+{"text": "Send him my number. Hold on, \"send it\".", "want": "none"}
+{"text": "Send him my number. Hold on, maybe send it.", "want": "none"}
+{"text": "Send him my number. Hold on, send it if he asks.", "want": "none"}
+{"text": "Send him my number. Hold on, send it 'to me instead'.", "want": "none"}
+{"text": "Send him my number. Hold on, send him my photo.", "want": "none"}
+{"text": "Send him my number. Hold on, send her my number.", "want": "none"}
+{"text": "Send him my photo. Scratch that, I'll show it to him in person.", "want": "none"}
+{"text": "Send him my photo. Hold on, send him my number.", "want": "none"}
+{"text": "Send him my photo. Hold on, send my photo to her.", "want": "none"}
+{"text": "Send him my photo. Wait, send it, she said.", "want": "none"}
+{"text": "Send him my photo. 🚫📸 I'll show him myself.", "want": "none"}
