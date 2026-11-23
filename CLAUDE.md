@@ -13,7 +13,7 @@ accepted merges and pays after maintainer review. There is no escrow.
 ## Before you start
 
 1. Star and fork the repository with the contributor's own GitHub account.
-   Open every PR from your fork into `develop`, the repository's main branch.
+   Open every PR from your fork into `vibestack`, the repository's main branch.
 2. Read the [product specification](spec/product/README.md) and the affected
    Vibestack stories and rules. The product specification owns launch scope.
    The [founder decision history](spec/product/source/founder-decisions.md)
