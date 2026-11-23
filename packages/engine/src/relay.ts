@@ -520,7 +520,17 @@ const CONTINUES_PRIVATE_REFUSAL = new RegExp(
   String.raw`^\s*(?:(?:or|nor|neither)\b|(?:and|also|not|same\s+(?:for|with))\s+${PRIVATE_RELAY_OBJECT}\b|${PRIVATE_RELAY_OBJECT}\s+(?:either|neither|too|as well)\s*$)`,
   "u",
 );
-const LATE_PRIVATE_RETRACTION = /^[,\s–—]*(?:(?:actually|wait|sorry)[,\s]+)?(?:no|wait|scratch that|cancel that|take that back|hold on|never ?mind|nvm|i(?:'ve| have)? changed my mind|(?:[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*\s*)+)(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$/iu;
+const RELAY_RETRACTION = "no|wait|scratch that|cancel that|take that back|hold on|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
+const RELAY_LATE_DOUBT = "maybe|hmm|idk|(?:i(?:'m| am) )?(?:not ready|reconsidering)|on second thought|let me think";
+const RELAY_STOP_SYMBOL = String.raw`[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*`;
+const RELAY_ITEM_SYMBOL = String.raw`[📞📸][\p{M}]*`;
+const LATE_PRIVATE_RETRACTION = new RegExp(
+  String.raw`^[,\s–—]*(?:(?:actually|wait|sorry)[,\s]+)?(?:${RELAY_RETRACTION}|${RELAY_LATE_DOUBT}|` +
+  String.raw`(?:(?:${RELAY_STOP_SYMBOL}(?:\s*${RELAY_ITEM_SYMBOL})?|${RELAY_ITEM_SYMBOL}\s*${RELAY_STOP_SYMBOL})\s*)+)` +
+  String.raw`(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$`,
+  "iu",
+);
+const LATE_ORPHAN_QUESTION = /[.!;…\n][ \t]*\?{2,}[ \t]*(?=$|[.!;…\n])/u;
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said|asks?|asked|(?:tells?|told)\s+(?:me|us))\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -573,7 +583,8 @@ function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean
 
 function retractsPrivateRequest(text: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
   const end = request.index! + request[0].length;
-  if (text.slice(end).split(RELAY_SENTENCE).some(sentence => LATE_PRIVATE_RETRACTION.test(sentence))) return true;
+  const tail = text.slice(end);
+  if (LATE_ORPHAN_QUESTION.test(tail) || tail.split(RELAY_SENTENCE).some(sentence => LATE_PRIVATE_RETRACTION.test(sentence))) return true;
   return privateRequests.some(candidate => {
     if (candidate.index! < end || candidate[0].toLowerCase() === request[0].toLowerCase() || reportsPrivateRequest(text, candidate)) return false;
     const lead = text.slice(end, candidate.index!).split(RELAY_SENTENCE).at(-1)!;
