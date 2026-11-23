@@ -164,3 +164,15 @@
 {"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"Sat and Sun please.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Sat or Sun are fine.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Thursday works, Sunday neither for me","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither really works","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither at all","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither really does","answer":"yes","keys":["a"]}
+{"text":"Saturday doesn't work, Sunday neither for me","answer":"yes","keys":[]}
+{"text":"Saturday and Sunday neither really works","answer":"yes","keys":[]}
+{"text":"Thursday works, Sunday neither for us","answer":"yes","keys":["a"]}
+{"text":"Sunday for me neither works, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday neither for me","answer":"yes","keys":[]}
+{"text":"Thursday works, Sunday neither for me too","answer":"yes","keys":["a"]}
+{"text":"He said Sunday neither works for me","answer":"yes","keys":["c"]}
+{"text":"If Sunday neither works for me, Thursday works","answer":"yes","keys":["a","c"]}

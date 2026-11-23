@@ -909,8 +909,9 @@ const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
  * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
  */
 const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
+const NEG_AFTER_BASE = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
-const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
+const NEG_AFTER = /^(?:\s*,?\s*neither\b(?:(?:\s+(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely))?\s+(?:does|do|is|are|was|were|will|would|can|could|works?|either)\b(?:\s+for\s+(?:me|us)\b)?(?:\s+at\s+all\b)?(?:\s+either\b)?|(?:\s+(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely)\b)?(?:\s+(?:for\s+(?:me|us)\b|at\s+all\b))?(?:\s+either\b)?(?:\s+too\b)?(?=\s*(?:$|[.,;!?]|\b(?:and|but|so|though|however|nor)\b)))|\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b))/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -919,7 +920,7 @@ const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
   for (const m of t.slice(0, i).matchAll(CLAUSE_START)) from = m.index! + m[0].length;
-  return NEG_CUE.test(t.slice(from, i)) || NEG_AFTER.test(t.slice(i + len));
+  return NEG_CUE.test(t.slice(from, i)) || refusalAfter(t, i, i + len);
 }
 /** The clause (between punctuation) around position i. */
 function clauseAt(t: string, i: number, len: number): string {
@@ -928,6 +929,19 @@ function clauseAt(t: string, i: number, len: number): string {
   const rest = t.slice(i + len);
   const end = rest.search(/[.,;!?\n]|\bbut\b/);
   return t.slice(from, end < 0 ? t.length : i + len + end);
+}
+
+function neitherFramed(t: string, at: number): boolean {
+  if (!probeChoiceAuthored(t.slice(0, at))) return true;
+  const clause = clauseAt(t, at, 0);
+  return /\bif\b/.test(clause) || COND_RX.test(clause);
+}
+
+function refusalAfter(t: string, at: number, end: number): boolean {
+  const tail = t.slice(end);
+  if (NEG_AFTER_BASE.test(tail) || REFUSES_OFFERED_TIME_BASE.test(tail)) return true;
+  if (neitherFramed(t, at)) return false;
+  return NEG_AFTER.test(tail) || REFUSES_OFFERED_TIME.test(tail);
 }
 
 const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\b/g;
@@ -1034,8 +1048,14 @@ const OFFERED_TIME_REJECTION_STATE = String.raw`good|great|fine|free|available|p
 const OFFERED_TIME_REFUSAL =
   String.raw`\s*(?:(?:both|all)\s+)?(?:${OFFERED_TIME_REFUSAL_QUALIFIER}|${REFUSAL_ADVERB})(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
   String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|(?:fit|suit)(?: ${SCHEDULING_CONSTRAINT})?|make it|(?:look|seem)\s+(?:${OFFERED_TIME_REJECTION_STATE})))?|` +
-  String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:${OFFERED_TIME_REJECTION_STATE}|going to work)\b)` + OFFERED_TIME_REFUSAL_END;
+  String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:${OFFERED_TIME_REJECTION_STATE}|going to work)\b|` +
+  String.raw`(?:,?\s*neither\b(?:(?:\s+(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely))?\s+(?:does|do|is|are|was|were|will|would|can|could|works?|either)\b(?:\s+for\s+(?:me|us)\b)?(?:\s+at\s+all\b)?(?:\s+either\b)?|(?:\s+(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely)\b)?(?:\s+(?:for\s+(?:me|us)\b|at\s+all\b))?(?:\s+either\b)?(?:\s+too\b)?(?=\s*(?:$|[.,;!?]|\b(?:and|but|so|though|however|nor)\b)))))` + OFFERED_TIME_REFUSAL_END;
 const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
+const OFFERED_TIME_REFUSAL_BASE =
+  String.raw`\s*(?:(?:both|all)\s+)?(?:${OFFERED_TIME_REFUSAL_QUALIFIER}|${REFUSAL_ADVERB})(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
+  String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|(?:fit|suit)(?: ${SCHEDULING_CONSTRAINT})?|make it|(?:look|seem)\s+(?:${OFFERED_TIME_REJECTION_STATE})))?|` +
+  String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:${OFFERED_TIME_REJECTION_STATE}|going to work)\b)` + OFFERED_TIME_REFUSAL_END;
+const REFUSES_OFFERED_TIME_BASE = new RegExp(`^${OFFERED_TIME_REFUSAL_BASE}`);
 const QUALIFIED_TIME_REFUSAL = new RegExp(String.raw`^\s*(?:(?:both|all)\s+)?${OFFERED_TIME_REFUSAL_QUALIFIER}`);
 const DIRECT_SHORT_DAY_REFUSAL = new RegExp(
   String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)\s+)?(?<day>${SHORT_DAY_TOKEN})\b(?=\s+${OFFERED_TIME_REFUSAL_QUALIFIER})(?=${OFFERED_TIME_REFUSAL})`,
@@ -1044,7 +1064,7 @@ const DIRECT_SHORT_DAY_REFUSAL = new RegExp(
 const RESTATED_CLOCK_PART = new RegExp(String.raw`^(?:morning|afternoon|evening|night)(?:\s+(?:on\s+)?(?:${DAY_TOKEN}))?$`);
 
 function probeTimeIsRefused(text: string, at: number, end: number): boolean {
-  return negatedAt(text, at, end - at) || REFUSES_OFFERED_TIME.test(text.slice(end));
+  return negatedAt(text, at, end - at);
 }
 
 function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean, dayLists: readonly ProbeSpan[]): TimeMention[] {
@@ -1082,7 +1102,7 @@ function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, m
     const tail = JOINED_SHORT_DAY.exec(text.slice(mention.end));
     if (!tail) continue;
     const end = mention.end + tail[0].length;
-    if (REFUSES_OFFERED_TIME.test(text.slice(end))) recover(mention.end + tail[1]!.length, end);
+    if (refusalAfter(text, mention.end + tail[1]!.length, end)) recover(mention.end + tail[1]!.length, end);
   }
   return mentions;
 }
@@ -1095,7 +1115,7 @@ function joinedProbeRefusals(text: string, mentions: readonly ProbeSpan[], membe
     const first = ordered[index]!, next = ordered[index + 1]!;
     if (first.end > next.at || !BARE_NAMED_TIME_JOIN.test(text.slice(first.end, next.at))
       || !memberChoiceAt(first.at) || !memberChoiceAt(next.at)) continue;
-    if (refused.has(next) || REFUSES_OFFERED_TIME.test(text.slice(next.end))) {
+    if (refused.has(next) || refusalAfter(text, next.at, next.end)) {
       refused.add(first);
       refused.add(next);
     }
@@ -1415,7 +1435,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     } else if (refused) {
       namedExclusion ||= exclusion;
       explicitAlternative ||= currentAlternative && matching.length > 0;
-      contradictedExclusion ||= exclusion && (NEG_AFTER.test(t.slice(m.end)) || REFUSES_OFFERED_TIME.test(t.slice(m.end)));
+      contradictedExclusion ||= exclusion && refusalAfter(t, m.at, m.end);
       refusedGroup ||= !!m.group;
       rememberQualifiedTimeRefusal(m.at, m.end);
       refuse(matching, exclusion ? undefined : clauseAt(t, m.at, m.end - m.at));

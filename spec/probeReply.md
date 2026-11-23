@@ -64,6 +64,18 @@ pure def lawDirectWithdrawalKeepsTheRefusal(modelConsent: str): bool =
     probeReplyReading(false, false, modelConsent) == KeepOffline
 ```
 
+### A qualifier or adverb after neither still refuses the named time
+
+A "neither" after a named time refuses that time even when a qualifier such as "for me", an adverb such as "really", or "at all" follows it, with or without a word such as "does" or "works" after it. The refusal also applies to each time joined to that time. A separate affirmative choice can still select another offered time. The refusal only applies when the member states it directly: a "neither" inside a report of what someone else said, or inside a condition, does not refuse the time.
+
+```quint
+pure def neitherQualifierRefusal(neitherAfterTime: bool, qualifierAfterNeither: bool, directStatement: bool): bool =
+  (neitherAfterTime or qualifierAfterNeither) and directStatement
+
+pure def lawNeitherQualifierRefusesNamedTime(neitherAfterTime: bool): bool =
+  neitherQualifierRefusal(neitherAfterTime, true, true)
+```
+
 ### A clear yes uses the chosen times when the member names them
 
 If a model reads a clear yes, use the offered times the person chose. If they gave no preference, keep all offered times. The caller validates model-supplied keys against the offered times first.
