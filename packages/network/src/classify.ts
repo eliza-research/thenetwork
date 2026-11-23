@@ -910,7 +910,7 @@ const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
  */
 const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
-const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
+const NEG_AFTER = /^(?:\s*,?\s*neither\b(?:\s+(?:does|do|is|are|was|were|will|would|can|could|works?|either)\b|(?=\s*(?:$|[.,;!?]|\b(?:and|but|so|though|however)\b)))|\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b))/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -1034,7 +1034,8 @@ const OFFERED_TIME_REJECTION_STATE = String.raw`good|great|fine|free|available|p
 const OFFERED_TIME_REFUSAL =
   String.raw`\s*(?:(?:both|all)\s+)?(?:${OFFERED_TIME_REFUSAL_QUALIFIER}|${REFUSAL_ADVERB})(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
   String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|(?:fit|suit)(?: ${SCHEDULING_CONSTRAINT})?|make it|(?:look|seem)\s+(?:${OFFERED_TIME_REJECTION_STATE})))?|` +
-  String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:${OFFERED_TIME_REJECTION_STATE}|going to work)\b)` + OFFERED_TIME_REFUSAL_END;
+  String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:${OFFERED_TIME_REJECTION_STATE}|going to work)\b|` +
+  String.raw`(?:,?\s*neither\b(?:\s+(?:does|do|is|are|was|were|will|would|can|could|works?|either)\b|(?=\s*(?:$|[.,;!?]|\b(?:and|but|so|though|however)\b)))))` + OFFERED_TIME_REFUSAL_END;
 const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
 const QUALIFIED_TIME_REFUSAL = new RegExp(String.raw`^\s*(?:(?:both|all)\s+)?${OFFERED_TIME_REFUSAL_QUALIFIER}`);
 const DIRECT_SHORT_DAY_REFUSAL = new RegExp(

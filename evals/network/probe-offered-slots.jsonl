@@ -164,3 +164,10 @@
 {"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"Sat and Sun please.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Sat or Sun are fine.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Thursday works, Sunday neither","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither does","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither works","answer":"yes","keys":["a"]}
+{"text":"Saturday works, Sunday neither","answer":"yes","keys":["b"]}
+{"text":"Sunday neither works","answer":"yes","keys":[]}
+{"text":"Saturday and Sunday, neither works","answer":"yes","keys":[]}
+{"text":"Saturday and Sunday neither works for me","answer":"yes","keys":[]}

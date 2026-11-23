@@ -64,6 +64,18 @@ pure def lawDirectWithdrawalKeepsTheRefusal(modelConsent: str): bool =
     probeReplyReading(false, false, modelConsent) == KeepOffline
 ```
 
+### A trailing neither refuses the named time
+
+A "neither" after a named time refuses that time, with or without a word such as "does" or "works" after it. The refusal also applies to each time joined to that time. A separate affirmative choice can still select another offered time.
+
+```quint
+pure def trailingNeitherRefusal(neitherAfterTime: bool, joinedToRefusedTime: bool): bool =
+  neitherAfterTime or joinedToRefusedTime
+
+pure def lawTrailingNeitherRefusesJoinedTime(neitherAfterTime: bool): bool =
+  trailingNeitherRefusal(neitherAfterTime, true)
+```
+
 ### A clear yes uses the chosen times when the member names them
 
 If a model reads a clear yes, use the offered times the person chose. If they gave no preference, keep all offered times. The caller validates model-supplied keys against the offered times first.

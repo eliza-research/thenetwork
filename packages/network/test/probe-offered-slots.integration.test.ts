@@ -24,6 +24,7 @@ type Scenario = {
   slots: typeof three;
   text: string;
   picked: number[];
+  closed?: true;
   legacyClarification?: true;
   generalPrelude?: true;
   followUp?: { text: string; picked: number[]; closeReason?: string; restart?: true; general?: true; unqualified?: string[] };
@@ -99,6 +100,16 @@ const scenarios: Scenario[] = [
     slots: [thursday, friday, saturday], text: "Monday or Saturday works.", picked: [saturday.start] },
   { scene: "an explicit alternative with an ambiguous named day requires a time choice",
     slots: [thursday, earlierSaturday, saturday, sunday], text: "Sat or Sun are fine.", picked: [] },
+  { scene: "a trailing neither refuses the last named time beside a pick",
+    slots: three, text: "Thursday works, Sunday neither", picked: [thursday.start] },
+  { scene: "a trailing neither does refuses the last named time",
+    slots: three, text: "Saturday doesn't work, Sunday neither does", picked: [], closed: true },
+  { scene: "a trailing neither works refuses a single named time",
+    slots: three, text: "Sunday neither works", picked: [], closed: true },
+  { scene: "a trailing neither works refuses a joined pair",
+    slots: three, text: "Saturday and Sunday, neither works", picked: [], closed: true },
+  { scene: "a trailing neither keeps the other named pick",
+    slots: three, text: "Saturday works, Sunday neither", picked: [saturday.start] },
   { scene: "an ordinary first-turn yes accepts the whole offer",
     slots: three, text: "Yes.", picked: three.map(slot => slot.start) },
   { scene: "a plain yes after a new general clarification accepts the whole offer",
@@ -234,7 +245,7 @@ const scenarios: Scenario[] = [
 ];
 
 // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer"
-test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted offered times when $scene", async ({ slots, text, picked, followUp, legacyClarification, generalPrelude }) => {
+test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted offered times when $scene", async ({ slots, text, picked, closed, followUp, legacyClarification, generalPrelude }) => {
   const url = await migratedDb("probe_offered_slots");
   const clock = new SimClock(Date.UTC(2026, 9, 12, 16));
   const app = APPS.friends;
@@ -324,7 +335,7 @@ test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted of
     }
     const reply = await signed("probe-offered-slots-answer", text);
     expect(await booking()).toEqual({
-      stage: picked.length ? "scheduled" : "probing", picked, meetingAt: picked[0],
+      stage: picked.length ? "scheduled" : closed ? "closed" : "probing", picked, meetingAt: picked[0],
     });
     if (followUp) {
       const pendingChoice = { kind: "probe", oppId: id, timeChoice: !followUp.general };
