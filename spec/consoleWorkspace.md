@@ -200,6 +200,16 @@ pure val weight_receiveHeldAnswer = 4
 pure def sometimesHeldTextReleased(w: Workspace): bool = w.held.status == HeldReleased
 pure def sometimesHeldPhotoReleased(w: Workspace): bool = w.held.status == HeldReleased and w.held.photo
 pure def sometimesHeldTextRejected(w: Workspace): bool = w.held.status == HeldRejected
+
+pure val eval_witness_sometimesHeldPhotoReleased = (
+  ("receiveViewer", RealWithService, true, false, false, false, false),
+  ("receiveHeldText", true, false),
+  ("typeHeldReason", 5),
+  ("loadHeldPhoto", true),
+  ("markPhotoReviewed", true),
+  ("decideHeld", ReleaseHeld),
+  ("receiveHeldAnswer", true)
+)
 ```
 
 ## Story: Act on safety cases and reports
@@ -308,6 +318,19 @@ pure val weight_actOnReport = 3
 pure def sometimesReportBanned(w: Workspace): bool = w.report.status == S::ReportBanned
 pure def sometimesReportHeld(w: Workspace): bool = w.report.status == S::ReportHeld
 pure def sometimesReportDismissed(w: Workspace): bool = w.report.status == S::ReportDismissed
+
+pure val eval_witness_sometimesReportHeld = (
+  ("receiveViewer", RealWithService, true, false, false, false, false),
+  ("receiveReport", false),
+  "startReveal",
+  ("typeRevealReason", 5),
+  "submitReveal",
+  ("receiveRevealAnswer", true),
+  "endReveal",
+  ("typeReportNote", 5),
+  ("actOnReport", HoldPersonStep),
+  ("receiveReportAnswer", true)
+)
 ```
 
 ## Story: See what members asked for
