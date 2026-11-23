@@ -116,7 +116,7 @@ send invitations, or change another app. The lowest stated age applies. Members
 anyone. No background checks are run.
 
 Text STOP stops every text from the shared line; "leave ntwrk.party" leaves this
-app only. Export/deletion support is help@ntwrk.party. Do not invoke destructive
+app only. Export/deletion support is help@ntwrk.party. To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected. Do not invoke destructive
 account controls during signup. The text line is {{TEXT_LINE}}; sending a text is the person's separate choice, never an automatic
 fallback or an extra signup step.
 

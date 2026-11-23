@@ -223,6 +223,7 @@ describe.each(SITES)("$domain", (s) => {
       expect(skill).toContain("then come back to this conversation");
       expect(skill).not.toContain("RESPONSE_STYLE");
       expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+      expect(skill).toContain("the person opens https://ntwrk.party/oauth/consents in the browser where they connected");
       if (s.app !== "ntwrk") expect(skill).not.toContain(`https://${s.domain}/mcp`);
       expect(skill).not.toContain("cannot add this app's connector");
       if (["friends", "slop", "ntwrk"].includes(s.app)) {

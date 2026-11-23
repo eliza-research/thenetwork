@@ -132,6 +132,7 @@ to share a base profile. Nobody can learn whether a phone number uses peon.biz.
 - Text STOP: stops every text from this number.
 - Text "leave peon.biz": stops peon.biz only.
 - To request an export or deletion, email help@ntwrk.party.
+- To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected.
 
 ## Support
 

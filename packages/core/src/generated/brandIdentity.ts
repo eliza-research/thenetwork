@@ -20,6 +20,8 @@ export type SharedPart = "PartMark" | "PartHeadline" | "PartPrompt" | "PartAgent
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
 export const supportEmail: string = "help@ntwrk.party";
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+export const agentAccessPage: string = "https://ntwrk.party/oauth/consents";
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 export const joinModes: JoinMode[] = ["InviteOnly", "OpenJoin"];
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
@@ -101,7 +103,7 @@ export function mayName(site: AppKey, named: AppKey, surface: Surface): boolean 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
 //@ pure
 export function hubTextsOnAppSurface(site: AppKey, surface: Surface): string[] {
-  return surface === "SkillSurface" ? ([supportEmail, openaiConnectorEndpoint(site), connectorEndpoint(site)] as string[]) : ([supportEmail] as string[]);
+  return surface === "SkillSurface" ? ([supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site)] as string[]) : ([supportEmail] as string[]);
 }
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */

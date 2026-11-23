@@ -115,7 +115,7 @@ send invitations, or change another app. The lowest stated age applies. Members
 receive no dating matches or photo requests. Do not upload or rate photos during signup.
 
 Text STOP stops every text from the shared line; "leave slop.date" leaves this
-app only. Export/deletion support is help@ntwrk.party. Do not invoke destructive
+app only. Export/deletion support is help@ntwrk.party. To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected. Do not invoke destructive
 account controls during signup. The text keyword is `slop` or `slop.date`
 on {{TEXT_LINE}}; sending a text is the person's separate choice, never an automatic
 fallback or an extra signup step.
