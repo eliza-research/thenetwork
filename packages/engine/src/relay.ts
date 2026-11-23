@@ -577,10 +577,11 @@ const PRIOR_ASSENT_ACTOR = String.raw`(?<actor>she|he|they|them|him|her|my\s+(?:
 const PRIOR_ASSENT_ACTION = String.raw`(?:(?<action>agree|approve|ask|request|consent)s?|says?\s+(?:yes|ok(?:ay)?|so))`;
 const PRIOR_ASSENT_ITEM = String.raw`(?:\s+(?!first\b)(?<item>.+?))?`;
 const PRIOR_ASSENT_CONDITIONS = [
-  String.raw`${PRIOR_ASSENT_ACTOR}\s+(?:(?:has|have)\s+to|needs?\s+to|must|has\s+got\s+to)\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`${PRIOR_ASSENT_ACTOR}(?:\s+(?:(?:has|have)\s+to|needs?\s+to|must)|(?:\s+(?:has|have)|'s|’s|'ve|’ve)?\s+got(?:ta|\s+to))\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
   String.raw`${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}\s+first`,
   String.raw`wait\s+for\s+${PRIOR_ASSENT_ACTOR}\s+to\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
-  String.raw`(?:only\s+after|(?<unless>unless))\s+${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`(?:wait|hold(?:\s+(?:it|off|on))?)\s+(?:until|till)\s+${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`(?:(?:only\s+)?(?:after|if|when|once)|(?<unless>unless))\s+${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
 ].map(condition => new RegExp(`^(?:please\\s+)?${condition}$`, "iu"));
 const PRIOR_ASSENT_COMPLETED = new RegExp(String.raw`^(?<actor>${PRIOR_ASSENT_NAME})\s+(?:(?:has|have)\s+)?(?:already\s+)?(?:(?<shortAction>agree|approve)d|(?<longAction>ask|request|consent)ed)(?:\s+already)?${PRIOR_ASSENT_ITEM}$`, "iu");
 const PRIOR_SENDER_CONFIRM = /^(?:please\s+)?wait\s+until\s+i\s+(?:confirm|approve)\s+(?:(?:that\s+)?you\s+can\s+)?/u;
@@ -599,7 +600,7 @@ function priorAssentItemKey(value: string, request: RegExpMatchArray, contact: b
 }
 
 function assentKey(actor: string, action: string, item: string): string {
-  return actor + " " + action + " " + item;
+  return actor.replace(/['’]s$/u, "") + " " + action + " " + item;
 }
 
 // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
