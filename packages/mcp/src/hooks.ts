@@ -2,8 +2,8 @@
 // packages/platform (the same OTP service, sessions and people store as the sites' /api/*).
 // The human signs in with the platform phone code on our page; the client and the agent never
 // send or see a phone number or a code.
-import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
+import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService, SignupAge } from "@thenetwork/platform";
+import { canJoinApp, canMatchInApp, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 import { connectorMembershipStatus, type MemberStatus } from "../../core/src/generated/connectorTools.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
@@ -100,7 +100,7 @@ export interface PlatformHooks {
   createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
   /** The server's current eligibility and wording for this same-app verified browser. */
   signupEnrollment?(app: McpAppId, who: SignedIn): Promise<BrowserSignup | undefined>;
-  joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string): Promise<BrowserSignupResult>;
+  joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string, signupAge?: SignupAge): Promise<BrowserSignupResult>;
 }
 
 const PUBLIC_STATUS: Record<MemberStatus, PublicStatus> = {
@@ -171,7 +171,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     withSignupAgePolicy(key, id, fn) {
       return p.store.withPhoneAgeGuard(key, async () => {
         const owner = await p.accounts.byPhoneHash(key);
-        const age = lowestAge(await p.store.ageFloor(key), owner?.person.lowestAge);
+        const age = owner ? await p.accounts.lowestAge(owner.e164, owner.person) : await p.store.ageFloor(key);
         const app = p.app(id);
         if (age !== undefined) await cleanAge(key, age);
         return fn(!!app && (age === undefined || canJoinApp(age, app)));
@@ -256,11 +256,11 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if ((eligibility.person?.id ?? null) !== who.personId || (!eligibility.canJoin && eligibility.reason !== "invite_only")) return undefined;
       return { consent: app.consent, requiresInvitation: eligibility.reason === "invite_only" };
     },
-    async joinSignup(id, who, input, invitation) {
+    async joinSignup(id, who, input, invitation, signupAge) {
       const app = p.app(id);
       if (!app || app.joinMode === "waitlist") return { ok: false, error: "invalid" };
       const view = signupAccountView(id, p.accounts.phoneHash(who.e164), who.personId);
-      return p.accounts.join(app, who, input, undefined, invitation, view);
+      return p.accounts.join(app, who, input, undefined, invitation, view, signupAge);
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);

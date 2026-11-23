@@ -14,7 +14,7 @@ Browser cookie names are part of the HTTP shell. Local app origins on one loopba
 
 The [signup draft rules](../mcpSignupDraft.md) drive draft preparation,
 session-bound reads, discard, and expiry. The draft waits for the
-person's final Join submission.
+person's final Join submission. The separate verified signup form derives age from the browser birthday using [the calendar rules](../authorizationPages.md). An accepted minor's private eligibility and its effect on matching are modeled in [signup age eligibility](signup_age_eligibility.md).
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

@@ -4,7 +4,7 @@
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
+import { ADULT_AGE, DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
 
 import { participationOverride, participationWindowModeKnown, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
@@ -75,6 +75,8 @@ export function presenceOf(r: any): Presence {
 export interface SnapshotScope { app: string; city?: string; homeCities?: readonly string[];
   /** Internal owned profile review only. Default snapshots feed matching/background work and exclude deferred Google intake. */
   purpose?: "profile_review";
+  /** Network runtime only. Adds a boolean for a cleared signup restriction. */
+  includeMaturedSignup?: boolean;
 }
 
 /**
@@ -95,7 +97,9 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
   const [members, facets, intents, presence, edges, recent, parts, personBlocks, events] = await Promise.all([
-    sql`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held from network.members m
+    sql`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held,
+      ${scope.includeMaturedSignup ? sql`a.age >= ${ADULT_AGE} and exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id)` : sql`false`} as matured_signup
+      from network.members m
       left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
     // Acceptance authorizes private intake, not matching or downstream automated use. Privacy scope is independent.
@@ -134,6 +138,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs,
       accountStatus: durableStaffHoldSnapshotStatus(staffBanSnapshotStatus(r.account_status, r.canonical_banned === true), r.safety_held === true),
       ...(isAppId(app) ? { apps: [app] } : {}),
+      ...(r.matured_signup === true ? { maturedSignup: true } : {}),
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.matching_age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,

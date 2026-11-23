@@ -32,6 +32,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
 //    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
 //    loses them all (deleteFor), and their rating with them.
+import { personAgeAt } from "./age.ts";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -380,15 +381,23 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
 }
 
 // ------------------------------------------------------------------------------------ rows
+type PhotoAdmission = (tx?: SQL) => Promise<PhotoRefusal | undefined>;
+
 export interface PhotoStore {
-  put(r: PhotoRow): Promise<void>;
+  publish(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
 }
 export class MemoryPhotoStore implements PhotoStore {
   readonly rows = new Map<string, PhotoRow>();
-  async put(r: PhotoRow) { this.rows.set(r.id, { ...r }); }
+  async publish(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined> {
+    const refused = await admit();
+    if (refused) return refused;
+    const count = [...this.rows.values()].filter(row => row.personId === r.personId).length;
+    if (photoSlotsFull(count)) return "too_many";
+    this.rows.set(r.id, { ...r });
+  }
   async get(id: string) { const r = this.rows.get(id); return r && { ...r }; }
   async list(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.personId === personId && (!app || r.app === app)).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => ({ ...r })); }
   async delete(id: string) { this.rows.delete(id); }
@@ -400,9 +409,21 @@ const photoRow = (r: Record<string, any>): PhotoRow => ({
 /** platform.photos (migration 0011). A deleted photo's row is removed (the bytes first). */
 export class PgPhotoStore implements PhotoStore {
   constructor(private readonly sql: SQL) {}
-  async put(r: PhotoRow) {
-    await this.sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
-      values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
+  async publish(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined> {
+    return this.sql.begin(async tx => {
+      // Verified signup holds this same row lock through its eligibility write and photo cleanup.
+      const [person] = await tx`select id from platform.people where id=${r.personId}::uuid and deleted_at is null for update`;
+      if (!person) return "adults_only";
+      await tx`select set_config('app.app_id', ${r.app}, true),
+        set_config('app.age_as_of', ${new Date(r.createdAt).toISOString()}, true)`;
+      const refused = await admit(tx);
+      if (refused) return refused;
+      const [stored] = await tx<{ n: number }[]>`select count(*)::int as n from platform.photos
+        where person_id=${r.personId}::uuid and deleted_at is null`;
+      if (photoSlotsFull(stored.n)) return "too_many";
+      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
+    });
   }
   async get(id: string) { const [r] = await this.sql`select * from platform.photos where id = ${id} and deleted_at is null`; return r ? photoRow(r) : undefined; }
   async list(personId: string, app?: AppId, lock = false) {
@@ -458,8 +479,9 @@ export class PhotoService {
 
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
-    const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
-    if (!p || p.deletedAt !== null || !canBeMatched(p.lowestAge)) return "adults_only";
+    const store = tx ? new PgPeopleStore(tx) : this.o.people;
+    const p = await store.getPerson(personId);
+    if (!p || p.deletedAt !== null || !canBeMatched(await personAgeAt(store, p, this.now()))) return "adults_only";
     if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
@@ -502,7 +524,14 @@ export class PhotoService {
     await this.o.storage.put(key, bytes, type);
     change = stepPhotoChange(change, { type: "recordUploadBytes" });
     if (!canRecordUploadRow(change)) throw new Error("photo bytes did not advance the upload");
-    await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now() });
+    const refused = await this.o.meta.publish({
+      id, personId, app, storageKey: key, contentType: type, bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now(),
+    }, tx => this.mayTake(personId, app, tx));
+    if (refused) {
+      await this.o.storage.delete(key);
+      return { ok: false, reason: refused };
+    }
     change = stepPhotoChange(change, { type: "recordUploadRow" });
     if (!(await this.finishPhotoChange(change, personId, app))) throw new Error("photo upload did not complete");
     return { ok: true, value: { id } };
@@ -545,7 +574,8 @@ export class PhotoService {
     const who = await this.ratingRefusal(personId, app);
     let attempt = stepRating(ratingInitial, { type: "screenSubject", eligible: who === undefined });
     if (!canSupplyPhotos(attempt)) return { rated: false, refused: who };
-    const age = (await this.o.people.getPerson(personId))?.lowestAge;
+    const person = await this.o.people.getPerson(personId);
+    const age = person && await personAgeAt(this.o.people, person, this.now());
     if (age == null || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
     const subject: RatingSubject = { age, ageVerified: true };
     const rows = ratingRows(await this.o.meta.list(personId, app));
