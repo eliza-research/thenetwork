@@ -71,7 +71,7 @@
 {"text":"sat and sun both except Thursday","answer":"yes","keys":["b","c"]}
 {"text":"sat and sun both at 11am","answer":"unclear","keys":[]}
 {"text":"sat sun both","answer":"unclear","keys":[]}
-{"text":"the 2nd and 3rd both work","answer":"unclear","keys":[]}
+{"text":"the 2nd and 3rd both work","answer":"yes","keys":["b","c"]}
 {"text":"Both Saturday, not Thursday.","answer":"unclear","keys":[]}
 {"text":"Yes both Saturday, not Thursday.","answer":"unclear","keys":[]}
 {"text":"Either Saturday works, but not both.","answer":"yes","keys":["b"]}
@@ -117,3 +117,17 @@
 {"text":"the first and second either work","answer":"yes","keys":["a","b"]}
 {"text":"sat and sun either at 11am","answer":"unclear","keys":[]}
 {"text":"sat and sun either but not sunday","answer":"yes","keys":["b"]}
+{"text":"Saturday for me doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday for me isn't good","answer":"unclear","keys":[]}
+{"text":"Saturday for me is not good","answer":"unclear","keys":[]}
+{"text":"Saturday and Sunday for me don't work","answer":"unclear","keys":[]}
+{"text":"Saturday and Sunday for me don't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday for me aren't good","answer":"unclear","keys":[]}
+{"text":"Saturday at 11am for me doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday morning for me doesn't work","answer":"unclear","keys":[]}
+{"text":"The first for me doesn't work","answer":"unclear","keys":[]}
+{"text":"The first and second for me don't work","answer":"unclear","keys":[]}
+{"text":"Saturday for me really doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday at 11am in the morning for me doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday at 11am in the morning and Sunday at 2pm in the afternoon for me don't work","answer":"unclear","keys":[]}
+{"text":"Saturday aren't good","answer":"unclear","keys":[]}

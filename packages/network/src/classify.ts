@@ -900,7 +900,16 @@ const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
  */
 const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
-const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
+const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely)\s+)?(?:for\s+(?:me|us)\s+)?(?:(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely)\s+)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|aren'?t\s+(?:really\s+)?(?:good|great|fine|free|available|possible|ideal|an option|a good fit)\b|can'?t\b|cannot\b)/;
+const QUALIFIER_BEFORE_REFUSAL = /^\s*(?:(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely)\s+)?for\s+(?:me|us)\b/;
+const BARE_TIME_JOIN = /^\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)$/;
+const RESTATED_DAYPART = /^\s+in the\s+(morning|afternoon|evening|night)\b/;
+const JOINED_ORDINAL = /^\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)(?:the\s+)?(first|1st|earlier|earliest|second|2nd|later|third|3rd|fourth|4th|last|latest)\b/;
+const JOINED_ORDINAL_INDEX: Record<string, number> = {
+  first: 0, "1st": 0, earlier: 0, earliest: 0,
+  second: 1, "2nd": 1, later: 1,
+  third: 2, "3rd": 2, fourth: 3, "4th": 3, last: -1, latest: -1,
+};
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -1278,11 +1287,29 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const joinedRefusals = joinedProbeRefusals(t, [...mentions, ...ordinals], memberChoiceAt);
   const joinedRefusalClauses = new Set([...joinedRefusals].map(m => clauseAt(t, m.at, m.end - m.at)));
   let weakOrdinalMissing = false;
-  for (const ordinal of ordinals) {
+  const expandedOrdinals = [...ordinals];
+  for (let k = 0; k < expandedOrdinals.length; k++) {
+    const from = expandedOrdinals[k]!;
+    const tail = JOINED_ORDINAL.exec(t.slice(from.end));
+    if (!tail) continue;
+    const word = tail[1]!;
+    const end = from.end + tail[0].length;
+    const ordinal = { at: end - word.length, end, index: JOINED_ORDINAL_INDEX[word]!, choiceEnd: end };
+    if (!expandedOrdinals.some(seen => seen.at === ordinal.at && seen.end === ordinal.end)) expandedOrdinals.push(ordinal);
+  }
+  expandedOrdinals.sort((a, b) => a.at - b.at);
+  const qualifierHiddenOrdinal = new Set<(typeof expandedOrdinals)[number]>();
+  for (let i = expandedOrdinals.length - 1; i > 0; i--) {
+    const prev = expandedOrdinals[i - 1]!, cur = expandedOrdinals[i]!;
+    const curRefused = qualifierHiddenOrdinal.has(cur)
+      || (negatedAt(t, cur.at, cur.end - cur.at) && QUALIFIER_BEFORE_REFUSAL.test(t.slice(cur.end)));
+    if (curRefused && BARE_TIME_JOIN.test(t.slice(prev.end, cur.at))) qualifierHiddenOrdinal.add(prev);
+  }
+  for (const ordinal of expandedOrdinals) {
     if (!memberChoiceAt(ordinal.at)) continue;
     const option = options.at(ordinal.index);
     if (!option) weakOrdinalMissing = true;
-    else if (ordinal.choiceEnd === undefined || joinedRefusals.has(ordinal)) refuse([option.key], clauseAt(t, ordinal.at, ordinal.end - ordinal.at));
+    else if (qualifierHiddenOrdinal.has(ordinal) || ordinal.choiceEnd === undefined || joinedRefusals.has(ordinal)) refuse([option.key], clauseAt(t, ordinal.at, ordinal.end - ordinal.at));
     else mark([option.key], ordinal.at, ordinal.choiceEnd - ordinal.at);
   }
   const ordinalKeys = directOrdinals.choices.flatMap(choices => choices.map(choice => options[probeOrdinalIndex(choice, options.length)]?.key));
@@ -1308,6 +1335,25 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return { key: o.key, day, knownDay: day !== undefined && DAY_WORDS.some(([, name]) => name === day),
       weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute) };
   });
+  const restatedQualifierRefused = (m: TimeMention): boolean => {
+    if (m.minute === undefined) return false;
+    const restated = RESTATED_DAYPART.exec(t.slice(m.end));
+    if (!restated || (restated[1] === "night" ? "evening" : restated[1]) !== partOf(m.minute)) return false;
+    const after = t.slice(m.end + restated[0].length);
+    return QUALIFIER_BEFORE_REFUSAL.test(after) && NEG_AFTER.test(after);
+  };
+  const qualifierHiddenRefused = new Set<TimeMention>();
+  const orderedMentions = [...mentions].sort((a, b) => a.at - b.at);
+  for (let i = orderedMentions.length - 1; i > 0; i--) {
+    const prev = orderedMentions[i - 1]!, cur = orderedMentions[i]!;
+    if (!memberChoiceAt(cur.at)) continue;
+    const curRefused = qualifierHiddenRefused.has(cur)
+      || (negatedAt(t, cur.at, cur.end - cur.at) && QUALIFIER_BEFORE_REFUSAL.test(t.slice(cur.end)))
+      || restatedQualifierRefused(cur);
+    const restatedLink = prev.minute !== undefined && cur.part !== undefined
+      && /^\s+in the\s+$/.test(t.slice(prev.end, cur.at)) && cur.part === partOf(prev.minute);
+    if (curRefused && (BARE_TIME_JOIN.test(t.slice(prev.end, cur.at)) || restatedLink)) qualifierHiddenRefused.add(prev);
+  }
   for (const m of mentions) {
     if (!memberChoiceAt(m.at)) continue;
     if (partExclusion && m.at >= partExclusion.index && m.at < partExclusionEnd) continue;
@@ -1319,7 +1365,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
         m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
-    const refused = exclusion || negatedAt(t, m.at, m.end - m.at) || joinedRefusals.has(m);
+    const refused = exclusion || negatedAt(t, m.at, m.end - m.at) || joinedRefusals.has(m)
+      || qualifierHiddenRefused.has(m) || restatedQualifierRefused(m);
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
     } else if (refused) {
