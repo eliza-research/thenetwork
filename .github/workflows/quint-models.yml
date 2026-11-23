@@ -1,31 +1,7 @@
 name: quint-models
 
 on:
-  push:
-    branches: [main, develop]
-    paths:
-      - 'spec/models/**'
-      - 'scripts/quint-check.ts'
-      - 'packages/core/src/runtime/process.ts'
-      - 'packages/core/src/runtime/streams.ts'
-      - 'tools/vibestack/package.json'
-      - 'tools/vibestack/pnpm-lock.yaml'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.nvmrc'
-      - '.github/workflows/quint-models.yml'
-  pull_request:
-    paths:
-      - 'spec/models/**'
-      - 'scripts/quint-check.ts'
-      - 'packages/core/src/runtime/process.ts'
-      - 'packages/core/src/runtime/streams.ts'
-      - 'tools/vibestack/package.json'
-      - 'tools/vibestack/pnpm-lock.yaml'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.nvmrc'
-      - '.github/workflows/quint-models.yml'
+  # quint.yml checks affected models after a PR or push. This workflow checks every model on a schedule.
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
