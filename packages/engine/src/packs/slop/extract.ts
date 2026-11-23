@@ -16,7 +16,7 @@
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
-import { slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
+import { slopRadiusContextAllowed, slopRadiusMilesInBounds, slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
 import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
@@ -570,12 +570,13 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
       const negCtx = /\b(?:run|ran|running|walk|walked|bike|biked|biking|commute|marathon|hike|hiked|drive to work|swim)\b/.test(around);
       const seg = segmentsOf(s).slice(1).find(x => x.start <= s.start + m.index && s.start + m.index < x.start + x.text.length);
       const short = s.text.trim().split(/\s+/).length <= 5 || (!!seg && seg.text.trim().split(/\s+/).length <= 3);
-      if (asked !== "distance" && (!(pos || short) || negCtx) && !/^\s*(?:like\s+|maybe\s+|about\s+|within\s+)?\d{1,3}\s*(?:mi|miles?)\b\W*$/.test(around)) continue;
+      const bareDigitRadius = /^\s*(?:like\s+|maybe\s+|about\s+|within\s+)?\d{1,3}\s*(?:mi|miles?)\b\W*$/.test(around);
+      if (!slopRadiusContextAllowed(asked === "distance", pos || short, negCtx, bareDigitRadius)) continue;
       if (negated(s.text, m.index, 2) && !/\b(?:no more than|not more than|not over|no further than|not further than)\s*$/.test(s.text.slice(0, m.index))) continue;
       const value = m[1]!;
       let n = Math.max(/ hundred$/.test(value) ? 100 : readNumericPhrase(value), m[2] ? Number(m[2]) : 0);
       if (/^k/.test(m[3]!)) n = Math.round(n * 0.621);
-      if (!(n >= 1 && n <= 200)) continue;
+      if (!slopRadiusMilesInBounds(n)) continue;
       best = cand<Distance>(mergeDistance(best?.value, { mode: "radius", miles: Math.round(n) }), s, m, /^k/.test(m[3]!) ? 0.85 : 0.95);
     }
     for (const m of all(/\b(?:anywhere|any where|all over|wherever)\s+(?:in\s+)?(?:the\s+)?(?:city|nyc|new york|sf|san francisco|la|los angeles|town)\b|\b(?:the\s+)?(?:whole|entire)\s+(?:city|nyc|town|bay)\b|\bcity\s*-?\s*wide\b|\b(?:just|only)\s+(?:the\s+)?(?:city|nyc|sf|la)\b(?!\s+(?:for|to))|\b(?:all|any of the|any)\s+(?:5|five)\s+boroughs\b|\b(?:the\s+)?(?:city|nyc)\s+is\s+(?:fine|good|ok|okay|cool)\b|\bdistance (?:doesn'?t|does not|dont) (?:really )?matter\b|\b(?:i'?ll|i will|happy to|can|could) (?:go|travel) anywhere\b|\bdon'?t care (?:about|how) (?:the )?(?:distance|far)\b|\banywhere is fine\b/, s.text)) {
@@ -588,7 +589,7 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
     }
     if (asked === "distance" && !best) {
       const m = /^\s*(?:within\s+|about\s+|around\s+|up to\s+|like\s+|maybe\s+|prob(?:ably)?\s+|max\s+)?(\d{1,3})\s*(?:ish|max|tops|or so)?\s*[?!.]*\s*$/.exec(s.text);
-      if (m && Number(m[1]) >= 1 && Number(m[1]) <= 200) best = cand<Distance>({ mode: "radius", miles: Number(m[1]) }, s, m, 0.9);
+      if (m && slopRadiusMilesInBounds(Number(m[1]))) best = cand<Distance>({ mode: "radius", miles: Number(m[1]) }, s, m, 0.9);
       const c = /^\s*(?:the\s+|just\s+(?:the\s+)?|only\s+(?:the\s+)?)?(?:city|nyc|anywhere|the whole city|new york|sf|la)\s*(?:is fine|works|lol|tbh)?\s*[?!.]*\s*$/.exec(s.text);
       if (c) best = cand<Distance>({ mode: "city" }, s, c, 0.9);
     }

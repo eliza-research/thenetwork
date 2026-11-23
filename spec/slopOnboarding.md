@@ -31,6 +31,22 @@ Spelled numbers that the reader knows, including “one hundred” and “a
 hundred,” can give a radius with a distance unit. Use the same distance
 context, unit conversion, and existing radius bounds as for a digit.
 
+```quint
+pure def slopRadiusContextAllowed(askedDistance: bool, distanceContext: bool, exerciseContext: bool, bareDigitRadius: bool): bool =
+  askedDistance or (distanceContext and not(exerciseContext)) or bareDigitRadius
+
+pure def slopRadiusMilesInBounds(miles: int): bool = miles >= 1 and miles <= 200
+
+pure def lawSlopExerciseDistanceNeedsAQueryOrBareRadius(distanceContext: bool): bool =
+  not(slopRadiusContextAllowed(false, distanceContext, true, false))
+
+pure def lawSlopRadiusRejectsMilesOutsideBounds(miles: int): bool =
+  (miles < 1 or miles > 200) implies not(slopRadiusMilesInBounds(miles))
+
+pure def lawSlopRadiusIncludesBoundaries(upper: bool): bool =
+  slopRadiusMilesInBounds(if (upper) 200 else 1)
+```
+
 ### Age restrictions stop dating onboarding before a prompt
 
 A minor or someone declined at signup receives no dating question or read-back. Otherwise, the router offers a read-back only when the required fields are complete, the profile awaits confirmation, and the read-back is within its ask limit and outside the immediate skip list. In all other cases it searches for a question.

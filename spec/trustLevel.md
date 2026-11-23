@@ -39,6 +39,17 @@ The inbound and relay readers share the threat phrase rule. A terminal
 choice, it supplies no threat signal unless the continuation states a
 harmful consequence.
 
+```quint
+pure def orElseIsThreat(terminal: bool, harmfulConsequence: bool): bool =
+  terminal or harmfulConsequence
+
+pure def lawNonterminalOrElseNeedsHarm(harmfulConsequence: bool): bool =
+  orElseIsThreat(false, harmfulConsequence) == harmfulConsequence
+
+pure def lawTerminalOrElseSuppliesThreat(harmfulConsequence: bool): bool =
+  orElseIsThreat(true, harmfulConsequence)
+```
+
 ### A hold stays in place until staff lift it
 
 Score updates and decay cannot release a hold. Staff release a hold through the separate review path.

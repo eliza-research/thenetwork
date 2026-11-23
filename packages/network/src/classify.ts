@@ -10,7 +10,7 @@
 import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canJoin, directAgreementIdiom, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
-import { OR_ELSE_THREAT } from "../../core/src/abuse.ts";
+import { hasOrElseThreat } from "../../core/src/abuse.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { historicalProbeTimeClause, mayRetryCounter, probeExclusionAlternative, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
@@ -80,7 +80,7 @@ const RX = {
   scamToMe: /\b(send|wire|transfer|lend|loan|venmo|zelle|cash ?app|paypal|give)\s+(me|us)\b[^.?!]{0,40}(\$\s?\d+|\bmoney\b|\bdeposit\b|\bfunds?\b|\bcash\b|\bbitcoin\b|\bcrypto\b)/i,
   extraction: /(\b(what'?s|whats|what is|what are|give me|send me|share|get me|can i (get|have)|i need|i want|pass me)\s+(the\s+)?((?!(?:venue|place|restaurant|bar|cafe|spot|park|gym|museum|library|event|club|studio|gallery|theater|theatre|network|app|meetup|building|shop|store)'s)\w+'s|his|her|their|them|everyone'?s?|members'?)\s+((phone |cell )?numbers?|phone|cell|address(es)?|emails?|instagram|ig|insta|socials|snap(chat)?|handles?|contacts?|last names?)\b|\bphone numbers? of\b|\bnumbers of (everyone|all|members|the)\b|\b(their|members'?) (phone )?numbers\b|\b(?!(?:venue|place|restaurant|bar|cafe|spot|park|gym|museum|library|event|club|studio|gallery|theater|theatre|network|app)'s)\w+'s (number|phone|cell|address|email|instagram|ig|insta)\b|\bhome address(es)?\b|\bcontact (details|info) (for|of)\b|\bthe (number|phone|insta|instagram|email) (of|for) (the |that )?(girl|guy|person|woman|man|one)\b|\bprivate notes\b|\bagent_private\b)/i,
   injection: /(ignore (all )?(the |your |my )?(previous|prior|above) (instructions|prompts?|rules)|system override|you are now (in |a |an )?(developer|admin|god|dan|jailbreak|unrestricted|unfiltered)|admin (debug )?mode|developer mode|<\/?\w+_message>|^\s*(assistant|system)\s*:|print (the|your|all) (system|prompt|instructions|database|members|member list|private)|reveal your (system )?(prompt|instructions)|jailbreak)/im,
-  harassment: new RegExp(/\b((they|he|she) owes? me|make (them|her|him) (answer|reply|respond|talk to me)|why won'?t (they|she|he) (answer|reply|respond|text)|i know where (they|she|he|you) lives?|(you|he|she|they)'?ll regret|(you|he|she|they) will regret)/.source + "|" + OR_ELSE_THREAT, "i"),
+  harassment: /\b((they|he|she) owes? me|make (them|her|him) (answer|reply|respond|talk to me)|why won'?t (they|she|he) (answer|reply|respond|text)|i know where (they|she|he|you) lives?|(you|he|she|they)'?ll regret|(you|he|she|they) will regret)/i,
   // Unasked sexual demands (scored as harassment): "send nudes", "send me naked pics". A story about
   // someone else who asked is a disclosure (DISCLOSURE), never the sender's own.
   sexual: /\b(send|sending|share|text|dm) (me )?(some |your |a )?(nudes?|nude (pics?|photos?|selfies?)|naked (pics?|photos?|selfies?)|dick pics?|pics of your (body|tits|boobs|ass))\b|\b(wanna|want to|let me) see (you )?naked\b/i,
@@ -147,9 +147,9 @@ export function classify(body: string): Classified {
   let risk = 0;
   // Abuse is read per sentence: a sentence that tells what someone else did is a disclosure.
   const sents = sentencesOf(t);
-  const hit = (rx: RegExp, kind: Abuse, points: number) => {
+  const hit = (rx: RegExp, kind: Abuse, points: number, also?: (text: string) => boolean) => {
     let own = false, told = false;
-    for (const s of sents) if (rx.test(s.text)) { if (describesAnotherPerson(s.text)) told = true; else own = true; }
+    for (const s of sents) if (rx.test(s.text) || also?.(s.text)) { if (describesAnotherPerson(s.text)) told = true; else own = true; }
     if (own) { abuse.push(kind); risk += points; } else if (told) disclosed.push(kind);
   };
   const link = RX.link.test(t);
@@ -162,7 +162,7 @@ export function classify(body: string): Classified {
     && sents.some(({ text }) => INTENT_TO_CONTACT_DIRECTLY.test(text) && !describesAnotherPerson(text));
   hit(CONTACT_EXTRACTION, "contact_extraction", contactExtractionRisk(explicitContactBypass));
   if (RX.injection.test(t)) { abuse.push("prompt_injection"); risk += 3; }
-  hit(RX.harassment, "harassment", 3);
+  hit(RX.harassment, "harassment", 3, hasOrElseThreat);
   if (!abuse.includes("harassment")) hit(RX.sexual, "harassment", 3);
   const { age, explicit } = agesStated(t);
   const minorSignal = minorSignOf(low) || (age !== undefined && age < 18);

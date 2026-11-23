@@ -33,7 +33,7 @@
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
 import { relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
-import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -186,7 +186,9 @@ const PAY = "(?:send|wire|transfer|lend|loan|venmo|zelle|cash ?app|paypal|give|s
 const MONEY = "(?:\\$\\s?\\d|\\bmoney\\b|\\bcash\\b|\\bfunds?\\b|\\bbucks\\b|\\bdollars?\\b|\\busd\\b|\\b\\d{2,5}\\b)";
 const APPS = "(?:whats ?app|telegram|signal|kik|hangouts|google chat|wechat|viber|snap(?:chat)?|insta(?:gram)?|ig|facebook|messenger|fb|discord|line app|skype|imessage)";
 
-export const RELAY_RULES: { code: string; re: RegExp }[] = [
+const otherThreats = R("\\bi(?:'?ll| will| am going to|'?m gonna| gonna| m gonna)\\s+(?:kill|hurt|find|ruin|destroy|beat|end|stab|shoot|expose|leak|post)\\b|\\bi know where (?:you|u) (?:live|work|sleep)\\b|\\b(?:you|u)(?:'?ll| will) (?:regret|pay for)\\b|\\b(?:make|making) (?:you|u) (?:regret|pay|sorry)\\b|\\bwatch (?:your|ur) back\\b|\\b(?:you|u)(?:'d| had)? better (?:answer|reply|respond|show|text)\\b|\\b(?:i'?ll |i will )?(?:make sure|let) everyone know|\\b(?:wait|show up|be waiting|come by|turn up)\\s+(?:for (?:you|u) )?(?:outside|at) (?:your|ur) (?:work|office|home|place|apartment|building|job|door)\\b");
+
+export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) => boolean }[] = [
   // Money and scams.
   { code: "scam:money", re: R(`\\b${PAY}\\s+(?:me|us)\\b[^.?!]{0,50}${MONEY}`) },
   { code: "scam:money", re: R("\\b(?:can|could|would)\\s+(?:you|u)\\s+(?:please\\s+)?(?:help(?: me)?(?: out)?(?: with)?|cover|spot|lend|loan|pay(?: for)?)\\b[^.?!]{0,40}\\b(?:rent|bills?|fees?|ticket|flight|hospital|medical|money|cash|\\$|bucks|loan|deposit|customs|visa|tuition|phone bill|gas money)\\b") },
@@ -221,7 +223,7 @@ export const RELAY_RULES: { code: string; re: RegExp }[] = [
   { code: "rating:word", re: R("\\bappearance\\s*:|\\bphoto rating\\b|\\b(?:hotness|attractiveness|percentile|clef|body ?type|looks? (?:rating|score|tier|level|match)|(?:out of|in) (?:my|your|ur|her|his|their) league)\\b") },
   { code: "rating:word", re: R("\\b(?:you'?re|ur|you are|she'?s|he'?s|i'?m|im)\\s+(?:a|an|like a)\\s+(?:\\d{1,2}|ten|nine|eight|seven|six|five|solid \\d{1,2})(?:\\s?/\\s?10| out of (?:10|ten))?(?=\\s*(?:$|[.!?,;)]|out of|lol|haha|tbh|honestly|right|though))") },
   // Harassment.
-  { code: "harass_severe:threat", re: R("\\bi(?:'?ll| will| am going to|'?m gonna| gonna| m gonna)\\s+(?:kill|hurt|find|ruin|destroy|beat|end|stab|shoot|expose|leak|post)\\b|\\bi know where (?:you|u) (?:live|work|sleep)\\b|\\b(?:you|u)(?:'?ll| will) (?:regret|pay for)\\b|\\b(?:make|making) (?:you|u) (?:regret|pay|sorry)\\b|\\bwatch (?:your|ur) back\\b|" + OR_ELSE_THREAT + "|\\b(?:you|u)(?:'d| had)? better (?:answer|reply|respond|show|text)\\b|\\b(?:i'?ll |i will )?(?:make sure|let) everyone know|\\b(?:wait|show up|be waiting|come by|turn up)\\s+(?:for (?:you|u) )?(?:outside|at) (?:your|ur) (?:work|office|home|place|apartment|building|job|door)\\b") },
+  { code: "harass_severe:threat", re: R(otherThreats.source + "|" + OR_ELSE_THREAT), matches: text => otherThreats.test(text) || hasOrElseThreat(text) },
   { code: "harass_severe:slur", re: R("\\b(?:fag(?:got)?s?|n[i]gg(?:a|er|ah|uh|az)s?|trann(?:y|ie)s?|kikes?|spics?|chinks?|retard(?:ed|s)?|dykes?|wetbacks?|shemales?|towelheads?|raghead)\\b") },
   { code: "harass:insult", re: R("\\b(?:fuck (?:you|off|u)|f off|stfu|bitch|whore|slut|cunt|skank|hoe|piece of shit|go die|kys|kill yourself|nobody (?:would|will|could) (?:ever )?(?:want|love|date|believe) (?:you|u)|(?:you|u)(?:'?re| are|r) (?:so |such an? |an? )?(?:ugly|fat|disgusting|gross|worthless|pathetic|nothing|a joke|trash|garbage|loser|idiot|moron|chubby|hideous))\\b") },
   { code: "harass:insult", re: R("\\b(?:waste of (?:space|air|oxygen|skin)|shut (?:up|ur mouth|your mouth)|(?:you'?d|you would|you'?ll|u'?d|ud) (?:be|look) (?:prettier|hotter|cuter|sexier|thinner|skinnier|more attractive|better looking|less ugly) if|(?:you|u) (?:should|need to|could|gotta) lose (?:some |a little |a bit of )?weight|if (?:you|u) lost (?:some )?weight|(?:you'?re|you are|ur|u r) (?:a |such a |just a )?(?:tease|prude|cocktease|gold ?digger)|typical (?:stuck[- ]up )?(?:bitch|woman|girl|guy|female))\\b") },
@@ -253,7 +255,7 @@ export function classifyRelayText(text: string): { codes: string[]; minorSignal:
   const normalized = text.replace(/[’‘`´]/g, "'");
   const vs = textVariants(normalized);
   const codes = new Set<string>();
-  for (const { code, re } of RELAY_RULES) if (!codes.has(code) && vs.some(v => re.test(v))) codes.add(code);
+  for (const { code, re, matches } of RELAY_RULES) if (!codes.has(code) && vs.some(matches ?? (v => re.test(v)))) codes.add(code);
   if (spelledPhone(text)) codes.add("contact:spelled_phone");
   const lower = normalized.toLowerCase();
   const ageText = normalizeAgeInitialism(lower);

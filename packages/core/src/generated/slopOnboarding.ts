@@ -45,10 +45,49 @@ export function lawSlopRangeDoesNotSetOwnAge(namesTarget: boolean): boolean {
   return !slopSelfShorthandAllowed(namesTarget, true);
 }
 
+/** Story: Review the information used for dating / Read a spelled distance as the same numeric preference (spec/slopOnboarding.md) */
+//@ pure
+export function slopRadiusContextAllowed(askedDistance: boolean, distanceContext: boolean, exerciseContext: boolean, bareDigitRadius: boolean): boolean {
+  return askedDistance || (distanceContext && !exerciseContext) || bareDigitRadius;
+}
+
+/** Story: Review the information used for dating / Read a spelled distance as the same numeric preference (spec/slopOnboarding.md) */
+//@ pure
+export function slopRadiusMilesInBounds(miles: number): boolean {
+  return miles >= 1 && miles <= 200;
+}
+
+/** Story: Review the information used for dating / Read a spelled distance as the same numeric preference (spec/slopOnboarding.md) */
+//@ pure
+export function lawSlopExerciseDistanceNeedsAQueryOrBareRadius(distanceContext: boolean): boolean {
+  //@ ensures \result === true
+  return !slopRadiusContextAllowed(false, distanceContext, true, false);
+}
+
+/** Story: Review the information used for dating / Read a spelled distance as the same numeric preference (spec/slopOnboarding.md) */
+//@ pure
+export function lawSlopRadiusRejectsMilesOutsideBounds(miles: number): boolean {
+  //@ ensures \result === true
+  return !(miles < 1 || miles > 200) || !slopRadiusMilesInBounds(miles);
+}
+
+/** Story: Review the information used for dating / Read a spelled distance as the same numeric preference (spec/slopOnboarding.md) */
+//@ pure
+export function lawSlopRadiusIncludesBoundaries(upper: boolean): boolean {
+  //@ ensures \result === true
+  return slopRadiusMilesInBounds(upper ? 200 : 1);
+}
+
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
 //@ pure
 export function readbackEligible(hardComplete: boolean, confirmed: boolean, skipped: boolean, belowAskCap: boolean): boolean {
   return hardComplete && !confirmed && !skipped && belowAskCap;
+}
+
+/** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
+//@ pure
+export function canRouteProfile(p: PromptRun): boolean {
+  return p.phase === "AwaitingProfile";
 }
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
@@ -71,12 +110,6 @@ export function resolveReadback(p: PromptRun, textAvailable: boolean): PromptRun
   //@ ensures (inv(p) && canResolveReadback(p)) ==> alwaysReadyHasReason(\result)
   //@ ensures (inv(p) && canResolveReadback(p)) ==> stepRestrictedStaysWithheld(p, \result)
   return textAvailable ? ({ phase: "ReadbackReady", reason: readbackReason } as PromptRun) : ({ ...p, phase: "QuestionSearch" } as PromptRun);
-}
-
-/** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
-//@ pure
-export function canRouteProfile(p: PromptRun): boolean {
-  return p.phase === "AwaitingProfile";
 }
 
 /** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */

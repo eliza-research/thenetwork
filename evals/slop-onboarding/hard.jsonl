@@ -171,3 +171,7 @@
 {"text":"id go up to twenty-five miles for a date","expect":{"distance":{"mode":"radius","miles":25}}}
 {"text":"up to one hundred kilometers","asked":"distance","expect":{"distance":{"mode":"radius","miles":62}}}
 {"text":"I ran one hundred miles this month","expect":{"distance":null}}
+{"text":"within 0.9 miles","expect":{"distance":null}}
+{"text":"within one mile","expect":{"distance":{"mode":"radius","miles":1}}}
+{"text":"within 200 miles","expect":{"distance":{"mode":"radius","miles":200}}}
+{"text":"within 200.1 miles","expect":{"distance":null}}
