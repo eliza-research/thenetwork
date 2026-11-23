@@ -21,6 +21,26 @@ pure def lawNamedRelayRequiresTheSelectedCounterpart(named: bool): bool =
   named implies not(relayTextRecipientAllowed(named, false))
 ```
 
+### A name identifies one recipient on an unselected relay
+
+For text or a number, an unselected name must match the counterpart of the
+newest live match. Refuse the relay if another live match has a different
+counterpart with that name. Ask for the match if more than one person is a
+live counterpart. If all live matches are with the named person, use the
+newest one. A selected item must come from the original turn and keeps its
+exact match. The name must match that counterpart. In a photo request the
+name may select a live counterpart when no item is selected, but must identify
+one person. A photo also needs the current consent and review for that match.
+A refusal does not write a swap, photo draft, or offer.
+
+```quint
+pure def relayNameCollisionRefuses(selectedItem: bool, otherCounterpartMatches: bool): bool =
+  not(selectedItem) and otherCounterpartMatches
+
+pure def lawNameCollisionRefusesOnlyAnUnselectedRelay(selectedItem: bool, otherCounterpartMatches: bool): bool =
+  relayNameCollisionRefuses(selectedItem, otherCounterpartMatches) == (not(selectedItem) and otherCounterpartMatches)
+```
+
 ### Polite wording still needs a direct request to send a private item
 
 A modal question can request a private item only if it directly asks the

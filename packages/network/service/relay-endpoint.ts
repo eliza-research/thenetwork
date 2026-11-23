@@ -155,10 +155,10 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
 
   try {
     const request = parseRelayRequest(text);
-    const threadId = await rt.readState(net => net.relayMatch(memberId as MemberId, itemId ?? undefined)?.id ?? null);
+    const threadId = itemId ?? await rt.readState(net => net.relayMatch(memberId as MemberId)?.id ?? null);
     const swapWithdrawn = withdrawsSwap(text);
     if (swapWithdrawn && request.kind !== "text") await rt.unitOfWork(net => { net.relayCancelSwap(memberId as MemberId); });
-    const photoStored = (photo: PhotoRelayAnswer): StoredRelay => ({ decision: photo.status === "unavailable" ? "block" : "none", notice: photo.text });
+    const photoStored = (photo: PhotoRelayAnswer): StoredRelay => ({ decision: photo.status === "unavailable" || photo.status === "blocked" ? "block" : "none", notice: photo.text });
     const share = request.kind === "contact_share";
     const photo = await d.photoRequest({
       app, personId: who.person.id, memberId, text, threadId, inboundId: `in:${b.channel}:${b.messageId}`, photoAsked: request.kind === "photo",
@@ -188,7 +188,7 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
       const body = request.kind === "text" ? request.body : undefined;
       const targetName = request.targetName;
       result = await rt.unitOfWork(async net => {
-        const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
+        const match = net.relayMatch(memberId as MemberId, itemId ?? undefined, targetName);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
         const outcome = await net.relayRequest(
           { itemId: key, from: memberId as MemberId, kind, ...(body !== undefined ? { text: body } : {}), ...(targetName !== undefined ? { targetName } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },

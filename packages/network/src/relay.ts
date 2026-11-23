@@ -1,7 +1,7 @@
 import type { MemberId, Owned } from "@thenetwork/core";
 import { initial as initialRelay, step as stepRelay, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import { relayAgeStatementRead, relayAgeStatementRefuses, relaySevereBlockCaseEvent, relayStartsMinorPolicy, relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
-import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
+import { relayNameCollisionRefuses, relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import {
   relayGuard, relayItemAsync, relaySenderMinorSign, relaySenderNotice, RELAY_LIMITS, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
@@ -11,6 +11,7 @@ import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
 export const SWAP_WITHDRAWN = "consent:withdrawn";
 export const RELAY_LOG_MAX = 5000;
+export const RELAY_AMBIGUOUS_NAME = "You've matched with more than one person with that name, so I can't tell who you mean.";
 const THREAD_MAX = 50;
 const VERDICT = { block: "Block", pass: "Pass" } as const satisfies Record<RelayResult["decision"], RelayVerdict>;
 const SEVERE_REASON_FAMILIES = new Set(["harass_severe", "clef_severe"]);
@@ -51,7 +52,7 @@ export interface RelayHost {
 }
 
 type RelayAskKind = Exclude<RelayItem["kind"], "photo">;
-interface RelayTargetResult { choice: RelayTargetChoice; match?: RelayMatch }
+interface RelayTargetResult { choice: RelayTargetChoice | "RelayAmbiguousName"; match?: RelayMatch }
 export interface RelayThreadState { id: string; app: string; members: [MemberId, MemberId]; openedAt: number; messages: RelayThreadMessage[] }
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
@@ -77,6 +78,9 @@ export interface RelayCallOptions {
   canonical?: ReadonlyMap<MemberId, RelayCanonical>;
 }
 export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean; teenReady?: boolean; birthKey?: number }
+
+const foldRelayName = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+const counterpart = (match: RelayMatch, from: MemberId) => match.participants.find(id => id !== from)!;
 
 const NOTICE = {
   whichMatch: "You have more than one match, so I didn't send that. Send it again and say who it's for.",
@@ -115,27 +119,37 @@ export class RelayDesk {
       .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1));
   }
 
-  matchFor(from: MemberId, matchId?: string): RelayTargetResult {
-    const live = this.liveMatches(from), named = matchId === undefined ? undefined : live.find(m => m.id === matchId);
-    const choice = relayTarget(live.length, matchId !== undefined, named !== undefined);
-    const match = choice === "RelayToNamedMatch" ? named : choice === "RelayToOnlyMatch" ? live[0] : undefined;
+  matchFor(from: MemberId, matchId?: string, targetName?: string): RelayTargetResult {
+    const live = this.liveMatches(from);
+    const selected = matchId !== undefined;
+    const candidate = selected ? live.find(m => m.id === matchId) : live[0];
+    let liveCount = live.length;
+    if (targetName !== undefined && candidate) {
+      const name = foldRelayName(targetName);
+      const recipient = counterpart(candidate, from);
+      const firstName = this.host.member(recipient)?.firstName;
+      if (!relayTextRecipientAllowed(true, firstName !== undefined && foldRelayName(firstName) === name)) return { choice: "RelayToNoMatch" };
+      if (!selected) {
+        const people = new Set(live.map(match => counterpart(match, from)));
+        const otherHasName = [...people].some(id => id !== recipient && foldRelayName(this.host.member(id)?.firstName ?? "") === name);
+        if (relayNameCollisionRefuses(selected, otherHasName)) return { choice: "RelayAmbiguousName" };
+        // A name can select the newest match only when all of the live matches refer to the same person.
+        liveCount = people.size;
+      }
+    }
+    const choice = relayTarget(liveCount, selected, candidate !== undefined);
+    const match = choice === "RelayToNamedMatch" || choice === "RelayToOnlyMatch" ? candidate : undefined;
     return match ? { choice, match } : { choice };
   }
 
   async request(ask: RelayAsk, o: RelayCallOptions): Promise<RelayOutcome> {
     const prior = this.prior(ask.itemId);
     if (prior) return { ...prior, replayed: true };
-    const { choice, match } = this.matchFor(ask.from, ask.matchId);
+    const { choice, match } = this.matchFor(ask.from, ask.matchId, ask.targetName);
     if (choice === "RelayAskWhichMatch") return { itemId: ask.itemId, decision: "unnamed", reason: NOTICE.whichMatch };
+    if (choice === "RelayAmbiguousName") return { itemId: ask.itemId, decision: "refused", reason: RELAY_AMBIGUOUS_NAME };
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: choice === "RelayNamedNotLive" ? NOTICE.matchClosed : NOTICE.noMatch };
-    const to = match.participants.find(p => p !== ask.from)!;
-    if (ask.targetName !== undefined) {
-      const recipient = this.host.member(to)?.firstName;
-      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
-      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
-        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-      }
-    }
+    const to = counterpart(match, ask.from);
     const now = this.host.now();
     const pair = this.host.teenPair?.(match.id) === true;
     if (ask.kind !== "text" && pair) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.textOnly };

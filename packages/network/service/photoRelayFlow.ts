@@ -10,6 +10,7 @@ import {
 import type { PhotoService } from "../../platform/src/photos.ts";
 import type { PhotoHoldingsView } from "../../mcp/src/hooks.ts";
 import { parseRelayRequest } from "../../engine/src/relay.ts";
+import { RELAY_AMBIGUOUS_NAME } from "../src/relay.ts";
 import { localDay, readPhotoMessage, type PhotoReading, type PhotoSlot, type ReaderDraft, type ReaderThread } from "./photoReference.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
@@ -99,7 +100,7 @@ interface PhotoRelayFlowDeps {
 }
 
 export type PhotoRequestStatus = "texted" | "done" | "refused" | "unavailable";
-export interface PhotoRelayAnswer { status: PhotoRequestStatus; text: string }
+export interface PhotoRelayAnswer { status: PhotoRequestStatus | "blocked"; text: string }
 export type PhotoRelayFinish = (tx: SQL) => Promise<(answer: PhotoRelayAnswer) => Promise<void>>;
 type TextCommit = (tx: SQL) => Promise<(text: string) => Promise<void>>;
 type PhotoCheckAnswer = { state: "offered" | "changed" | "lapsed" | "refused"; text: string };
@@ -240,6 +241,7 @@ export class PhotoRelayFlow {
     if (!rt) return input.photoAsked ? settle({ status: "unavailable", text: PHOTO_RELAY_TEXT.unavailable }) : undefined;
     const who: Who = { rt, app: input.app, personId: input.personId, memberId: input.memberId };
     const scene = await this.scene(who, input.text, input.threadId);
+    if (scene.reading.kind === "ambiguous_match") return settle({ status: "blocked", text: RELAY_AMBIGUOUS_NAME });
     const spoken = scene.reading.kind === "send" || scene.reading.kind === "take_back" ? await this.answerReading(who, scene, commit("done")) : undefined;
     if (!spoken) return input.photoAsked ? settle({ status: "refused", text: PHOTO_RELAY_TEXT.sayWhich }) : undefined;
     const status: PhotoRequestStatus = spoken.unavailable ? "unavailable" : spoken.draft ? "texted" : scene.reading.kind === "take_back" && !spoken.asked ? "done" : "refused";
@@ -252,6 +254,7 @@ export class PhotoRelayFlow {
     if (!rt || !this.d.relay.enabled) return { status: "unavailable", text: PHOTO_RELAY_TEXT.unavailable };
     const who: Who = { rt, app: input.app, personId: input.personId, memberId: input.memberId };
     const scene = await this.scene(who, input.words, null);
+    if (scene.reading.kind === "ambiguous_match") return { status: "refused", text: RELAY_AMBIGUOUS_NAME };
     const spoken = scene.reading.kind === "send" || scene.reading.kind === "take_back" ? await this.answerReading(who, scene) : undefined;
     if (!spoken) return { status: "refused", text: PHOTO_RELAY_TEXT.connectorSay };
     if (!spoken.draft) return { status: spoken.unavailable ? "unavailable" : scene.reading.kind === "take_back" && !spoken.asked ? "done" : "refused", text: spoken.text };
@@ -413,6 +416,7 @@ export class PhotoRelayFlow {
   private async answerReading(who: Who, scene: Scene, commit?: TextCommit): Promise<Spoken | undefined> {
     const r = scene.reading;
     switch (r.kind) {
+      case "ambiguous_match": return { text: RELAY_AMBIGUOUS_NAME };
       case "send": {
         if (r.target.kind === "ask") return { text: scene.threads.length ? PHOTO_RELAY_TEXT.whichMatch(scene.threads.map(t => t.firstName)) : PHOTO_RELAY_TEXT.noMatchOpen };
         const thread = r.target.thread;

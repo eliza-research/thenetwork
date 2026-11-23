@@ -24,6 +24,8 @@ A relay thread of a teen friendship pair, on friends.help or in the ntwrk `Frien
 
 Photos do not pass the relay desk. A photo goes through the photo offer, its receiver's yes, an automatic check and a bound view link ([photo relay item](photo_relay_item.md)); the RELAY action answers a photo request before the desk. Changed (owner decision D14 of 2026-11-22): the desk has no photo item, because photo relay has its own flow.
 
+For an unselected name, the shell checks whether another live match has a different counterpart with that name. The model takes that check as an input. A refusal completes the request without changing the swap or delivery state. Several matches with the same named counterpart count as one. The photo model checks refusal before creating or updating a draft.
+
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 The model agrees with `RelayDesk` (`packages/network/src/relay.ts`), the relay host of `ConsentNetwork` (`relayHost`), `relayItemAsync` (`packages/engine/src/relay.ts`), `relayAdmission` (`packages/network/service/runtime.ts`) and the relay endpoint. `stepRelay` of the generated item lifecycle gives `Blocked` or `ReadyToSend`, as `apply` does. The number swap: `RelayDesk.swap` decides both shares, applies the other member's share first and the member's own share only when the first one was not refused; `relayAdmission` refuses a swap question after its consent window (`relayConsentStale`, `relay:ask_expired`; `askInsideWindow`, `askLateTest`), and `cancelSwaps` marks the passed shares of both directions `consent:withdrawn`, which `relayRecordMayDispatch` refuses (`withdrawSwaps`, `withdrawAfterSwapTest`).
@@ -355,6 +357,17 @@ module relay {
   action commitPrivateRecipientMismatch(k: str, named: bool, counterpartMatches: bool): bool = all {
     ep.phase.get(k) == "claimed", ep.kind.get(k) == "share", not(w.erased.get(owner(k))),
     not(relayTextRecipientAllowed(named, counterpartMatches)),
+    ep' = committed(ep, k),
+    w' = w, desk' = desk, queue' = queue, g' = g,
+  }
+
+  pure def relayNameCollisionRefuses(selectedItem: bool, otherCounterpartMatches: bool): bool =
+    not(selectedItem) and otherCounterpartMatches
+
+  action commitAmbiguousName(k: str, selectedItem: bool, otherCounterpartMatches: bool): bool = all {
+    ep.phase.get(k) == "claimed", Set("share", "text").contains(ep.kind.get(k)),
+    not(w.erased.get(owner(k))),
+    relayNameCollisionRefuses(selectedItem, otherCounterpartMatches),
     ep' = committed(ep, k),
     w' = w, desk' = desk, queue' = queue, g' = g,
   }
@@ -701,9 +714,10 @@ module relay {
   // still combine across requests. "wrongRecipient" supplies the shell's mismatched-name result.
   // "rateTheirs"/"rateMine": the engine's rate limit; "refuseAsk",
   // "refuseTheirs", "refuseMine": Network.send refuses (the conversation streak or the leak guard).
-  pure val FAULTS = Set("none", "wrongRecipient", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
+  pure val FAULTS = Set("none", "wrongRecipient", "ambiguousName", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
   action commit(k: str, tc: str, fault: str): bool =
-    if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
+    if (Set("text", "share").contains(ep.kind.get(k)) and fault == "ambiguousName") commitAmbiguousName(k, false, true)
+    else if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
     else if (ep.kind.get(k) == "share" and fault == "wrongRecipient") commitPrivateRecipientMismatch(k, true, false)
     else if (ep.kind.get(k) == "share")
       commitShare(k, fault == "rateTheirs", fault == "rateMine", fault == "refuseAsk", fault == "refuseTheirs", fault == "refuseMine")
@@ -940,6 +954,15 @@ module relay {
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
       .then(claim("b1", "share")).then(commit("b1", "pass", "wrongRecipient")).then(answer("b1"))
+      .expect(ep.receipt.get("b1") == "completed" and desk.swaps.exists(sw => sw.src == "A")
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
+      .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
+
+  run unselectedNamedCollisionKeepsSwapPendingTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claim("b1", "share")).then(commit("b1", "pass", "ambiguousName")).then(answer("b1"))
       .expect(ep.receipt.get("b1") == "completed" and desk.swaps.exists(sw => sw.src == "A")
         and not(numberPending("A")) and not(numberPending("B")) and safety)
       .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))

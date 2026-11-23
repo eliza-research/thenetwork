@@ -10,6 +10,8 @@ Check consent to the newest fresh proposal, the receiver's yes before any check,
 
 Production uses [photo relay](../photoRelayItem.md) for the reference decision (`photoPickFor`), the reply to a proposal (`photoDraftReplyFor`), the offer admission (`photoOfferAdmissionFor`), the offer machine, the sender notices, the page links and the receiver's answer, and [photo consent and review](../photoRelayReview.md) for each photo's review item. This model covers the whole flow for one sender and one receiver.
 
+The [relay address rule](../relayRequestAddress.md) refuses a photo request whose unselected name matches more than one live counterpart. The shell supplies the collision. The request writes no draft or offer. If the turn answers the member, that reply makes any earlier draft prompt stale.
+
 After the receiver's yes, each item starts in the automatic check (`screen`; the classifier verdict is an oracle, with `RETRY_MAX = 2` tries after `RETRY_WAIT`). Only a flagged photo, a photo the check cannot take or a photo the check could not screen in its tries goes to staff (`review`). The offer is ready as soon as one photo is approved (`settle`). `openView` binds the view link to the receiver's first browser, and the link stays open until the sender takes the photo back or the access ends; `renewLink` issues a new unbound link in place of the old one. A taken-back photo is kept in `takenBack`, which the sender's list shows. A ready offer does not count as open for the next offer of the pair (`consentYes`). The transaction that records STOP, leaving, a block, a ban, a hold, erasure or an age under 18 records an end fact on the open offer (`pairEnds`, `partyEnded`), which a later START or released hold does not clear, so the view stays closed (`lawNoViewWhenNotCurrent`) and the tick ends the offer; a deleted photo hides only that photo. A take-back of a declined offer whose notice is not yet due drops its notice and leaves its phase as it is (`photoTakeBackFor` TakeBackQuietly), a take-back from reviewing on drops the photos from the offer, and a "sent" notice that is not yet out when the offer ends is dropped (`lawSentIsNotToldAfterTheEnd`). Changed (owner decisions D4 and D14 of 2026-11-22, "automatic check. i like private link, but not the 24 hours restriction, its enabled until its retracted by the user"): the member's words pick the photos, an automatic check replaces the staff check of every photo, and the view has no time limit.
 
 ```quint
@@ -178,6 +180,12 @@ module photo_relay_item {
   action propose(ps: Set[int]): bool = all {
     partiesOk(w), ps.size() >= 1, ps.size() <= SET_MAX, ps.subseteq(w.photos),
     w' = { ...w, draft: { live: true, shownAt: now, proposed: ps, noticeAt: w.noticeVersion, snapshot: w.photos, newest: true } },
+    now' = now, g' = g,
+  }
+
+  action refuseAmbiguousName(selectedItem: bool, otherCounterpartMatches: bool, answeredInTurn: bool): bool = all {
+    not(selectedItem) and otherCounterpartMatches,
+    w' = if (answeredInTurn) { ...w, draft: { ...w.draft, newest: false } } else w,
     now' = now, g' = g,
   }
 
@@ -493,7 +501,7 @@ module photo_relay_item {
   action anyStep(ps: Set[int], p: int, b: bool, d: int, v: str): bool = any {
     propose(ps), correct(ps), consentYes, askReceiver, receiverYes, receiverNo, noMorePhotos, lapseAnswer,
     screen(p, v), review(p, b), expirePending(p), settle, openView, viewImage(p, b), renewLink, revoke(ps),
-    endOnParties, report, sendNotice,
+    endOnParties, report, sendNotice, refuseAmbiguousName(false, true, b),
     any { tick(d), otherPrompt(b), pairEnds(b), pairResumes, photoDeleted(p), noticeChange, newDay, photosOk },
   }
 
@@ -579,6 +587,10 @@ module photo_relay_item {
   run staleYesTest = init.then(propose(Set(1))).then(tick(1)).then(consentYes).fail()
 
   run otherPromptYesTest = init.then(propose(Set(1))).then(otherPrompt(true)).then(consentYes).fail()
+
+  run ambiguousNameLeavesDraftAndOffersInPlaceTest =
+    init.then(propose(Set(1))).then(refuseAmbiguousName(false, true, true))
+      .expect(w.draft.live and w.draft.proposed == Set(1) and not(w.draft.newest) and not(w.offer.exists) and safety)
 
   run photosChangedYesTest = init.then(propose(Set(1))).then(photoDeleted(2)).then(consentYes).fail()
 

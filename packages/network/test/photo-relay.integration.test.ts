@@ -18,7 +18,7 @@ const secret="synthetic-photo-relay-signing-secret-20261122",start=Date.UTC(2026
 const staffToken="synthetic-photo-relay-safety-token-20261122",reviewerToken="synthetic-photo-relay-reviewer-token-20261122";
 const phones={ari:"+12125550301",maya:"+12125550302",jordan:"+12125550303",teo:"+12125550304",nia:"+12125550305",omar:"+12125550306",
   lee:"+12125550307",kim:"+12125550308",rosa:"+12125550309",tao:"+12125550310",sam:"+12125550311",una:"+12125550312",
-  vic:"+12125550313",wes:"+12125550314"} as const;
+  vic:"+12125550313",wes:"+12125550314",patA:"+12125550315",patB:"+12125550316"} as const;
 type Who=keyof typeof phones;
 let url:string,sql:SQL,service:NetworkService,server:HttpServer,cloud:HttpServer,seq=0,storageReads=0,failPreviewAudit=false,screenMode:"clean"|"flagged"|"down"="clean",screenCalls=0;
 const people:Record<Who,{personId:string;memberId:string}>={} as never;
@@ -117,6 +117,36 @@ test.skipIf(!pgAvailable)("a sender names a photo in their own words, sees exact
   expect((await replayed.json() as {replies?:string[]}).replies).toEqual(yes.replies);
   expect(await offers("ari","maya")).toHaveLength(1);
 },120_000);
+
+test.skipIf(!pgAvailable)("an unselected photo name shared by two matches leaves the existing draft and offers intact", async () => {
+  // spec/relayRequestAddress.md, "A name identifies one recipient on an unselected relay"
+  await join("patA", "Pat", 29);
+  await join("patB", "Pat", 30);
+  await pair("photo-ari-older-pat", "ari", "patA");
+  clock.advance(MINUTE);
+  await pair("photo-ari-newer-pat", "ari", "patB");
+  const draft = () => service.photoRelay.draftOf(people.ari.personId, "slop");
+  try {
+    expect((await say("ari", "Send Jordan photo 2.")).reply).toContain("Send Jordan photo 2");
+    const earlier = await draft();
+    expect(earlier).toMatchObject({ recipientMemberId: people.jordan.memberId });
+    const screens = screenCalls;
+    const ambiguous = await say("ari", "Send Pat photo 1.");
+    expect(ambiguous.outcome).toBe("handled");
+    expect(ambiguous.reply).toContain("more than one person with that name");
+    expect(await draft()).toEqual(earlier);
+    expect(await offers("ari", "patA")).toEqual([]);
+    expect(await offers("ari", "patB")).toEqual([]);
+    expect(screenCalls).toBe(screens);
+  } finally {
+    await service.runtimeFor("slop")!.unitOfWork(net => {
+      const st = net.exportState();
+      st.opps = st.opps.filter(op => op.id !== "photo-ari-older-pat" && op.id !== "photo-ari-newer-pat");
+      net.importState(st);
+    });
+    await say("ari", "no");
+  }
+}, 120_000);
 
 test.skipIf(!pgAvailable)("a photo named in the member's own words is not proposed when another person is asked to send it, or the member puts a condition on it, hedges it or takes it back",async()=>{
   for(const text of [

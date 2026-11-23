@@ -322,7 +322,7 @@ test("with two live matches the open context offers both; an unnamed relay asks 
     st.opps.push({...base,id:"relay-pair-cy",participants:[fromId,thirdId],status:[[fromId,"yes"],[thirdId,"yes"]],contacted:[fromId,thirdId],createdAt:clock.now()});n.importState(st);});
   try {
     clock.advance(MINUTE);expect((await post(TURN_PATH,turn(b,"two-matches-sam-reply","Sounds good, thanks"))).status).toBe(200);
-    const unnamed=await open("two-matches-unnamed","tell Sam I'm on my way");
+    const unnamed=await open("two-matches-unnamed","tell them I'm on my way");
     const [row]=await sql`select response from platform.inbound where id='msg:blooio:two-matches-unnamed'`;
     expect(row.response.context.activeItems).toEqual([{id:"relay-pair-cy",kind:"match",summary:"Match with Cy"},{id:"relay-pair",kind:"match",summary:"Match with Sam"}]);
     const before=posts,calls=classifications;
@@ -363,7 +363,7 @@ test("two live matches with the same first name get distinct summaries, or none 
     await pairs(Date.UTC(2026,9,9,15),Date.UTC(2026,9,9,17));
     expect(await items("same-name-same-day")).toBeNull();
     const before=posts,unnamed=await open("same-name-unnamed","tell Sam I'm on my way");
-    expect(await(await post(RELAY_PATH,unnamed)).json()).toMatchObject({decision:"none",senderNotice:"You have more than one match, so I didn't send that. Send it again and say who it's for."});
+    expect(await(await post(RELAY_PATH,unnamed)).json()).toMatchObject({decision:"block",senderNotice:expect.stringContaining("more than one person with that name"),delivered:false});
     expect((await post(RELAY_PATH,{...(await open("same-name-guess","tell Sam I'm on my way")),itemId:"relay-pair"})).status).toBe(403);
     expect(posts).toBe(before);
   } finally {

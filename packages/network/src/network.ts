@@ -9600,7 +9600,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
   relayRequest(ask: RelayAsk, o: RelayCallOptions): Promise<RelayOutcome> { return this.relayDesk.request(ask, o); }
   relayCancelSwap(memberId: MemberId): number { const n = this.relayDesk.cancelSwaps(memberId); if (n) this.dirty = true; return n; }
-  relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId).match; }
+  relayMatch(memberId: MemberId, matchId?: string, targetName?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId, targetName).match; }
   relayLiveMatches(memberId: MemberId): { match: RelayMatch; otherFirstName: string; meeting: boolean }[] {
     return this.relayDesk.liveMatches(memberId).map(match => {
       const other = this.relayHost().member(match.participants.find(p => p !== memberId)!);

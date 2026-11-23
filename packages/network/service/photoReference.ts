@@ -2,16 +2,18 @@ import { classifyYesNo, DAY } from "@thenetwork/core";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { parseRelayRequest, relayAffirmsIt, relayPhotoReferenceAllowed, relayStatedDestination } from "../../engine/src/relay.ts";
 import { photoPickFor, photoSlotsMax, type PhotoPickResult } from "../../core/src/generated/photoRelayItem.ts";
+import { relayNameCollisionRefuses } from "../../core/src/generated/relayRequestAddress.ts";
 import { maskOf as numbersMask, numbersOf as maskNumbers } from "../../platform/src/photo-relay.ts";
 
 export interface PhotoSlot { n: number; id: string; addedAt: number; batch: string; label: string | null; sharedWith: string[] }
 export interface ReaderThread { threadId: string; recipientMemberId: string; firstName: string }
 export interface ReaderDraft { recipientMemberId: string | null; shown: number[]; proposed: number[]; wantsSet: boolean; listed: boolean }
 export interface ReaderContext { photos: PhotoSlot[]; now: number; timeZone: string; threads: ReaderThread[]; currentThreadId: string | null; draft: ReaderDraft | null }
-export type Target = { kind: "one"; thread: ReaderThread } | { kind: "ask"; recipients: number };
+export type Target = { kind: "one"; thread: ReaderThread } | { kind: "ask"; recipients: number; ambiguous?: true };
 type PickWhy = "list" | "ordinal" | "recency" | "date" | "label" | "content" | "has" | "other" | "all" | "this" | "and";
 export type PhotoReading =
   | { kind: "none" }
+  | { kind: "ambiguous_match" }
   | { kind: "send"; target: Target; result: PhotoPickResult; numbers: number[]; wantsSet: boolean; why: PickWhy; alsoText: boolean }
   | { kind: "draft"; hasReference: boolean; yes: boolean; no: boolean; result: PhotoPickResult | null; numbers: number[]; wantsSet: boolean; why: PickWhy }
   | { kind: "holdings"; firstName: string | null }
@@ -476,6 +478,7 @@ function scopeOf(ctx: ReaderContext, target: string | null, draftMode: boolean):
 function liveTarget(ctx: ReaderContext): Target {
   const current = ctx.threads.find(th => th.threadId === ctx.currentThreadId);
   if (current) return { kind: "one", thread: current };
+  if (ctx.currentThreadId !== null) return { kind: "ask", recipients: 0 };
   if (ctx.threads.length === 1) return { kind: "one", thread: ctx.threads[0]! };
   return { kind: "ask", recipients: ctx.threads.length };
 }
@@ -495,11 +498,15 @@ function targetAt(words: string[], i: number, ctx: ReaderContext, unknown: boole
   if (a === "all" && b === "my" && c === "matches") return { target: { kind: "ask", recipients: 2 }, len: 3 };
   if ((a === "both" || a === "all") && b === "of" && c === "them") return { target: { kind: "ask", recipients: 2 }, len: 3 };
   const s = scopeOf(ctx, null, false);
-  const known = threadNamed(s, a);
-  const isName = known !== undefined || (unknown && nameish(a, ctx));
+  const named = ctx.threads.filter(th => normalized(th.firstName).split(" ")[0] === a);
+  const isName = named.length > 0 || (unknown && nameish(a, ctx));
   if (!isName) return null;
   if ((b === "and" || b === "&") && (threadNamed(s, c) !== undefined || nameish(c, ctx))) return { target: { kind: "ask", recipients: 2 }, len: 3 };
-  return { target: known ? { kind: "one", thread: known } : { kind: "ask", recipients: 0 }, len: 1 };
+  const selected = ctx.currentThreadId !== null;
+  const distinct = new Set(named.map(th => th.recipientMemberId));
+  if (relayNameCollisionRefuses(selected, distinct.size > 1)) return { target: { kind: "ask", recipients: distinct.size, ambiguous: true }, len: 1 };
+  const thread = selected ? named.find(th => th.threadId === ctx.currentThreadId) : named[0];
+  return { target: thread ? { kind: "one", thread } : { kind: "ask", recipients: 0 }, len: 1 };
 }
 
 function contentWords(phrase: string[]): string[] {
@@ -562,6 +569,7 @@ function sendOf(t: string, original: string, ctx: ReaderContext): PhotoReading |
     let end = chosen.end;
     while (end < words.length && /^#?\d+$/.test(words[end]!)) end++;
     if (!relayPhotoReferenceAllowed(asPhotoRequest(t, words.slice(v, end)))) return NONE;
+    if (chosen.target.kind === "ask" && chosen.target.ambiguous) return { kind: "ambiguous_match" };
     const target = chosen.target.kind === "one" ? chosen.target.thread.recipientMemberId : null;
     const s = scopeOf(ctx, target, false);
     const phraseText = chosen.phrase.join(" ");
@@ -595,6 +603,7 @@ function redirectOf(words: string[], original: string, ctx: ReaderContext, draft
   const from = RECIPIENT_PREPS.has(words[found.at - 1] ?? "") ? found.at - 1 : found.at;
   const phrase = [...words.slice(0, from), ...words.slice(found.at + found.len)].filter(w => !VERBS.has(w) && !AUX.has(w));
   const target = found.target;
+  if (target.kind === "ask" && target.ambiguous) return { kind: "ambiguous_match" };
   const recipients = target.kind === "one" ? 1 : target.recipients;
   const s = scopeOf(ctx, target.kind === "one" ? target.thread.recipientMemberId : null, true);
   const said = flagsOf(phrase.join(" "), original, s);
@@ -714,6 +723,7 @@ function takeBackOf(t: string, original: string, ctx: ReaderContext): PhotoReadi
     if (!WITHDRAW.has(w) && !VERBS.has(w) && !AUX.has(w)) rest.push(w);
   }
   const chosen = target ?? liveTarget(ctx);
+  if (chosen.kind === "ask" && chosen.ambiguous) return { kind: "ambiguous_match" };
   const thread = chosen.kind === "one" ? chosen.thread : null;
   const s = scopeOf(ctx, null, false);
   const ref = NUMERAL.test(rest[0] ?? "") ? ["photo", ...rest] : rest;
