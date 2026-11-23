@@ -67,3 +67,9 @@
 {"text":"I would not send this calendar invite, but send Ari this photo.","want":"photo"}
 {"text":"I will not wait, send them my number","want":"contact_share"}
 {"text":"I would not wait, send them my number","want":"contact_share"}
+{"text": "tell Ana to send him my number", "want": "none"}
+{"text": "ask Ana to give him my number", "want": "none"}
+{"text": "tell Sam to share my number with him", "want": "none"}
+{"text": "let Ana send him my number", "want": "none"}
+{"text": "please tell Ana to send him my number", "want": "none"}
+{"text": "tell my match to send him my number", "want": "none"}

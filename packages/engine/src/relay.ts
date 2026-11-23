@@ -455,6 +455,11 @@ const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|w
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
 const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
+// A request that a third party send the number ("tell Ana to send him my number") is not the
+// sender's own share: the relay reaches only the match, so Ana would never get it, and the number
+// must not go to the match on the strength of it. The CONTACT_REQ match is still required, so
+// "tell them to send me their number" stays a text request.
+const TELL_TO_SHARE = new RegExp(`^\\s*(?:please\\s+)?(?:tell|ask|let)\\s+${OTHER}\\s+(?:to\\s+)?(?:please\\s+)?(?:send|give|share|pass|forward)\\b`, "iu");
 const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward)\\s+(?:this|that|these|my)\\s+(?:photos?|pics?|pictures?|selfies?)\\s+(?:to|with)\\s+${OTHER}`, "iu");
 const TEXT_REQ = new RegExp(`^\\s*(?:please\\s+)?(?:tell|let|ask)\\s+${OTHER}\\s+(?:know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
 
@@ -514,7 +519,8 @@ export function parseRelayRequest(text: string): RelayRequest {
       || (SHARE_NEG.test(clause) && (PRIVATE_RELAY_REFERENCE.test(clause)
         || (PRIVATE_RELAY_ACTION.test(clause) && PRIVATE_RELAY_ITEM.test(clause)))))
       || (contact && refusesNumberSwap(clauses));
-    return privateRelayRequestAllowed(refused, hedged)
+    const toldToShare = contact && TELL_TO_SHARE.test(spoken);
+    return privateRelayRequestAllowed(refused, hedged) && !toldToShare
       ? { kind: contact ? "contact_share" : "photo" } : { kind: "none" };
   }
   const low = t.toLowerCase();
