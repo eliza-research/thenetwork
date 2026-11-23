@@ -748,8 +748,9 @@ function independentPhoneBoundary(prefix: string, markedPayload: boolean): numbe
 function independentWithdrawalBoundary(payload: string, markedPayload: boolean): number | undefined {
   const words = relaySentenceBoundaries(payload.replace(/[“”]/g, '"'));
   for (const part of words.matchAll(RELAY_SENTENCE_TEXT)) {
-    const refusal = part[0].trim().toLowerCase();
-    if (!CONTACT_ITEM_REFUSAL.test(refusal) && !DECLINES_PENDING_SEND.test(refusal)) continue;
+    const refusal = part[0].trim().toLowerCase().split(/\s+because\s+|,\s*(?=(?:please|pls)\s*$)/u, 1)[0]!;
+    const namesNumber = CONTACT_ITEM_REFUSAL.test(refusal) && OWN_SWAP_ITEM.test(refusal);
+    if (!namesNumber && !DECLINES_PENDING_SEND.test(refusal)) continue;
     if (words.slice(part.index + part[0].length).startsWith("?")) continue;
     const end = independentPhoneBoundary(payload.slice(0, part.index), markedPayload);
     if (end !== undefined) return end;

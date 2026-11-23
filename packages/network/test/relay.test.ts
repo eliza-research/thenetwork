@@ -499,6 +499,7 @@ let envelopeWithdrawalPair = 0;
 test.each([
   { text: "Tell Ari I am running late. Don't send my number.", body: "I am running late.", decision: "pass", withdraws: true },
   { text: "Tell Ari: “I am running late.” Don't send my number.", body: "“I am running late.”", decision: "pass", withdraws: true },
+  { text: "Tell Ari: “I am running late.” Don't send my number because I changed my mind.", body: "“I am running late.”", decision: "pass", withdraws: true },
   { text: "Tell Ari: I am running late. Don't send my number.", body: "I am running late. Don't send my number.", decision: "pass" },
   { text: "Tell Ari I am running late. Please send Ari my number. Don't send my number.", body: "I am running late.", decision: "pass", withdraws: true },
   { text: "Tell Ari: “I am running late.” Please send Ari my number. Don't send my number.", body: "“I am running late.”", decision: "pass", withdraws: true },
