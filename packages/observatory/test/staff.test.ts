@@ -631,4 +631,19 @@ describe("tokens, Access keys and the lab (OBS-11)", () => {
       expect(lab.running).toBe(0);
     }
   });
+
+  test("lab: disposal prevents a seed waiting on its first save from starting", async () => {
+    const script = join(dir, "disposed-arm.mts");
+    const started = join(dir, "disposed-arm-started");
+    await writeFile(script, `import { writeFile } from 'node:fs/promises';
+      await writeFile(${JSON.stringify(started)}, 'started');
+      console.log(JSON.stringify({ results: [] }));`);
+    const lab = new Lab({ dir: join(dir, "lab-dispose"), script });
+    const run = await lab.start({ arms: ["consent"], seeds: [1], days: 1 }, "tester");
+    await lab.dispose();
+
+    expect(lab.running).toBe(0);
+    await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await lab.get(run.id)).toMatchObject({ status: "failed", error: "the server stopped before the run finished" });
+  });
 });
