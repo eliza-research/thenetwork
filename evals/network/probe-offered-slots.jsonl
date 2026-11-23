@@ -164,3 +164,19 @@
 {"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"Sat and Sun please.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Sat or Sun are fine.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work","answer":"unclear","keys":[]}
+{"text":"Yeah, Saturday and Sunday don't work","answer":"unclear","keys":[]}
+{"text":"Yep, Saturday and Sunday don't work","answer":"unclear","keys":[]}
+{"text":"Sure, Saturday and Sunday don't work","answer":"unclear","keys":[]}
+{"text":"OK, Saturday and Sunday don't work","answer":"unclear","keys":[]}
+{"text":"Yes, Thursday and Saturday don't work","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work for me","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday aren't good","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday are not good","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday do not work","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest don't work","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are busy","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest work","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, everything else works","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, I'm free","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, Thursday works","answer":"yes","keys":["a"]}

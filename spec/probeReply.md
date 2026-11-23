@@ -73,6 +73,21 @@ pure def pickedTimes(chosen: List[str], offered: List[str]): List[str] =
   if (chosen.length() > 0) chosen else offered
 ```
 
+### A yes that only refuses named times does not book the rest
+
+A yes that refuses one or more offered times, without choosing a remaining time, does not book the times the member never affirmed: the probe stays open and the member is asked again. A phrase that affirms the remainder ("the rest work", "everything else is fine", "I'm free") still books the times that were not refused.
+
+```quint
+pure def yesBooksUnmentionedTimes(refusedOffered: bool, affirmedRemainder: bool): bool =
+  not(refusedOffered) or affirmedRemainder
+
+pure def lawAYesThatOnlyRefusesBooksNothing(refusedOffered: bool): bool =
+  refusedOffered implies not(yesBooksUnmentionedTimes(refusedOffered, false))
+
+pure def lawAnAffirmedRemainderBooksTheRest(refusedOffered: bool): bool =
+  refusedOffered implies yesBooksUnmentionedTimes(refusedOffered, true)
+```
+
 ### A direct ordinal selects that position in the offer
 
 Use the order in the member's current message. An affirmative “second works” selects only the second option. A supported series of ordinals can select several positions when it ends with a clear choice. “Last” names the final offered option. A missing position or an unbound phrase such as “later works” leaves the offer open. A statement about the previous meeting does not select the last option.
