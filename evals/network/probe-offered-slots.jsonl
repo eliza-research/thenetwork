@@ -124,3 +124,6 @@
 {"text":"sat sun work for me","answer":"yes","keys":["b","c"]}
 {"text":"I can do Sat Sun","answer":"yes","keys":["b","c"]}
 {"text":"Sunday works. I sat Sunday.","answer":"yes","keys":["c"]}
+{"text":"Sat Sun.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
+{"text":"Sat Sun.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Yeah, we can meet in the sun Saturday.","answer":"yes","keys":["b"]}
