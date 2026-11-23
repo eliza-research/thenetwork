@@ -121,6 +121,11 @@
 {"text": "Don't send him my number. I have second thoughts about sharing it. Send him my photo.", "want": "none"}
 {"text": "Don't send him my number. I'm not sure. Send him my photo.", "want": "none"}
 {"text": "Don't send him my photo. I'm not sure whether to send it. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I'm not sure about sending it while Dad is here. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I have second thoughts. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I'm not comfortable sharing my number. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I'm not sure about sending him this calendar invite. Send him my number.", "want": "contact_share"}
+{"text": "Don't send him my number. I'm not comfortable showing my photo. Send him my photo.", "want": "none"}
 {"text": "Don't send him my photo. I'm not sure what time it is. Send him my number.", "want": "contact_share"}
 {"text": "Don't send him my number. I am unsure what time it is. Send him my photo.", "want": "photo"}
 {"text": "Don't send him my photo. Send him my number tomorrow.", "want": "none"}
