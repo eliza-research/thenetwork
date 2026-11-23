@@ -237,6 +237,55 @@ describe("block and report targets in a group plan", () => {
     expect(w.net.exportState().blocks).not.toContain("a|b");
   });
 
+  test.each([
+    "someone else from the gym",
+    "someone else would be better",
+    "someone else can have saturday",
+    "someone else should come too",
+    "someone else is coming with me",
+  ])("a bare someone-else reply ends the safety question without filing: %s", async answer => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    const from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+    const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pendingOf()).toBeDefined();
+    await w.say("a", answer);
+    expect(pendingOf()).toBeUndefined();
+    expect(w.net.safetyReports()).toHaveLength(0);
+    expect(w.to("a", from).some(s => /couldn't tell who you mean/i.test(s.body))).toBe(true);
+    // Later bare "yes" answers must not file against the person just ruled out.
+    await w.say("a", "yes");
+    expect(w.net.safetyReports()).toHaveLength(0);
+    await w.say("a", "yes");
+    expect(w.net.safetyReports()).toHaveLength(0);
+  });
+
+  test("a bare someone-else reply with a competing probe keeps the safety question", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const pending = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pending()?.targets).toEqual(["b"]);
+    w.propose(["a", "c"]);
+    await w.runUntil(() => w.probed("a"), 2 * DAY);
+    expect(w.probed("a")).toBe(true);
+
+    await w.say("a", "someone else can have saturday");
+    expect(pending()?.targets).toEqual(["b"]);
+    expect(w.probed("a")).toBe(true);
+    expect(w.net.safetyReports()).toEqual([]);
+    await w.say("a", "Ben");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
   test("a someone-else exclusion ends the safety question even with a competing probe", async () => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
     await w.onboard("a", "b", "c");
