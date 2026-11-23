@@ -10,6 +10,7 @@ import {
   type Event,
   type GrantMark,
   grantMarkAfter,
+  grantMarkOnOpen,
   grantOffersTakeBack,
   initial,
   type PhotoHoldingsPage,
@@ -101,6 +102,10 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
   };
   const release = async (senderPersonId: string, recipientMemberId: string) => {
     const [o] = await sql`select id from platform.photo_offers where sender_person_id = ${senderPersonId}::uuid and recipient_member_id = ${recipientMemberId} and phase = 'reviewing'`;
+    for (const wait of [60_000, 300_000, 900_000, 3_600_000]) {
+      st.clock.advance(wait);
+      await st.svc.tick();
+    }
     for (const item of await sql`select id from platform.photo_relay_items where offer_id = ${o!.id} and state = 'pending'`) {
       const preview = await st.svc.fetch(new Request(`http://127.0.0.1/relay/${item.id}/photo?app=slop`, { headers: { authorization: `Bearer ${SAFETY_TOKEN}` } }));
       await preview.arrayBuffer();
@@ -139,7 +144,7 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
       const result = await openHoldings(this.token);
       if (!this.send({ type: "answerOpen", opened: result.answer })) return;
       this.photos = result.photos;
-      this.marks = Object.fromEntries(result.photos.flatMap(p => p.shares.map((_, i) => [`${p.n}:${i}`, "GrantOpen" as GrantMark])));
+      this.marks = Object.fromEntries(result.photos.flatMap(p => p.shares.map((s, i) => [`${p.n}:${i}`, grantMarkOnOpen(s.access)])));
       for (const photo of this.photos) {
         if (!this.page.linkHeld) return;
         this.requests++;
@@ -161,6 +166,7 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
       this.requests++;
       const kind = await takeBackShare(this.token, n, share.firstName);
       if (this.send({ type: "answerTakeBack", takeBackAnswer: kind })) this.marks[key] = grantMarkAfter(kind);
+      if (this.send({ type: "reopenAfterTakeBack" }) && canAnswerOpen(this.page)) await this.read();
       return kind;
     }
   }
@@ -190,14 +196,16 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
     expect(p.urls.every(u => u.startsWith("blob:"))).toBe(true);
 
     expect(await p.takeBack("Jordan", 1)).toBe("TakeBackDone");
-    expect([p.page.grants, p.page.takenBack, p.marks[p.share("Jordan", 1).key]]).toEqual([1, 1, "GrantTakenBack"]);
+    expect([p.page.screen, p.page.grants, p.page.takenBack, p.marks[p.share("Jordan", 1).key], p.share("Jordan", 1).share.access]).toEqual(["HoldingsList", 1, 0, "GrantTakenBack", "GrantWasTakenBack"]);
     expect(await offerPhase(sender.personId, jordan!.memberId)).toBe("revoked");
     expect(await offerPhase(sender.personId, maya!.memberId)).toBe("ready");
     expect(grantOffersTakeBack(p.page, p.marks[p.share("Jordan", 1).key]!)).toBe(false);
     expect(await p.takeBack("Jordan", 1)).toBeUndefined();
 
     expect(await p.takeBack("Maya", 1)).toBe("TakeBackDone");
-    expect([p.page.screen, p.page.grants, p.page.takenBack]).toEqual(["HoldingsList", 0, 2]);
+    expect([p.page.screen, p.page.grants, p.page.takenBack]).toEqual(["HoldingsList", 0, 0]);
+    expect(p.photos[0]!.shares.map(s => s.access)).toEqual(["GrantWasTakenBack", "GrantWasTakenBack"]);
+    expect(Object.values(p.marks)).toEqual(["GrantTakenBack", "GrantTakenBack"]);
     expect(await offerPhase(sender.personId, maya!.memberId)).toBe("revoked");
     for (const u of p.urls) URL.revokeObjectURL(u);
   }, T);

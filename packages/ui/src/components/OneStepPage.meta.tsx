@@ -16,6 +16,9 @@ export const meta: ComponentMeta<OneStepPageProps> = {
     Unreachable: { notice: "StepUnreachable" },
     "Session ended": { stepKey: "PhoneSignIn", notice: "StepSessionEnded" },
     "Sign in again": { stepKey: "PhoneSignIn", notice: "StepSignInAgain" },
+    "Cloud sign-in expired": { stepKey: "PhoneSignIn", notice: "StepSignInExpired" },
+    "Cloud sign-in refused": { stepKey: "PhoneSignIn", notice: "StepSignInRefused" },
+    "Cloud sign-in unavailable": { stepKey: "PhoneSignIn", notice: "StepSignInUnavailable" },
     Step: {},
   },
   play: {
@@ -30,6 +33,12 @@ export const meta: ComponentMeta<OneStepPageProps> = {
       expect(within(canvasElement).getByRole("alert").textContent).toBe("Your session ended. Please log in again."),
     "Sign in again": ({ canvasElement }: { canvasElement: HTMLElement }) =>
       expect(within(canvasElement).getByRole("alert").textContent).toBe("For your safety, sign in again with your current number."),
+    "Cloud sign-in expired": ({ canvasElement }: { canvasElement: HTMLElement }) =>
+      expect(within(canvasElement).getByRole("alert").textContent).toBe("Your sign-in took too long. Sign in again."),
+    "Cloud sign-in refused": ({ canvasElement }: { canvasElement: HTMLElement }) =>
+      expect(within(canvasElement).getByRole("alert").textContent).toBe("We could not sign you in. For help, email help@ntwrk.party."),
+    "Cloud sign-in unavailable": ({ canvasElement }: { canvasElement: HTMLElement }) =>
+      expect(within(canvasElement).getByRole("alert").textContent).toBe("Sign-in is not available right now. Try again in a few minutes."),
     Step: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const canvas = within(canvasElement);
       await expect(canvas.queryByRole("alert")).toBeNull();

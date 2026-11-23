@@ -1,5 +1,5 @@
 // spec/photoUploadPage.md, "The server answer decides between saved, refused, closed and a retry"
-import type { PhotoAnswer, PhotoAnswerKind, PhotoBatch } from "../../../core/src/generated/photoUploadPage.ts";
+import type { PhotoAnswer, PhotoAnswerKind, PhotoBatch, PhotoLinkStatus, PhotoLinkStatusKind } from "../../../core/src/generated/photoUploadPage.ts";
 import { type StepAnswer, stepCall } from "./stepPages.ts";
 
 /** The refusal of one photo that the page shows. A server reason that the page does not know is `other`. */
@@ -36,6 +36,41 @@ export function batchOf(files: readonly File[]): PhotoBatch {
     totalBytes: files.reduce((total, file) => total + file.size, 0),
     typesOk: files.every((file) => allowedTypes.includes(file.type)),
   };
+}
+
+/** The photo consent that the link status gives: the exact text that the page shows and the version that it sends. */
+export interface PhotoConsentShown {
+  text: string;
+  version: string;
+}
+
+const consentOf = (value: unknown): PhotoConsentShown | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { text, version } = value as Readonly<Record<string, unknown>>;
+  if (typeof text !== "string" || typeof version !== "string") return undefined;
+  if (text.trim() === "" || text.length > 2000 || !/^[A-Za-z0-9._-]{1,64}$/.test(version)) return undefined;
+  return { text, version };
+};
+
+const linkStatusKindOf = (answer: StepAnswer): PhotoLinkStatusKind => {
+  if (!answer.reached) return "LinkStatusUnreachable";
+  const { status, code } = answer;
+  if (status === 200) return answer.data.ok === true && typeof answer.data.consentRequired === "boolean" && consentOf(answer.data.consent) ? "LinkStatusOpen" : "LinkStatusFailed";
+  if ((status === 404 || status === 410) && code === "link_unavailable") return "LinkStatusClosed";
+  if (status === 502 || status === 503) return "LinkStatusUnreachable";
+  return "LinkStatusFailed";
+};
+
+/**
+ * Asks the server whether the link can upload now, without using it. The token goes only in the `x-photo-upload-link` header.
+ * An open link also gives whether the consent is required, and the consent text and version.
+ * @model spec/photoUploadPage.md
+ */
+export async function readPhotoLink(token: string): Promise<{ linkStatus: PhotoLinkStatus; consent: PhotoConsentShown | undefined }> {
+  const answer = await stepCall(photoUploadPath, { method: "GET", headers: { "x-photo-upload-link": token } });
+  const kind = linkStatusKindOf(answer);
+  if (kind !== "LinkStatusOpen" || !answer.reached) return { linkStatus: { kind, consentRequired: false }, consent: undefined };
+  return { linkStatus: { kind, consentRequired: answer.data.consentRequired === true }, consent: consentOf(answer.data.consent) };
 }
 
 const kindOf = (answer: StepAnswer): PhotoAnswerKind => {

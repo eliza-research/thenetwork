@@ -9,13 +9,11 @@ const viewAnswerPath = "/api/photos/page/answer";
 
 const imageTypes: readonly string[] = ["image/jpeg", "image/png", "image/webp"];
 
-/** What a good open answer carries beside the machine answer: the sender's first name and the end of the view window. */
+/** What a good open answer carries beside the machine answer: the sender's first name. The answer has no end time. */
 export interface PhotoViewOpened {
   answer: ViewOpenAnswer;
   /** The first name of the sender; "" unless the answer is `OpenShown`. */
   fromFirstName: string;
-  /** The end of the view window in epoch milliseconds; undefined when the answer does not give a usable one. */
-  until: number | undefined;
 }
 
 /** One image answer, with the object URL of the bytes when the answer is `ImageShown`. The caller releases the URL. */
@@ -34,15 +32,13 @@ export function photoViewTokenWellFormed(token: string): boolean {
 
 const firstNameOf = (value: unknown): string => (typeof value === "string" && value.trim() !== "" && value.length <= 60 ? value.trim() : "");
 
-const untilOf = (value: unknown): number | undefined => (typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined);
-
 const openKindOf = (answer: StepAnswer): ViewOpenKind => {
   if (!answer.reached) return "OpenUnreachable";
   const { status, code, data } = answer;
   if (status === 200) return data.purpose === "view" && firstNameOf(data.fromFirstName) !== "" ? "OpenShown" : "OpenFailed";
   if (status === 403 && code === "other_device") return "OpenOtherDevice";
   if (status === 410 && code === "link_expired") return "OpenGone";
-  if (status === 404 && code === "link_unavailable") return "OpenGone";
+  if (status === 404 && code === "link_unavailable") return "OpenReplaced";
   if (status === 502 || status === 503) return "OpenUnreachable";
   return "OpenFailed";
 };
@@ -54,14 +50,15 @@ const countOf = (answer: StepAnswer): number => {
 };
 
 /**
- * Opens the view link once, when the person taps. The first open binds this browser; the token goes only in the JSON body.
+ * Opens the view link when the person taps. The first open binds this browser; a later open on it reads the count again.
+ * The token goes only in the JSON body.
  * @model spec/photosViewPage.md
  */
 export async function openPhotoView(token: string): Promise<PhotoViewOpened> {
   const answer = await stepCall(viewOpenPath, { method: "POST", json: { token } });
   const kind = openKindOf(answer);
-  if (kind !== "OpenShown" || !answer.reached) return { answer: { kind, count: 0 }, fromFirstName: "", until: undefined };
-  return { answer: { kind, count: countOf(answer) }, fromFirstName: firstNameOf(answer.data.fromFirstName), until: untilOf(answer.data.until) };
+  if (kind !== "OpenShown" || !answer.reached) return { answer: { kind, count: 0 }, fromFirstName: "" };
+  return { answer: { kind, count: countOf(answer) }, fromFirstName: firstNameOf(answer.data.fromFirstName) };
 }
 
 const errorCodeOf = async (response: Response): Promise<string> => {
@@ -75,7 +72,7 @@ const errorCodeOf = async (response: Response): Promise<string> => {
 
 const imageKindOf = (status: number, code: string): ViewImageAnswer => {
   if (status === 404 && code === "not_found") return "ImageMissing";
-  if (status === 404 && code === "link_unavailable") return "ImageGone";
+  if (status === 404 && code === "link_unavailable") return "ImageReplaced";
   if (status === 410 && code === "link_expired") return "ImageGone";
   if (status === 403 && code === "other_device") return "ImageOtherDevice";
   if (status === 502 || status === 503) return "ImageUnreachable";
@@ -102,7 +99,7 @@ export async function loadPhotoView(token: string, n: number): Promise<PhotoView
     return { answer: "ImageUnreachable", url: undefined };
   }
   if (response.status !== 200) return { answer: imageKindOf(response.status, await errorCodeOf(response)), url: undefined };
-  const type = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   if (!imageTypes.includes(type)) return { answer: "ImageFailed", url: undefined };
   let bytes: Blob;
   try {
@@ -119,7 +116,7 @@ const reportOf = (answer: StepAnswer): ViewReportAnswer => {
   const { status, code, data } = answer;
   if (status === 200) return data.state === "reported" ? "ReportDone" : "ReportFailed";
   if (status === 410 && code === "link_expired") return "ReportGone";
-  if (status === 404 && code === "link_unavailable") return "ReportGone";
+  if (status === 404 && code === "link_unavailable") return "ReportReplaced";
   if (status === 403 && code === "other_device") return "ReportOtherDevice";
   if (status === 502 || status === 503) return "ReportUnreachable";
   return "ReportFailed";

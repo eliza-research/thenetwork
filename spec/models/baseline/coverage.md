@@ -15,11 +15,11 @@ How the ledger was made: six agents read every file and the models on the three 
 | Verdict | Files |
 |---|---|
 | covered | 320 |
-| na | 419 |
+| na | 426 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 739 |
+| total | 746 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
@@ -527,12 +527,14 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/Headline.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Headline.tsx | production | spec/brandIdentity.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/components/HomeHelpPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/HomeHelpPageView.stories.tsx | harness | none | none | na | Handwritten stories past the cap of 12 generated stories: they build each story from the args and play functions of HomeHelpPageView.meta.tsx; it ships in no page. |
 | packages/ui/src/components/HomeHelpPageView.tsx | production | spec/homeHelpPage.md | packages/core/src/generated/homeHelpPage.ts, packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of homeHelpPage and oneStepPage and does not recompute them. |
 | packages/ui/src/components/Icon.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Icon.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/Input.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Input.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/JoinView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/JoinView.stories.tsx | harness | none | none | na | Handwritten stories past the cap of 12 generated stories: they build each story from the args and play functions of JoinView.meta.tsx; it ships in no page. |
 | packages/ui/src/components/JoinView.tsx | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
 | packages/ui/src/components/Label.stories.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Label.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
@@ -555,16 +557,21 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/PhoneInput.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/PhoneInput.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/components/PhonePageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhonePageView.stories.tsx | harness | none | none | na | Handwritten stories past the cap of 12 generated stories: they build each story from the args and play functions of PhonePageView.meta.tsx; it ships in no page. |
 | packages/ui/src/components/PhonePageView.tsx | production | spec/phonePage.md | packages/core/src/generated/phonePage.ts, packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of phonePage and oneStepPage and does not recompute them. |
 | packages/ui/src/components/PhoneStep.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/PhoneStep.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/components/PhotoUploadPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotoUploadPageView.stories.tsx | harness | none | none | na | Handwritten stories past the cap of 12 generated stories: they build each story from the args and play functions of PhotoUploadPageView.meta.tsx; it ships in no page. |
 | packages/ui/src/components/PhotoUploadPageView.tsx | production | spec/photoUploadPage.md | packages/core/src/generated/photoUploadPage.ts | covered | Display only: it shows the machine state and the copy. |
 | packages/ui/src/components/PhotosCheckPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotosCheckPageView.stories.tsx | harness | none | none | na | Handwritten stories past the cap of 12 generated stories: they build each story from the args and play functions of PhotosCheckPageView.meta.tsx; it ships in no page. |
 | packages/ui/src/components/PhotosCheckPageView.tsx | production | spec/photosCheckPage.md | packages/core/src/generated/photosCheckPage.ts | covered | Display only: it shows the machine state, the photos and the copy. |
 | packages/ui/src/components/PhotosMinePageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotosMinePageView.stories.tsx | harness | none | none | na | Handwritten stories past the cap of 12 generated stories: they build each story from the args and play functions of PhotosMinePageView.meta.tsx; it ships in no page. |
 | packages/ui/src/components/PhotosMinePageView.tsx | production | spec/photosMinePage.md | packages/core/src/generated/photosMinePage.ts | covered | Display only: it shows the machine state, the share marks and the copy. |
 | packages/ui/src/components/PhotosViewPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotosViewPageView.stories.tsx | harness | none | none | na | Handwritten stories past the cap of 12 generated stories: they build each story from the args and play functions of PhotosViewPageView.meta.tsx; it ships in no page. |
 | packages/ui/src/components/PhotosViewPageView.tsx | production | spec/photosViewPage.md | packages/core/src/generated/photosViewPage.ts | covered | Display only: it shows the machine state and the copy; the no-save styles and the context-menu block are a shell (play tests). |
 | packages/ui/src/components/Popover.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Popover.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |

@@ -12,15 +12,19 @@ Photos are for adults (18+) only. The server checks the age, the membership, the
 
 ### The page reads the token from the fragment once and opens the picker only for a well-formed token
 
-The page reads the fragment once, when it opens. Then it removes the fragment from the address with `history.replaceState`, before it sends any request. It keeps the token only in the memory of the page. It never puts the token in storage, in the address, in a log or in the page state. A one-step photo link is never kept across a sign-in, because the page has no sign-in ([one-step pages](oneStepPage.md), "The link stays in the fragment"). A token that does not have the correct shape shows the "link has expired" step and the page sends nothing. A well-formed token opens the picker.
+The page reads the fragment once, when it opens. Then it removes the fragment from the address with `history.replaceState`, before it sends any request. It keeps the token only in the memory of the page. It never puts the token in storage, in the address, in a log or in the page state. A one-step photo link is never kept across a sign-in, because the page has no sign-in ([one-step pages](oneStepPage.md), "The link stays in the fragment"). A token that does not have the correct shape shows the "link has expired" step and the page sends nothing. A well-formed token shows a checking step, and the page asks the server for the status of the link (`GET /api/photos/upload` with the token in the `x-photo-upload-link` header, never in the address). The status call does not use the link.
 
-The page cannot know if the link is still open before it uploads, because the server has no status call for a link (gap 3). The page learns that a link is used or expired only from the upload answer. When the server adds a status call, its answer plugs in at `openPhotoPage` as one more parameter.
+- `200` is "open": the page shows the picker. The answer says whether the photo consent is required and gives the consent text and its version. The shell keeps the text and the version and shows the text exactly; this model keeps only whether the consent is asked.
+- `404` and `410` `link_unavailable` are "closed": the token is not known, the link was used or has expired, it is for another app, or the holder may no longer add photos. The page shows the closed link and sends nothing more.
+- A request that does not reach the server, and `502` and `503`, are "unreachable". Every other answer, also a `200` without a consent text and version, is "failed". The checking step shows the error and offers "Try again".
+
+An open status is not a promise: the upload can still answer that the link closed.
 
 ```quint
 import photoPolicy.* from "./photoPolicy"
 
-type PhotoScreen = PhotoOpening | PhotoBadLink | PhotoPick | PhotoDone | PhotoAllRefused | PhotoLinkClosed
-type PhotoPending = PhotoIdle | PhotoUploading
+type PhotoScreen = PhotoOpening | PhotoBadLink | PhotoChecking | PhotoPick | PhotoDone | PhotoAllRefused | PhotoLinkClosed
+type PhotoPending = PhotoIdle | PhotoReading | PhotoUploading
 type PhotoError = PhotoNoError | PhotoPickCount | PhotoPickTooLarge | PhotoPickType | PhotoConsentNeeded |
   PhotoTooLarge | PhotoUnreachable | PhotoRequestFailed
 type PhotoUploadPage = {
@@ -28,6 +32,7 @@ type PhotoUploadPage = {
   pending: PhotoPending,
   error: PhotoError,
   linkOpen: bool,
+  consentAsked: bool,
   consentTicked: bool,
   chosen: int,
   savedCount: int,
@@ -35,7 +40,7 @@ type PhotoUploadPage = {
 }
 pure val initial: PhotoUploadPage = {
   screen: PhotoOpening, pending: PhotoIdle, error: PhotoNoError, linkOpen: false,
-  consentTicked: false, chosen: 0, savedCount: 0, someRefused: false,
+  consentAsked: false, consentTicked: false, chosen: 0, savedCount: 0, someRefused: false,
 }
 
 pure val tokenWellFormedValues = Set(true, false)
@@ -43,8 +48,42 @@ pure val tokenWellFormedValues = Set(true, false)
 pure def canOpenPhotoPage(page: PhotoUploadPage): bool = page.screen == PhotoOpening
 
 pure def openPhotoPage(page: PhotoUploadPage, tokenWellFormed: bool): PhotoUploadPage =
-  if (tokenWellFormed) { ...page, screen: PhotoPick, linkOpen: true }
+  if (tokenWellFormed) { ...page, screen: PhotoChecking, pending: PhotoReading }
   else { ...page, screen: PhotoBadLink, linkOpen: false }
+
+type PhotoLinkStatusKind = LinkStatusOpen | LinkStatusClosed | LinkStatusUnreachable | LinkStatusFailed
+type PhotoLinkStatus = { kind: PhotoLinkStatusKind, consentRequired: bool }
+
+pure val linkStatusValues = Set(
+  { kind: LinkStatusOpen, consentRequired: true },
+  { kind: LinkStatusOpen, consentRequired: false },
+  { kind: LinkStatusClosed, consentRequired: false },
+  { kind: LinkStatusUnreachable, consentRequired: false },
+  { kind: LinkStatusFailed, consentRequired: true },
+)
+
+pure def canAnswerLinkStatus(page: PhotoUploadPage): bool = page.pending == PhotoReading
+
+pure def answerLinkStatus(page: PhotoUploadPage, linkStatus: PhotoLinkStatus): PhotoUploadPage =
+  val idle = { ...page, pending: PhotoIdle }
+  if (linkStatus.kind == LinkStatusOpen)
+    { ...idle, screen: PhotoPick, linkOpen: true, consentAsked: linkStatus.consentRequired, error: PhotoNoError }
+  else if (linkStatus.kind == LinkStatusClosed) { ...idle, screen: PhotoLinkClosed, linkOpen: false, error: PhotoNoError }
+  else if (linkStatus.kind == LinkStatusUnreachable) { ...idle, error: PhotoUnreachable }
+  else { ...idle, error: PhotoRequestFailed }
+
+pure def canRetryLinkStatus(page: PhotoUploadPage): bool =
+  page.screen == PhotoChecking and page.pending == PhotoIdle and page.error != PhotoNoError
+
+pure def retryLinkStatus(page: PhotoUploadPage): PhotoUploadPage = { ...page, pending: PhotoReading, error: PhotoNoError }
+
+pure def photoLinkHeld(page: PhotoUploadPage): bool = page.screen == PhotoChecking or page.linkOpen
+
+pure def lawOnlyAnOpenStatusOpensThePicker(page: PhotoUploadPage, linkStatus: PhotoLinkStatus): bool =
+  (canAnswerLinkStatus(page) and answerLinkStatus(page, linkStatus).screen == PhotoPick) implies linkStatus.kind == LinkStatusOpen
+
+pure def alwaysCheckingSendsNoPhotos(page: PhotoUploadPage): bool =
+  page.screen == PhotoChecking implies (not(page.linkOpen) and page.pending != PhotoUploading and page.chosen == 0)
 
 pure def alwaysClosedScreensCloseTheLink(page: PhotoUploadPage): bool =
   page.screen != PhotoPick implies not(page.linkOpen)
@@ -110,18 +149,20 @@ pure def lawAcceptedBatchFitsTheLimits(batch: PhotoBatch): bool =
 
 ### The photo consent goes with the upload only when the person ticks it
 
-The page shows the photo consent text exactly, with a box that the person ticks. Only a ticked box sends the consent version in the `x-photo-consent` header. A member who agreed by text does not have to tick it. No API serves the photo consent text or version, so the site build gives them to the page from the platform's `PHOTO_CONSENT` (gap 2). When the server serves the consent, the build input is where it plugs in. When the server answers that the consent is missing, the page clears the box, marks it as refused and asks the person to tick it. The link stays open for this answer. While the consent is refused and not ticked, the page does not send the photos again. Ticking the box clears the refusal.
+When the link status says that the consent is required, the page shows the photo consent text of the status answer exactly, with a box that the person ticks. Only a ticked box sends the consent version of the status answer in the `x-photo-consent` header. A member who agreed already (by text or earlier on the page) does not see the box. The page does not bundle a consent text or version: the server gives both. When the server answers an upload that the consent is missing, the page shows the box, clears it, marks it as refused and asks the person to tick it. The link stays open for this answer. While the consent is refused and not ticked, the page does not send the photos again. Ticking the box clears the refusal.
 
 ```quint
 pure val tickedValues = Set(true, false)
 
 pure def photoConsentHeaderSent(page: PhotoUploadPage): bool = page.consentTicked
 
-pure def canTickConsent(page: PhotoUploadPage): bool = page.screen == PhotoPick and page.pending == PhotoIdle
+pure def canTickConsent(page: PhotoUploadPage): bool = page.screen == PhotoPick and page.pending == PhotoIdle and page.consentAsked
 
 pure def tickConsent(page: PhotoUploadPage, ticked: bool): PhotoUploadPage =
   { ...page, consentTicked: ticked,
     error: if (ticked and page.error == PhotoConsentNeeded) PhotoNoError else page.error }
+
+pure def alwaysTickOnlyWhenAsked(page: PhotoUploadPage): bool = page.consentTicked implies page.consentAsked
 
 pure def alwaysConsentNeededWhileUnticked(page: PhotoUploadPage): bool =
   page.error == PhotoConsentNeeded implies not(page.consentTicked)
@@ -218,7 +259,7 @@ pure def answerUpload(page: PhotoUploadPage, answer: PhotoAnswer): PhotoUploadPa
   else if (answer.kind == UploadLinkClosed)
     { ...idle, screen: PhotoLinkClosed, linkOpen: false, savedCount: 0, someRefused: false, error: PhotoNoError }
   else if (answer.kind == UploadConsentRequired)
-    { ...idle, consentTicked: false, error: PhotoConsentNeeded }
+    { ...idle, consentAsked: true, consentTicked: false, error: PhotoConsentNeeded }
   else { ...idle, error: retryError(answer.kind) }
 
 pure def lawRetryAnswersShowAnError(kind: PhotoAnswerKind): bool =
@@ -246,13 +287,16 @@ pure def stepSavedOnlyFromTheAnswer(before: PhotoUploadPage, via: str, after: Ph
 
 ### A closed link never opens again on the page
 
-A used link, an expired link, a malformed token and every answer that uses the link close the link on the page. After that, no event opens it again, and the page offers no upload. The page tells the person to text ADD PHOTOS for a new link. Staging links point to production slop.date, because the server builds the link from the app domain (gap 4, server side). No agent path issues a link: the skill tells the agent to have the person text ADD PHOTOS (gap 5).
+A used link, an expired link, a malformed token and every answer that uses the link close the link on the page. After that, no event opens it again, and the page offers no upload. The page tells the person to text ADD PHOTOS for a new link. On staging, the server builds the link from the staging site origin. No agent path issues a link: the skill tells the agent to have the person text ADD PHOTOS (gap 5).
 
 ```quint
 pure def photoUploadOffered(page: PhotoUploadPage): bool = page.screen == PhotoPick and page.linkOpen
 
 pure def stepLinkNeverReopens(before: PhotoUploadPage, after: PhotoUploadPage): bool =
-  (not(before.linkOpen) and before.screen != PhotoOpening) implies not(after.linkOpen)
+  (not(before.linkOpen) and before.screen != PhotoOpening and before.screen != PhotoChecking) implies not(after.linkOpen)
+
+pure def stepPickerOnlyFromAnOpenStatus(before: PhotoUploadPage, via: str, after: PhotoUploadPage): bool =
+  (after.screen == PhotoPick and before.screen != PhotoPick) implies (via == "answerLinkStatus" and before.pending == PhotoReading)
 
 pure def lawClosingAnswerEndsTheUpload(page: PhotoUploadPage, answer: PhotoAnswer): bool =
   (canAnswerUpload(page) and answerClosesTheLink(answer.kind)) implies not(photoUploadOffered(answerUpload(page, answer)))
@@ -281,6 +325,11 @@ pure def sometimesConsentNeeded(page: PhotoUploadPage): bool = page.error == Pho
 pure def sometimesTooLarge(page: PhotoUploadPage): bool = page.error == PhotoTooLarge and page.linkOpen
 pure def sometimesRequestFailed(page: PhotoUploadPage): bool = page.error == PhotoRequestFailed
 pure def sometimesUnreachable(page: PhotoUploadPage): bool = page.error == PhotoUnreachable and photoUploadOffered(page)
+pure def sometimesCheckingLink(page: PhotoUploadPage): bool = page.screen == PhotoChecking and page.pending == PhotoReading
+pure def sometimesStatusUnreachable(page: PhotoUploadPage): bool = page.screen == PhotoChecking and page.error == PhotoUnreachable
+pure def sometimesStatusFailed(page: PhotoUploadPage): bool = page.screen == PhotoChecking and page.error == PhotoRequestFailed
+pure def sometimesPickWithoutConsentBox(page: PhotoUploadPage): bool = page.screen == PhotoPick and not(page.consentAsked)
+pure def sometimesClosedBeforeUpload(page: PhotoUploadPage): bool = page.screen == PhotoLinkClosed and page.chosen == 0
 pure def sometimesRetryAfterUnreachable(page: PhotoUploadPage): bool =
   page.screen == PhotoPick and page.error == PhotoUnreachable and canUploadPhotos(page)
 ```

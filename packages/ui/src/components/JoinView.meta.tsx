@@ -39,7 +39,6 @@ export const meta: ComponentMeta<JoinViewProps> = {
     "Request failed": { page: page({ screen: "Profile", account: 1, formError: "RequestFailed" }), failure: "server" },
     Member: { page: page({ screen: "Member", account: 1 }) },
     Blocked: { page: page({ screen: "Blocked", account: 1, reason: "InviteOnly" }) },
-    "Done from agent": { page: page({ screen: "Done", account: 1, consented: true, viaAgent: true }) },
   },
   play: {
     "Birthday refused": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
@@ -51,6 +50,13 @@ export const meta: ComponentMeta<JoinViewProps> = {
     },
     "Invalid phone": ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByRole("alert").textContent).toBe("Enter a 10-digit US mobile number."),
     Blocked: ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByText("peon.biz is not open to new members right now. Please try again later.")).toBeTruthy(),
-    "Done from agent": ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByText("Go back to the same chat to finish setting up your profile.")).toBeTruthy(),
   },
+};
+
+export const moreExamples: Readonly<Record<string, Partial<JoinViewProps>>> = {
+  "Done from agent": { page: page({ screen: "Done", account: 1, consented: true, viaAgent: true }) },
+};
+
+export const morePlay = {
+  "Done from agent": ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByText("Go back to the same chat to finish setting up your profile.")).toBeTruthy(),
 };

@@ -2,15 +2,15 @@
 
 The ntwrk.party site keeps one page at `/home-help`. The service sends the link in the conversation, as the answer to the text `HOME HELP ADDRESS <code> <revision>`, when everyone on a reviewed home-help plan agreed ([private address release](privateHomeHelpVenue.md), [reviewed roster consent](homeHelpConsent.md)). The link is `https://ntwrk.party/home-help#hh_<32 letters>-<revision>`. On this page the requester adds or removes the street address, and an accepted helper reads it. The page does one step and has no navigation, no settings and no account view ([one-step pages](oneStepPage.md)). The page is only on ntwrk.party (`oneStepOnSite(StepHomeHelp, app)`).
 
-This spec models only what the page shows and what the page lets the person do. The server owns the plan, the roster, the consents, the age rule (18 and older), the encryption and every refusal ([private address release](privateHomeHelpVenue.md)). The browser shell owns the fragment, the session storage, the fetch calls, the map from each server answer to one answer of this model, the character and byte counts of the address, the security check widget, the focus and the copy. The model has these abstractions: the role of the person is an input that the shell gives (now always "unknown"); the address is only the result of its check; each server answer is one `HelpVenueAnswer`; the sign-in steps are the shared sub-flow of [one-step pages](oneStepPage.md). The shell sends each server answer to this machine as one event, and it does not decide what the machine decides. The revealed address stays in the memory of the page only: the shell never logs it, never stores it and never puts it in the address.
+This spec models only what the page shows and what the page lets the person do. The server owns the plan, the roster, the consents, the age rule (18 and older), the encryption and every refusal ([private address release](privateHomeHelpVenue.md)). The browser shell owns the fragment, the session storage, the fetch calls, the map from each server answer to one answer of this model, the character and byte counts of the address, the security check widget, the focus and the copy. The model has these abstractions: the status of the person on the plan is one `HelpStatus` answer that the shell gives from the read-only status call; the address is only the result of its check; each server answer is one `HelpVenueAnswer`; the sign-in steps are the shared sub-flow of [one-step pages](oneStepPage.md). The shell sends each server answer to this machine as one event, and it does not decide what the machine decides. The revealed address stays in the memory of the page only: the shell never logs it, never stores it and never puts it in the address.
 
 Open gaps, with the place where each one plugs in:
 
-- There is no read-only status call, so the page cannot know the role or whether an address is saved before it acts. The shell sends `HelpRoleUnknown` in `homeHelpLoaded` and `homeHelpSessionRead`, and the choice step offers every action. When the server adds a status field, the shell sends the known role there, and nothing else changes.
+- The read-only status call (`POST /api/home-help/venue` with `action: "status"`, page contracts addendum of 2026-11-22) gives the role and whether the address is saved. It writes nothing and never gives the address. The page calls it after each session read that finds a session. After an action, the answer of that action gives the result step, so the page does not call the status again.
 - The server gives the same `409` for every refusal: a wrong role, a plan that changed or closed, a person under 18, a second submit and a bad address. The page shows one closed step for all of them, and it checks the address before it sends it.
 - Helpers get no notice when the address is saved. A helper texts `HOME HELP ADDRESS` again to get the link.
 - The Cloud sign-in returns to `/home-help` with no fragment. The page keeps the link in session storage before it leaves for Cloud sign-in and reads it once when it comes back (`linkKept`).
-- When the Cloud callback fails, the server shows its own JSON error page, outside this page.
+- When the Cloud callback fails, the server sends the browser back to `/home-help?error=...` (no fragment). The page takes the kept link from session storage, shows the notice of the error on the sign-in step and removes `?error=` from the address.
 
 ## Story: Open the home-help step from my link
 
@@ -78,18 +78,46 @@ pure def stepBadLinkIsFinal(before: HomeHelpPage, after: HomeHelpPage): bool =
 
 ### The page reads the session and shows the choice step or the sign-in step
 
-While the page loads, it shows a loading step. It reads the session. A signed-in person gets the choice step with the role from the shell. A signed-out person gets the sign-in step. When the page cannot read the session, it shows the sign-in step with "cannot reach the server" above it.
+While the page loads, it shows a loading step. It reads the session. For a signed-in person it then asks the server for the status of the person on the plan, and the status decides the step:
+
+- A requester whose address is not saved gets the address form.
+- A requester whose address is saved gets the saved step, with "Remove".
+- An accepted helper gets the choice step with "Show address" only.
+- A closed status (not everyone agreed, the wrong person, a plan that changed or ended, a person under 18, a removed address, a helper who waits for the address, or another app) gets the closed step.
+- When the status cannot be read (no answer, a server error or an answer in the wrong shape), the page shows the choice step with every action, and the server refuses the action that is not for the person.
+
+A signed-out person gets the sign-in step. When the page cannot read the session, it shows the sign-in step with "cannot reach the server" above it. When a Cloud sign-in came back with an error, the sign-in step shows the notice of that error.
 
 ```quint
+type HelpStatus = StatusRequester | StatusRequesterSaved | StatusHelper | StatusClosed | StatusUnknown
+
 pure val sessionValues = Set(SessionSignedIn, SessionSignedOut, SessionUnreadable)
-pure val roleValues = Set(HelpRoleUnknown, HelpRoleRequester, HelpRoleHelper)
+pure val statusValues = Set(StatusRequester, StatusRequesterSaved, StatusHelper, StatusClosed, StatusUnknown)
+
+pure def helpRoleOf(status: HelpStatus): HelpRole =
+  if (status == StatusRequester or status == StatusRequesterSaved) HelpRoleRequester
+  else if (status == StatusHelper) HelpRoleHelper
+  else HelpRoleUnknown
+
+pure def helpScreenOf(status: HelpStatus): HelpScreen =
+  if (status == StatusRequester) HelpAddress
+  else if (status == StatusRequesterSaved) HelpSaved
+  else if (status == StatusClosed) HelpClosed
+  else HelpChoose
+
+pure def helpSignedIn(p: HomeHelpPage, status: HelpStatus): HomeHelpPage =
+  { ...p, screen: helpScreenOf(status), role: helpRoleOf(status), notice: NoStepNotice }
+
+pure def lawHelperNeverGetsTheForm(status: HelpStatus): bool =
+  helpRoleOf(status) == HelpRoleHelper implies helpScreenOf(status) != HelpAddress
+pure def lawStatusGivesTheAddressToNobody(status: HelpStatus): bool = helpScreenOf(status) != HelpRevealed
+pure def lawOnlyAClosedStatusCloses(status: HelpStatus): bool = (helpScreenOf(status) == HelpClosed) iff (status == StatusClosed)
 
 pure def canHomeHelpLoaded(p: HomeHelpPage): bool = p.screen == HelpLoading
 
-pure def homeHelpLoaded(p: HomeHelpPage, session: StepSession, role: HelpRole): HomeHelpPage =
-  if (session == SessionSignedIn) { ...p, screen: HelpChoose, role: role }
-  else if (session == SessionSignedOut) { ...p, screen: HelpSignIn }
-  else { ...p, screen: HelpSignIn, notice: StepUnreachable }
+pure def homeHelpLoaded(p: HomeHelpPage, session: StepSession, status: HelpStatus, cloudReturn: CloudReturn): HomeHelpPage =
+  if (session == SessionSignedIn) helpSignedIn(p, status)
+  else { ...p, screen: HelpSignIn, notice: noticeOnOpen(session, cloudReturn) }
 
 pure def helpWaiting(p: HomeHelpPage): bool =
   p.screen == HelpOpening or p.screen == HelpLoading or p.screen == HelpChecking
@@ -124,13 +152,13 @@ pure def stepLinkKeptOnlyWhenLeavingForCloud(before: HomeHelpPage, via: str, aft
 
 ### After sign-in the page reads the session again
 
-The page reads the session after a verified code. A signed-in session shows the choice step and clears the notice. A session that is gone starts the sign-in again with "session ended". A session that the page cannot read starts the sign-in again with "cannot reach the server".
+The page reads the session after a verified code. A signed-in session asks for the status, as on load, and the status decides the step and clears the notice. A session that is gone starts the sign-in again with "session ended". A session that the page cannot read starts the sign-in again with "cannot reach the server".
 
 ```quint
 pure def canHomeHelpSessionRead(p: HomeHelpPage): bool = p.screen == HelpChecking
 
-pure def homeHelpSessionRead(p: HomeHelpPage, session: StepSession, role: HelpRole): HomeHelpPage =
-  if (session == SessionSignedIn) { ...p, screen: HelpChoose, role: role, notice: NoStepNotice }
+pure def homeHelpSessionRead(p: HomeHelpPage, session: StepSession, status: HelpStatus): HomeHelpPage =
+  if (session == SessionSignedIn) helpSignedIn(p, status)
   else { ...p, screen: HelpSignIn, signIn: signInAgain(p.signIn), linkKept: false,
     notice: if (session == SessionUnreadable) StepUnreachable else StepSessionEnded }
 ```
@@ -311,7 +339,7 @@ pure def alwaysActionsFitTheRole(p: HomeHelpPage): bool =
 
 ### A person can save, read or remove the address, find the step closed, or see each error
 
-The page can reach the saved, revealed, removed, closed and unavailable steps and the bad-link step. It can leave for Cloud sign-in with the link kept. It can show each address error, "try later", a general failure, "cannot reach the server" and "session ended". The choice step can show a known role, for the time when the server gives it.
+The page can reach the saved, revealed, removed, closed and unavailable steps and the bad-link step. It can leave for Cloud sign-in with the link kept. It can show each address error, "try later", a general failure, "cannot reach the server", "session ended" and each Cloud sign-in error. The status can open the address form, the saved step, the choice step of a helper and the closed step.
 
 ```quint
 pure def sometimesSaved(p: HomeHelpPage): bool = p.screen == HelpSaved
@@ -332,4 +360,8 @@ pure def sometimesSignedInAfterSignIn(p: HomeHelpPage): bool = p.screen == HelpC
 pure def sometimesKnownRoleRequester(p: HomeHelpPage): bool = p.screen == HelpChoose and p.role == HelpRoleRequester
 pure def sometimesKnownRoleHelper(p: HomeHelpPage): bool = p.screen == HelpChoose and p.role == HelpRoleHelper
 pure def sometimesRemovedAsKnownRequester(p: HomeHelpPage): bool = p.screen == HelpRemoved and p.role == HelpRoleRequester
+pure def sometimesSavedFromTheStatus(p: HomeHelpPage): bool = p.screen == HelpSaved and p.pending == HelpIdle and p.role == HelpRoleRequester
+pure def sometimesClosedFromTheStatus(p: HomeHelpPage): bool = p.screen == HelpClosed and p.role == HelpRoleUnknown
+pure def sometimesUnknownRole(p: HomeHelpPage): bool = p.screen == HelpChoose and p.role == HelpRoleUnknown
+pure def sometimesCloudSignInRefused(p: HomeHelpPage): bool = p.screen == HelpSignIn and p.notice == StepSignInRefused
 ```

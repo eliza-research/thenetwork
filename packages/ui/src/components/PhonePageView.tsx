@@ -45,6 +45,7 @@ export function PhonePageView({
   newNumber,
   changeCode,
   newNumberShown,
+  changeRetryMinutes,
   phone,
   code,
   phoneShown,
@@ -70,7 +71,10 @@ export function PhonePageView({
 }: PhonePageViewProps) {
   const errorId = useId();
   const loading = phoneBusy(page);
-  const error = errors[page.error];
+  const error =
+    page.error === "PhoneRateLimited" && page.retryKnown && changeRetryMinutes !== undefined
+      ? `Too many tries. Try again in ${changeRetryMinutes} ${changeRetryMinutes === 1 ? "minute" : "minutes"}.`
+      : errors[page.error];
   const formWaiting = phoneNumberFormWaiting(page);
 
   const submitNumber = (event: FormEvent<HTMLFormElement>) => {

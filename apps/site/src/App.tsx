@@ -81,7 +81,7 @@ export function App({ brand, view, site }: AppProps) {
     case "PhotosAddPage":
       return (
         <PageShell brand={brand}>
-          <PhotosAdd site={site} />
+          <PhotosAdd />
         </PageShell>
       );
     case "PhotosCheckPage":
@@ -158,11 +158,11 @@ function HomeHelp({ site }: StepPartProps) {
 }
 
 /**
- * The photo upload page over the photo upload state of `usePhotoUploadPage`, with the photo consent of the site build.
+ * The photo upload page over the photo upload state of `usePhotoUploadPage`. The photo consent comes from the link status.
  * @model spec/photoUploadPage.md
  */
-function PhotosAdd({ site }: StepPartProps) {
-  return <PhotoUploadPageView {...usePhotoUploadPage({ consentVersion: site.photoConsentVersion })} consentText={site.photoConsentText} />;
+function PhotosAdd() {
+  return <PhotoUploadPageView {...usePhotoUploadPage()} />;
 }
 
 /**

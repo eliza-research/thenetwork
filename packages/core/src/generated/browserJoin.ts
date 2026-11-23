@@ -1,22 +1,23 @@
 // GENERATED from spec/browserJoin.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { type ClientLabel as authorizationPages_ClientLabel, type Reply as authorizationPages_Reply, type ConsentPrimary as authorizationPages_ConsentPrimary, type SignupDraftBinding as authorizationPages_SignupDraftBinding, type SignupPrefillRequest as authorizationPages_SignupPrefillRequest, type CalendarDate as authorizationPages_CalendarDate, type AuthView as authorizationPages_AuthView, type FieldError as authorizationPages_FieldError, type Scope as authorizationPages_Scope, type SecurityCheck as authorizationPages_SecurityCheck, type PageChrome as authorizationPages_PageChrome, type Offers as authorizationPages_Offers, type ConsentParts as authorizationPages_ConsentParts, type AuthPage as authorizationPages_AuthPage, signupConsentStartsTicked as authorizationPages_signupConsentStartsTicked, signupPrefillAllowed as authorizationPages_signupPrefillAllowed, lawConsentNeverPreTicked as authorizationPages_lawConsentNeverPreTicked, isLeapYear as authorizationPages_isLeapYear, dateBefore as authorizationPages_dateBefore, birthdayNotYetThisYear as authorizationPages_birthdayNotYetThisYear, signupClockDay as authorizationPages_signupClockDay, noOffers as authorizationPages_noOffers, alwaysFieldErrorStaysOnItsPage as authorizationPages_alwaysFieldErrorStaysOnItsPage, isCodeReply as authorizationPages_isCodeReply, stepCodePageOnlyAfterPhoneSubmit as authorizationPages_stepCodePageOnlyAfterPhoneSubmit, offersSignupConfirmation as authorizationPages_offersSignupConfirmation, showsSignupConfirmation as authorizationPages_showsSignupConfirmation, useSignupPrefill as authorizationPages_useSignupPrefill, lawPrefillOnlyForItsClientAppAndPhone as authorizationPages_lawPrefillOnlyForItsClientAppAndPhone, lawExpiredPrefillIsEmpty as authorizationPages_lawExpiredPrefillIsEmpty, lawAgeGuardRefusesPrefill as authorizationPages_lawAgeGuardRefusesPrefill, daysInMonth as authorizationPages_daysInMonth, ageOnDate as authorizationPages_ageOnDate, defaultScopes as authorizationPages_defaultScopes, scopes as authorizationPages_scopes, scopeName as authorizationPages_scopeName, scopeText as authorizationPages_scopeText, isApproveReply as authorizationPages_isApproveReply, alwaysApprovalFollowsConsent as authorizationPages_alwaysApprovalFollowsConsent, isCancelReply as authorizationPages_isCancelReply, sometimesApproved as authorizationPages_sometimesApproved, sometimesDeclined as authorizationPages_sometimesDeclined, sometimesConsentRetry as authorizationPages_sometimesConsentRetry, sometimesCloudSignIn as authorizationPages_sometimesCloudSignIn, sometimesCodeRejected as authorizationPages_sometimesCodeRejected, sometimesCheckRejected as authorizationPages_sometimesCheckRejected, sometimesCheckExpired as authorizationPages_sometimesCheckExpired, sometimesTooManyCodes as authorizationPages_sometimesTooManyCodes, sometimesPhoneRejected as authorizationPages_sometimesPhoneRejected, sometimesSendFailed as authorizationPages_sometimesSendFailed, sometimesConsentAfterCode as authorizationPages_sometimesConsentAfterCode, sometimesLinkInvalid as authorizationPages_sometimesLinkInvalid, sometimesTooManyTries as authorizationPages_sometimesTooManyTries, sometimesNotAvailable as authorizationPages_sometimesNotAvailable, sometimesPageExpired as authorizationPages_sometimesPageExpired, sometimesAlreadySignedIn as authorizationPages_sometimesAlreadySignedIn, sometimesCheckNumber as authorizationPages_sometimesCheckNumber, sometimesConnectAgain as authorizationPages_sometimesConnectAgain, sometimesPleaseRetry as authorizationPages_sometimesPleaseRetry, initial as authorizationPages_initial, sometimesSignInUnavailable as authorizationPages_sometimesSignInUnavailable, sometimesNotAllowed as authorizationPages_sometimesNotAllowed, viewFor as authorizationPages_viewFor, errorFor as authorizationPages_errorFor, checkFor as authorizationPages_checkFor, isConsentView as authorizationPages_isConsentView, isMessageView as authorizationPages_isMessageView, rendersPage as authorizationPages_rendersPage, showsPhoneField as authorizationPages_showsPhoneField, showsCodeField as authorizationPages_showsCodeField, isOpenReply as authorizationPages_isOpenReply, isCloudReturnReply as authorizationPages_isCloudReturnReply, canSolveCheck as authorizationPages_canSolveCheck, solveCheck as authorizationPages_solveCheck, canExpireCheck as authorizationPages_canExpireCheck, expireCheck as authorizationPages_expireCheck, alwaysSecurityCheckOnlyOnPhonePage as authorizationPages_alwaysSecurityCheckOnlyOnPhonePage, isPhoneReply as authorizationPages_isPhoneReply, stepPhoneSubmitNeedsSolvedCheck as authorizationPages_stepPhoneSubmitNeedsSolvedCheck, canSubmitCode as authorizationPages_canSubmitCode, alwaysCodePageFollowsSentCode as authorizationPages_alwaysCodePageFollowsSentCode, consentParts as authorizationPages_consentParts, lawConsentRetryHasNoSignup as authorizationPages_lawConsentRetryHasNoSignup, lawSignupNoticeRequiresSave as authorizationPages_lawSignupNoticeRequiresSave, consentPrimaryAction as authorizationPages_consentPrimaryAction, lawPrefillAtMostOnce as authorizationPages_lawPrefillAtMostOnce, calendarDateExists as authorizationPages_calendarDateExists, lawBirthdayNotYetGivesOneYearLess as authorizationPages_lawBirthdayNotYetGivesOneYearLess, lawBirthdayReachedGivesFullYears as authorizationPages_lawBirthdayReachedGivesFullYears, lawLeapDayBirthdayCountsFromMarchFirst as authorizationPages_lawLeapDayBirthdayCountsFromMarchFirst, lawScopeTextIsNotTheScopeName as authorizationPages_lawScopeTextIsNotTheScopeName, canApprove as authorizationPages_canApprove, alwaysConsentPageIsRecorded as authorizationPages_alwaysConsentPageIsRecorded, stepApprovalOnlyByAllow as authorizationPages_stepApprovalOnlyByAllow, stepConsentNeedsKnownPerson as authorizationPages_stepConsentNeedsKnownPerson, chromeFor as authorizationPages_chromeFor, isFinal as authorizationPages_isFinal, offersFor as authorizationPages_offersFor, canOpenPage as authorizationPages_canOpenPage, canReturnFromCloud as authorizationPages_canReturnFromCloud, canRetryConnection as authorizationPages_canRetryConnection, canSubmitPhone as authorizationPages_canSubmitPhone, lawOnlyConsentPagesNameAClient as authorizationPages_lawOnlyConsentPagesNameAClient, lawNewPersonSeesFinishSignupFirst as authorizationPages_lawNewPersonSeesFinishSignupFirst, lawMemberConsentKeepsAllowFirst as authorizationPages_lawMemberConsentKeepsAllowFirst, lawRetryConsentKeepsTryAgainFirst as authorizationPages_lawRetryConsentKeepsTryAgainFirst, lawOnlyConsentPagesHaveAPrimaryAction as authorizationPages_lawOnlyConsentPagesHaveAPrimaryAction, birthdateAccepted as authorizationPages_birthdateAccepted, lawLeapDayOnlyInLeapYears as authorizationPages_lawLeapDayOnlyInLeapYears, canCancelRequest as authorizationPages_canCancelRequest, lawMessagePagesShowNoCredentialField as authorizationPages_lawMessagePagesShowNoCredentialField, stepFinalViewsStay as authorizationPages_stepFinalViewsStay, lawEveryPageShowsBrandAndLegalLinks as authorizationPages_lawEveryPageShowsBrandAndLegalLinks, showReply as authorizationPages_showReply, submitCode as authorizationPages_submitCode, lawConsentNamesClientAndScopes as authorizationPages_lawConsentNamesClientAndScopes, lawFutureBirthdateRefused as authorizationPages_lawFutureBirthdateRefused, lawImpossibleBirthdateRefused as authorizationPages_lawImpossibleBirthdateRefused, lawAcceptedAgeIsBetweenZeroAnd120 as authorizationPages_lawAcceptedAgeIsBetweenZeroAnd120, approve as authorizationPages_approve, cancelRequest as authorizationPages_cancelRequest, openPage as authorizationPages_openPage, returnFromCloud as authorizationPages_returnFromCloud, retryConnection as authorizationPages_retryConnection, submitPhone as authorizationPages_submitPhone, calendarDateOfDay as authorizationPages_calendarDateOfDay } from "./authorizationPages.ts";
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type JoinScreen = "Opening" | "Loading" | "Phone" | "Code" | "Checking" | "Profile" | "Member" | "Blocked" | "Done" | "LeftForCloud";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type BlockReason = "NoBlock" | "UnderAge" | "InviteOnly" | "InReview" | "NotValid" | "OtherReason";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type FlowNotice = "NoNotice" | "ApiUnreachable" | "SessionEnded" | "AccountChanged";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
-export type InlineError = "NoError" | "InvalidPhone" | "CheckPending" | "CheckFailed" | "CheckRejected" | "CheckAgain" | "RateLimited" | "CodeFormat" | "InvalidCode" | "NewCodeSent" | "ProfileIncomplete" | "CloudUnavailable" | "RequestFailed";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
+export type InlineError = "NoError" | "InvalidPhone" | "CheckPending" | "CheckFailed" | "CheckRejected" | "CheckAgain" | "RateLimited" | "CodeFormat" | "InvalidCode" | "NewCodeSent" | "ProfileIncomplete" | "InvalidBirthdate" | "CloudUnavailable" | "RequestFailed";
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type AuthMode = "AuthPending" | "OtpMode" | "CloudMode";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type CheckState = "NoCheck" | "CheckRunning" | "CheckPassed" | "CheckBroken";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type Pending = "Idle" | "StartingCode" | "VerifyingCode" | "ResendingCode" | "SavingProfile" | "OpeningCloud";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
-export interface JoinPage { screen: JoinScreen; auth: AuthMode; check: CheckState; pending: Pending; reason: BlockReason; notice: FlowNotice; formError: InlineError; account: number; inviteOnly: boolean; viaAgent: boolean; addressClean: boolean; formHasValues: boolean; consented: boolean }
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
+export interface JoinPage { screen: JoinScreen; auth: AuthMode; check: CheckState; pending: Pending; reason: BlockReason; notice: FlowNotice; formError: InlineError; account: number; inviteOnly: boolean; viaAgent: boolean; addressClean: boolean; formHasValues: boolean; birthdayGiven: boolean; consented: boolean }
 /** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 export type SessionResult = "SignedOut" | "ReadFailed" | "MayJoin" | "AlreadyIn" | "MayNotJoin";
 /** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
@@ -27,14 +28,14 @@ export type AuthLookup = "LookupFailed" | "ModeOtp" | "ModeCloud";
 export type StartResult = "CodeSent" | "StartRateLimited" | "StartCheckRejected" | "StartFailed";
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 export type VerifyResult = "Verified" | "WrongCode" | "VerifyRateLimited" | "VerifyFailed";
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
-export interface ProfileForm { nameGiven: boolean; age: number; consentTicked: boolean }
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
+export interface ProfileForm { nameGiven: boolean; birthday: authorizationPages_CalendarDate; today: authorizationPages_CalendarDate; consentTicked: boolean }
 /** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
-export type JoinOutcome = "JoinedOk" | "JoinUnderAge" | "JoinInviteOnly" | "JoinReview" | "JoinAccountChanged" | "JoinUnauthorized" | "JoinInvalidInvitation" | "JoinFailed";
+export type JoinOutcome = "JoinedOk" | "JoinUnderAge" | "JoinInviteOnly" | "JoinReview" | "JoinAccountChanged" | "JoinUnauthorized" | "JoinInvalidInvitation" | "JoinInvalidBirthdate" | "JoinFailed";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "openPage"; viaAgent: boolean; fragmentName: boolean; ageDigitsOnly: boolean; ageDigitCount: number; fragmentAge: number }
+  | { type: "openPage"; viaAgent: boolean; fragmentName: boolean }
   | { type: "loaded"; view: SessionView; appUnreachable: boolean; inviteOnly: boolean }
   | { type: "readAuthMode"; lookup: AuthLookup; checkOn: boolean }
   | { type: "expireCheck" }
@@ -49,7 +50,7 @@ export type Event =
   | { type: "continueWithPhone" }
   | { type: "answerCloudStart"; opened: boolean }
   | { type: "recheck"; view: SessionView }
-  | { type: "editProfile" }
+  | { type: "editProfile"; birthdayGiven: boolean }
   | { type: "submitProfile"; form: ProfileForm }
   | { type: "answerJoin"; joinAnswer: JoinOutcome }
   | { type: "restoreCloudPrefill"; view: SessionView; fromAgent: boolean; hasFields: boolean };
@@ -58,45 +59,47 @@ export type Event =
 export const codeDigitsMin: number = 4;
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 export const codeDigitsMax: number = 8;
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 export const fragmentNameMax: number = 50;
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
-export const initial: JoinPage = { screen: "Opening", auth: "AuthPending", check: "NoCheck", pending: "Idle", reason: "NoBlock", notice: "NoNotice", formError: "NoError", account: 0, inviteOnly: false, viaAgent: false, addressClean: false, formHasValues: false, consented: false };
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
+export const formToday: authorizationPages_CalendarDate = { year: 2026, month: 11, day: 22 };
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
+export const initial: JoinPage = { screen: "Opening", auth: "AuthPending", check: "NoCheck", pending: "Idle", reason: "NoBlock", notice: "NoNotice", formError: "NoError", account: 0, inviteOnly: false, viaAgent: false, addressClean: false, formHasValues: false, birthdayGiven: false, consented: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: JoinPage): boolean {
-  return alwaysAddressCleanAfterOpening(current) && alwaysBlockedHasReason(current) && alwaysPhoneStepsHaveNoAccount(current) && alwaysAccountStepsHaveAccount(current) && alwaysCheckOnlyWithTextCodes(current) && alwaysCodeStepUsesTextCodes(current) && alwaysResendWithoutCheckOnly(current) && alwaysDoneNeedsConsent(current) && alwaysRequestBelongsToItsStep(current);
+  return alwaysAddressCleanAfterOpening(current) && alwaysBlockedHasReason(current) && alwaysPhoneStepsHaveNoAccount(current) && alwaysAccountStepsHaveAccount(current) && alwaysCheckOnlyWithTextCodes(current) && alwaysCodeStepUsesTextCodes(current) && alwaysResendWithoutCheckOnly(current) && alwaysBirthdayOnlyOnProfile(current) && alwaysDoneNeedsConsent(current) && alwaysRequestBelongsToItsStep(current);
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function fragmentNameKept(nameLength: number): number {
   return nameLength > fragmentNameMax ? fragmentNameMax : nameLength;
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function fragmentAgeAccepted(ageDigitsOnly: boolean, ageDigitCount: number, fragmentAge: number): boolean {
   return ageDigitsOnly && ageDigitCount >= 1 && ageDigitCount <= 3 && fragmentAge <= 120;
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function lawFragmentNameKeptWithinLimit(nameLength: number): boolean {
   //@ ensures \result === true
   return fragmentNameKept(nameLength) <= fragmentNameMax;
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function canOpenPage(page: JoinPage): boolean {
   return page.screen === "Opening";
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
-export function openPage(page: JoinPage, viaAgent: boolean, fragmentName: boolean, ageDigitsOnly: boolean, ageDigitCount: number, fragmentAge: number): JoinPage {
+export function openPage(page: JoinPage, viaAgent: boolean, fragmentName: boolean): JoinPage {
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysAddressCleanAfterOpening(\result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysBlockedHasReason(\result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysPhoneStepsHaveNoAccount(\result)
@@ -104,28 +107,37 @@ export function openPage(page: JoinPage, viaAgent: boolean, fragmentName: boolea
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> stepCodeRequestNeedsPassedCheck(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> stepCheckSpentAfterCodeStart(page, "openPage", \result)
+  //@ ensures (inv(page) && canOpenPage(page)) ==> stepJoinAnswerClearsBirthday(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> stepSignInKeepsFormValues(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> stepDoneFollowsSavedProfile(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page)) ==> stepOneRequestAtATime(page, \result)
-  return { ...page, screen: "Loading", viaAgent: viaAgent, addressClean: true, formHasValues: fragmentName || fragmentAgeAccepted(ageDigitsOnly, ageDigitCount, fragmentAge) };
+  return { ...page, screen: "Loading", viaAgent: viaAgent, addressClean: true, formHasValues: fragmentName, birthdayGiven: false };
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function alwaysAddressCleanAfterOpening(page: JoinPage): boolean {
   return !(page.screen !== "Opening") || page.addressClean;
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function lawFragmentAgeNeverAboveLimit(ageDigitsOnly: boolean, ageDigitCount: number, fragmentAge: number): boolean {
   //@ ensures \result === true
   return !(!ageDigitsOnly || ageDigitCount < 1 || ageDigitCount > 3 || fragmentAge > 120) || !fragmentAgeAccepted(ageDigitsOnly, ageDigitCount, fragmentAge);
+}
+
+/** Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment (spec/browserJoin.md) */
+//@ pure
+export function lawFragmentNeverGivesBirthday(page: JoinPage, viaAgent: boolean, fragmentName: boolean): boolean {
+  //@ ensures \result === true
+  return !openPage(page, viaAgent, fragmentName).birthdayGiven;
 }
 
 /** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
@@ -200,10 +212,12 @@ export function loaded(page: JoinPage, view: SessionView, appUnreachable: boolea
   //@ ensures (inv(page) && canLoaded(page, view)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canLoaded(page, view)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepCodeRequestNeedsPassedCheck(page, "loaded", \result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepCheckSpentAfterCodeStart(page, "loaded", \result)
+  //@ ensures (inv(page) && canLoaded(page, view)) ==> stepJoinAnswerClearsBirthday(page, "loaded", \result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepSignInKeepsFormValues(page, "loaded", \result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepDoneFollowsSavedProfile(page, "loaded", \result)
@@ -282,10 +296,12 @@ export function readAuthMode(page: JoinPage, lookup: AuthLookup, checkOn: boolea
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canReadAuthMode(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> stepCodeRequestNeedsPassedCheck(page, "readAuthMode", \result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> stepCheckSpentAfterCodeStart(page, "readAuthMode", \result)
+  //@ ensures (inv(page) && canReadAuthMode(page)) ==> stepJoinAnswerClearsBirthday(page, "readAuthMode", \result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> stepSignInKeepsFormValues(page, "readAuthMode", \result)
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> stepDoneFollowsSavedProfile(page, "readAuthMode", \result)
@@ -316,10 +332,12 @@ export function expireCheck(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepCodeRequestNeedsPassedCheck(page, "expireCheck", \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepCheckSpentAfterCodeStart(page, "expireCheck", \result)
+  //@ ensures (inv(page) && canExpireCheck(page)) ==> stepJoinAnswerClearsBirthday(page, "expireCheck", \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepSignInKeepsFormValues(page, "expireCheck", \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepDoneFollowsSavedProfile(page, "expireCheck", \result)
@@ -343,10 +361,12 @@ export function submitPhone(page: JoinPage, phoneValid: boolean): JoinPage {
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canSubmitPhone(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> stepCodeRequestNeedsPassedCheck(page, "submitPhone", \result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> stepCheckSpentAfterCodeStart(page, "submitPhone", \result)
+  //@ ensures (inv(page) && canSubmitPhone(page)) ==> stepJoinAnswerClearsBirthday(page, "submitPhone", \result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> stepSignInKeepsFormValues(page, "submitPhone", \result)
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> stepDoneFollowsSavedProfile(page, "submitPhone", \result)
@@ -376,10 +396,12 @@ export function settleCheck(page: JoinPage, passed: boolean): JoinPage {
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepCodeRequestNeedsPassedCheck(page, "settleCheck", \result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepCheckSpentAfterCodeStart(page, "settleCheck", \result)
+  //@ ensures (inv(page) && canSettleCheck(page)) ==> stepJoinAnswerClearsBirthday(page, "settleCheck", \result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepSignInKeepsFormValues(page, "settleCheck", \result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepDoneFollowsSavedProfile(page, "settleCheck", \result)
@@ -423,10 +445,12 @@ export function answerCodeStart(page: JoinPage, started: StartResult): JoinPage 
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepCodeRequestNeedsPassedCheck(page, "answerCodeStart", \result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepCheckSpentAfterCodeStart(page, "answerCodeStart", \result)
+  //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepJoinAnswerClearsBirthday(page, "answerCodeStart", \result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepSignInKeepsFormValues(page, "answerCodeStart", \result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepDoneFollowsSavedProfile(page, "answerCodeStart", \result)
@@ -457,10 +481,12 @@ export function submitCode(page: JoinPage, codeDigitCount: number): JoinPage {
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepCodeRequestNeedsPassedCheck(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepCheckSpentAfterCodeStart(page, "submitCode", \result)
+  //@ ensures (inv(page) && canSubmitCode(page)) ==> stepJoinAnswerClearsBirthday(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepSignInKeepsFormValues(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepDoneFollowsSavedProfile(page, "submitCode", \result)
@@ -484,10 +510,12 @@ export function answerVerify(page: JoinPage, verifyAnswer: VerifyResult): JoinPa
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canAnswerVerify(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepCodeRequestNeedsPassedCheck(page, "answerVerify", \result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepCheckSpentAfterCodeStart(page, "answerVerify", \result)
+  //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepJoinAnswerClearsBirthday(page, "answerVerify", \result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepSignInKeepsFormValues(page, "answerVerify", \result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepDoneFollowsSavedProfile(page, "answerVerify", \result)
@@ -518,10 +546,12 @@ export function resendCode(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canResendCode(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canResendCode(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canResendCode(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canResendCode(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canResendCode(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canResendCode(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canResendCode(page)) ==> stepCodeRequestNeedsPassedCheck(page, "resendCode", \result)
   //@ ensures (inv(page) && canResendCode(page)) ==> stepCheckSpentAfterCodeStart(page, "resendCode", \result)
+  //@ ensures (inv(page) && canResendCode(page)) ==> stepJoinAnswerClearsBirthday(page, "resendCode", \result)
   //@ ensures (inv(page) && canResendCode(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canResendCode(page)) ==> stepSignInKeepsFormValues(page, "resendCode", \result)
   //@ ensures (inv(page) && canResendCode(page)) ==> stepDoneFollowsSavedProfile(page, "resendCode", \result)
@@ -551,10 +581,12 @@ export function changeNumber(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canChangeNumber(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canChangeNumber(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> stepCodeRequestNeedsPassedCheck(page, "changeNumber", \result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> stepCheckSpentAfterCodeStart(page, "changeNumber", \result)
+  //@ ensures (inv(page) && canChangeNumber(page)) ==> stepJoinAnswerClearsBirthday(page, "changeNumber", \result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> stepSignInKeepsFormValues(page, "changeNumber", \result)
   //@ ensures (inv(page) && canChangeNumber(page)) ==> stepDoneFollowsSavedProfile(page, "changeNumber", \result)
@@ -578,10 +610,12 @@ export function answerResend(page: JoinPage, resent: StartResult): JoinPage {
   //@ ensures (inv(page) && canAnswerResend(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canAnswerResend(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> stepCodeRequestNeedsPassedCheck(page, "answerResend", \result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> stepCheckSpentAfterCodeStart(page, "answerResend", \result)
+  //@ ensures (inv(page) && canAnswerResend(page)) ==> stepJoinAnswerClearsBirthday(page, "answerResend", \result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> stepSignInKeepsFormValues(page, "answerResend", \result)
   //@ ensures (inv(page) && canAnswerResend(page)) ==> stepDoneFollowsSavedProfile(page, "answerResend", \result)
@@ -605,10 +639,12 @@ export function continueWithPhone(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canContinueWithPhone(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> stepCodeRequestNeedsPassedCheck(page, "continueWithPhone", \result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> stepCheckSpentAfterCodeStart(page, "continueWithPhone", \result)
+  //@ ensures (inv(page) && canContinueWithPhone(page)) ==> stepJoinAnswerClearsBirthday(page, "continueWithPhone", \result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> stepSignInKeepsFormValues(page, "continueWithPhone", \result)
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> stepDoneFollowsSavedProfile(page, "continueWithPhone", \result)
@@ -632,10 +668,12 @@ export function answerCloudStart(page: JoinPage, opened: boolean): JoinPage {
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> stepCodeRequestNeedsPassedCheck(page, "answerCloudStart", \result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> stepCheckSpentAfterCodeStart(page, "answerCloudStart", \result)
+  //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> stepJoinAnswerClearsBirthday(page, "answerCloudStart", \result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> stepSignInKeepsFormValues(page, "answerCloudStart", \result)
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> stepDoneFollowsSavedProfile(page, "answerCloudStart", \result)
@@ -659,10 +697,12 @@ export function recheck(page: JoinPage, view: SessionView): JoinPage {
   //@ ensures (inv(page) && canRecheck(page, view)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canRecheck(page, view)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepCodeRequestNeedsPassedCheck(page, "recheck", \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepCheckSpentAfterCodeStart(page, "recheck", \result)
+  //@ ensures (inv(page) && canRecheck(page, view)) ==> stepJoinAnswerClearsBirthday(page, "recheck", \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepSignInKeepsFormValues(page, "recheck", \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepDoneFollowsSavedProfile(page, "recheck", \result)
@@ -671,21 +711,15 @@ export function recheck(page: JoinPage, view: SessionView): JoinPage {
   return { ...local_4, notice: signedInResult(view.result) || page.notice === "AccountChanged" ? page.notice : (view.result === "SignedOut" ? "SessionEnded" : "ApiUnreachable") };
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
-//@ pure
-export function profileComplete(form: ProfileForm): boolean {
-  return form.nameGiven && form.age >= 1 && form.age <= 120 && form.consentTicked;
-}
-
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function canEditProfile(page: JoinPage): boolean {
   return page.screen === "Profile" && page.pending === "Idle";
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
 //@ pure
-export function editProfile(page: JoinPage): JoinPage {
+export function editProfile(page: JoinPage, birthdayGiven: boolean): JoinPage {
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysAddressCleanAfterOpening(\result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysBlockedHasReason(\result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysPhoneStepsHaveNoAccount(\result)
@@ -693,24 +727,32 @@ export function editProfile(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> stepCodeRequestNeedsPassedCheck(page, "editProfile", \result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> stepCheckSpentAfterCodeStart(page, "editProfile", \result)
+  //@ ensures (inv(page) && canEditProfile(page)) ==> stepJoinAnswerClearsBirthday(page, "editProfile", \result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> stepSignInKeepsFormValues(page, "editProfile", \result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> stepDoneFollowsSavedProfile(page, "editProfile", \result)
   //@ ensures (inv(page) && canEditProfile(page)) ==> stepOneRequestAtATime(page, \result)
-  return { ...page, formHasValues: true };
+  return { ...page, formHasValues: true, birthdayGiven: birthdayGiven };
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function canSubmitProfile(page: JoinPage): boolean {
   return page.screen === "Profile" && page.pending === "Idle";
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
+//@ pure
+export function profileComplete(form: ProfileForm): boolean {
+  return form.nameGiven && authorizationPages_birthdateAccepted(form.birthday, form.today) && form.consentTicked;
+}
+
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function submitProfile(page: JoinPage, form: ProfileForm): JoinPage {
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -720,22 +762,38 @@ export function submitProfile(page: JoinPage, form: ProfileForm): JoinPage {
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> stepCodeRequestNeedsPassedCheck(page, "submitProfile", \result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> stepCheckSpentAfterCodeStart(page, "submitProfile", \result)
+  //@ ensures (inv(page) && canSubmitProfile(page)) ==> stepJoinAnswerClearsBirthday(page, "submitProfile", \result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> stepSignInKeepsFormValues(page, "submitProfile", \result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> stepDoneFollowsSavedProfile(page, "submitProfile", \result)
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> stepOneRequestAtATime(page, \result)
-  return profileComplete(form) ? ({ ...page, pending: "SavingProfile", consented: true, formError: "NoError" } as JoinPage) : ({ ...page, formError: "ProfileIncomplete" } as JoinPage);
+  return profileComplete(form) ? ({ ...page, pending: "SavingProfile", consented: true, formError: "NoError" } as JoinPage) : (form.nameGiven && form.consentTicked ? ({ ...page, formError: "InvalidBirthdate" } as JoinPage) : ({ ...page, formError: "ProfileIncomplete" } as JoinPage));
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function lawProfileNeedsConsent(form: ProfileForm): boolean {
   //@ ensures \result === true
   return !profileComplete(form) || form.consentTicked;
+}
+
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
+//@ pure
+export function lawProfileNeedsRealPastBirthday(form: ProfileForm): boolean {
+  //@ ensures \result === true
+  return !profileComplete(form) || (authorizationPages_calendarDateExists(form.birthday) && !authorizationPages_dateBefore(form.today, form.birthday));
+}
+
+/** Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked (spec/browserJoin.md) */
+//@ pure
+export function lawYoungBirthdayReachesServer(form: ProfileForm): boolean {
+  //@ ensures \result === true
+  return !(form.nameGiven && form.consentTicked && authorizationPages_birthdateAccepted(form.birthday, form.today) && authorizationPages_ageOnDate(form.birthday, form.today) < 18) || profileComplete(form);
 }
 
 /** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
@@ -752,6 +810,24 @@ export function canAnswerJoin(page: JoinPage): boolean {
 
 /** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
 //@ pure
+export function birthdateErrorShown(page: JoinPage): boolean {
+  return page.screen === "Profile" && page.formError === "InvalidBirthdate";
+}
+
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
+//@ pure
+export function stepJoinAnswerClearsBirthday(before: JoinPage, via: string, after: JoinPage): boolean {
+  return !(via === "answerJoin" && after.formError !== "RequestFailed") || !after.birthdayGiven;
+}
+
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
+//@ pure
+export function alwaysBirthdayOnlyOnProfile(page: JoinPage): boolean {
+  return !page.birthdayGiven || (page.screen === "Profile" && page.formHasValues);
+}
+
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
+//@ pure
 export function answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage {
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysAddressCleanAfterOpening(\result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysBlockedHasReason(\result)
@@ -760,25 +836,36 @@ export function answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage {
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepCodeRequestNeedsPassedCheck(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepCheckSpentAfterCodeStart(page, "answerJoin", \result)
+  //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepJoinAnswerClearsBirthday(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepSignInKeepsFormValues(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepDoneFollowsSavedProfile(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepOneRequestAtATime(page, \result)
   const local_5: JoinPage = { ...page, pending: "Idle" };
-  const local_6: BlockReason = joinRefusal(joinAnswer);
-  return joinAnswer === "JoinedOk" ? ({ ...local_5, screen: "Done", notice: "NoNotice" } as JoinPage) : (local_6 !== "NoBlock" ? ({ ...local_5, screen: "Blocked", reason: local_6 } as JoinPage) : (joinAnswer === "JoinAccountChanged" ? ({ ...local_5, screen: "Checking", account: 0, formHasValues: false, consented: false, notice: "AccountChanged", formError: "NoError" } as JoinPage) : (joinAnswer === "JoinUnauthorized" ? ({ ...local_5, screen: "Phone", account: 0, formHasValues: false, consented: false, notice: "SessionEnded", formError: "NoError" } as JoinPage) : ({ ...local_5, formError: "RequestFailed" } as JoinPage))));
+  const local_6: JoinPage = { ...local_5, birthdayGiven: false };
+  const local_7: BlockReason = joinRefusal(joinAnswer);
+  return joinAnswer === "JoinedOk" ? ({ ...local_6, screen: "Done", notice: "NoNotice" } as JoinPage) : (local_7 !== "NoBlock" ? ({ ...local_6, screen: "Blocked", reason: local_7 } as JoinPage) : (joinAnswer === "JoinInvalidBirthdate" ? ({ ...local_6, formError: "InvalidBirthdate" } as JoinPage) : (joinAnswer === "JoinAccountChanged" ? ({ ...local_6, screen: "Checking", account: 0, formHasValues: false, consented: false, notice: "AccountChanged", formError: "NoError" } as JoinPage) : (joinAnswer === "JoinUnauthorized" ? ({ ...local_6, screen: "Phone", account: 0, formHasValues: false, consented: false, notice: "SessionEnded", formError: "NoError" } as JoinPage) : ({ ...local_5, formError: "RequestFailed" } as JoinPage)))));
+}
+
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
+//@ pure
+export function lawRefusedBirthdateKeepsOwnedProfile(page: JoinPage): boolean {
+  //@ ensures \result === true
+  const local_8: JoinPage = answerJoin(page, "JoinInvalidBirthdate");
+  return !(page.screen === "Profile" && canAnswerJoin(page)) || (canSubmitProfile(local_8) && birthdateErrorShown(local_8) && !local_8.birthdayGiven && local_8.account === page.account && local_8.formHasValues === page.formHasValues && local_8.consented === page.consented);
 }
 
 /** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
 //@ pure
 export function lawFailedSaveKeepsOwnedProfile(page: JoinPage): boolean {
   //@ ensures \result === true
-  const local_7: JoinPage = answerJoin(page, "JoinFailed");
-  return !(page.screen === "Profile" && canAnswerJoin(page)) || (canSubmitProfile(local_7) && local_7.account === page.account && local_7.formHasValues === page.formHasValues && local_7.consented === page.consented);
+  const local_9: JoinPage = answerJoin(page, "JoinFailed");
+  return !(page.screen === "Profile" && canAnswerJoin(page)) || (canSubmitProfile(local_9) && local_9.account === page.account && local_9.birthdayGiven === page.birthdayGiven && local_9.formHasValues === page.formHasValues && local_9.consented === page.consented);
 }
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
@@ -802,7 +889,7 @@ export function browserInvitationKeepsAccount(beforeAccount: number, afterAccoun
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
 //@ pure
 export function browserInvitationMayRetry(joinAnswer: JoinOutcome): boolean {
-  return joinAnswer === "JoinFailed";
+  return joinAnswer === "JoinFailed" || joinAnswer === "JoinInvalidBirthdate";
 }
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
@@ -814,17 +901,17 @@ export function lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: numb
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
 //@ pure
-export function lawBrowserInvitationNeedsCleanConsentedAccount(page: JoinPage, form: ProfileForm, boundAccount: boolean): boolean {
+export function lawBrowserInvitationKeptOnlyForRetry(joinAnswer: JoinOutcome): boolean {
   //@ ensures \result === true
-  const local_8: JoinPage = submitProfile(page, form);
-  return !(canSubmitProfile(page) && canAnswerJoin(local_8) && browserInvitationMaySubmit(boundAccount, local_8.addressClean, local_8.consented)) || (boundAccount && page.addressClean && profileComplete(form) && local_8.consented);
+  return !browserInvitationMayRetry(joinAnswer) || (joinRefusal(joinAnswer) === "NoBlock" && answerJoin(initial, joinAnswer).screen === initial.screen);
 }
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
 //@ pure
-export function lawBrowserInvitationKeptOnlyForRetry(joinAnswer: JoinOutcome): boolean {
+export function lawBrowserInvitationNeedsCleanConsentedAccount(page: JoinPage, form: ProfileForm, boundAccount: boolean): boolean {
   //@ ensures \result === true
-  return !browserInvitationMayRetry(joinAnswer) || (joinRefusal(joinAnswer) === "NoBlock" && answerJoin(initial, joinAnswer).screen === initial.screen);
+  const local_10: JoinPage = submitProfile(page, form);
+  return !(canSubmitProfile(page) && canAnswerJoin(local_10) && browserInvitationMaySubmit(boundAccount, local_10.addressClean, local_10.consented)) || (boundAccount && page.addressClean && profileComplete(form) && local_10.consented);
 }
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
@@ -835,8 +922,8 @@ export function cloudJoinPrefillCanRead(eligible: boolean, receiptMatches: boole
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
 //@ pure
-export function browserPrefillMayPresentReceipt(fromAgent: boolean, linkName: boolean, linkAge: boolean, linkInvitation: boolean): boolean {
-  return !(fromAgent || linkName || linkAge || linkInvitation);
+export function browserPrefillMayPresentReceipt(fromAgent: boolean, linkName: boolean, linkInvitation: boolean): boolean {
+  return !(fromAgent || linkName || linkInvitation);
 }
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
@@ -860,9 +947,9 @@ export function lawCloudPrefillNeedsOwnLiveHandoff(eligible: boolean, receiptMat
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
 //@ pure
-export function lawInvitationLinkDoesNotPresentPriorPrefillReceipt(fromAgent: boolean, linkName: boolean, linkAge: boolean): boolean {
+export function lawInvitationLinkDoesNotPresentPriorPrefillReceipt(fromAgent: boolean, linkName: boolean): boolean {
   //@ ensures \result === true
-  return !browserPrefillMayPresentReceipt(fromAgent, linkName, linkAge, true);
+  return !browserPrefillMayPresentReceipt(fromAgent, linkName, true);
 }
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
@@ -875,15 +962,17 @@ export function restoreCloudPrefill(page: JoinPage, view: SessionView, fromAgent
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysCheckOnlyWithTextCodes(\result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysCodeStepUsesTextCodes(\result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysBirthdayOnlyOnProfile(\result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysDoneNeedsConsent(\result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysRequestBelongsToItsStep(\result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepCodeRequestNeedsPassedCheck(page, "restoreCloudPrefill", \result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepCheckSpentAfterCodeStart(page, "restoreCloudPrefill", \result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepJoinAnswerClearsBirthday(page, "restoreCloudPrefill", \result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepFormClearedWhenAccountLeaves(page, \result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepSignInKeepsFormValues(page, "restoreCloudPrefill", \result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepDoneFollowsSavedProfile(page, "restoreCloudPrefill", \result)
   //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepOneRequestAtATime(page, \result)
-  return { ...page, viaAgent: fromAgent, formHasValues: hasFields, consented: false };
+  return { ...page, viaAgent: fromAgent, formHasValues: hasFields, birthdayGiven: false, consented: false };
 }
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
@@ -1010,6 +1099,12 @@ export function sometimesProfileIncomplete(page: JoinPage): boolean {
 
 /** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
+export function sometimesBirthdayTyped(page: JoinPage): boolean {
+  return page.birthdayGiven;
+}
+
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
+//@ pure
 export function sometimesRequestFailed(page: JoinPage): boolean {
   return page.formError === "RequestFailed";
 }
@@ -1098,6 +1193,12 @@ export function sometimesJoinedFromAgent(page: JoinPage): boolean {
   return agentReturnShown(page);
 }
 
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
+//@ pure
+export function sometimesInvalidBirthdate(page: JoinPage): boolean {
+  return birthdateErrorShown(page);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: JoinPage, event: Event): boolean {
@@ -1128,7 +1229,7 @@ export function enabled(current: JoinPage, event: Event): boolean {
 export function step(current: JoinPage, event: Event): JoinPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "openPage") return canOpenPage(current) ? openPage(current, event.viaAgent, event.fragmentName, event.ageDigitsOnly, event.ageDigitCount, event.fragmentAge) : current;
+  if (event.type === "openPage") return canOpenPage(current) ? openPage(current, event.viaAgent, event.fragmentName) : current;
   if (event.type === "loaded") return canLoaded(current, event.view) ? loaded(current, event.view, event.appUnreachable, event.inviteOnly) : current;
   if (event.type === "readAuthMode") return canReadAuthMode(current) ? readAuthMode(current, event.lookup, event.checkOn) : current;
   if (event.type === "expireCheck") return canExpireCheck(current) ? expireCheck(current) : current;
@@ -1143,7 +1244,7 @@ export function step(current: JoinPage, event: Event): JoinPage {
   if (event.type === "continueWithPhone") return canContinueWithPhone(current) ? continueWithPhone(current) : current;
   if (event.type === "answerCloudStart") return canAnswerCloudStart(current) ? answerCloudStart(current, event.opened) : current;
   if (event.type === "recheck") return canRecheck(current, event.view) ? recheck(current, event.view) : current;
-  if (event.type === "editProfile") return canEditProfile(current) ? editProfile(current) : current;
+  if (event.type === "editProfile") return canEditProfile(current) ? editProfile(current, event.birthdayGiven) : current;
   if (event.type === "submitProfile") return canSubmitProfile(current) ? submitProfile(current, event.form) : current;
   if (event.type === "answerJoin") return canAnswerJoin(current) ? answerJoin(current, event.joinAnswer) : current;
   if (event.type === "restoreCloudPrefill") return canRestoreCloudPrefill(current, event.view) ? restoreCloudPrefill(current, event.view, event.fromAgent, event.hasFields) : current;
@@ -1164,9 +1265,10 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   const is_SessionView = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && (v.result === "SignedOut" || v.result === "ReadFailed" || v.result === "MayJoin" || v.result === "AlreadyIn" || v.result === "MayNotJoin") && Number.isSafeInteger(v.account) && (v.reason === "NoBlock" || v.reason === "UnderAge" || v.reason === "InviteOnly" || v.reason === "InReview" || v.reason === "NotValid" || v.reason === "OtherReason");
-  const is_ProfileForm = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.nameGiven === "boolean" && Number.isSafeInteger(v.age) && typeof v.consentTicked === "boolean";
+  const is_authorizationPages_CalendarDate = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && Number.isSafeInteger(v.year) && Number.isSafeInteger(v.month) && Number.isSafeInteger(v.day);
+  const is_ProfileForm = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.nameGiven === "boolean" && is_authorizationPages_CalendarDate(v.birthday) && is_authorizationPages_CalendarDate(v.today) && typeof v.consentTicked === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "openPage" && typeof raw.viaAgent === "boolean" && typeof raw.fragmentName === "boolean" && typeof raw.ageDigitsOnly === "boolean" && Number.isSafeInteger(raw.ageDigitCount) && Number.isSafeInteger(raw.fragmentAge)) return { type: "openPage", viaAgent: raw.viaAgent, fragmentName: raw.fragmentName, ageDigitsOnly: raw.ageDigitsOnly, ageDigitCount: raw.ageDigitCount, fragmentAge: raw.fragmentAge };
+  if (raw.type === "openPage" && typeof raw.viaAgent === "boolean" && typeof raw.fragmentName === "boolean") return { type: "openPage", viaAgent: raw.viaAgent, fragmentName: raw.fragmentName };
   if (raw.type === "loaded" && is_SessionView(raw.view) && typeof raw.appUnreachable === "boolean" && typeof raw.inviteOnly === "boolean") return { type: "loaded", view: ({ result: raw.view.result, account: raw.view.account, reason: raw.view.reason }), appUnreachable: raw.appUnreachable, inviteOnly: raw.inviteOnly };
   if (raw.type === "readAuthMode" && (raw.lookup === "LookupFailed" || raw.lookup === "ModeOtp" || raw.lookup === "ModeCloud") && typeof raw.checkOn === "boolean") return { type: "readAuthMode", lookup: raw.lookup, checkOn: raw.checkOn };
   if (raw.type === "expireCheck") return { type: "expireCheck" };
@@ -1181,9 +1283,9 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "continueWithPhone") return { type: "continueWithPhone" };
   if (raw.type === "answerCloudStart" && typeof raw.opened === "boolean") return { type: "answerCloudStart", opened: raw.opened };
   if (raw.type === "recheck" && is_SessionView(raw.view)) return { type: "recheck", view: ({ result: raw.view.result, account: raw.view.account, reason: raw.view.reason }) };
-  if (raw.type === "editProfile") return { type: "editProfile" };
-  if (raw.type === "submitProfile" && is_ProfileForm(raw.form)) return { type: "submitProfile", form: ({ nameGiven: raw.form.nameGiven, age: raw.form.age, consentTicked: raw.form.consentTicked }) };
-  if (raw.type === "answerJoin" && (raw.joinAnswer === "JoinedOk" || raw.joinAnswer === "JoinUnderAge" || raw.joinAnswer === "JoinInviteOnly" || raw.joinAnswer === "JoinReview" || raw.joinAnswer === "JoinAccountChanged" || raw.joinAnswer === "JoinUnauthorized" || raw.joinAnswer === "JoinInvalidInvitation" || raw.joinAnswer === "JoinFailed")) return { type: "answerJoin", joinAnswer: raw.joinAnswer };
+  if (raw.type === "editProfile" && typeof raw.birthdayGiven === "boolean") return { type: "editProfile", birthdayGiven: raw.birthdayGiven };
+  if (raw.type === "submitProfile" && is_ProfileForm(raw.form)) return { type: "submitProfile", form: ({ nameGiven: raw.form.nameGiven, birthday: ({ year: raw.form.birthday.year, month: raw.form.birthday.month, day: raw.form.birthday.day }), today: ({ year: raw.form.today.year, month: raw.form.today.month, day: raw.form.today.day }), consentTicked: raw.form.consentTicked }) };
+  if (raw.type === "answerJoin" && (raw.joinAnswer === "JoinedOk" || raw.joinAnswer === "JoinUnderAge" || raw.joinAnswer === "JoinInviteOnly" || raw.joinAnswer === "JoinReview" || raw.joinAnswer === "JoinAccountChanged" || raw.joinAnswer === "JoinUnauthorized" || raw.joinAnswer === "JoinInvalidInvitation" || raw.joinAnswer === "JoinInvalidBirthdate" || raw.joinAnswer === "JoinFailed")) return { type: "answerJoin", joinAnswer: raw.joinAnswer };
   if (raw.type === "restoreCloudPrefill" && is_SessionView(raw.view) && typeof raw.fromAgent === "boolean" && typeof raw.hasFields === "boolean") return { type: "restoreCloudPrefill", view: ({ result: raw.view.result, account: raw.view.account, reason: raw.view.reason }), fromAgent: raw.fromAgent, hasFields: raw.hasFields };
   return undefined;
 }
@@ -1202,8 +1304,8 @@ export function parseState(x: unknown): JoinPage | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.screen === "Opening" || raw.screen === "Loading" || raw.screen === "Phone" || raw.screen === "Code" || raw.screen === "Checking" || raw.screen === "Profile" || raw.screen === "Member" || raw.screen === "Blocked" || raw.screen === "Done" || raw.screen === "LeftForCloud") && (raw.auth === "AuthPending" || raw.auth === "OtpMode" || raw.auth === "CloudMode") && (raw.check === "NoCheck" || raw.check === "CheckRunning" || raw.check === "CheckPassed" || raw.check === "CheckBroken") && (raw.pending === "Idle" || raw.pending === "StartingCode" || raw.pending === "VerifyingCode" || raw.pending === "ResendingCode" || raw.pending === "SavingProfile" || raw.pending === "OpeningCloud") && (raw.reason === "NoBlock" || raw.reason === "UnderAge" || raw.reason === "InviteOnly" || raw.reason === "InReview" || raw.reason === "NotValid" || raw.reason === "OtherReason") && (raw.notice === "NoNotice" || raw.notice === "ApiUnreachable" || raw.notice === "SessionEnded" || raw.notice === "AccountChanged") && (raw.formError === "NoError" || raw.formError === "InvalidPhone" || raw.formError === "CheckPending" || raw.formError === "CheckFailed" || raw.formError === "CheckRejected" || raw.formError === "CheckAgain" || raw.formError === "RateLimited" || raw.formError === "CodeFormat" || raw.formError === "InvalidCode" || raw.formError === "NewCodeSent" || raw.formError === "ProfileIncomplete" || raw.formError === "CloudUnavailable" || raw.formError === "RequestFailed") && Number.isSafeInteger(raw.account) && typeof raw.inviteOnly === "boolean" && typeof raw.viaAgent === "boolean" && typeof raw.addressClean === "boolean" && typeof raw.formHasValues === "boolean" && typeof raw.consented === "boolean" && Object.keys(raw).length === 13)) return undefined;
-  const parsed: JoinPage = ({ screen: raw.screen, auth: raw.auth, check: raw.check, pending: raw.pending, reason: raw.reason, notice: raw.notice, formError: raw.formError, account: raw.account, inviteOnly: raw.inviteOnly, viaAgent: raw.viaAgent, addressClean: raw.addressClean, formHasValues: raw.formHasValues, consented: raw.consented });
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.screen === "Opening" || raw.screen === "Loading" || raw.screen === "Phone" || raw.screen === "Code" || raw.screen === "Checking" || raw.screen === "Profile" || raw.screen === "Member" || raw.screen === "Blocked" || raw.screen === "Done" || raw.screen === "LeftForCloud") && (raw.auth === "AuthPending" || raw.auth === "OtpMode" || raw.auth === "CloudMode") && (raw.check === "NoCheck" || raw.check === "CheckRunning" || raw.check === "CheckPassed" || raw.check === "CheckBroken") && (raw.pending === "Idle" || raw.pending === "StartingCode" || raw.pending === "VerifyingCode" || raw.pending === "ResendingCode" || raw.pending === "SavingProfile" || raw.pending === "OpeningCloud") && (raw.reason === "NoBlock" || raw.reason === "UnderAge" || raw.reason === "InviteOnly" || raw.reason === "InReview" || raw.reason === "NotValid" || raw.reason === "OtherReason") && (raw.notice === "NoNotice" || raw.notice === "ApiUnreachable" || raw.notice === "SessionEnded" || raw.notice === "AccountChanged") && (raw.formError === "NoError" || raw.formError === "InvalidPhone" || raw.formError === "CheckPending" || raw.formError === "CheckFailed" || raw.formError === "CheckRejected" || raw.formError === "CheckAgain" || raw.formError === "RateLimited" || raw.formError === "CodeFormat" || raw.formError === "InvalidCode" || raw.formError === "NewCodeSent" || raw.formError === "ProfileIncomplete" || raw.formError === "InvalidBirthdate" || raw.formError === "CloudUnavailable" || raw.formError === "RequestFailed") && Number.isSafeInteger(raw.account) && typeof raw.inviteOnly === "boolean" && typeof raw.viaAgent === "boolean" && typeof raw.addressClean === "boolean" && typeof raw.formHasValues === "boolean" && typeof raw.birthdayGiven === "boolean" && typeof raw.consented === "boolean" && Object.keys(raw).length === 14)) return undefined;
+  const parsed: JoinPage = ({ screen: raw.screen, auth: raw.auth, check: raw.check, pending: raw.pending, reason: raw.reason, notice: raw.notice, formError: raw.formError, account: raw.account, inviteOnly: raw.inviteOnly, viaAgent: raw.viaAgent, addressClean: raw.addressClean, formHasValues: raw.formHasValues, birthdayGiven: raw.birthdayGiven, consented: raw.consented });
   return inv(parsed) ? parsed : undefined;
 }
 

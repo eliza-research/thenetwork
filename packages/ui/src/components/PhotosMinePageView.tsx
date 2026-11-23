@@ -25,6 +25,7 @@ const accessWords: Readonly<Record<GrantAccess, string>> = {
   GrantChecking: "checking",
   GrantReady: "ready",
   GrantShared: "shared",
+  GrantWasTakenBack: "taken back",
 };
 
 const listNotices: Readonly<Record<Exclude<HoldingsNotice, "HoldingsNoNotice">, string>> = {

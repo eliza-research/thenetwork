@@ -20,7 +20,7 @@ export const meta: ComponentMeta<ProfileStepProps> = {
       await expect(birthday.getAttribute("name")).toBe("birthdate");
       await expect(birthday.value).toBe("");
       await expect(canvasElement.querySelector("input[name=age]")).toBeNull();
-      fireEvent.change(birthday, { target: { value: "1996-03-14" } });
+      await fireEvent.change(birthday, { target: { value: "1996-03-14" } });
       await expect(args.onValuesChange).toHaveBeenCalledWith({ birthdate: "1996-03-14" });
       await userEvent.click(canvas.getByRole("checkbox"));
       await expect(args.onValuesChange).toHaveBeenCalledWith({ consent: true });

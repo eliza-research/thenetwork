@@ -40,7 +40,7 @@ export async function stepCall(path: string, init: StepRequest): Promise<StepAns
   } catch {
     return { reached: false };
   }
-  let json: unknown = null;
+  let json: unknown;
   try {
     json = await response.json();
   } catch {

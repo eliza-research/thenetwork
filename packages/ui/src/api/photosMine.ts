@@ -3,6 +3,7 @@ import {
   type GrantAccess,
   type GrantWire,
   grantAccessOf,
+  grantCanBeTakenBack,
   type ImageKind,
   type OpenAnswer,
   type OpenKind,
@@ -33,6 +34,7 @@ const wireStates: Readonly<Record<string, GrantWire>> = {
   checking: "WireChecking",
   ready: "WireReady",
   opened: "WireOpened",
+  taken_back: "WireTakenBack",
 };
 
 /**
@@ -100,7 +102,7 @@ export async function openHoldings(token: string): Promise<{ answer: OpenAnswer;
   const photos = listOf(result.data);
   if (!photos) return none("OpenFailed");
   const sorted = [...photos].sort((a, b) => a.n - b.n);
-  return { answer: { kind: "OpenListed", photos: sorted.length, grants: sorted.reduce((total, photo) => total + photo.shares.length, 0) }, photos: sorted };
+  return { answer: { kind: "OpenListed", photos: sorted.length, grants: sorted.reduce((total, photo) => total + photo.shares.filter((share) => grantCanBeTakenBack(share.access)).length, 0) }, photos: sorted };
 }
 
 const imageKinds = { timed_out: "ImageTimedOut", unavailable: "ImageUnavailable", other_phone: "ImageOtherPhone", unreachable: "ImageMissing" } as const;

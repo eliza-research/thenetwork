@@ -126,8 +126,6 @@ export const render: RenderPage = (app, page, input) => {
     minJoinAge: input.minJoinAge,
     consentText: input.consentText,
     turnstileSiteKey: input.turnstileSiteKey,
-    photoConsentText: input.photoConsentText,
-    photoConsentVersion: input.photoConsentVersion,
   };
   const html = renderToString(
     <StrictMode>

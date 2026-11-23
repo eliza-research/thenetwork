@@ -1,6 +1,6 @@
 # Photo check page
 
-The slop.date site keeps one page at `/photos/check`. It does one step: an adult member sees exactly the photos that a photo proposal names, and sends them with one "Send" action. The service puts the link `https://slop.date/photos/check#<token>` in each photo proposal, choice and list that it texts to the sender ([photo relay item](photoRelayItem.md), the backend owner decision of 2026-11-22). The token is 43 characters of base64url. It is the only authority: the page has no sign-in. Consent to send is only YES to the proposal on the phone line, or "Send" on this page. The receiver is asked first, and a person on the safety team checks each photo before the receiver can open it ([photo relay review](photoRelayReview.md)). The page is on slop.date only, and it has no navigation, no settings and no account view ([one-step pages](oneStepPage.md)).
+The slop.date site keeps one page at `/photos/check`. It does one step: an adult member sees exactly the photos that a photo proposal names, and sends them with one "Send" action. The service puts the link `https://slop.date/photos/check#<token>` in each photo proposal, choice and list that it texts to the sender ([photo relay item](photoRelayItem.md), the backend owner decision of 2026-11-22). The token is 43 characters of base64url. It is the only authority: the page has no sign-in. Consent to send is only YES to the proposal on the phone line, or "Send" on this page. The receiver is asked first, and an automatic check screens each photo before the receiver can open it; a photo that the check does not clear goes to a person on the safety team ([photo relay review](photoRelayReview.md), owner decision D14). The page shows the `notice` of the server as it comes and does not write its own. The page is on slop.date only, and it has no navigation, no settings and no account view ([one-step pages](oneStepPage.md)).
 
 Photos are for adults (18+) only ([photo policy](photoPolicy.md)). The server checks the age, the membership, the hold and the ban when it issues the link and again on each call. A minor, an unverified or banned person and a held member never get a link, and the page asks for no age. The page never shows a score. The photos stay in the memory of the page as object URLs, and the page removes them when the step ends ([photo retention](photoRetention.md)).
 
@@ -260,15 +260,15 @@ pure val answerValues = Set(
   { kind: CheckUnreachable, proposedCount: 0 },
 )
 
-pure def endedScreenFor(kind: CheckAnswerKind): ProposalScreen =
-  if (kind == CheckChanged) ProposalChanged
-  else if (kind == CheckLapsed) ProposalLapsed
-  else if (kind == CheckRefused) ProposalRefused
-  else if (kind == CheckClosed) ProposalClosed
-  else if (kind == CheckOtherDevice) ProposalOtherDevice
+pure def endedScreenFor(answerKind: CheckAnswerKind): ProposalScreen =
+  if (answerKind == CheckChanged) ProposalChanged
+  else if (answerKind == CheckLapsed) ProposalLapsed
+  else if (answerKind == CheckRefused) ProposalRefused
+  else if (answerKind == CheckClosed) ProposalClosed
+  else if (answerKind == CheckOtherDevice) ProposalOtherDevice
   else ProposalOpening
 
-pure def answerEndsTheStep(kind: CheckAnswerKind): bool = endedScreenFor(kind) != ProposalOpening
+pure def answerEndsTheStep(answerKind: CheckAnswerKind): bool = endedScreenFor(answerKind) != ProposalOpening
 
 pure def canAnswerCheck(page: PhotoCheck): bool = page.pending == ProposalSending or page.pending == ProposalChoosing
 

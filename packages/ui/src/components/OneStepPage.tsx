@@ -21,12 +21,15 @@ const notices: Readonly<Record<Exclude<StepNotice, "NoStepNotice">, string>> = {
   StepUnreachable: apiMessages.api_unreachable,
   StepSessionEnded: apiMessages.unauthorized,
   StepSignInAgain: "For your safety, sign in again with your current number.",
+  StepSignInExpired: "Your sign-in took too long. Sign in again.",
+  StepSignInRefused: "We could not sign you in. For help, email help@ntwrk.party.",
+  StepSignInUnavailable: "Sign-in is not available right now. Try again in a few minutes.",
 };
 
 /**
  * The content column of a one-step page inside `PageShell`: the shared notice, then the one step.
  * Focus moves to each new step after the first one: to its first field, or to its heading when it has no field.
- * @model spec/oneStepPage.md
+ * @model spec/phonePage.md
  */
 export function OneStepPage({ stepKey, waiting = false, notice = "NoStepNotice", className, children, ...props }: OneStepPageProps) {
   const firstStepRef = useRef<HTMLElement | null>(null);

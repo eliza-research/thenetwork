@@ -585,7 +585,7 @@ pure def sometimesNewCodeSent(page: JoinPage): bool = page.formError == NewCodeS
 pure def sometimesPrefilledProfile(page: JoinPage): bool = page.screen == Profile and page.formHasValues
 
 pure val eval_witness_sometimesCodeFormat = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, false),
   ("submitPhone", true),
@@ -594,7 +594,7 @@ pure val eval_witness_sometimesCodeFormat = (
 )
 
 pure val eval_witness_sometimesCheckAgain = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, true),
   ("settleCheck", true),
@@ -604,7 +604,7 @@ pure val eval_witness_sometimesCheckAgain = (
 )
 
 pure val eval_witness_sometimesInvalidCode = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, false),
   ("submitPhone", true),
@@ -614,7 +614,7 @@ pure val eval_witness_sometimesInvalidCode = (
 )
 
 pure val eval_witness_sometimesNewCodeSent = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, false),
   ("submitPhone", true),

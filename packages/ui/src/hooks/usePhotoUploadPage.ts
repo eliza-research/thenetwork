@@ -1,23 +1,18 @@
 // spec/photoUploadPage.md, "Photo upload page"
 import { useEffect, useRef, useState } from "react";
 import {
+  canAnswerLinkStatus,
   canAnswerUpload,
   enabled,
   type Event,
   initial,
   photoConsentHeaderSent,
-  photoUploadOffered,
+  photoLinkHeld,
   type PhotoUploadPage,
   step,
 } from "../../../core/src/generated/photoUploadPage.ts";
-import { batchOf, type PhotoRefusalShown, photoTokenWellFormed, sendPhotos } from "../api/photoUpload.ts";
+import { batchOf, type PhotoConsentShown, type PhotoRefusalShown, photoTokenWellFormed, readPhotoLink, sendPhotos } from "../api/photoUpload.ts";
 import { takeLinkFragment } from "../lib/stepLink.ts";
-
-/** What the page knows from the site build. The hook reads it once. */
-export interface PhotoUploadOptions {
-  /** The version of the photo consent that the page shows; the page sends it only when the person ticks the box. */
-  consentVersion: string;
-}
 
 /** The photo upload page state and the actions that change it. The names match the `PhotoUploadPageView` props. */
 export interface PhotoUploadController {
@@ -26,24 +21,28 @@ export interface PhotoUploadController {
   fileNames: string[];
   /** The refusals of single photos from the last answer, each once. */
   refused: PhotoRefusalShown[];
+  /** The photo consent text that the link status gave; the page shows it exactly. "" before the status answer. */
+  consentText: string;
   onChoose: (files: File[]) => void;
   onConsentChange: (ticked: boolean) => void;
   onUpload: () => void;
+  onRetry: () => void;
 }
 
 type PhotoUploadData = Omit<PhotoUploadController, `on${string}`>;
 
-const start: PhotoUploadData = { page: initial, fileNames: [], refused: [] };
+const start: PhotoUploadData = { page: initial, fileNames: [], refused: [], consentText: "" };
 
 /**
  * Runs the photo upload page: each server answer becomes one event of the generated machine, and nothing here decides what the machine decides.
- * The link token stays in the memory of this hook only.
+ * The link token and the consent version stay in the memory of this hook only. The consent text and version come from the link status, not from the site build.
  * @model spec/photoUploadPage.md
  */
-export function usePhotoUploadPage({ consentVersion }: PhotoUploadOptions): PhotoUploadController {
+export function usePhotoUploadPage(): PhotoUploadController {
   const [data, setData] = useState(start);
   const current = useRef(start);
   const token = useRef("");
+  const consent = useRef<PhotoConsentShown | undefined>(undefined);
   const files = useRef<File[]>([]);
 
   const [actions] = useState(() => {
@@ -58,15 +57,28 @@ export function usePhotoUploadPage({ consentVersion }: PhotoUploadOptions): Phot
       commit({ ...before, ...fields, page });
       return page;
     };
-    const forget = () => {
+    const forgetIfClosed = (page: PhotoUploadPage | undefined) => {
+      if (!page || photoLinkHeld(page)) return;
       token.current = "";
       files.current = [];
     };
+    const readStatus = async () => {
+      const result = await readPhotoLink(token.current);
+      if (result.consent) consent.current = result.consent;
+      const after = send({ type: "answerLinkStatus", linkStatus: result.linkStatus }, result.consent ? { consentText: result.consent.text } : {});
+      forgetIfClosed(after);
+    };
     return {
-      open: () => {
+      open: async () => {
         const fragment = takeLinkFragment().replace(/^#/, "");
         const opened = send({ type: "openPhotoPage", tokenWellFormed: photoTokenWellFormed(fragment) });
-        if (opened && photoUploadOffered(opened)) token.current = fragment;
+        if (!opened || !canAnswerLinkStatus(opened)) return;
+        token.current = fragment;
+        await readStatus();
+      },
+      onRetry: async () => {
+        const next = send({ type: "retryLinkStatus" });
+        if (next && canAnswerLinkStatus(next)) await readStatus();
       },
       onChoose: (chosen: File[]) => {
         const next = send({ type: "choosePhotos", batch: batchOf(chosen) }, { fileNames: chosen.map((file) => file.name) });
@@ -79,15 +91,15 @@ export function usePhotoUploadPage({ consentVersion }: PhotoUploadOptions): Phot
         const chosen = files.current;
         const next = send({ type: "uploadPhotos", batch: batchOf(chosen) });
         if (!next || !canAnswerUpload(next)) return;
-        const result = await sendPhotos(token.current, chosen, photoConsentHeaderSent(next) ? consentVersion : undefined);
+        const result = await sendPhotos(token.current, chosen, photoConsentHeaderSent(next) ? consent.current?.version : undefined);
         const after = send({ type: "answerUpload", answer: result.answer }, { refused: result.refused });
-        if (after && !photoUploadOffered(after)) forget();
+        forgetIfClosed(after);
       },
     };
   });
 
   useEffect(() => {
-    actions.open();
+    void actions.open();
   }, [actions]);
 
   return {
@@ -95,5 +107,6 @@ export function usePhotoUploadPage({ consentVersion }: PhotoUploadOptions): Phot
     onChoose: actions.onChoose,
     onConsentChange: actions.onConsentChange,
     onUpload: () => void actions.onUpload(),
+    onRetry: () => void actions.onRetry(),
   };
 }

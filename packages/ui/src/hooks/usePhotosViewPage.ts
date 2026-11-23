@@ -27,8 +27,6 @@ export interface PhotosViewController {
   photos: ViewedPhoto[];
   /** The sender's first name from the open answer; "" before the tap. */
   fromFirstName: string;
-  /** The end of the view window in epoch milliseconds, from the open answer. */
-  until: number | undefined;
   onTap: () => void;
   onAskReport: () => void;
   onKeepViewing: () => void;
@@ -37,37 +35,27 @@ export interface PhotosViewController {
 
 type PhotosViewData = Omit<PhotosViewController, `on${string}`>;
 
-const start: PhotosViewData = { page: initial, photos: [], fromFirstName: "", until: undefined };
-
-const longestTimer = 2_147_483_647;
+const start: PhotosViewData = { page: initial, photos: [], fromFirstName: "" };
 
 /**
- * Runs the photo view page: each server answer and the end of the window become one event of the generated machine, and
- * nothing here decides what the machine decides. The token and the object URLs stay in the memory of this hook only.
+ * Runs the photo view page: each server answer becomes one event of the generated machine, and nothing here decides what
+ * the machine decides. No timer closes the photos: the link stays valid until the sender takes them back. The token and the object URLs stay in the memory of this hook only.
  * @model spec/photosViewPage.md
  */
 export function usePhotosViewPage(): PhotosViewController {
   const [data, setData] = useState(start);
   const current = useRef(start);
   const token = useRef("");
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const [actions] = useState(() => {
     const release = (photos: readonly ViewedPhoto[]) => {
       for (const photo of photos) URL.revokeObjectURL(photo.url);
     };
-    const stopTimer = () => {
-      if (timer.current !== undefined) clearTimeout(timer.current);
-      timer.current = undefined;
-    };
     const commit = (next: PhotosViewData) => {
       const held = viewPhotosHeld(next.page);
       if (!held) release(next.photos);
       const settled = held ? next : { ...next, photos: [] };
-      if (!settled.page.linkHeld) {
-        token.current = "";
-        stopTimer();
-      }
+      if (!settled.page.linkHeld) token.current = "";
       current.current = settled;
       setData(settled);
     };
@@ -77,15 +65,6 @@ export function usePhotosViewPage(): PhotosViewController {
       const page = step(before.page, event);
       commit({ ...before, ...fields, page });
       return current.current.page;
-    };
-    const startTimer = (until: number | undefined) => {
-      stopTimer();
-      if (until === undefined) return;
-      const wait = Math.min(Math.max(until - Date.now(), 0), longestTimer);
-      timer.current = setTimeout(() => {
-        timer.current = undefined;
-        send({ type: "endViewWindow" });
-      }, wait);
     };
     const loadPhotos = async (count: number) => {
       for (let n = 1; n <= count; n++) {
@@ -104,16 +83,14 @@ export function usePhotosViewPage(): PhotosViewController {
         if (opened?.linkHeld) token.current = fragment;
       },
       close: () => {
-        stopTimer();
         release(current.current.photos);
       },
       onTap: async () => {
         const next = send({ type: "tapToView" });
         if (!next || !canAnswerViewOpen(next)) return;
         const result = await openPhotoView(token.current);
-        const after = send({ type: "answerViewOpen", openAnswer: result.answer }, result.answer.kind === "OpenShown" ? { fromFirstName: result.fromFirstName, until: result.until } : {});
+        const after = send({ type: "answerViewOpen", openAnswer: result.answer }, result.answer.kind === "OpenShown" ? { fromFirstName: result.fromFirstName } : {});
         if (!after || after.screen !== "ViewShowing") return;
-        startTimer(result.until);
         await loadPhotos(after.count);
       },
       onAskReport: () => {

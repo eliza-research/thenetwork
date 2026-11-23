@@ -13,7 +13,7 @@ import { OneStepPage } from "./OneStepPage.tsx";
 import { Spinner } from "./Spinner.tsx";
 import { StepFrame } from "./StepFrame.tsx";
 
-export type PhotosCheckPageViewProps = Omit<ComponentProps<"div">, "children"> & PhotosCheckController;
+export type PhotosCheckPageViewProps = Omit<ComponentProps<"div">, "children" | "onToggle"> & PhotosCheckController;
 
 const errorTexts: Readonly<Record<ProposalError, string | undefined>> = {
   ProposalNoError: undefined,
@@ -189,7 +189,7 @@ export function PhotosCheckPageView({
         );
       }
       case "ProposalSent":
-        return <Ended screen={screen} title="Done">{text || `I'll ask ${name} if they want it. A person on our safety team checks it first.`}</Ended>;
+        return <Ended screen={screen} title="Done">{text || `I'll ask ${name} if they want it. An automatic check screens it first.`}</Ended>;
       case "ProposalClosed":
         return <Ended screen={screen} title="This photo choice is closed">It was sent or withdrawn. Text me if you want to send a photo.</Ended>;
       case "ProposalLapsed":

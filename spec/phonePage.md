@@ -6,10 +6,10 @@ The `/phone` page changes the number of a member on one site. The link is `https
 
 Open gaps (the backend closes them; the page does not work around them):
 
-- No text command and no skill sends the `/phone` link yet (gap 2).
+- The text command CHANGE NUMBER sends the `/phone` link (backend). It ships in the same release as this page.
 - A person who no longer holds the current number cannot sign in, so has no route on the page. The held step and the sign-in step give help@ntwrk.party (gap 3).
-- A refused change start for too many tries has no `retry-after` header. The page shows "Try later". A `retryKnown` field, as in `StepSignIn`, plugs in at `answerNumberStart` when the header comes (gap 4).
-- A Cloud callback failure shows the server's JSON page, outside this page (gap 5).
+
+The server closed two earlier gaps (page contracts addendum of 2026-11-22): a refused change start for too many tries carries `retry-after`, and a failed Cloud callback comes back to `/phone` with `?error=`.
 
 ## Story: Change my number from the link in my conversation
 
@@ -17,7 +17,7 @@ Open gaps (the backend closes them; the page does not work around them):
 
 ### The page reads the session when it opens
 
-The page opens and shows a loading step while it reads the session. A signed-in session goes to the new-number step. A signed-out session goes to the sign-in step. When the page cannot read the session, it goes to the sign-in step and shows that the server cannot be reached. After the session read, the page asks for the sign-in mode, also when it is signed in, because the result of the change depends on the mode.
+The page opens and shows a loading step while it reads the session. A signed-in session goes to the new-number step. A signed-out session goes to the sign-in step. When the page cannot read the session, it goes to the sign-in step and shows that the server cannot be reached. When a Cloud sign-in came back with an error, the sign-in step shows the notice of that error (`noticeOnOpen`). After the session read, the page asks for the sign-in mode, also when it is signed in, because the result of the change depends on the mode.
 
 ```quint
 import oneStepPage.* from "./oneStepPage"
@@ -27,9 +27,9 @@ type PhonePending = PhoneIdle | PhoneStarting | PhoneConfirming | PhoneResending
 type PhoneError = PhoneNoError | PhoneInvalidNumber | PhoneSameNumber | PhoneRateLimited | PhoneCodeFormat |
   PhoneWrongCode | PhoneStartAgain | PhoneNumberInUse | PhoneNewCodeSent | PhoneRequestFailed
 type PhonePage = { screen: PhoneScreen, signIn: StepSignIn, pending: PhonePending, error: PhoneError,
-  notice: StepNotice, changeStarted: bool, moved: bool, doneSignedOut: bool }
+  notice: StepNotice, changeStarted: bool, moved: bool, doneSignedOut: bool, retryKnown: bool }
 pure val initial: PhonePage = { screen: PhoneOpening, signIn: signInStart, pending: PhoneIdle, error: PhoneNoError,
-  notice: NoStepNotice, changeStarted: false, moved: false, doneSignedOut: false }
+  notice: NoStepNotice, changeStarted: false, moved: false, doneSignedOut: false, retryKnown: false }
 
 pure val sessionValues = Set(SessionSignedIn, SessionSignedOut, SessionUnreadable)
 
@@ -37,9 +37,8 @@ pure def canOpenPhonePage(p: PhonePage): bool = p.screen == PhoneOpening
 pure def openPhonePage(p: PhonePage): PhonePage = { ...p, screen: PhoneLoading }
 
 pure def canPhoneLoaded(p: PhonePage): bool = p.screen == PhoneLoading
-pure def phoneLoaded(p: PhonePage, session: StepSession): PhonePage =
-  if (session == SessionSignedIn) { ...p, screen: PhoneNewNumber, notice: NoStepNotice }
-  else { ...p, screen: PhoneSignIn, notice: if (session == SessionUnreadable) StepUnreachable else NoStepNotice }
+pure def phoneLoaded(p: PhonePage, session: StepSession, cloudReturn: CloudReturn): PhonePage =
+  { ...p, screen: if (session == SessionSignedIn) PhoneNewNumber else PhoneSignIn, notice: noticeOnOpen(session, cloudReturn) }
 
 pure def phoneScreenWaiting(p: PhonePage): bool =
   p.screen == PhoneOpening or p.screen == PhoneLoading or p.screen == PhoneChecking
@@ -60,11 +59,11 @@ pure def moveSignIn(p: PhonePage, attempt: SignInAttempt): PhonePage =
 
 pure def phoneSignInAgain(notice: StepNotice, p: PhonePage): PhonePage =
   { ...p, screen: PhoneSignIn, signIn: signInAgain(p.signIn), pending: PhoneIdle, error: PhoneNoError,
-    notice: notice, changeStarted: false }
+    notice: notice, changeStarted: false, retryKnown: false }
 
 pure def canPhoneSessionRead(p: PhonePage): bool = p.screen == PhoneChecking
 pure def phoneSessionRead(p: PhonePage, session: StepSession): PhonePage =
-  if (session == SessionSignedIn) { ...p, screen: PhoneNewNumber, notice: NoStepNotice, error: PhoneNoError }
+  if (session == SessionSignedIn) { ...p, screen: PhoneNewNumber, notice: NoStepNotice, error: PhoneNoError, retryKnown: false }
   else phoneSignInAgain(noticeForSession(session), p)
 
 pure def alwaysSignInConsistent(p: PhonePage): bool = signInConsistent(p.signIn)
@@ -75,7 +74,7 @@ pure def alwaysSignInBusyOnlyOnSignIn(p: PhonePage): bool =
 
 ### The new number goes to the server only when it is valid and the mode is known
 
-On the new-number step the page waits for the sign-in mode, then lets the person send the new number. The page refuses a number that is not a 10-digit US mobile number. A sent code opens the code step and clears the notice. "Same number", "invalid phone", "too many tries" and a general failure keep the new-number step and show why. "Too many tries" has no wait from the server, so the page says "Try later". A sign-in that is too old starts the sign-in again and asks the person to sign in again for safety. A session that ended, or a session with no person, starts the sign-in again and says that the session ended. A held current number shows the held step. When the page cannot reach the server, it keeps the step and shows the notice.
+On the new-number step the page waits for the sign-in mode, then lets the person send the new number. The page refuses a number that is not a 10-digit US mobile number. A sent code opens the code step and clears the notice. "Same number", "invalid phone", "too many tries" and a general failure keep the new-number step and show why. With "too many tries" the server gives the wait in `retry-after`, and the page shows it in minutes (`retryMinutesShown`). When the answer has no usable wait, the page says "Try later". A sign-in that is too old starts the sign-in again and asks the person to sign in again for safety. A session that ended, or a session with no person, starts the sign-in again and says that the session ended. A held current number shows the held step. When the page cannot reach the server, it keeps the step and shows the notice.
 
 ```quint
 type PhoneStartAnswer = PhoneStartSent | PhoneStartInvalidPhone | PhoneStartSameNumber | PhoneStartNoPerson |
@@ -84,23 +83,24 @@ type PhoneStartAnswer = PhoneStartSent | PhoneStartInvalidPhone | PhoneStartSame
 pure val startAnswerValues = Set(PhoneStartSent, PhoneStartInvalidPhone, PhoneStartSameNumber, PhoneStartNoPerson,
   PhoneStartReauth, PhoneStartReview, PhoneStartRateLimited, PhoneStartSignedOut, PhoneStartFailed, PhoneStartUnreachable)
 pure val numberValidValues = Set(true, false)
+pure val retryKnownValues = Set(true, false)
 
 pure def phoneNumberFormWaiting(p: PhonePage): bool = p.screen == PhoneNewNumber and p.signIn.auth == SignInModePending
 
 pure def canSubmitNewNumber(p: PhonePage): bool =
   p.screen == PhoneNewNumber and p.pending == PhoneIdle and p.signIn.auth != SignInModePending
 pure def submitNewNumber(p: PhonePage, numberValid: bool): PhonePage =
-  if (numberValid) { ...p, pending: PhoneStarting, error: PhoneNoError }
-  else { ...p, error: PhoneInvalidNumber }
+  if (numberValid) { ...p, pending: PhoneStarting, error: PhoneNoError, retryKnown: false }
+  else { ...p, error: PhoneInvalidNumber, retryKnown: false }
 
-pure def phoneAfterStart(startAnswer: PhoneStartAnswer, resend: bool, p: PhonePage): PhonePage =
-  val idle = { ...p, pending: PhoneIdle }
+pure def phoneAfterStart(startAnswer: PhoneStartAnswer, retryKnown: bool, resend: bool, p: PhonePage): PhonePage =
+  val idle = { ...p, pending: PhoneIdle, retryKnown: false }
   if (startAnswer == PhoneStartSent)
     (if (resend) { ...idle, error: PhoneNewCodeSent, notice: NoStepNotice }
     else { ...idle, screen: PhoneCode, error: PhoneNoError, notice: NoStepNotice, changeStarted: true })
   else if (startAnswer == PhoneStartInvalidPhone) { ...idle, error: PhoneInvalidNumber, notice: NoStepNotice }
   else if (startAnswer == PhoneStartSameNumber) { ...idle, error: PhoneSameNumber, notice: NoStepNotice }
-  else if (startAnswer == PhoneStartRateLimited) { ...idle, error: PhoneRateLimited, notice: NoStepNotice }
+  else if (startAnswer == PhoneStartRateLimited) { ...idle, error: PhoneRateLimited, notice: NoStepNotice, retryKnown: retryKnown }
   else if (startAnswer == PhoneStartFailed) { ...idle, error: PhoneRequestFailed, notice: NoStepNotice }
   else if (startAnswer == PhoneStartReauth) phoneSignInAgain(StepSignInAgain, idle)
   else if (startAnswer == PhoneStartNoPerson or startAnswer == PhoneStartSignedOut) phoneSignInAgain(StepSessionEnded, idle)
@@ -108,10 +108,16 @@ pure def phoneAfterStart(startAnswer: PhoneStartAnswer, resend: bool, p: PhonePa
   else { ...idle, notice: StepUnreachable }
 
 pure def canAnswerNumberStart(p: PhonePage): bool = p.pending == PhoneStarting
-pure def answerNumberStart(p: PhonePage, startAnswer: PhoneStartAnswer): PhonePage = phoneAfterStart(startAnswer, false, p)
+pure def answerNumberStart(p: PhonePage, startAnswer: PhoneStartAnswer, retryKnown: bool): PhonePage =
+  phoneAfterStart(startAnswer, retryKnown, false, p)
+
+pure def lawWaitShowsOnlyWithTooManyTries(p: PhonePage, startAnswer: PhoneStartAnswer, retryKnown: bool): bool =
+  answerNumberStart(p, startAnswer, retryKnown).retryKnown implies (startAnswer == PhoneStartRateLimited and retryKnown)
+
+pure def alwaysWaitOnlyWithTooManyTries(p: PhonePage): bool = p.retryKnown implies p.error == PhoneRateLimited
 
 pure def lawReauthAsksForSignIn(p: PhonePage): bool =
-  val after = answerNumberStart(p, PhoneStartReauth)
+  val after = answerNumberStart(p, PhoneStartReauth, false)
   after.screen == PhoneSignIn and after.notice == StepSignInAgain and after.signIn.stage == SignInNumber
 ```
 
@@ -131,12 +137,12 @@ pure def phoneChangeCodeAccepted(codeDigits: int): bool = codeDigits >= 4 and co
 
 pure def canSubmitChangeCode(p: PhonePage): bool = p.screen == PhoneCode and p.pending == PhoneIdle
 pure def submitChangeCode(p: PhonePage, codeDigits: int): PhonePage =
-  if (phoneChangeCodeAccepted(codeDigits)) { ...p, pending: PhoneConfirming, error: PhoneNoError }
-  else { ...p, error: PhoneCodeFormat }
+  if (phoneChangeCodeAccepted(codeDigits)) { ...p, pending: PhoneConfirming, error: PhoneNoError, retryKnown: false }
+  else { ...p, error: PhoneCodeFormat, retryKnown: false }
 
 pure def canAnswerNumberConfirm(p: PhonePage): bool = p.pending == PhoneConfirming
 pure def answerNumberConfirm(p: PhonePage, confirmAnswer: PhoneConfirmAnswer): PhonePage =
-  val idle = { ...p, pending: PhoneIdle }
+  val idle = { ...p, pending: PhoneIdle, retryKnown: false }
   if (confirmAnswer == PhoneConfirmMoved)
     { ...idle, screen: PhoneDone, moved: true, doneSignedOut: p.signIn.auth == SignInCloud,
       error: PhoneNoError, notice: NoStepNotice, changeStarted: false }
@@ -171,13 +177,14 @@ On the code step, the person can ask for a new code to the same new number, or g
 
 ```quint
 pure def canResendChangeCode(p: PhonePage): bool = p.screen == PhoneCode and p.pending == PhoneIdle
-pure def resendChangeCode(p: PhonePage): PhonePage = { ...p, pending: PhoneResending, error: PhoneNoError }
+pure def resendChangeCode(p: PhonePage): PhonePage = { ...p, pending: PhoneResending, error: PhoneNoError, retryKnown: false }
 
 pure def canAnswerChangeResend(p: PhonePage): bool = p.pending == PhoneResending
-pure def answerChangeResend(p: PhonePage, startAnswer: PhoneStartAnswer): PhonePage = phoneAfterStart(startAnswer, true, p)
+pure def answerChangeResend(p: PhonePage, startAnswer: PhoneStartAnswer, retryKnown: bool): PhonePage =
+  phoneAfterStart(startAnswer, retryKnown, true, p)
 
 pure def canChangeNewNumber(p: PhonePage): bool = p.screen == PhoneCode and p.pending == PhoneIdle
-pure def changeNewNumber(p: PhonePage): PhonePage = { ...p, screen: PhoneNewNumber, error: PhoneNoError, changeStarted: false }
+pure def changeNewNumber(p: PhonePage): PhonePage = { ...p, screen: PhoneNewNumber, error: PhoneNoError, changeStarted: false, retryKnown: false }
 
 pure def alwaysCodeNeedsChange(p: PhonePage): bool =
   (p.screen == PhoneCode or p.pending == PhoneConfirming or p.pending == PhoneResending) implies p.changeStarted
@@ -196,7 +203,7 @@ pure def alwaysSignInAgainHasNoChange(p: PhonePage): bool =
   (p.screen == PhoneSignIn or p.screen == PhoneChecking) implies (not(p.changeStarted) and p.pending == PhoneIdle)
 
 pure def lawSignInAgainKeepsMode(p: PhonePage): bool =
-  answerNumberStart(p, PhoneStartReauth).signIn.auth == p.signIn.auth
+  answerNumberStart(p, PhoneStartReauth, false).signIn.auth == p.signIn.auth
 ```
 
 ## Story: Send each request only once
@@ -237,7 +244,11 @@ pure def sometimesNumberInUse(p: PhonePage): bool = p.screen == PhoneNewNumber a
 pure def sometimesStartAgain(p: PhonePage): bool = p.screen == PhoneNewNumber and p.error == PhoneStartAgain
 pure def sometimesReauth(p: PhonePage): bool = p.screen == PhoneSignIn and p.notice == StepSignInAgain
 pure def sometimesSessionEnded(p: PhonePage): bool = p.screen == PhoneSignIn and p.notice == StepSessionEnded
-pure def sometimesRateLimited(p: PhonePage): bool = p.error == PhoneRateLimited
+pure def sometimesRateLimited(p: PhonePage): bool = p.error == PhoneRateLimited and not(p.retryKnown)
+pure def sometimesRateLimitedWithTime(p: PhonePage): bool = p.error == PhoneRateLimited and p.retryKnown
+pure def sometimesCloudSignInRefused(p: PhonePage): bool = p.screen == PhoneSignIn and p.notice == StepSignInRefused
+pure def sometimesCloudSignInExpired(p: PhonePage): bool = p.screen == PhoneSignIn and p.notice == StepSignInExpired
+pure def sometimesCloudSignInUnavailable(p: PhonePage): bool = p.screen == PhoneSignIn and p.notice == StepSignInUnavailable
 pure def sometimesUnreachable(p: PhonePage): bool = p.notice == StepUnreachable
 pure def sometimesNewCodeSent(p: PhonePage): bool = p.screen == PhoneCode and p.error == PhoneNewCodeSent
 pure def sometimesWrongCode(p: PhonePage): bool = p.screen == PhoneCode and p.error == PhoneWrongCode

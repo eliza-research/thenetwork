@@ -10,7 +10,6 @@ import { parse as parseYaml } from "yaml";
 import { mcpUrlFor, skillsConfig } from "./skills.config.ts";
 import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
-import { PHOTO_APPS, PHOTO_CONSENT } from "../packages/platform/src/photos.ts";
 import { siteApp } from "../apps/site/prerender.ts";
 import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
 import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType, updateHandoffAssetPath } from "../packages/core/src/generated/sitePages.ts";
@@ -55,18 +54,26 @@ export const SKILLS_DIR = join(here, "skills");
 export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
 /**
- * Security headers for every page (Cloudflare reads dist/_headers; the dev server sends the same).
+ * The image sources of a site. Only a site with the photo pages (slop.date) allows `blob:`, because those pages show the photo
+ * bytes from object URLs in memory. Every other site keeps `'self' data:`.
+ */
+export function imageSources(app: AppKey): string {
+  return siteHasPage(app, "PhotosViewPage") ? "'self' data: blob:" : "'self' data:";
+}
+
+/**
+ * Security headers for every page of a site (Cloudflare reads dist/_headers; the dev server sends the same).
  * Everything is same-origin except the Turnstile script and frame. No site may frame a page (the
  * signup page has consent controls).
  */
-export const SECURITY_HEADERS: Record<string, string> = {
-  "Content-Security-Policy": `default-src 'self'; script-src 'self' ${TURNSTILE_ORIGIN}; frame-src ${TURNSTILE_ORIGIN}; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`,
+export const securityHeaders = (app: AppKey): Record<string, string> => ({
+  "Content-Security-Policy": `default-src 'self'; script-src 'self' ${TURNSTILE_ORIGIN}; frame-src ${TURNSTILE_ORIGIN}; style-src 'self'; img-src ${imageSources(app)}; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`,
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
-};
+});
 
 export const SITES: Site[] = [
   { app: "ntwrk", key: "Ntwrk", domain: "ntwrk.party", project: "ntwrk-party", port: 5101, src: join(here, "ntwrk.party/static"), skill: "ntwrk-party" },
@@ -277,8 +284,8 @@ function write(path: string, body: string | Buffer): void {
 }
 
 /** dist/_headers: the security headers on every path, plus types, CORS and caching for the skill files. */
-export function headersFile(): string {
-  const all = Object.entries(SECURITY_HEADERS).map(([k, v]) => `  ${k}: ${v}`).join("\n");
+export function headersFile(app: AppKey): string {
+  const all = Object.entries(securityHeaders(app)).map(([k, v]) => `  ${k}: ${v}`).join("\n");
   const skill = `  Access-Control-Allow-Origin: ${skillAllowOrigin}\n  Cache-Control: public, max-age=${skillCacheSeconds}`;
   return [
     `/*\n${all}`,
@@ -341,12 +348,10 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
       minJoinAge: APPS[s.app].minJoinAge,
       consentText: APPS[s.app].consent.text,
       turnstileSiteKey: turnstileKey(env),
-      photoConsentText: PHOTO_APPS.includes(s.app) ? PHOTO_CONSENT.text : "",
-      photoConsentVersion: PHOTO_APPS.includes(s.app) ? PHOTO_CONSENT.version : "",
     };
     for (const page of pages(s)) write(join(outdir, PAGE_FILES[page]), app.page(s.key, page, input));
     if (existsSync(s.src)) cpSync(s.src, outdir, { recursive: true });
-    write(join(outdir, "_headers"), headersFile());
+    write(join(outdir, "_headers"), headersFile(s.key));
     // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json lists the paths that run it.
     const worker = await buildWorker({
       entryPoints: [ROUTER], bundle: true, platform: "browser", format: "esm", minify: true,

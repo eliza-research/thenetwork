@@ -6,7 +6,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { enabled, type Event, initial, type PhonePage, step } from "../../packages/core/src/generated/phonePage.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
-import { confirmNumberChange, startNumberChange } from "../../packages/ui/src/api/phone.ts";
+import { confirmNumberChange, type PhoneStartResult, startNumberChange } from "../../packages/ui/src/api/phone.ts";
 import { readStepSession } from "../../packages/ui/src/api/stepPages.ts";
 import { createSignIn, emptySignInFields, type SignInFields } from "../../packages/ui/src/hooks/stepSignIn.ts";
 import { Browser, newPhone, pgAvailable, startStack, webJoin, type Stack } from "./harness.ts";
@@ -46,19 +46,23 @@ function phonePage() {
     patch: (more) => { fields = { ...fields, ...more }; },
     afterVerified: async () => { send({ type: "phoneSessionRead", session: await readStepSession() }); },
   });
+  let last: PhoneStartResult | undefined;
   return {
     get page() { return page; },
+    get lastStart() { return last; },
     send,
     signIn,
     type: (more: Partial<SignInFields>) => { fields = { ...fields, ...more }; },
     async open() {
       send({ type: "openPhonePage" });
-      send({ type: "phoneLoaded", session: await readStepSession() });
+      send({ type: "phoneLoaded", session: await readStepSession(), cloudReturn: "CloudReturnNone" });
       await signIn.readMode();
     },
     async submitNewNumber(e164: string) {
       if (!send({ type: "submitNewNumber", numberValid: true })) throw new Error("the new-number form refused");
-      return send({ type: "answerNumberStart", startAnswer: await startNumberChange(e164) });
+      const started = await startNumberChange(e164);
+      last = started;
+      return send({ type: "answerNumberStart", startAnswer: started.answer, retryKnown: started.retryAfterSeconds !== undefined });
     },
     async submitChangeCode(code: string) {
       if (!send({ type: "submitChangeCode", codeDigits: code.length })) throw new Error("the code form refused");
@@ -67,7 +71,9 @@ function phonePage() {
     },
     async resend(e164: string) {
       if (!send({ type: "resendChangeCode" })) throw new Error("the resend was refused");
-      return send({ type: "answerChangeResend", startAnswer: await startNumberChange(e164) });
+      const started = await startNumberChange(e164);
+      last = started;
+      return send({ type: "answerChangeResend", startAnswer: started.answer, retryKnown: started.retryAfterSeconds !== undefined });
     },
   };
 }
@@ -150,6 +156,19 @@ describe.skipIf(!pgAvailable)("the /phone page on a text-code sign-in site", () 
     await signInOnPage(st, page, A);
     expect(page.page).toMatchObject({ screen: "PhoneNewNumber", notice: "NoStepNotice" });
     expect(await page.submitNewNumber(B)).toMatchObject({ screen: "PhoneCode" });
+  }, T);
+
+  test("a second code to the same new number within 30 seconds is refused with the wait from retry-after", async () => {
+    const [A, B] = [newPhone(), newPhone()];
+    const { b } = await webJoin(st, "peon", A, { age: 30 });
+    pageOn(st, "peon", b);
+    const page = phonePage();
+    await page.open();
+    st.clock.advance(31_000);
+    expect(await page.submitNewNumber(B)).toMatchObject({ screen: "PhoneCode" });
+    expect(await page.resend(B)).toMatchObject({ screen: "PhoneCode", error: "PhoneRateLimited", retryKnown: true });
+    expect(page.lastStart?.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(page.lastStart?.retryAfterSeconds).toBeLessThanOrEqual(30);
   }, T);
 
   // spec/phonePage.md, "Only a well-formed change code goes to the server, and only a moved number shows the result"

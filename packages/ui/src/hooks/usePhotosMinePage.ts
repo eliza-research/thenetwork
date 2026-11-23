@@ -7,6 +7,7 @@ import {
   type Event,
   type GrantMark,
   grantMarkAfter,
+  grantMarkOnOpen,
   grantOffersTakeBack,
   initial,
   type PhotoHoldingsPage,
@@ -52,14 +53,15 @@ export function shareKey(n: number, index: number): ShareKey {
 }
 
 const marksOf = (photos: readonly HoldingPhoto[]): Record<ShareKey, GrantMark> =>
-  Object.fromEntries(photos.flatMap((photo) => photo.shares.map((_, index) => [shareKey(photo.n, index), "GrantOpen" as GrantMark])));
+  Object.fromEntries(photos.flatMap((photo) => photo.shares.map((share, index) => [shareKey(photo.n, index), grantMarkOnOpen(share.access)])));
 
 const loadingImages = (photos: readonly HoldingPhoto[]): Record<number, HoldingImage> =>
-  Object.fromEntries(photos.map((photo) => [photo.n, { tile: "TileLoading" as PhotoTile }]));
+  Object.fromEntries(photos.map((photo) => [photo.n, { tile: "TileLoading" }]));
 
 /**
  * Runs the my photos page: each person action and each server answer becomes one event of the generated machine.
- * The share marks and the image tiles change only through `grantMarkAfter` and `photoTileFor`. The link token stays in the memory of this hook only.
+ * The share marks and the image tiles change only through `grantMarkOnOpen`, `grantMarkAfter` and `photoTileFor`. After a take-back
+ * the page reads the list again, so that each share shows the state that the server has. The link token stays in the memory of this hook only.
  * @model spec/photosMinePage.md
  */
 export function usePhotosMinePage(): PhotosMineController {
@@ -130,6 +132,11 @@ export function usePhotosMinePage(): PhotosMineController {
         const kind = await takeBackShare(token.current, n, share.firstName);
         const after = send({ type: "answerTakeBack", takeBackAnswer: kind }, { marks: { ...current.current.marks, [key]: grantMarkAfter(kind) } });
         forgetIfClosed(after);
+        const reopened = send({ type: "reopenAfterTakeBack" });
+        if (!reopened || !canAnswerOpen(reopened)) return;
+        release();
+        commit({ ...current.current, photos: [], marks: {}, images: {} });
+        await read();
       },
       release,
     };

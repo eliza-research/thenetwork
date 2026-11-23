@@ -14,7 +14,7 @@ import { fileAt } from "../packages/core/src/runtime/files.ts";
 import { existsSync, statSync, watch } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { handle as routerHandle, isBackendPath, isProxyHeader, retiredSitePage, updateHandoffPage } from "../deploy/router.ts";
-import { PAGE_FILES, SECURITY_HEADERS, SITES, buildSite, resetSiteApp, site as findSite, type Site } from "../sites/sites.ts";
+import { PAGE_FILES, SITES, buildSite, resetSiteApp, securityHeaders, site as findSite, type Site } from "../sites/sites.ts";
 
 const HOP = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "content-length", "accept-encoding"];
 /** Client-set IP headers are dropped: the backend never takes a rate-limit bucket from a header a browser sets. */
@@ -113,7 +113,7 @@ export async function serveSite(s: Site, opts: DevOptions) {
       }
       const f = file(opts.outdir, url.pathname);
       if (!f) return new Response("Not found", { status: 404 });
-      const headers: Record<string, string> = { "cache-control": "no-store", ...SECURITY_HEADERS };
+      const headers: Record<string, string> = { "cache-control": "no-store", ...securityHeaders(s.key) };
       if (f.path.endsWith(".md")) headers["content-type"] = "text/plain; charset=utf-8";
       return new Response(await fileAt(f.path).blob(), { status: f.status, headers });
     },

@@ -47,10 +47,11 @@ pure def lawKeptLinkIsInTheFragment(kind: OneStepKind): bool = oneStepLinkMayBeK
 
 ### A step page shows one shared notice above the step
 
-A step page can show one notice above its step: the server cannot be reached, the session ended, or the person must sign in again for safety. A page with no notice shows nothing above the step.
+A step page can show one notice above its step: the server cannot be reached, the session ended, the person must sign in again for safety, or a Cloud sign-in came back with an error. A page with no notice shows nothing above the step.
 
 ```quint
-type StepNotice = NoStepNotice | StepUnreachable | StepSessionEnded | StepSignInAgain
+type StepNotice = NoStepNotice | StepUnreachable | StepSessionEnded | StepSignInAgain |
+  StepSignInExpired | StepSignInRefused | StepSignInUnavailable
 type StepSession = SessionSignedIn | SessionSignedOut | SessionUnreadable
 
 pure def oneStepNoticeShown(notice: StepNotice): bool = notice != NoStepNotice
@@ -61,6 +62,32 @@ pure def noticeForSession(session: StepSession): StepNotice =
 
 pure def lawSignedInHasNoNotice(session: StepSession): bool =
   (session == SessionSignedIn) iff not(oneStepNoticeShown(noticeForSession(session)))
+```
+
+### A Cloud sign-in that fails comes back to the page with one error
+
+When a Cloud sign-in that started on `/phone` or `/home-help` fails, the server sends the browser back to the same page with one query value: `?error=sign_in_expired` (the handoff is missing, expired or does not match), `?error=sign_in_refused` (Cloud refused the person, or the phone is held, banned or suppressed) or `?error=sign_in_unavailable` (Cloud or the storage cannot be reached). The page reads the value once when it opens, and removes it from the address with `history.replaceState`. It shows the sign-in step with the notice of that error. Any other value counts as no error. A page that has a session shows no Cloud error.
+
+```quint
+type CloudReturn = CloudReturnNone | CloudReturnExpired | CloudReturnRefused | CloudReturnUnavailable
+
+pure val cloudReturnValues = Set(CloudReturnNone, CloudReturnExpired, CloudReturnRefused, CloudReturnUnavailable)
+
+pure def noticeForCloudReturn(cloudReturn: CloudReturn): StepNotice =
+  if (cloudReturn == CloudReturnExpired) StepSignInExpired
+  else if (cloudReturn == CloudReturnRefused) StepSignInRefused
+  else if (cloudReturn == CloudReturnUnavailable) StepSignInUnavailable
+  else NoStepNotice
+
+pure def noticeOnOpen(session: StepSession, cloudReturn: CloudReturn): StepNotice =
+  if (session == SessionSignedIn) NoStepNotice
+  else if (session == SessionUnreadable) StepUnreachable
+  else noticeForCloudReturn(cloudReturn)
+
+pure def lawEveryCloudErrorShowsANotice(cloudReturn: CloudReturn): bool =
+  (cloudReturn != CloudReturnNone) iff oneStepNoticeShown(noticeForCloudReturn(cloudReturn))
+pure def lawSessionHidesTheCloudError(cloudReturn: CloudReturn): bool =
+  noticeOnOpen(SessionSignedIn, cloudReturn) == NoStepNotice
 ```
 
 ### A refused request says when to try again
@@ -168,7 +195,7 @@ pure def signInMove(s: StepSignIn, attempt: SignInAttempt): StepSignIn =
   val spent = signInSpent(s.check)
   val startError = signInStartError(attempt.answer)
   val startRetry = startError == SignInRateLimited and attempt.retryKnown
-  val settled = signInSettledError(s.stage, s.error, attempt.passed)
+  val settledError = signInSettledError(s.stage, s.error, attempt.passed)
   if (attempt.kind == AttemptReadMode)
     { ...s, auth: modeAuth, checkOn: attempt.checkOn, check: signInCheckFor(modeAuth, attempt.checkOn) }
   else if (attempt.kind == AttemptSubmitNumber)
@@ -199,8 +226,8 @@ pure def signInMove(s: StepSignIn, attempt: SignInAttempt): StepSignIn =
     (if (attempt.answer == SignInAnswerOk) { ...idle, stage: SignInLeftForCloud, error: SignInNoError, retryKnown: false }
     else { ...idle, error: SignInCloudUnavailable, retryKnown: false })
   else if (attempt.kind == AttemptSettleCheck)
-    { ...s, check: if (attempt.passed) CheckPassed else CheckBroken, error: settled,
-      retryKnown: s.retryKnown and settled == SignInRateLimited }
+    { ...s, check: if (attempt.passed) CheckPassed else CheckBroken, error: settledError,
+      retryKnown: s.retryKnown and settledError == SignInRateLimited }
   else { ...s, check: CheckRunning }
 
 pure def lawCodeNeedsFourToEightDigits(digits: int): bool =
@@ -242,7 +269,7 @@ pure def signInConsistent(s: StepSignIn): bool =
   (s.pending == SignInResending implies s.check == NoCheck) and
   (s.stage == SignInCode implies s.auth == SignInOtp)
 
-pure val signInAttemptValues: Set[SignInAttempt] = Set(
+pure val attemptValues: Set[SignInAttempt] = Set(
   { ...signInAttemptNone, kind: AttemptReadMode, lookup: SignInLookupOtp, checkOn: true },
   { ...signInAttemptNone, kind: AttemptReadMode, lookup: SignInLookupOtp, checkOn: false },
   { ...signInAttemptNone, kind: AttemptReadMode, lookup: SignInLookupFailed, checkOn: true },
@@ -273,7 +300,6 @@ pure val signInAttemptValues: Set[SignInAttempt] = Set(
   { ...signInAttemptNone, kind: AttemptSettleCheck, passed: false },
   { ...signInAttemptNone, kind: AttemptExpireCheck },
 )
-pure val attemptValues: Set[SignInAttempt] = signInAttemptValues
 pure val sValues: Set[StepSignIn] = Set(
   signInStart,
   { ...signInStart, auth: SignInOtp, checkOn: true, check: CheckRunning },

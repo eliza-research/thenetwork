@@ -89,7 +89,12 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     const [offer] = await sql`select id from platform.photo_offers where sender_person_id = ${sender.personId}::uuid`;
     const offerId = offer!.id as string;
     expect((await turn(maya, "yes")).outcome).toBe("handled");
-    const [item] = await sql`select id from platform.photo_relay_items where offer_id = ${offerId}`;
+    for (const wait of [60_000, 300_000, 900_000, 3_600_000]) {
+      st.clock.advance(wait);
+      await st.svc.tick();
+    }
+    const [item] = await sql`select id, state from platform.photo_relay_items where offer_id = ${offerId}`;
+    expect(item!.state).toBe("pending");
     const itemId = item!.id as string;
     const preview = await st.svc.fetch(new Request(`http://127.0.0.1/relay/${itemId}/photo?app=slop`, { headers: { authorization: `Bearer ${SAFETY_TOKEN}` } }));
     expect(preview.status).toBe(200);
@@ -102,14 +107,13 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     const [ready] = await sql`select body from network.messages where app_id = 'slop' and member_id = ${receiver.memberId} and id = ${`photo-ready:${offerId}`}`;
     const token = /\/photos\/view#([A-Za-z0-9_-]{43})/.exec(String(ready?.body))?.[1];
     expect(token).toBeDefined();
-    return { ari, offerId, token: token! };
+    return { ari, maya, receiverMemberId: receiver.memberId, offerId, token: token! };
   };
 
   class ViewPage {
     page: PhotosViewPage = initial;
     urls: string[] = [];
     fromFirstName = "";
-    until: number | undefined;
     constructor(private readonly token: string) {
       this.send({ type: "openViewPage", tokenWellFormed: photoViewTokenWellFormed(token) });
     }
@@ -125,7 +129,6 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
       if (!this.send({ type: "answerViewOpen", openAnswer: opened.answer })) return;
       if (this.page.screen !== "ViewShowing") return;
       this.fromFirstName = opened.fromFirstName;
-      this.until = opened.until;
       for (let n = 1; n <= this.page.count && canAnswerViewImage(this.page); n++) {
         const image = await loadPhotoView(this.token, n);
         if (image.url !== undefined) this.urls.push(image.url);
@@ -152,9 +155,7 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     expect(first.fromFirstName).toBe("Ari");
     expect(first.urls).toHaveLength(1);
     expect(first.urls[0]).toMatch(/^blob:/);
-    expect(await phaseOf(offerId)).toBe("viewing");
-    const [row] = await sql`select view_until from platform.photo_offers where id = ${offerId}`;
-    expect(first.until).toBe(new Date(row!.view_until as string).getTime());
+    expect(await phaseOf(offerId)).toBe("ready");
     expect(sent.map(r => [r.method, r.url])).toEqual([["POST", "/api/photos/page/open"], ["POST", "/api/photos/page/image"]]);
     expect(sent.every(r => !r.url.includes(token))).toBe(true);
 
@@ -189,7 +190,29 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     expect([later.page.screen, later.page.opened, later.page.reportLost]).toEqual(["ViewGone", false, false]);
   }, T);
 
-  test("a photo the sender took back and a view window that ended give the same answer and the same step", async () => {
+  test("no clock closes the link: the bound phone opens it after 2 days and after 30 days, until the sender takes it back", async () => {
+    const { ari, offerId, token } = await readyOffer("noclock");
+    const mayaPhone = new Browser();
+    phoneOn(mayaPhone);
+    const first = new ViewPage(token);
+    await first.tap();
+    expect(first.page.screen).toBe("ViewShowing");
+    for (const wait of [2 * DAY, 28 * DAY]) {
+      st.clock.advance(wait);
+      await st.svc.tick();
+      const later = new ViewPage(token);
+      await later.tap();
+      expect([later.page.screen, later.page.count, later.page.loaded]).toEqual(["ViewShowing", 1, 1]);
+      expect(await phaseOf(offerId)).toBe("ready");
+    }
+    expect((await turn(ari, "take back photo 1")).outcome).toBe("handled");
+    expect(await phaseOf(offerId)).toBe("revoked");
+    const takenBack = new ViewPage(token);
+    await takenBack.tap();
+    expect([takenBack.page.screen, takenBack.page.reportLost]).toEqual(["ViewGone", false]);
+  }, T);
+
+  test("a photo the sender took back and an offer that ended give the same answer and the same step", async () => {
     const withdrawn = await readyOffer("withdrawn");
     expect((await turn(withdrawn.ari, "take back photo 1")).outcome).toBe("handled");
     expect(await phaseOf(withdrawn.offerId)).toBe("revoked");
@@ -198,21 +221,39 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     const takenBack = new ViewPage(withdrawn.token);
     await takenBack.tap();
 
-    const lapsed = await readyOffer("window");
+    const stopped = await readyOffer("stopped");
     const mayaPhone = new Browser();
     phoneOn(mayaPhone);
-    const seen = new ViewPage(lapsed.token);
+    const seen = new ViewPage(stopped.token);
     await seen.tap();
     expect(seen.page.screen).toBe("ViewShowing");
-    st.clock.advance(DAY + 60_000);
-    const fromEnded = await openPhotoView(lapsed.token);
-    const ended = new ViewPage(lapsed.token);
+    expect((await turn(stopped.ari, "STOP")).outcome).toBe("handled");
+    const fromEnded = await openPhotoView(stopped.token);
+    const ended = new ViewPage(stopped.token);
     await ended.tap();
 
     expect(fromWithdrawn).toEqual(fromEnded);
-    expect(fromEnded).toEqual({ answer: { kind: "OpenGone", count: 0 }, fromFirstName: "", until: undefined });
+    expect(fromEnded).toEqual({ answer: { kind: "OpenGone", count: 0 }, fromFirstName: "" });
     expect([takenBack.page.screen, ended.page.screen]).toEqual(["ViewGone", "ViewGone"]);
     expect(takenBack.page).toEqual(ended.page);
+  }, T);
+
+  test("a link that PHOTO LINK replaced shows the replaced step, and the new link opens on a new phone", async () => {
+    const { maya, receiverMemberId, token } = await readyOffer("renew");
+    const renewal = await turn(maya, "PHOTO LINK");
+    expect(renewal.outcome).toBe("handled");
+    phoneOn(new Browser());
+    const old = new ViewPage(token);
+    await old.tap();
+    expect([old.page.screen, old.page.linkHeld]).toEqual(["ViewReplaced", false]);
+    const sentToMaya = await sql`select body from network.messages where app_id = 'slop' and member_id = ${receiverMemberId}`;
+    const fresh = [renewal.reply, ...sentToMaya.map((m: Record<string, unknown>) => String(m.body))]
+      .map(body => /new private link[^:]*: \S*\/photos\/view#([A-Za-z0-9_-]{43})/.exec(body)?.[1]).find(found => found !== undefined);
+    expect(fresh).toBeDefined();
+    expect(fresh).not.toBe(token);
+    const next = new ViewPage(fresh!);
+    await next.tap();
+    expect(next.page.screen).toBe("ViewShowing");
   }, T);
 
   test("a report that arrives after the sender took the photo back shows that the report did not go", async () => {

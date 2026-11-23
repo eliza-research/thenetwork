@@ -286,7 +286,11 @@ describe.each(SITES)("$domain", (s) => {
     expect(h).toContain("script-src 'self' https://challenges.cloudflare.com;");
     expect(h).toContain("frame-src https://challenges.cloudflare.com;");
     expect(h).toContain("connect-src 'self';");
-    expect(h).toContain("img-src 'self' data: blob:;");
+    if (s.app === "slop") expect(h).toContain("img-src 'self' data: blob:;");
+    else {
+      expect(h).toContain("img-src 'self' data:;");
+      expect(h).not.toContain("blob:");
+    }
     expect(h).toContain("X-Frame-Options: DENY");
     expect(h).toContain("Referrer-Policy: no-referrer");
     expect(h).toContain("X-Content-Type-Options: nosniff");

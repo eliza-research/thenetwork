@@ -3,6 +3,7 @@ import {
   type HelpAddressCheck,
   type HelpLinkSource,
   type HelpPlanCode,
+  type HelpStatus,
   type HelpVenueAnswer,
   homeHelpAddressCheck,
   homeHelpLinkWellFormed,
@@ -105,6 +106,29 @@ export function venueAnswerOf(action: VenueAction, answer: StepAnswer): VenueRes
     default:
       return { answer: "VenueFailed" };
   }
+}
+
+/**
+ * Maps the answer of the read-only status call to one status of the page machine. `401` means that the session ended.
+ * Every answer that does not give a known role is `StatusUnknown`, and the page then offers every action.
+ * @model spec/homeHelpPage.md
+ */
+export function helpStatusOf(answer: StepAnswer): { status: HelpStatus; signedOut: boolean } {
+  if (!answer.reached) return { status: "StatusUnknown", signedOut: false };
+  if (answer.status === 401) return { status: "StatusUnknown", signedOut: true };
+  if (answer.status === 409) return { status: "StatusClosed", signedOut: false };
+  if (answer.status !== 200 || answer.data.ok !== true || typeof answer.data.addressSaved !== "boolean") return { status: "StatusUnknown", signedOut: false };
+  if (answer.data.role === "helper") return { status: answer.data.addressSaved ? "StatusHelper" : "StatusClosed", signedOut: false };
+  if (answer.data.role === "requester") return { status: answer.data.addressSaved ? "StatusRequesterSaved" : "StatusRequester", signedOut: false };
+  return { status: "StatusUnknown", signedOut: false };
+}
+
+/**
+ * Asks the server for the status of the person on the plan (`action: "status"`). It writes nothing and never gives the address.
+ * @model spec/homeHelpPage.md
+ */
+export async function readHelpStatus(link: HomeHelpLink): Promise<{ status: HelpStatus; signedOut: boolean }> {
+  return helpStatusOf(await stepCall("/api/home-help/venue", { method: "POST", json: { action: "status", id: link.id, revision: link.revision } }));
 }
 
 /**

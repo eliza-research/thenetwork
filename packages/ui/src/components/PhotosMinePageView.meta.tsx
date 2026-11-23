@@ -45,6 +45,12 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
       marks: { "1:0": "GrantOpen" },
       images: { 1: { tile: "TileShown", url: pixel } },
     },
+    "Taken back on the server": {
+      page: list({ photos: 1, grants: 1 }),
+      photos: [{ n: 1, label: "beach", addedOn: "2026-11-02", shares: [{ firstName: "Maya", access: "GrantWasTakenBack" }, { firstName: "Jordan", access: "GrantReady" }] }],
+      marks: { "1:0": "GrantTakenBack", "1:1": "GrantOpen" },
+      images: { 1: { tile: "TileShown", url: pixel } },
+    },
     "Taking back": { page: list({ pending: "HoldingsTakingBack" }), marks: { ...open, "1:0": "GrantTakingBack" } },
     "Taken back": { page: list({ grants: 2, takenBack: 1 }), marks: { ...open, "1:0": "GrantTakenBack" } },
     "Nothing open": { page: list({ grants: 2 }), marks: { ...open, "2:0": "GrantClosed" } },
@@ -52,14 +58,6 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
       page: list({ grants: 0, takenBack: 3 }),
       marks: { "1:0": "GrantTakenBack", "1:1": "GrantTakenBack", "2:0": "GrantTakenBack" },
     },
-    "Take back failed": { page: list({ notice: "HoldingsFailed" }) },
-    "Take back unreachable": { page: list({ notice: "HoldingsUnreachable" }) },
-    Empty: closed("HoldingsEmpty"),
-    "Timed out": closed("HoldingsTimedOut"),
-    "Other phone": closed("HoldingsOtherPhone"),
-    Unavailable: closed("HoldingsUnavailable"),
-    "Open unreachable": { page: page({ screen: "HoldingsOpenFailed", notice: "HoldingsUnreachable", linkHeld: true }), photos: [], marks: {}, images: {} },
-    "Open failed": { page: page({ screen: "HoldingsOpenFailed", notice: "HoldingsFailed", linkHeld: true }), photos: [], marks: {}, images: {} },
   },
   play: {
     Opening: async (context: Context) => {
@@ -72,7 +70,7 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
     },
     List: async (context: Context) => {
       clearAllMocks();
-      heading(context, "Your photos");
+      await heading(context, "Your photos");
       await expect(view(context).getByText("Agents only see this list if you allow it, never the photos.")).toBeTruthy();
       await expect(view(context).getByText('1 "beach" · Mon 2 Nov')).toBeTruthy();
       await expect(view(context).getByText("2 · Sat 14 Nov")).toBeTruthy();
@@ -88,7 +86,7 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
       await expect(view(context).queryByRole("alert")).toBeNull();
       const buttons = takeBackButtons(context);
       await expect(buttons.length).toBe(3);
-      await userEvent.click(buttons[1]!);
+      await userEvent.click(buttons[1]);
       await expect(context.args.onTakeBack).toHaveBeenCalledWith("1:1");
     },
     "Images loading": async (context: Context) => {
@@ -98,9 +96,18 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
     },
     "Nobody has them": async (context: Context) => {
       await expect(view(context).getByText("Nobody has it.")).toBeTruthy();
-      noActions(context);
+      await noActions(context);
     },
     "Shared state": (context: Context) => expect(view(context).getByText("Maya: shared")).toBeTruthy(),
+    "Taken back on the server": async (context: Context) => {
+      clearAllMocks();
+      await expect(view(context).getByText("Maya: taken back")).toBeTruthy();
+      await expect(view(context).getByText("Jordan: ready")).toBeTruthy();
+      const buttons = takeBackButtons(context);
+      await expect(buttons.length).toBe(1);
+      await userEvent.click(buttons[0]);
+      await expect(context.args.onTakeBack).toHaveBeenCalledWith("1:1");
+    },
     "Taking back": async (context: Context) => {
       clearAllMocks();
       const pending = view(context).getByRole("button", { name: "Taking back…" });
@@ -108,7 +115,7 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
       const others = takeBackButtons(context);
       await expect(others.length).toBe(2);
       for (const button of others) await expect(button.hasAttribute("disabled")).toBe(true);
-      await userEvent.click(pending);
+      await userEvent.click(pending, { pointerEventsCheck: 0 });
       await expect(context.args.onTakeBack).not.toHaveBeenCalled();
     },
     "Taken back": async (context: Context) => {
@@ -121,41 +128,55 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
     },
     "All taken back": async (context: Context) => {
       await expect(view(context).getAllByText(/: taken back$/).length).toBe(3);
-      noActions(context);
+      await noActions(context);
     },
-    "Take back failed": async (context: Context) => {
-      await expect(view(context).getByRole("alert").textContent).toBe("We could not take it back. Please try again.");
-      for (const button of takeBackButtons(context)) await expect(button.hasAttribute("disabled")).toBe(false);
-    },
-    "Take back unreachable": (context: Context) => expect(view(context).getByRole("alert").textContent).toBe(apiMessages.api_unreachable),
-    Empty: async (context: Context) => {
-      heading(context, "Your photos");
-      await expect(view(context).getByText("You have no photos here. Text ADD PHOTOS to add some.")).toBeTruthy();
-      noActions(context);
-    },
-    "Timed out": async (context: Context) => {
-      heading(context, "This link timed out");
-      await expect(view(context).getByText(newLinkLine)).toBeTruthy();
-      noActions(context);
-    },
-    "Other phone": async (context: Context) => {
-      heading(context, "This link was opened on another phone");
-      await expect(view(context).getByText(newLinkLine)).toBeTruthy();
-      noActions(context);
-    },
-    Unavailable: async (context: Context) => {
-      heading(context, "This link doesn't work");
-      await expect(view(context).getByRole("link", { name: "help@ntwrk.party" }).getAttribute("href")).toBe("mailto:help@ntwrk.party");
-      await expect(view(context).queryAllByRole("link").length).toBe(1);
-      noActions(context);
-    },
-    "Open unreachable": async (context: Context) => {
-      clearAllMocks();
-      heading(context, "Your photos");
-      await expect(view(context).getByRole("alert").textContent).toBe(apiMessages.api_unreachable);
-      await userEvent.click(view(context).getByRole("button", { name: "Try again" }));
-      await expect(context.args.onRetry).toHaveBeenCalled();
-    },
-    "Open failed": (context: Context) => expect(view(context).getByRole("alert").textContent).toBe(apiMessages.unknown),
   },
+};
+
+export const moreExamples: Readonly<Record<string, Partial<PhotosMinePageViewProps>>> = {
+  "Take back failed": { page: list({ notice: "HoldingsFailed" }) },
+  "Take back unreachable": { page: list({ notice: "HoldingsUnreachable" }) },
+  Empty: closed("HoldingsEmpty"),
+  "Timed out": closed("HoldingsTimedOut"),
+  "Other phone": closed("HoldingsOtherPhone"),
+  Unavailable: closed("HoldingsUnavailable"),
+  "Open unreachable": { page: page({ screen: "HoldingsOpenFailed", notice: "HoldingsUnreachable", linkHeld: true }), photos: [], marks: {}, images: {} },
+  "Open failed": { page: page({ screen: "HoldingsOpenFailed", notice: "HoldingsFailed", linkHeld: true }), photos: [], marks: {}, images: {} },
+};
+
+export const morePlay = {
+  "Take back failed": async (context: Context) => {
+    await expect(view(context).getByRole("alert").textContent).toBe("We could not take it back. Please try again.");
+    for (const button of takeBackButtons(context)) await expect(button.hasAttribute("disabled")).toBe(false);
+  },
+  "Take back unreachable": (context: Context) => expect(view(context).getByRole("alert").textContent).toBe(apiMessages.api_unreachable),
+  Empty: async (context: Context) => {
+    await heading(context, "Your photos");
+    await expect(view(context).getByText("You have no photos here. Text ADD PHOTOS to add some.")).toBeTruthy();
+    await noActions(context);
+  },
+  "Timed out": async (context: Context) => {
+    await heading(context, "This link timed out");
+    await expect(view(context).getByText(newLinkLine)).toBeTruthy();
+    await noActions(context);
+  },
+  "Other phone": async (context: Context) => {
+    await heading(context, "This link was opened on another phone");
+    await expect(view(context).getByText(newLinkLine)).toBeTruthy();
+    await noActions(context);
+  },
+  Unavailable: async (context: Context) => {
+    await heading(context, "This link doesn't work");
+    await expect(view(context).getByRole("link", { name: "help@ntwrk.party" }).getAttribute("href")).toBe("mailto:help@ntwrk.party");
+    await expect(view(context).queryAllByRole("link").length).toBe(1);
+    await noActions(context);
+  },
+  "Open unreachable": async (context: Context) => {
+    clearAllMocks();
+    await heading(context, "Your photos");
+    await expect(view(context).getByRole("alert").textContent).toBe(apiMessages.api_unreachable);
+    await userEvent.click(view(context).getByRole("button", { name: "Try again" }));
+    await expect(context.args.onRetry).toHaveBeenCalled();
+  },
+  "Open failed": (context: Context) => expect(view(context).getByRole("alert").textContent).toBe(apiMessages.unknown),
 };

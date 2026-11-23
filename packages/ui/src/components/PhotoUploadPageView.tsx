@@ -13,11 +13,7 @@ import { Label } from "./Label.tsx";
 import { OneStepPage } from "./OneStepPage.tsx";
 import { StepFrame } from "./StepFrame.tsx";
 
-export type PhotoUploadPageViewProps = Omit<ComponentProps<"div">, "children"> &
-  PhotoUploadController & {
-    /** The photo consent of the site build. The page shows this exact text beside the box. */
-    consentText: string;
-  };
+export type PhotoUploadPageViewProps = Omit<ComponentProps<"div">, "children"> & PhotoUploadController;
 
 const errorTexts: Readonly<Record<PhotoError, string | undefined>> = {
   PhotoNoError: undefined,
@@ -61,10 +57,11 @@ const savedTitle = (count: number): string => (count === 1 ? "1 photo saved" : `
  * It shows no preview and no score. The file input has no `capture` attribute.
  * @model spec/photoUploadPage.md
  */
-export function PhotoUploadPageView({ page, fileNames, refused, onChoose, onConsentChange, onUpload, consentText, ...props }: PhotoUploadPageViewProps) {
+export function PhotoUploadPageView({ page, fileNames, refused, consentText, onChoose, onConsentChange, onUpload, onRetry, ...props }: PhotoUploadPageViewProps) {
   const consentId = useId();
   const errorId = useId();
   const loading = page.pending === "PhotoUploading";
+  const reading = page.pending === "PhotoReading";
   const error = errorTexts[page.error];
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -78,6 +75,18 @@ export function PhotoUploadPageView({ page, fileNames, refused, onChoose, onCons
     switch (screen) {
       case "PhotoOpening":
         return null;
+      case "PhotoChecking":
+        return (
+          <StepFrame title="Add your photos" loading={reading} data-photo-step={screen}>
+            <p className="text-foreground">{reading ? "Checking your link…" : "We could not check your link."}</p>
+            <FieldError id={errorId}>{error}</FieldError>
+            {reading ? null : (
+              <Button data-focus aria-describedby={error ? errorId : undefined} onClick={onRetry} className="self-start">
+                Try again
+              </Button>
+            )}
+          </StepFrame>
+        );
       case "PhotoBadLink":
       case "PhotoLinkClosed":
         return (
@@ -105,11 +114,12 @@ export function PhotoUploadPageView({ page, fileNames, refused, onChoose, onCons
               </Field>
               {fileNames.length > 0 ? (
                 <ul aria-label="Chosen photos" className="flex flex-col gap-1 text-sm text-muted-foreground">
-                  {fileNames.map((name, index) => (
-                    <li key={`${index}-${name}`}>{name}</li>
+                  {fileNames.map((name) => (
+                    <li key={name}>{name}</li>
                   ))}
                 </ul>
               ) : null}
+              {page.consentAsked ? (
               <div className="flex items-start gap-3">
                 <Checkbox
                   id={consentId}
@@ -124,6 +134,7 @@ export function PhotoUploadPageView({ page, fileNames, refused, onChoose, onCons
                   {consentText}
                 </Label>
               </div>
+              ) : null}
               <FieldError id={errorId}>{error}</FieldError>
               <Button type="submit" loading={loading} className="self-start">
                 {loading ? "Uploading…" : "Upload"}

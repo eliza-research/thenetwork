@@ -4,11 +4,11 @@ The slop.date site keeps one page at `/photos/mine`. It does one step: it shows 
 
 Model header. The model does not hold the token, the photos or the first names. The list is two counts: the photos that the page shows, and the shares that still offer "Take back". A share is one first name on one photo. The shell keeps the list from the server, the token in memory, one mark for each share and one tile for each photo. The shell sends one event to this machine for each person action and for each server answer. It sets the mark of a share and the tile of a photo only with `grantMarkAfter` and `photoTileFor`, and it shows "Take back" only where `grantOffersTakeBack` lets it. The shell reads the fragment, removes it from the address, sends the requests, maps each status and error code to one answer kind, turns image bytes into object URLs, formats the day and writes the copy. These stay outside the model: the fetch calls and the status maps, the token regex, the JSON shape checks, the object URLs, `history.replaceState`, focus and the copy. The play tests of the view and `tests/e2e/photos-mine-page.e2e.test.ts` cover them.
 
-Assumptions. The backend side of this page is written but not pushed or verified. These assumptions come from the contract (`photoRelay-CONTRACT.md`, sections 7.4 and 12) and from the unpushed `packages/platform/src/photo-pages.ts`:
+Assumptions. The backend side of this page is written but not pushed or verified. These assumptions come from the contract (`photoRelay-CONTRACT.md`, section 0 (owner decision D14), sections 7.4 and 12), the page amendment of 2026-11-22 (`photoRelay-PAGES-AMENDMENT.md`) and the unpushed `packages/platform/src/photo-pages.ts`:
 
 - A1. `POST /api/photos/page/open {token}` answers `200 {purpose: "mine", photos: [{n, label, addedOn, access: [{firstName, state}]}], until}`. A `200` with another purpose is a link for another page. The page treats it as a link that does not work.
-- A2. The access states on the wire are `asked`, `checking` and `ready`. Section 12 of the contract also names `opened`, but decision Q9 says that the sender gets no read receipt, and the backend `PhotoAccessState` has no `opened`. The page shows `opened` as `ready`, so that a server that sends it never makes a read receipt on this page.
-- A3. Every share in the list can get "Take back". The server answers `nothing_open` when no open offer holds that photo for that first name. The page cannot tell an open share from a closed one before it asks, because the sender view shows a ready offer and a closed offer the same.
+- A2. The access states on the wire are `asked`, `checking`, `ready` and `taken_back` (D14). `checking` covers the automatic check and a flagged photo that waits for staff. `taken_back` is a share that the member took back; it offers no "Take back". Section 12 of the contract also names `opened`, but decision Q9 says that the sender gets no read receipt, and the backend `PhotoAccessState` has no `opened`. The page shows `opened` as `ready`, so that a server that sends it never makes a read receipt on this page.
+- A3. Every share in the list that is not `taken_back` can get "Take back". The server answers `nothing_open` when no open offer holds that photo for that first name. The page cannot tell an open share from a closed one before it asks, because the sender view shows a ready offer and a closed offer the same.
 - A4. `answer {token, answer: "take_back", numbers: [n], firstName}` takes back photo `n` from every live match with that first name. Two matches with the same first name both lose the photo. The page marks only the share that the person tapped.
 - A5. The image call needs the device cookie that the first `open` set. The page asks for each image only after the list opens.
 - A6. The page does not use `until`. It learns that the link timed out only from a `410 link_expired` answer.
@@ -156,23 +156,34 @@ pure def alwaysRetryHoldsTheLink(page: PhotoHoldingsPage): bool =
 
 ### Each share shows who has the photo and how far the offer is, and never whether it was opened
 
-Each photo shows its number, its name when it has one, and the day it was added. Below it, each share shows the first name of the match and one word: "asked" (the match has not answered yet), "checking" (a person on the safety team checks it) or "ready" (the photo is on its way). A photo with no share says that nobody has it. The page never says that a match opened a photo, because the sender gets no read receipt ([photo relay item](photoRelayItem.md), "The sender learns only sent, not taken, not approved or timed out"). A wire state that the page does not know shows "shared", and the share still offers "Take back".
+Each photo shows its number, its name when it has one, and the day it was added. Below it, each share shows the first name of the match and one word: "asked" (the match has not answered yet), "checking" (the automatic check screens it, or a person on the safety team checks a photo that the check did not clear), "ready" (the photo is on its way) or "taken back" (the member took it back). A taken-back share offers no "Take back" and does not count as a share that can be taken back. A photo with no share says that nobody has it. The page never says that a match opened a photo, because the sender gets no read receipt ([photo relay item](photoRelayItem.md), "The sender learns only sent, not taken, not approved or timed out"). A wire state that the page does not know shows "shared", and the share still offers "Take back".
 
 ```quint
-type GrantWire = WireAsked | WireChecking | WireReady | WireOpened | WireUnknown
-type GrantAccess = GrantAsked | GrantChecking | GrantReady | GrantShared
+type GrantWire = WireAsked | WireChecking | WireReady | WireOpened | WireTakenBack | WireUnknown
+type GrantAccess = GrantAsked | GrantChecking | GrantReady | GrantShared | GrantWasTakenBack
+type GrantMark = GrantOpen | GrantTakingBack | GrantTakenBack | GrantClosed
 
 pure def grantAccessOf(wire: GrantWire): GrantAccess =
   if (wire == WireAsked) GrantAsked
   else if (wire == WireChecking) GrantChecking
   else if (wire == WireReady or wire == WireOpened) GrantReady
+  else if (wire == WireTakenBack) GrantWasTakenBack
   else GrantShared
+
+pure def grantCanBeTakenBack(access: GrantAccess): bool = access != GrantWasTakenBack
+
+pure def grantMarkOnOpen(access: GrantAccess): GrantMark =
+  if (grantCanBeTakenBack(access)) GrantOpen else GrantTakenBack
+
+pure def lawTakenBackShareOffersNothing(access: GrantAccess): bool =
+  (access == GrantWasTakenBack) iff (grantMarkOnOpen(access) == GrantTakenBack)
 
 pure def lawOpenedLooksLikeReady(wire: GrantWire): bool =
   (wire == WireOpened or wire == WireReady) iff (grantAccessOf(wire) == GrantReady)
 pure def lawEveryWireStateShowsAShare(wire: GrantWire): bool =
-  grantAccessOf(wire) == GrantAsked or grantAccessOf(wire) == GrantChecking or
-    grantAccessOf(wire) == GrantReady or grantAccessOf(wire) == GrantShared
+  grantAccessOf(wire) != GrantWasTakenBack implies grantCanBeTakenBack(grantAccessOf(wire))
+pure def lawOnlyTakenBackOnTheWireShowsTakenBack(wire: GrantWire): bool =
+  (grantAccessOf(wire) == GrantWasTakenBack) iff (wire == WireTakenBack)
 ```
 
 ### Each photo shows its image only from its own answer
@@ -206,7 +217,7 @@ pure def lawAMissingImageKeepsThePage(page: PhotoHoldingsPage, imageAnswer: Imag
 
 A share offers "Take back" only on the list, while the page holds the token, while no other take-back runs, and while its mark is open. The page sends `answer` with `take_back`, the number of the photo and the first name of the share. While the request runs, that share shows that it is being taken back, and no other share offers "Take back". Each answer becomes one kind:
 
-- `200 taken_back` is "done": the share shows "taken back". The match cannot open the photo again, but the page cannot undo a view that already happened.
+- `200 taken_back` is "done": the share shows "taken back". Then the page reads the list again, so that every share that the take-back closed (also a second match with the same first name) shows "taken back" as the server has it. The match cannot open the photo again, but the page cannot undo a view that already happened.
 - `200 nothing_open` is "nothing open": the share shows that there is nothing to take back, because the offer already ended.
 - `410 link_expired`, `404 link_unavailable` and `403 other_device` close the page as the open answer does.
 - A request that does not reach the server, and `502` and `503`, are "unreachable". The share offers "Take back" again and the page shows that it could not reach the server.
@@ -217,8 +228,6 @@ The receiver is not told: a take-back sends nothing to the match ([photo relay i
 ```quint
 type TakeBackKind = TakeBackDone | TakeBackNothingOpen | TakeBackTimedOut | TakeBackUnavailable | TakeBackOtherPhone |
   TakeBackUnreachable | TakeBackFailed
-type GrantMark = GrantOpen | GrantTakingBack | GrantTakenBack | GrantClosed
-
 pure def grantMarkAfter(kind: TakeBackKind): GrantMark =
   if (kind == TakeBackDone) GrantTakenBack
   else if (kind == TakeBackNothingOpen) GrantClosed
@@ -246,6 +255,15 @@ pure def answerTakeBack(page: PhotoHoldingsPage, takeBackAnswer: TakeBackKind): 
   else if (takeBackAnswer == TakeBackOtherPhone) { ...closed, screen: HoldingsOtherPhone }
   else if (takeBackAnswer == TakeBackUnreachable) { ...idle, notice: HoldingsUnreachable }
   else { ...idle, notice: HoldingsFailed }
+
+pure def canReopenAfterTakeBack(page: PhotoHoldingsPage): bool =
+  page.screen == HoldingsList and page.pending == HoldingsIdle and page.linkHeld and page.takenBack >= 1
+
+pure def reopenAfterTakeBack(page: PhotoHoldingsPage): PhotoHoldingsPage =
+  { ...page, screen: HoldingsOpening, pending: HoldingsReading, notice: HoldingsNoNotice, photos: 0, grants: 0, takenBack: 0 }
+
+pure def stepReopenOnlyAfterATakeBack(before: PhotoHoldingsPage, via: str, after: PhotoHoldingsPage): bool =
+  (before.screen == HoldingsList and after.screen == HoldingsOpening) implies (via == "reopenAfterTakeBack" and before.takenBack >= 1)
 
 pure def lawOnlyTheServerMarksTakenBack(kind: TakeBackKind): bool =
   (grantMarkAfter(kind) == GrantTakenBack) iff (kind == TakeBackDone)

@@ -19,7 +19,7 @@ import { NetworkService } from "../../packages/network/service/service.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../packages/platform/test/pg.ts";
-import { addressCheckOf, type HomeHelpLink, parseHomeHelpLink, type VenueAction, venueAnswerOf, venueBody } from "../../packages/ui/src/api/homeHelp.ts";
+import { addressCheckOf, helpStatusOf, type HomeHelpLink, parseHomeHelpLink, type VenueAction, venueAnswerOf, venueBody } from "../../packages/ui/src/api/homeHelp.ts";
 import type { StepAnswer } from "../../packages/ui/src/api/stepPages.ts";
 
 class FakeOtp implements OtpProvider {
@@ -72,7 +72,7 @@ async function homeHelpWorld(database: string) {
     method: "POST", headers: { authorization: "Bearer ntwrk-safety", "content-type": "application/json" }, body: JSON.stringify(body),
   }));
   const jars = new Map<string, string>();
-  const api = async (phone: string, method: "GET" | "POST", path: string, body?: object, host = NTWRK_HOST): Promise<StepAnswer> => {
+  const api = async (phone: string, method: "GET" | "POST", path: string, body?: object, host = NTWRK_HOST): Promise<Extract<StepAnswer, { reached: true }>> => {
     const jar = jars.get(`${host}|${phone}`);
     const res = await service.publicFetch(new Request(`http://127.0.0.1:8790${path}`, {
       method, headers: { host, accept: "application/json", ...(body ? { "content-type": "application/json" } : {}), ...(jar ? { cookie: jar } : {}) },
@@ -153,7 +153,7 @@ test("the page refuses a link that the conversation cannot send, and keeps a goo
   expect(missing.source).toBe("LinkMissing");
   const stopped = run(initial, { type: "openHomeHelpPage", source: missing.source, wellFormed: missing.wellFormed });
   expect(stopped.screen).toBe("HelpBadLink");
-  expect(enabled(stopped, { type: "homeHelpLoaded", session: "SessionSignedIn", role: "HelpRoleUnknown" })).toBe(false);
+  expect(enabled(stopped, { type: "homeHelpLoaded", session: "SessionSignedIn", status: "StatusUnknown", cloudReturn: "CloudReturnNone" })).toBe(false);
   expect(addressCheckOf("  ")).toBe("AddressEmpty");
   expect(addressCheckOf("15 Fictional Street\nApt 2")).toBe("AddressBadChars");
   expect(addressCheckOf("15 Fictional Street Apt 2")).toBe("AddressBadChars");
@@ -185,18 +185,26 @@ test.skipIf(!pgAvailable)("the requester saves and removes the address and the h
       return { page: run(next, { type: "answerVenue", venueAnswer: result.answer }), result };
     };
     const opened = run(initial, { type: "openHomeHelpPage", source: read.source, wellFormed: read.wellFormed });
+    const statusOf = async (phone: string) => helpStatusOf(await api(phone, "POST", "/api/home-help/venue", { action: "status", id: link.id, revision: link.revision }));
+    const loaded = async (phone: string) => {
+      const got = await statusOf(phone);
+      return run(opened, { type: "homeHelpLoaded", session: got.signedOut ? "SessionSignedOut" : await session(phone), status: got.status, cloudReturn: "CloudReturnNone" });
+    };
 
     expect(await session(rae)).toBe("SessionSignedOut");
-    expect(run(opened, { type: "homeHelpLoaded", session: await session(rae), role: "HelpRoleUnknown" }).screen).toBe("HelpSignIn");
-    const stale = run(opened, { type: "homeHelpLoaded", session: "SessionSignedIn", role: "HelpRoleUnknown" });
+    expect(await statusOf(rae)).toEqual({ status: "StatusUnknown", signedOut: true });
+    expect(run(opened, { type: "homeHelpLoaded", session: await session(rae), status: "StatusUnknown", cloudReturn: "CloudReturnExpired" })).toMatchObject({ screen: "HelpSignIn", notice: "StepSignInExpired" });
+    const stale = run(opened, { type: "homeHelpLoaded", session: "SessionSignedIn", status: "StatusUnknown", cloudReturn: "CloudReturnNone" });
     const signedOut = await act(stale, rae, "reveal", { type: "askReveal" });
     expect(signedOut.result.answer).toBe("VenueSignedOut");
     expect(signedOut.page).toMatchObject({ screen: "HelpSignIn", notice: "StepSessionEnded" });
 
     await login(rae);
-    const choose = run(opened, { type: "homeHelpLoaded", session: await session(rae), role: "HelpRoleUnknown" });
+    expect(await statusOf(rae)).toEqual({ status: "StatusRequester", signedOut: false });
+    const form = await loaded(rae);
+    expect(form).toMatchObject({ screen: "HelpAddress", role: "HelpRoleRequester" });
+    const choose = run(opened, { type: "homeHelpLoaded", session: await session(rae), status: "StatusUnknown", cloudReturn: "CloudReturnNone" });
     expect(choose.screen).toBe("HelpChoose");
-    const form = run(choose, { type: "chooseAdd" });
     const refused = run(form, { type: "submitAddress", addressCheck: addressCheckOf("77 Canary Street\nApt 4") });
     expect(refused).toMatchObject({ screen: "HelpAddress", pending: "HelpIdle", error: "HelpAddressBadChars" });
     expect((await api(rae, "POST", "/api/home-help/venue", { action: "submit", id: link.id, revision: link.revision, address: "77 Canary Street\nApt 4" })).status).toBe(409);
@@ -204,12 +212,14 @@ test.skipIf(!pgAvailable)("the requester saves and removes the address and the h
     const saved = await act(form, rae, "submit", { type: "submitAddress", addressCheck: addressCheckOf(ADDRESS) }, ADDRESS);
     expect(saved.result).toEqual({ answer: "VenueStored" });
     expect(saved.page.screen).toBe("HelpSaved");
+    expect(await loaded(rae)).toMatchObject({ screen: "HelpSaved", role: "HelpRoleRequester" });
     expect((await say(rae, addressCommand))[0]).toContain("Your address is saved for this plan.");
     expect((await act(form, rae, "submit", { type: "submitAddress", addressCheck: addressCheckOf(ADDRESS) }, ADDRESS)).page.screen).toBe("HelpClosed");
     expect((await act(choose, rae, "reveal", { type: "askReveal" })).page.screen).toBe("HelpClosed");
 
     await login(ari);
-    const helperChoose = run(opened, { type: "homeHelpLoaded", session: await session(ari), role: "HelpRoleUnknown" });
+    expect(await loaded(ari)).toMatchObject({ screen: "HelpChoose", role: "HelpRoleHelper" });
+    const helperChoose = run(opened, { type: "homeHelpLoaded", session: await session(ari), status: "StatusUnknown", cloudReturn: "CloudReturnNone" });
     const revealed = await act(helperChoose, ari, "reveal", { type: "askReveal" });
     expect(revealed.result).toEqual({ answer: "VenueRevealed", address: ADDRESS });
     expect(revealed.page).toMatchObject({ screen: "HelpRevealed", addressHeld: true });
@@ -218,6 +228,7 @@ test.skipIf(!pgAvailable)("the requester saves and removes the address and the h
     const removed = await act(saved.page, rae, "revoke", { type: "askRevoke" });
     expect(removed.result).toEqual({ answer: "VenueRemoved" });
     expect(removed.page.screen).toBe("HelpRemoved");
+    expect(await loaded(rae)).toMatchObject({ screen: "HelpClosed" });
     expect((await act(helperChoose, ari, "reveal", { type: "askReveal" })).page.screen).toBe("HelpClosed");
     expect((await act(form, rae, "submit", { type: "submitAddress", addressCheck: addressCheckOf(ADDRESS) }, ADDRESS)).page.screen).toBe("HelpClosed");
   } finally {

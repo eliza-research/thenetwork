@@ -4,6 +4,7 @@ import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
 import {
+  canAnswerLinkStatus,
   canAnswerUpload,
   enabled,
   type Event,
@@ -15,7 +16,7 @@ import {
 } from "../../packages/core/src/generated/photoUploadPage.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import { PHOTO_CONSENT } from "../../packages/platform/src/photos.ts";
-import { batchOf, type PhotoRefusalShown, photoTokenWellFormed, sendPhotos } from "../../packages/ui/src/api/photoUpload.ts";
+import { batchOf, type PhotoConsentShown, type PhotoRefusalShown, photoTokenWellFormed, readPhotoLink, sendPhotos } from "../../packages/ui/src/api/photoUpload.ts";
 import { newPhone, pgAvailable, startStack, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 const T = 120_000;
@@ -83,8 +84,25 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
     refused: PhotoRefusalShown[] = [];
     requests = 0;
     private files: File[] = [];
-    constructor(private readonly token: string) {
+    consent: PhotoConsentShown | undefined;
+    statusReads = 0;
+    private constructor(private readonly token: string) {
       this.send({ type: "openPhotoPage", tokenWellFormed: photoTokenWellFormed(token) });
+    }
+    static async open(token: string): Promise<PhotoPage> {
+      const page = new PhotoPage(token);
+      await page.readStatus();
+      return page;
+    }
+    async readStatus() {
+      if (!canAnswerLinkStatus(this.page)) return;
+      this.statusReads++;
+      const read = await readPhotoLink(this.token);
+      if (read.consent) this.consent = read.consent;
+      this.send({ type: "answerLinkStatus", linkStatus: read.linkStatus });
+    }
+    async retry() {
+      if (this.send({ type: "retryLinkStatus" })) await this.readStatus();
     }
     private send(event: Event): boolean {
       if (!enabled(this.page, event)) return false;
@@ -100,7 +118,7 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
     async upload() {
       if (!this.send({ type: "uploadPhotos", batch: batchOf(this.files) }) || !canAnswerUpload(this.page)) return;
       this.requests++;
-      const result = await sendPhotos(this.token, this.files, photoConsentHeaderSent(this.page) ? PHOTO_CONSENT.version : undefined);
+      const result = await sendPhotos(this.token, this.files, photoConsentHeaderSent(this.page) ? this.consent?.version : undefined);
       this.refused = result.refused;
       this.send({ type: "answerUpload", answer: result.answer });
     }
@@ -110,14 +128,17 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
     const { phone, token } = await adultWithTextedLink();
     expect(photoTokenWellFormed(token)).toBe(true);
     pageOnSite("slop");
-    const first = new PhotoPage(token);
+    const first = await PhotoPage.open(token);
     expect(photoUploadOffered(first.page)).toBe(true);
+    expect(first.page.consentAsked).toBe(false);
+    const statusAgain = await readPhotoLink(token);
+    expect(statusAgain.linkStatus.kind).toBe("LinkStatusOpen");
     first.choose([photo("a"), photo("b")]);
     await first.upload();
     expect([first.page.screen, first.page.savedCount, first.page.someRefused, first.page.linkOpen]).toEqual(["PhotoDone", 2, false, false]);
     expect(await photoCount(phone)).toBe(2);
 
-    const again = new PhotoPage(token);
+    const again = await PhotoPage.open(token);
     again.choose([photo("c")]);
     await again.upload();
     expect([again.page.screen, again.page.savedCount]).toEqual(["PhotoLinkClosed", 0]);
@@ -127,7 +148,9 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
   test("without consent on file the answer asks for the box, the page does not resend unticked, and a ticked box sends the version", async () => {
     const { phone, token } = await adultWithoutConsent();
     pageOnSite("slop");
-    const p = new PhotoPage(token);
+    const p = await PhotoPage.open(token);
+    expect([p.page.screen, p.page.consentAsked, p.consent?.version]).toEqual(["PhotoPick", true, PHOTO_CONSENT.version]);
+    expect(p.consent?.text).toBe(PHOTO_CONSENT.text);
     p.choose([photo("consent")]);
     await p.upload();
     expect([p.page.screen, p.page.error, p.page.consentTicked, p.page.linkOpen]).toEqual(["PhotoPick", "PhotoConsentNeeded", false, true]);
@@ -144,7 +167,7 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
   test("the page refuses a batch outside the limits without a request, and the server's too-large answer keeps the link open", async () => {
     const { phone, token } = await adultWithTextedLink();
     pageOnSite("slop");
-    const p = new PhotoPage(token);
+    const p = await PhotoPage.open(token);
     p.choose([1, 2, 3, 4, 5].map(i => photo(`n${i}`)));
     expect(p.page.error).toBe("PhotoPickCount");
     await p.upload();
@@ -170,7 +193,7 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
   test("a refused photo shows its line: some refused saves the rest, all refused saves nothing and closes the link", async () => {
     const partly = await adultWithTextedLink();
     pageOnSite("slop");
-    const p = new PhotoPage(partly.token);
+    const p = await PhotoPage.open(partly.token);
     p.choose([photo("good"), notAnImage("bad")]);
     await p.upload();
     expect([p.page.screen, p.page.savedCount, p.page.someRefused, p.refused.length]).toEqual(["PhotoDone", 1, true, 1]);
@@ -178,7 +201,7 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
     expect(await photoCount(partly.phone)).toBe(1);
 
     const none = await adultWithTextedLink();
-    const q = new PhotoPage(none.token);
+    const q = await PhotoPage.open(none.token);
     q.choose([notAnImage("only")]);
     await q.upload();
     expect([q.page.screen, q.page.savedCount, q.page.linkOpen, q.refused.length]).toEqual(["PhotoAllRefused", 0, false, 1]);
@@ -186,10 +209,15 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
     expect(await photoCount(none.phone)).toBe(0);
   }, T);
 
-  test("a server that cannot be reached leaves the link open and the page uploads again", async () => {
+  test("a server that cannot be reached leaves the link open: the status and the upload can each be tried again", async () => {
     const { phone, token } = await adultWithTextedLink();
     pageOn("http://127.0.0.1:1");
-    const p = new PhotoPage(token);
+    const p = await PhotoPage.open(token);
+    expect([p.page.screen, p.page.error, p.page.linkOpen]).toEqual(["PhotoChecking", "PhotoUnreachable", false]);
+    pageOnSite("slop");
+    await p.retry();
+    expect([p.page.screen, p.page.linkOpen, p.statusReads]).toEqual(["PhotoPick", true, 2]);
+    pageOn("http://127.0.0.1:1");
     p.choose([photo("retry")]);
     await p.upload();
     expect([p.page.screen, p.page.error, p.page.linkOpen]).toEqual(["PhotoPick", "PhotoUnreachable", true]);
@@ -201,25 +229,24 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
 
   test("a malformed token sends nothing; an unknown token, another site and an adult who is no longer 18+ close the link and store nothing", async () => {
     pageOnSite("slop");
-    const malformed = new PhotoPage("short");
+    const malformed = await PhotoPage.open("short");
     expect(malformed.page.screen).toBe("PhotoBadLink");
     malformed.choose([photo("never")]);
     await malformed.upload();
     expect(malformed.requests).toBe(0);
 
-    const unknown = new PhotoPage("A".repeat(43));
+    const unknown = await PhotoPage.open("A".repeat(43));
     unknown.choose([photo("unknown")]);
     await unknown.upload();
     expect(unknown.page.screen).toBe("PhotoLinkClosed");
 
     const wrongSite = await adultWithTextedLink();
     pageOnSite("ntwrk");
-    const elsewhere = new PhotoPage(wrongSite.token);
-    elsewhere.choose([photo("wrong-site")]);
-    await elsewhere.upload();
+    const elsewhere = await PhotoPage.open(wrongSite.token);
     expect(elsewhere.page.screen).toBe("PhotoLinkClosed");
+    expect((await sendPhotos(wrongSite.token, [photo("wrong-site")], undefined)).answer.kind).toBe("UploadLinkClosed");
     pageOnSite("slop");
-    const home = new PhotoPage(wrongSite.token);
+    const home = await PhotoPage.open(wrongSite.token);
     home.choose([photo("after-wrong-site")]);
     await home.upload();
     expect(home.page.screen).toBe("PhotoLinkClosed");
@@ -227,7 +254,7 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
 
     const younger = await adultWithTextedLink();
     await st.svc.accounts.recordAge(younger.phone, await st.svc.people.getPerson(await personOf(younger.phone)), 16);
-    const minor = new PhotoPage(younger.token);
+    const minor = await PhotoPage.open(younger.token);
     minor.choose([photo("minor")]);
     await minor.upload();
     expect([minor.page.screen, minor.page.savedCount]).toEqual(["PhotoLinkClosed", 0]);

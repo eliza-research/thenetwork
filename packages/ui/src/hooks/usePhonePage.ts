@@ -1,5 +1,6 @@
 // spec/phonePage.md, "The page reads the session when it opens"
 import { useEffect, useRef, useState } from "react";
+import { retryMinutesShown } from "../../../core/src/generated/oneStepPage.ts";
 import {
   canAnswerChangeResend,
   canAnswerNumberConfirm,
@@ -11,8 +12,9 @@ import {
   step,
 } from "../../../core/src/generated/phonePage.ts";
 import { maskPhone, toE164 } from "../api/join.ts";
-import { confirmNumberChange, startNumberChange } from "../api/phone.ts";
+import { confirmNumberChange, type PhoneStartResult, startNumberChange } from "../api/phone.ts";
 import { readStepSession } from "../api/stepPages.ts";
+import { takeCloudReturn } from "../lib/stepLink.ts";
 import { createSignIn, emptySignInFields, type SignInFields, type SignInHandlers } from "./stepSignIn.ts";
 
 /** What the page knows before it loads. */
@@ -31,6 +33,8 @@ export interface PhoneController extends SignInFields, Omit<SignInHandlers, "rea
   changeCode: string;
   /** The new number that got the change code, with only its last four digits shown. */
   newNumberShown: string;
+  /** The wait in whole minutes after a change start that the server refused for too many tries, when it gave one. */
+  changeRetryMinutes: number | undefined;
   onNewNumberChange: (newNumber: string) => void;
   onSubmitNewNumber: () => void;
   onChangeCodeChange: (changeCode: string) => void;
@@ -39,7 +43,7 @@ export interface PhoneController extends SignInFields, Omit<SignInHandlers, "rea
   onChangeNewNumber: () => void;
 }
 
-type PhoneData = SignInFields & Pick<PhoneController, "page" | "newNumber" | "changeCode" | "newNumberShown">;
+type PhoneData = SignInFields & Pick<PhoneController, "page" | "newNumber" | "changeCode" | "newNumberShown" | "changeRetryMinutes">;
 
 /**
  * Runs the phone change page: each API answer becomes one event of the generated machine, and nothing here decides what the machine decides.
@@ -47,7 +51,7 @@ type PhoneData = SignInFields & Pick<PhoneController, "page" | "newNumber" | "ch
  * @model spec/phonePage.md
  */
 export function usePhonePage({ siteKey }: PhoneOptions): PhoneController {
-  const start: PhoneData = { ...emptySignInFields, page: initial, newNumber: "", changeCode: "", newNumberShown: "" };
+  const start: PhoneData = { ...emptySignInFields, page: initial, newNumber: "", changeCode: "", newNumberShown: "", changeRetryMinutes: undefined };
   const [data, setData] = useState(start);
   const current = useRef(start);
   const sentTo = useRef("");
@@ -77,10 +81,15 @@ export function usePhonePage({ siteKey }: PhoneOptions): PhoneController {
       patch,
       afterVerified: readSession,
     });
+    const retryOf = (started: PhoneStartResult) => ({
+      retryKnown: started.retryAfterSeconds !== undefined,
+      minutes: started.retryAfterSeconds === undefined ? undefined : retryMinutesShown(started.retryAfterSeconds),
+    });
     const open = async () => {
+      const cloudReturn = takeCloudReturn();
       if (!send({ type: "openPhonePage" })) return;
       const session = await readStepSession();
-      if (!send({ type: "phoneLoaded", session })) return;
+      if (!send({ type: "phoneLoaded", session, cloudReturn })) return;
       await readMode();
     };
     const submitNewNumber = async () => {
@@ -88,8 +97,9 @@ export function usePhonePage({ siteKey }: PhoneOptions): PhoneController {
       const next = send({ type: "submitNewNumber", numberValid: e164 !== null });
       if (!next || e164 === null || !canAnswerNumberStart(next)) return;
       sentTo.current = e164;
-      const startAnswer = await startNumberChange(e164);
-      send({ type: "answerNumberStart", startAnswer }, { changeCode: "", newNumberShown: maskPhone(e164) });
+      const started = await startNumberChange(e164);
+      const retry = retryOf(started);
+      send({ type: "answerNumberStart", startAnswer: started.answer, retryKnown: retry.retryKnown }, { changeCode: "", newNumberShown: maskPhone(e164), changeRetryMinutes: retry.minutes });
     };
     const submitChangeCode = async () => {
       const digits = current.current.changeCode.replace(/\D/g, "");
@@ -101,8 +111,9 @@ export function usePhonePage({ siteKey }: PhoneOptions): PhoneController {
     const resendChangeCode = async () => {
       const next = send({ type: "resendChangeCode" });
       if (!next || !canAnswerChangeResend(next)) return;
-      const startAnswer = await startNumberChange(sentTo.current);
-      send({ type: "answerChangeResend", startAnswer });
+      const started = await startNumberChange(sentTo.current);
+      const retry = retryOf(started);
+      send({ type: "answerChangeResend", startAnswer: started.answer, retryKnown: retry.retryKnown }, { changeRetryMinutes: retry.minutes });
     };
     return {
       open,

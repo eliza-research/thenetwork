@@ -56,7 +56,7 @@ function signInErrorText(error: SignInError, retryMinutes: number | undefined): 
 
 /**
  * The sign-in step of a one-step page: the current number and the security check, the Cloud button, or the code from the text.
- * @model spec/oneStepPage.md
+ * @model spec/phonePage.md
  */
 export function StepSignInView({
   signIn,

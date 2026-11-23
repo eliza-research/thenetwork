@@ -1,10 +1,10 @@
 // spec/homeHelpPage.md, "The page reads the session and shows the choice step or the sign-in step"
 import { useEffect, useRef, useState } from "react";
 import { enabled, type Event, type HomeHelpPage, initial, step } from "../../../core/src/generated/homeHelpPage.ts";
-import type { SignInAttempt } from "../../../core/src/generated/oneStepPage.ts";
-import { addressCheckOf, type HomeHelpLink, parseHomeHelpLink, sendVenue, type VenueAction } from "../api/homeHelp.ts";
+import type { CloudReturn, SignInAttempt, StepSession } from "../../../core/src/generated/oneStepPage.ts";
+import { addressCheckOf, type HomeHelpLink, parseHomeHelpLink, readHelpStatus, sendVenue, type VenueAction } from "../api/homeHelp.ts";
 import { readStepSession } from "../api/stepPages.ts";
-import { keepLinkFragment, takeKeptFragment, takeLinkFragment } from "../lib/stepLink.ts";
+import { keepLinkFragment, takeCloudReturn, takeKeptFragment, takeLinkFragment } from "../lib/stepLink.ts";
 import { createSignIn, emptySignInFields, type SignInFields, type SignInHandlers } from "./stepSignIn.ts";
 
 /** What the home-help page knows before it reads anything. */
@@ -39,7 +39,7 @@ const start: HelpData = { ...emptySignInFields, page: initial, address: "", reve
 
 /**
  * Runs the home-help address step: each server answer becomes one event of the generated machine, and nothing here decides what the machine decides.
- * The shell sends the role "unknown" until the server gives a status call.
+ * After each session read that finds a session, the shell asks the server for the status of the person on the plan.
  * @model spec/homeHelpPage.md
  */
 export function useHomeHelpPage({ siteKey }: HomeHelpOptions): HomeHelpController {
@@ -70,14 +70,21 @@ export function useHomeHelpPage({ siteKey }: HomeHelpOptions): HomeHelpControlle
       patch: (fields: Partial<SignInFields>) => patch(fields),
       beforeCloud: () => keepLinkFragment("home-help", linkText.current),
       afterVerified: async () => {
-        const session = await readStepSession();
-        await signInReady(send({ type: "homeHelpSessionRead", session, role: "HelpRoleUnknown" }));
+        const read = await statusAfter(await readStepSession());
+        await signInReady(send({ type: "homeHelpSessionRead", session: read.session, status: read.status }));
       },
     });
+    const statusAfter = async (session: StepSession) => {
+      const target = link.current;
+      if (session !== "SessionSignedIn" || !target) return { session, status: "StatusUnknown" as const };
+      const read = await readHelpStatus(target);
+      return { session: read.signedOut ? ("SessionSignedOut" as const) : session, status: read.status };
+    };
     const signInReady = async (page: HomeHelpPage | undefined) => {
       if (page?.screen === "HelpSignIn" && page.signIn.auth === "SignInModePending") await signIn.readMode();
     };
     const open = async () => {
+      const cloudReturn: CloudReturn = takeCloudReturn();
       const fromAddress = takeLinkFragment();
       const kept = takeKeptFragment("home-help");
       const read = fromAddress !== "" ? parseHomeHelpLink(fromAddress) : parseHomeHelpLink(kept, true);
@@ -85,8 +92,8 @@ export function useHomeHelpPage({ siteKey }: HomeHelpOptions): HomeHelpControlle
       if (opened?.screen !== "HelpLoading" || !read.link) return;
       link.current = read.link;
       linkText.current = read.text;
-      const session = await readStepSession();
-      await signInReady(send({ type: "homeHelpLoaded", session, role: "HelpRoleUnknown" }));
+      const loaded = await statusAfter(await readStepSession());
+      await signInReady(send({ type: "homeHelpLoaded", session: loaded.session, status: loaded.status, cloudReturn }));
     };
     const run = async (action: VenueAction, event: Event, address?: string) => {
       const target = link.current;

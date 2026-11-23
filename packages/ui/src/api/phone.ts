@@ -20,17 +20,23 @@ const confirmRefusals: Readonly<Record<string, PhoneConfirmAnswer>> = {
   "409 number_in_use": "PhoneConfirmNumberInUse",
 };
 
+/** The answer to a change start, with the wait in whole seconds from `retry-after` when the server refused for too many tries. */
+export interface PhoneStartResult {
+  answer: PhoneStartAnswer;
+  retryAfterSeconds?: number;
+}
+
 /**
  * Asks the server to text a change code to the new number (`POST /api/me/phone/start`). The server `message` is not shown: the page has its own fixed copy.
  * @model spec/phonePage.md
  */
-export async function startNumberChange(phone: string): Promise<PhoneStartAnswer> {
+export async function startNumberChange(phone: string): Promise<PhoneStartResult> {
   const result = await stepCall("/api/me/phone/start", { method: "POST", json: { phone } });
-  if (!result.reached || unreachable(result)) return "PhoneStartUnreachable";
-  if (result.status === 200) return "PhoneStartSent";
-  if (result.status === 401) return "PhoneStartSignedOut";
-  if (result.status === 429) return "PhoneStartRateLimited";
-  return startRefusals[`${result.status} ${result.code}`] ?? "PhoneStartFailed";
+  if (!result.reached || unreachable(result)) return { answer: "PhoneStartUnreachable" };
+  if (result.status === 200) return { answer: "PhoneStartSent" };
+  if (result.status === 401) return { answer: "PhoneStartSignedOut" };
+  if (result.status === 429) return { answer: "PhoneStartRateLimited", ...(result.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: result.retryAfterSeconds }) };
+  return { answer: startRefusals[`${result.status} ${result.code}`] ?? "PhoneStartFailed" };
 }
 
 /** The answer to a change code, with the masked new number that the server gives on a move. */

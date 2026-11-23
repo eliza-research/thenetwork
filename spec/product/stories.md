@@ -733,7 +733,8 @@ Acceptance:
 
 - `/phone` is on every site. No page links to it. The link has no token and no fragment.
 - The page asks for a sign-in on the current number when there is no session, when the session ended, or when the sign-in is older than ten minutes ("For your safety, sign in again with your current number.").
-- The new number goes to the server only when it is a 10-digit US number and the sign-in mode is known. "Same number", "too many tries" ("Try later") and "invalid phone" keep the step.
+- The new number goes to the server only when it is a 10-digit US number and the sign-in mode is known. "Same number", "too many tries" and "invalid phone" keep the step. "Too many tries" shows the wait in minutes from `retry-after`, or "Try later" when the server gives no wait.
+- A Cloud sign-in that fails comes back to the page with `?error=`. The sign-in step shows one notice for an expired, a refused or an unavailable sign-in, and the page removes the value from the address.
 - A change code of 4 to 10 digits goes to the server. A wrong code keeps the code step. An expired change asks to start again. A number that another person uses goes back to the new-number step.
 - A held number shows "We need to check this number" and help@ntwrk.party.
 - A moved number shows the masked new number. On a Cloud site the page also says "Use your new number the next time you sign in." There is no sign-in button.
@@ -751,7 +752,8 @@ Acceptance:
 - `/home-help` is on ntwrk.party only. No page links to it.
 - The page reads the plan code and the revision from the fragment and removes the fragment before any request. It keeps the link in session storage only across the Cloud sign-in.
 - A bad or missing link shows "This link does not work", and the page sends no request.
-- The person signs in with the shared sign-in steps. The page offers the actions that the role allows, and all three while the role is unknown.
+- The person signs in with the shared sign-in steps. A failed Cloud sign-in shows its notice on the sign-in step.
+- After each session read that finds a session, the page asks the read-only status of the person on the plan. A requester without an address gets the address form, a requester with a saved address gets the saved step with "Remove", an accepted helper gets "Show the address", and a closed status gets the closed step. When the status cannot be read, the page offers all three actions and the server refuses the wrong one.
 - The page checks the address before it sends it: not empty, one line, at most 300 characters and 300 UTF-8 bytes.
 - The page shows the saved, removed, revealed, closed or unavailable result. It keeps the revealed address in page memory only. It names only help@ntwrk.party.
 
@@ -768,7 +770,8 @@ Acceptance:
 - `/photos/add` is on slop.date only. No page links to it. The page has no sign-in: the link is the authority.
 - The page reads the token from the fragment once, removes it before any request and keeps it in memory only. A malformed token sends nothing.
 - The page accepts 1 to 4 JPEG, PNG or WebP photos of at most 4 MB each and 8 MB in all, and checks them before it sends them.
-- The consent text shows exactly. Only a ticked box sends its version. A consent refusal keeps the link open.
+- Before the picker, the page asks the server for the status of the link (the token only in a header). A closed link shows "This link has expired" at once. A status that cannot be read offers "Try again".
+- The consent text and its version come from the link status. The page shows the box only when the server says that the consent is required, and shows the text exactly. Only a ticked box sends its version. A consent refusal keeps the link open.
 - A used, expired or ineligible link, or a link used on another site, stores nothing. The page then says to text ADD PHOTOS.
 - The page shows the saved count and one line for each refusal. It never shows a score. Photos are for adults (18+) only.
 
@@ -801,7 +804,7 @@ Acceptance:
 
 - `/photos/mine` is on slop.date only. No page links to it. The page has no sign-in: the link is the authority.
 - The page reads the token from the fragment once, removes it before any request and keeps it in memory only. A malformed token sends nothing.
-- Each photo shows its number, its name and its day. Each share shows "{firstName}: asked", "checking" or "ready". The page never says that a match opened a photo.
+- Each photo shows its number, its name and its day. Each share shows "{firstName}: asked", "checking", "ready" or "taken back". A taken-back share has no "Take back" button. The page never says that a match opened a photo.
 - "Take back" works on one share at a time. Only the server answer marks a share taken back or closed. A take-back sends nothing to the match.
 - A timed-out link, a link opened on another phone and a link that does not work show nothing and say to text MY PHOTOS for a new one.
 - The page says that agents see the list only if the person allows it, and never the photos. It never shows a score. The only link is help@ntwrk.party. Photos are for adults (18+) only.
@@ -818,10 +821,10 @@ Acceptance:
 
 - `/photos/view` is on slop.date only. No page links to it. The page has no sign-in: the link is the authority.
 - The page reads the token from the fragment once, removes it before any request and keeps it in memory only. A malformed token sends nothing.
-- The page sends the open request only when the person taps. The tap step does not name the sender and shows no photo. The first open binds the phone and starts the 24 hours.
-- The page has no download link, no share button and no link to an image. The image cannot be dragged, and the context menu and the long-press callout are off over it. The page releases the photos at the end of the window, on a report and on every closed step. The spec says that a screenshot or another camera stays possible.
+- The page sends the open request only when the person taps. The tap step does not name the sender and shows no photo. The first open binds the link to that phone. The link has no time limit: it opens on that phone until the sender takes the photo back, the receiver reports it or the access ends. The page says that the photo stays on this phone until the sender takes it back, and that PHOTO LINK gives a new link for another phone.
+- The page has no download link, no share button and no link to an image. The image cannot be dragged, and the context menu and the long-press callout are off over it. No timer closes the photos. The page releases them on a report, on every closed step and when the page closes. The spec says that a screenshot or another camera stays possible.
 - "Report" needs a confirm. Only the server answer shows "reported". A report that comes after the offer closed says that it did not go, and gives help@ntwrk.party.
-- A link on another phone shows nothing. A withdrawn, ended, expired or reported offer shows the same "no longer available" step, so the receiver never learns of a take-back. Photos are for adults (18+) only.
+- A link on another phone shows nothing and says to text PHOTO LINK. A link that a newer PHOTO LINK replaced says to use the newest link. A withdrawn, ended or reported offer shows the same "no longer available" step, so the receiver never learns of a take-back. Photos are for adults (18+) only.
 
 Spec: [photo view page](../photosViewPage.md), [one-step pages](../oneStepPage.md), [photo policy](../photoPolicy.md).
 
