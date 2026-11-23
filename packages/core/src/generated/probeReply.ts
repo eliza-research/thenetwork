@@ -49,6 +49,19 @@ export function lawDirectWithdrawalKeepsTheRefusal(modelConsent: string): boolea
   return participationWithdrawalReading(true, true) === "DirectWithdrawal" && probeReplyReading(false, false, modelConsent) === "KeepOffline";
 }
 
+/** Story: Make a choice about a proposed opportunity / A trailing neither refuses the named time (spec/probeReply.md) */
+//@ pure
+export function trailingNeitherRefusal(neitherAfterTime: boolean, joinedToRefusedTime: boolean): boolean {
+  return neitherAfterTime || joinedToRefusedTime;
+}
+
+/** Story: Make a choice about a proposed opportunity / A trailing neither refuses the named time (spec/probeReply.md) */
+//@ pure
+export function lawTrailingNeitherRefusesJoinedTime(neitherAfterTime: boolean): boolean {
+  //@ ensures \result === true
+  return trailingNeitherRefusal(neitherAfterTime, true);
+}
+
 /** Story: Make a choice about a proposed opportunity / A clear yes uses the chosen times when the member names them (spec/probeReply.md) */
 //@ pure
 export function pickedTimes(chosen: string[], offered: string[]): string[] {
