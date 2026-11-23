@@ -241,7 +241,8 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
         const hook = d.hookFor?.(app);
         const outcome = await net.relayRequest(
           { itemId: key, from: memberId as MemberId, kind: request.kind, ...(photo ? {photoIds:[photo.photoId]} : {}),
-            ...(request.kind === "text" ? { text: request.body, targetName: request.targetName } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
+            ...(request.kind === "text" ? { text: request.body } : {}), ...(request.targetName !== undefined ? { targetName: request.targetName } : {}),
+            ...(itemId !== null ? { matchId: itemId } : {}) },
           { ...(photo ? {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]}} : {}), ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
         );
         const r = stored(outcome);

@@ -44,11 +44,19 @@ const ask=async(who:"ari"|"bo",messageId:string,text:string):Promise<RelaySendRe
 const post=async(body:RelaySendRequest)=>signed(RELAY_PATH,`${body.messageId}:relay`,JSON.stringify(body));
 const staff=(path:string,token:string,method="GET",b?:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method,headers:{authorization:`Bearer ${token}`,...(b?{"content-type":"application/json"}:{})},...(b?{body:JSON.stringify(b)}:{})}));
 
+async function enrollRelayMember(phone: string, nameAndAge: string, prefix: string) {
+  for (const [index, text] of ["friends.help", nameAndAge, "I enjoy hiking and cooking",
+    "Saturday afternoons work for me", "Small groups are good"].entries()) {
+    clock.advance(MINUTE);
+    const id = prefix + "-" + index;
+    expect((await signed(TURN_PATH, id, JSON.stringify(turn(phone, id, text)))).status).toBe(200);
+  }
+}
+
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});await start();
-  for(const [who,name] of [["ari","Ari, 29"],["bo","Bo, 31"]] as const)for(const [index,text] of ["friends.help",name,"I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()){
-    clock.advance(MINUTE);expect((await signed(TURN_PATH,`${who}-setup-${index}`,JSON.stringify(turn(phones[who],`${who}-setup-${index}`,text)))).status).toBe(200);
-  }
+  for (const [who, name] of [["ari", "Ari, 29"], ["bo", "Bo, 31"]] as const)
+    await enrollRelayMember(phones[who], name, who + "-setup");
   ari=await open(phones.ari,"ari-open");bo=await open(phones.bo,"bo-open");
   // A plan both said yes to (the matching path itself is covered elsewhere): the relay opens on it.
   const now=clock.now();
@@ -198,6 +206,105 @@ test("a polite signed relay keeps the payload's negation and uses the named matc
   expect(await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%eat meat%'`).toHaveLength(0);
 });
 
+const namedRelayPhones = ["+12125550183", "+12125550184"] as const;
+let namedRelayMembers: [string, string] | undefined;
+
+async function namedRelaySams(): Promise<[string, string]> {
+  if (namedRelayMembers) return namedRelayMembers;
+  const members: string[] = [];
+  for (const [index, phone] of namedRelayPhones.entries()) {
+    const id = "named-relay-sam-" + index;
+    await enrollRelayMember(phone, "Sam, 29", id);
+    members.push(await open(phone, id + "-open"));
+  }
+  return namedRelayMembers = [members[0]!, members[1]!];
+}
+
+async function setNamedRelayMatches(matches: { id: string; other: string; dayOffset: number }[]) {
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
+    const nextDay = Math.floor(clock.now() / DAY) + 1;
+    clock.set(nextDay * DAY + 16 * HOUR);
+    const now = clock.now();
+    state.opps = matches.map(({ id, other, dayOffset }) => ({
+      ...swapMatchTemplate!, id, participants: [bo, other], status: [[bo, "yes"], [other, "yes"]],
+      contacted: [bo, other], createdAt: now, meetingAt: now + dayOffset * DAY, deadline: now + dayOffset * DAY,
+    }));
+    if (state.relay) state.relay.swaps = [];
+    net.importState(state);
+  });
+}
+
+test("an unselected named relay refuses two different counterparts with the same name", async () => {
+  const [older, newer] = await namedRelaySams();
+  await setNamedRelayMatches([
+    { id: "same-name-text-old", other: older, dayOffset: 1 },
+    { id: "same-name-text-new", other: newer, dayOffset: 2 },
+  ]);
+  const outgoing = () => sql`select id from network.messages where app_id='friends' and direction='outbound' and type='relay' and body like '%shellfish%'`;
+  const before = (await outgoing()).length;
+  const request = await ask("bo", "same-name-text", "Could you tell Sam I don't eat shellfish?");
+  expect((await post({ ...request, itemId: "same-name-text-old" })).status).toBe(403);
+  const response = await post(request);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await outgoing()).toHaveLength(before);
+}, 60_000);
+
+test("an unselected named number refusal preserves the other member's existing match consent", async () => {
+  const [older, newer] = await namedRelaySams();
+  const newestMatch = "same-name-number-new";
+  await setNamedRelayMatches([
+    { id: "same-name-number-old", other: older, dayOffset: 1 },
+    { id: newestMatch, other: newer, dayOffset: 2 },
+  ]);
+  const messageId = "same-name-sam-first", text = "Please send Bo my number.";
+  expect(await open(namedRelayPhones[1], messageId, text)).toBe(newer);
+  const first = await post({ channel: "blooio", messageId, app: "friends", itemId: null, memberId: newer, text });
+  expect(await first.json()).toMatchObject({ decision: "hold", delivered: false });
+  const original = await pendingNumberSwaps();
+  expect(original).toEqual([expect.objectContaining({ from: newer, matchId: newestMatch })]);
+
+  const before = await sharesQueued();
+  const response = await post(await ask("bo", "same-name-number-reply", "Please send Sam my number."));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await pendingNumberSwaps()).toEqual(original);
+  expect(await sharesQueued()).toBe(before);
+}, 60_000);
+
+test("an unselected named relay uses the newest opportunity with the same person", async () => {
+  const [sam] = await namedRelaySams();
+  await setNamedRelayMatches([
+    { id: "same-person-old", other: sam, dayOffset: 1 },
+    { id: "same-person-new", other: sam, dayOffset: 2 },
+  ]);
+  const response = await post(await ask("bo", "same-person-text", "Could you tell Sam I don't drink milk?"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "pass", delivered: false });
+  const sent = await sql`select member_id, opportunity_id from network.messages
+    where app_id='friends' and direction='outbound' and type='relay' and body like '%drink milk%'`;
+  expect([...sent]).toEqual([{ member_id: sam, opportunity_id: "same-person-new" }]);
+  const number = await post(await ask("bo", "same-person-number", "Please send Sam my number."));
+  expect(await number.json()).toMatchObject({ decision: "hold", delivered: false });
+  expect(await pendingNumberSwaps()).toEqual([expect.objectContaining({ to: sam, matchId: "same-person-new" })]);
+}, 60_000);
+
+test("an unselected named relay does not switch from the newest match to an older person", async () => {
+  const [sam] = await namedRelaySams();
+  await setNamedRelayMatches([
+    { id: "other-person-old", other: sam, dayOffset: 1 },
+    { id: "other-person-new", other: ari, dayOffset: 2 },
+  ]);
+  const response = await post(await ask("bo", "other-person-text", "Could you tell Sam I am nearby?"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false });
+  const number = await post(await ask("bo", "other-person-number", "Please send Sam my number."));
+  expect(await number.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await pendingNumberSwaps()).toEqual([]);
+}, 60_000);
+
 const sharesQueued = async () => (await sql`select id from network.messages where app_id='friends'
   and direction='outbound' and body like '%asked me to send you%'`).length;
 const pendingNumberSwaps = () => service.runtimeFor("friends")!.unitOfWork(net => net.exportState().relay?.swaps ?? []);
@@ -224,6 +331,63 @@ async function startNumberSwap(id: string, who: "ari" | "bo") {
   expect(await (await post(await ask(who, id + "-first", "send " + recipient + " my number"))).json())
     .toMatchObject({ decision: "hold", delivered: false });
 }
+
+test.each([
+  ["Please send Sam my number.", "block"],
+  ["Please send my number to Sam.", "block"],
+  ["Yes, send it to Sam.", "block"],
+  ["Yes, send it, to Sam.", "block"],
+  ["Yes, send it - to Sam.", "block"],
+  ["Yes, send it over to Sam.", "block"],
+  ["Yes, send it? To Sam.", "none"],
+  ["Yes, send it “to Sam”.", "none"],
+  ["Please send him my number. Directly to Sam.", "none"],
+  ["Please send Ari my number. To be clear, I'll be there at seven. To Sam.", "none"],
+  ["Please send Ari my number. To be clear, tell them I'll be there at seven. To Sam.", "none"],
+  ["Yes, send it to Herman.", "block"],
+  ["Yes, send it to Ari9.", "none"],
+  ["Yes, send it (to Sam).", "none"],
+  ["Yes, send it. To Sam.", "none"],
+  ["Yes, send it to Ari Smith.", "none"],
+  ["Please send my number to her and Sam.", "none"],
+  ["Please send her my number, to Sam.", "none"],
+  ["Please send my number to Sam when you can.", "block"],
+  ["Please send my number to Ari Smith.", "none"],
+  ["Please send my number to Ari Smith when you can.", "none"],
+  ["Please send my number to Ari if he asks.", "none"],
+])("a named private request keeps the selected swap pending: %s", async (text, decision) => {
+  const id = "named-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+  const response = await post(await ask("bo", id + "-reply", text));
+  expect(response.status).toBe(200);
+  expect({
+    response: await response.json(),
+    newShares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id),
+  }).toMatchObject({ response: { decision, delivered: false }, newShares: 0, pending: original });
+}, 60_000);
+
+test.each([
+  "Please send my number to Ari, thanks.",
+  "Please send my number to Ari when you can.",
+  "Yes, send it to Ari.",
+  "Yes, send it: to Ari, thanks.",
+  "Yes, send it - to Ari.",
+  "Yes, send it over to Ari.",
+  "Please send Ari my number with thanks.",
+  "Please send Ari my number. To be clear, I'll be there at seven.",
+  "Please send Ari my number. With that settled, I'll be there at seven.",
+  "Yes, send it to my match.",
+])("a complete recipient can finish the selected swap: %s", async text => {
+  const id = "named-number-match-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  expect(await (await post(await ask("bo", id + "-reply", text))).json()).toMatchObject({ decision: "pass", delivered: false });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
 
 test.each([
   "Give him my number if he asks.",
@@ -387,6 +551,8 @@ test.each(["Ari said “Don't send my number.”", "Ari said ‘don't send it pl
 
 test.each([
   "Tell Ana to send him my number",
+  "Tell Ari to send my number to Sam9.",
+  "Tell Ari to send my photo to Sam9.",
   "Ask Ana to text him my number",
   "Could you tell Ana to please give him my number?",
   "Let Ana share my number with him",
@@ -502,6 +668,50 @@ test.each([
   { text: "Send him my number. Give it to him after dinner.", shares: false },
   { text: "Send him my number. Send it to him after I finish work.", shares: false },
   { text: "Send him my number. He can have it once Ari approves.", shares: false },
+  { text: "He has to consent first. Share my number with him.", shares: false },
+  { text: "Wait until I confirm the number swap. Share my number with him.", shares: false },
+  { text: "Wait for Ana to approve sharing my number with Ari. Share my number with Ari.", shares: false },
+  { text: "Wait for Ana to approve sharing my number with Bo. Share my number with Ari.", shares: true },
+  { text: "Ari has to approve my number first. Ari already approved my photo. Share my number with him.", shares: false },
+  { text: "Ari has to approve my number first. Ari already approved my number. Share my number with him.", shares: true },
+  { text: "Ari must approve this first. Ari already approved that. Share my number with him.", shares: false },
+  { text: "Ari must approve sharing my number with him first. Ari already approved sharing my number with her. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree to share my number with Ari. Share my number with Ari.", shares: false },
+  { text: "Ana must approve sharing my number with Ari first. Ana already approved sharing my number with Ari. Share my number with Ari.", shares: true },
+  { text: "Ana has to agree first. Share my number with him.", shares: false },
+  { text: "Ana agrees first. Share my number with him.", shares: false },
+  { text: "Ana needs to say yes first. Share my number with him.", shares: false },
+  { text: "He has to ask first. Share my number with him.", shares: false },
+  { text: "He asks first. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree. Share my number with him.", shares: false },
+  { text: "Only after Ana agrees. Share my number with him.", shares: false },
+  { text: "Ana has to agree first; share my number with him.", shares: false },
+  { text: "Unless he asks first. Share my number with him.", shares: false },
+  { text: "Ana agrees. Share my number with him.", shares: true },
+  { text: "He asked already. Share my number with him.", shares: true },
+  { text: "No need to wait for Ana to agree. Please send Ari my number.", shares: true },
+  { text: "I heard Ana has to ask first about the venue. Please send Ari my number.", shares: true },
+  { text: "He has to ask the venue about opening hours. Please send Ari my number.", shares: true },
+  { text: "Ari said “Wait for Ana to agree.” Please send Ari my number.", shares: true },
+  { text: "He has to ask for my photo first. Share my number with him.", shares: false },
+  { text: "Wait for Ari to agree. Ari has already agreed. Share my number with him.", shares: true },
+  { text: "Wait for Ari to agree. Bo has already agreed. Share my number with him.", shares: false },
+  { text: "Wait for Ari to approve. Ari has already agreed. Share my number with him.", shares: false },
+  { text: "Wait for him to agree. He has already agreed. Share my number with him.", shares: false },
+  { text: "Wait until Ari asks again. Ari asked. Share my number with him.", shares: false },
+  { text: "Wait until Ari asks again. Ari asked again. Share my number with him.", shares: true },
+  { text: "Only if he requests my number explicitly. Send him my number.", shares: false },
+  { text: "Wait until he asks why, tell him we can talk Friday. Send him my number.", shares: true },
+  { text: "Send him my number. It is for him when he asks.", shares: false },
+  { text: "Send him my number. It is for work on Friday.", shares: true },
+  { text: "Wait for Ari to agree, please. Share my number with him.", shares: false },
+  { text: "Ana has to agree first, but I can send you the schedule. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree, but Ari said “I am at work.” Share my number with him.", shares: false },
+  { text: "Wait for Ari to agree. Ari has already agreed!? Share my number with him.", shares: false },
+  { text: "Wait for Ari to agree. Ari has already agreed. ? Share my number with him.", shares: false },
+  { text: "He has to ask me first. Share my number with him.", shares: false },
+  { text: "Ana must approve it first. Share my number with him.", shares: false },
+  { text: "Wait for Ana to agree to it. Share my number with him.", shares: false },
   { text: "Send him my number. Give it to him, and tell me if he asks.", shares: true },
   { text: "Send him my number. Give it to him, and tell me when dinner is ready.", shares: true },
   { text: "Send him my number. Dinner will be ready after I finish work.", shares: true },
@@ -600,4 +810,94 @@ test.each([
   expect({ decision: (await response.json()).decision, newShares: await sharesQueued() - before,
     pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
     .toEqual({ decision: shares ? "pass" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
+}, 60_000);
+
+let ageEstimatePair = 0;
+test.each([
+  { label: "first-person near adult birthday on TURN", body: "I'm turning 18 next month", minor: true, incomingAge: 17 },
+  { label: "first-person mid-teen birthday on TURN", body: "I'm turning 16 next month", minor: true, incomingAge: 15 },
+  { label: "first-person school year on TURN", body: "I'm in seventh grade", minor: true, incomingAge: 13 },
+  { label: "adult teacher role", body: "I'm in 12th grade, as a teacher.", minor: false },
+  { label: "decimal measurement", body: "I'm turning 16.5 degrees", minor: false },
+  { label: "grouped measurement", body: "I'm almost 15,000 feet away", minor: false },
+  { label: "measurement beside genuine youth estimate", body: "I'm turning 16.5 degrees, but I'm almost 18.", minor: true, incomingAge: 17 },
+  { label: "grade followed by teacher attribution", body: "I'm in seventh grade, as a teacher told me.", minor: true, incomingAge: 13 },
+  { label: "short birthday today", body: "turning 18 today", minor: true },
+  { label: "short birthday this month", body: "turning 18 this month", minor: true },
+  { label: "measurement in miles", body: "I'm almost 150 miles away.", minor: false },
+  { label: "turn in degrees", body: "I'm turning 165 degrees clockwise.", minor: false },
+  { label: "quoted birthday", body: 'She said "I\'m turning 16 next month".', minor: false },
+  { label: "unfinished reported birthday", body: "She said “I'm turning 16 next month", minor: false },
+  { label: "indirect grade", body: "My cousin said I am in seventh grade.", minor: false },
+  { label: "quoted grade", body: "She said ‘I'm in seventh grade’.", minor: false },
+  { label: "adult school role", body: "I'm in 12th grade as a teacher.", minor: false },
+  { label: "distant birthday", body: "I'm turning 16 in two years.", minor: false },
+  { label: "hypothetical birthday", body: "What if I'm turning 16 next month?", minor: false },
+  { label: "short almost age", body: "almost 16", minor: true },
+  { label: "short turning age", body: "turning 16 next month", minor: true },
+  { label: "short birthday", body: "16 next month", minor: true },
+  { label: "own birthday quotation", body: "I said “I'm turning 16 next month”", minor: true },
+  { label: "own grade quotation", body: "I said ‘I'm in seventh grade’", minor: true },
+  { label: "own grade quotation with teacher attribution", body: "I said ‘I'm in seventh grade, as a teacher told me.’", minor: true },
+  { label: "own grade quotation with qualified teacher role", body: "I said ‘I'm in 12th grade, as a teacher at the school.’", minor: false },
+  { label: "another speaker quotes a grade with teacher attribution", body: "She said ‘I'm in seventh grade, as a teacher told me.’", minor: false },
+  { label: "unfinished casual birthday", body: "“I'm turning 16 next month", minor: true },
+])("signed TURN and relay classify age at their own boundary: $label", async ({ label, body, minor, incomingAge }) => {
+  const id = "relay-age-estimate-" + randomUUID();
+  const pair = ++ageEstimatePair;
+  const senderPhone = "+12125550" + (100 + 2 * pair);
+  const recipientPhone = "+12125550" + (101 + 2 * pair);
+  await enrollRelayMember(senderPhone, "Ari, 29", id + "-ari");
+  await enrollRelayMember(recipientPhone, "Bo, 29", id + "-bo");
+  const sender = await open(senderPhone, id + "-ari-open"), recipient = await open(recipientPhone, id + "-bo-open");
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
+    const now = clock.now();
+    state.opps.push({ ...swapMatchTemplate!, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY,
+      participants: [sender, recipient], status: [[sender, "yes"], [recipient, "yes"]], contacted: [sender, recipient] });
+    net.importState(state);
+  });
+  const before = (await service.accounts.personFor(senderPhone))?.lowestAge;
+  expect(before).toBe(29);
+
+  const text = "tell Bo " + body, messageId = id + "-text";
+  if (incomingAge !== undefined) {
+    clock.advance(MINUTE);
+    const response = await signed(TURN_PATH, messageId, JSON.stringify(turn(senderPhone, messageId, text)));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "handled" });
+    expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(incomingAge);
+    expect(await service.runtimeFor("friends")!.unitOfWork(net =>
+      net.exportState().opps.find(opp => opp.id === id)?.stage)).toBe("closed");
+    expect((await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text })).status).toBe(403);
+    clock.advance(MINUTE);
+    const followupId = id + "-minor-followup";
+    const followup = await signed(TURN_PATH, followupId, JSON.stringify(turn(senderPhone, followupId, "tell Bo the coffee shop is open.")));
+    expect(await followup.json()).toMatchObject({ outcome: "handled" });
+    expect(await sql`select id from network.messages
+      where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`).toHaveLength(0);
+    return;
+  }
+  expect(await open(senderPhone, messageId, text)).toBe(sender);
+  expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(before);
+  const response = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
+  expect(response.status).toBe(200);
+  const decision = minor ? "block" : "pass";
+  expect(await response.json()).toMatchObject({ decision, delivered: false });
+  const records = await sql`select decision, age_signal from network.relay_records
+    where app_id='friends' and opportunity_id=${id} and from_member=${sender}`;
+  expect([...records]).toEqual([{ decision, age_signal: minor }]);
+  const sent = await sql`select body from network.messages
+    where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`;
+  expect(sent).toHaveLength(minor ? 0 : 1);
+  expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(before);
+  expect(await service.runtimeFor("friends")!.unitOfWork(net =>
+    net.exportState().opps.find(opp => opp.id === id)?.stage)).toBe("scheduled");
+  if (label === "short turning age") {
+    const messageId = id + "-followup", text = "tell Bo the coffee shop is open.";
+    expect(await open(senderPhone, messageId, text)).toBe(sender);
+    const followup = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
+    expect(await followup.json()).toMatchObject({ decision: "pass", delivered: false });
+  }
 }, 60_000);

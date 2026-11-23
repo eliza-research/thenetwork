@@ -16,7 +16,7 @@ import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { SET_STATE_PATH, TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
-import { Browser, connectMcp, VERIFIER, newPhone, pgAvailable, rpc, signIn, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
+import { Browser, connectMcp, REDIRECT, VERIFIER, newPhone, pgAvailable, rpc, signIn, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 import { slopProfiles, type SlopProfile } from "../../packages/engine/src/packs/slop/profile.ts";
 import { mutualMarkets, makeSlopPack, SLOP_ENGINE_DEFAULTS } from "../../packages/engine/src/packs/slop/index.ts";
@@ -880,6 +880,40 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect((await rpc(st, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, b.token!.access_token)).res.status).toBe(200);
       expect((await rpc(st, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, other.token!.access_token)).res.status).toBe(200);
       expect((await me("slop", browser)).status).toBe(200);
+    }, T);
+
+    test("pending OAuth requests stay independent across app sites on one loopback hostname", async () => {
+      const browser = new Browser();
+      const pending: { app: AppId; rid: string }[] = [];
+      for (const app of ["peon", "friends"] as const) {
+        const registration = await st.site(app, "/oauth/register", { json: {
+          client_name: "E2E Assistant", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none",
+        } });
+        expect(registration.status).toBe(201);
+        const { client_id } = await registration.json() as { client_id: string };
+        const query = new URLSearchParams({ response_type: "code", client_id, redirect_uri: REDIRECT,
+          code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource: `${st.sites[app].origin}/mcp` });
+        const page = await st.site(app, `/oauth/authorize?${query}`, { browser });
+        const rid = /name="rid" value="([^"]+)"/.exec(await page.text())?.[1];
+        if (!rid) throw new Error(`Missing pending request for ${app}`);
+        pending.push({ app, rid });
+      }
+      const first = pending[0]!, second = pending[1]!;
+      const pendingCookie = browser.jar.get(`mcp_auth_${first.app}`);
+      if (!pendingCookie) throw new Error("Missing loopback authorization cookie");
+      const legacyBrowser = new Browser();
+      legacyBrowser.jar.set("mcp_auth", pendingCookie);
+      const legacyRetry = await st.site(first.app, `/oauth/retry?rid=${first.rid}`, { browser: legacyBrowser });
+      expect((await legacyRetry.text()).includes('action="/oauth/authorize/phone"')).toBe(true);
+      expect((await st.site(second.app, `/oauth/retry?rid=${first.rid}`, { browser: legacyBrowser })).status).toBe(400);
+      expect((await st.site(second.app, `/oauth/retry?rid=${second.rid}`, { browser: legacyBrowser })).status).toBe(400);
+
+      for (const { app, rid } of pending) {
+        const retry = await st.site(app, `/oauth/retry?rid=${rid}`, { browser });
+        expect((await retry.text()).includes('action="/oauth/authorize/phone"'), `retry in ${app}`).toBe(true);
+        const cancelled = await st.site(app, "/oauth/authorize/cancel", { browser, form: { rid } });
+        expect(cancelled.status).toBe(303);
+      }
     }, T);
 
     test("OAuth with PKCE on peon.biz; check_status shows only peon; the token is refused on another site and on /mcp/openai", async () => {
