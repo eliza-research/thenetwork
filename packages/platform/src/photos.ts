@@ -32,6 +32,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
 //    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
 //    loses them all (deleteFor), and their rating with them.
+import { personAgeAt } from "./age.ts";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -458,8 +459,9 @@ export class PhotoService {
 
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
-    const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
-    if (!p || p.deletedAt !== null || !canBeMatched(p.lowestAge)) return "adults_only";
+    const store = tx ? new PgPeopleStore(tx) : this.o.people;
+    const p = await store.getPerson(personId);
+    if (!p || p.deletedAt !== null || !canBeMatched(await personAgeAt(store, p, this.now()))) return "adults_only";
     if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
@@ -545,7 +547,8 @@ export class PhotoService {
     const who = await this.ratingRefusal(personId, app);
     let attempt = stepRating(ratingInitial, { type: "screenSubject", eligible: who === undefined });
     if (!canSupplyPhotos(attempt)) return { rated: false, refused: who };
-    const age = (await this.o.people.getPerson(personId))?.lowestAge;
+    const person = await this.o.people.getPerson(personId);
+    const age = person && await personAgeAt(this.o.people, person, this.now());
     if (age == null || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
     const subject: RatingSubject = { age, ageVerified: true };
     const rows = ratingRows(await this.o.meta.list(personId, app));

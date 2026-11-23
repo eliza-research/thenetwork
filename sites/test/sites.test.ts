@@ -239,14 +239,19 @@ describe.each(SITES)("$domain", (s) => {
       expect(skill).toContain(`“Connect ${s.app === "ntwrk" ? "The Network" : s.domain}” and give`);
       expect(skill).toContain("then come back to this conversation");
       expect(skill).not.toContain("RESPONSE_STYLE");
-      expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+      if (s.app === "slop") {
+        expect(skill).not.toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+        expect(skill.replace(/\s+/g, " ")).toContain("ChatGPT and Codex have no public connector for slop.date.");
+      } else {
+        expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+      }
       expect(skill).toContain("the person opens https://ntwrk.party/oauth/consents in the browser where they connected");
       if (s.app !== "ntwrk") expect(skill).not.toContain(`https://${s.domain}/mcp`);
       expect(skill).not.toContain("cannot add this app's connector");
       if (["friends", "slop", "ntwrk"].includes(s.app)) {
         expect(skill).toContain("native connector authorization");
         expect(skill).toContain(`this app's own connector endpoint, \`https://ntwrk.party${hubPath(s.app)}\``);
-        expect(skill).toContain(`(in ChatGPT, \`https://ntwrk.party${hubPath(s.app)}/openai\`)`);
+        if (s.app !== "slop") expect(skill).toContain(`(in ChatGPT, \`https://ntwrk.party${hubPath(s.app)}/openai\`)`);
         expect(skill.replace(/\s+/g, " ")).toContain("Only if this client cannot add a remote connector at all, or the person cannot add it, say “Signup isn't supported in this agent yet.”");
         expect(skill).toContain("the one link");
         expect(skill).toContain("**Finish signup**");
@@ -353,7 +358,12 @@ test("staging builds keep the served entry, skills and signed router on configur
     const prompt = `Read ${origins.slop}/SKILL.md and follow it.`;
     expect(home).toContain(`>${prompt}</code>`);
     expect(home).toContain(`https://claude.ai/new?q=${encodeURIComponent(prompt)}`);
-    for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
+    expect(home).not.toContain('href="https://chatgpt.com/');
+    const hubHome = readFileSync(join(hubDirectory, "index.html"), "utf8");
+    const hubSkill = readFileSync(join(hubDirectory, "SKILL.md"), "utf8");
+    const hubPrompt = `Read ${origins.ntwrk}/SKILL.md?version=${encodeURIComponent(skillVersion(hubSkill))} and follow it.`;
+    expect(hubHome).toContain(`https://chatgpt.com/?q=${encodeURIComponent(hubPrompt)}`);
+    for (const origin of ["https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
       const href = [...home.matchAll(/href="([^"]+)"/g)].map(m => m[1]!).find(href => href.startsWith(`${origin}?q=`));
       expect(href, origin).toBeDefined();
       expect(new URL(href!).searchParams.get("q"), origin).toBe(prompt);
@@ -373,6 +383,7 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(skill).toContain(`${origins.slop}/`);
     expect(skill).toContain(`${origins.ntwrk}/mcp/slop`);
     expect(skill).not.toContain(`${origins.slop}/mcp`);
+    expect(skill).not.toContain(`${origins.ntwrk}/mcp/slop/openai`);
     expect(skill).toContain("native connector authorization");
     expect(skill).not.toContain("/api/auth/otp/");
     for (const path of ["privacy", "terms"]) expect(skill).toContain(`${origins.slop}/${path}`);
@@ -380,7 +391,7 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(skill).not.toContain("https://slop.date");
     const index = await (await fetch(`${base}/.well-known/agent-skills/index.json`)).json() as { skills: { url: string; digest: string }[] };
     expect(await (await fetch(base + index.skills[0]!.url)).text()).toBe(skill);
-    expect(readFileSync(join(hubDirectory, "SKILL.md"), "utf8")).toContain(`${origins.ntwrk}/`);
+    expect(hubSkill).toContain(`${origins.ntwrk}/`);
     for (const path of ["/api/app", "/mcp", "/oauth/authorize", "/.well-known/oauth-protected-resource/mcp"]) {
       expect((await (await fetch(base + path)).json()).id).toBe("slop");
     }
@@ -404,11 +415,11 @@ test("a local or test MCP_URL moves the ntwrk.party connector endpoints and the 
     const path = site.app === "ntwrk" ? "/mcp" : `/mcp/${site.app}`;
     const production = fill(source, { ...env, MCP_URL: undefined, BACKEND_ORIGIN: undefined }, site.domain);
     expect(production, site.domain).toContain(`https://ntwrk.party${path}`);
-    expect(production, site.domain).toContain(`https://ntwrk.party${path}/openai`);
+    expect(production.includes(`https://ntwrk.party${path}/openai`), site.domain).toBe(site.app !== "slop");
     const local = fill(source, env, site.domain);
     expect(local, site.domain).not.toContain("https://ntwrk.party/mcp");
     expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}`);
-    expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}/openai`);
+    expect(local.includes(`https://ntwrk.party.dev.example.test${path}/openai`), site.domain).toBe(site.app !== "slop");
     expect(production, site.domain).toContain("https://ntwrk.party/oauth/consents");
     expect(local, site.domain).not.toContain("https://ntwrk.party/oauth");
     expect(local, site.domain).toContain("https://ntwrk.party.dev.example.test/oauth/consents");

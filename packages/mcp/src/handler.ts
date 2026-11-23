@@ -9,11 +9,12 @@ import {
   browserSignupJoinAllowed, browserSignupMemberAllowed, browserSignupOpenAllowed, browserSignupOwnerBindingAllowed,
   initial as browserInitial, mayCompareBrowserDigest, sessionMatchesConsent, step as stepBrowser,
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
+import { adultAge, joinableAge } from "../../core/src/generated/memberAge.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
   type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
   ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial,
-  signupClockDay, solveCheck,
+  signupAdultDate, signupClockDay, solveCheck,
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
@@ -298,16 +299,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const hostMap = o.hostMap ?? defaultHostMap(apps);
   const dev = devShortcutsAllowed(env);
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
-  const issuerOf = (a: McpApp) => (typeof o.issuer === "function" ? o.issuer(a) : o.issuer ?? `https://${a.domain}`).replace(/\/+$/, "");
-  for (const a of Object.values(apps)) {
-    const u = new URL(issuerOf(a));
+  const issuers = new Map(Object.values(apps).map(a => {
+    const u = new URL(typeof o.issuer === "function" ? o.issuer(a) : o.issuer ?? `https://${a.domain}`);
     if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHost(u.hostname))) throw new Error(`the issuer for ${a.id} must be https (http only on a loopback host)`);
-    if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
-  }
-  const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
+    if (u.pathname.replace(/\/+$/, "") || u.search || u.hash || u.username || u.password) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
+    return [a.id, u] as const;
+  }));
+  const issuerOf = (a: McpApp) => issuers.get(a.id)!.origin;
+  const secureCookies = (a: McpApp) => issuers.get(a.id)!.protocol === "https:";
   const browserCookie = (host: McpApp, app: McpAppId) => {
-    const name = host.id === app ? "mcp_auth" : `mcp_auth_${app}`;
-    return secureCookies(host) ? `__Host-${name}` : name;
+    if (!secureCookies(host)) return `mcp_auth_${app}`;
+    return host.id === app ? "__Host-mcp_auth" : `__Host-mcp_auth_${app}`;
   };
   let lastSweep = 0;
 
@@ -328,7 +330,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
   function canonicalResource(raw: string, c: Pick<Ctx, "issuer" | "host" | "app">): string | undefined {
     const served = servedResource(raw, c);
-    return served && served.app === c.app.id ? served.resource : undefined;
+    return served && served.app === c.app.id && (served.surface !== "openai" || openAiOn(c)) ? served.resource : undefined;
   }
   const challenge = (resource: string, extra: Record<string, string> = {}) =>
     "Bearer " + Object.entries({ resource_metadata: prmUrl(resource), scope: "membership:read", ...extra }).map(([k, v]) => `${k}="${v.replace(/"/g, "'")}"`).join(", ");
@@ -632,7 +634,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const r = rid ? await store.getAuthRequest(rid) : undefined;
     if (!r) return undefined;
     const sameApp = r.app === c.app.id && canonicalResource(r.resource, c) === r.resource;
-    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host, r.app));
+    const cookies = c.req.headers.get("cookie");
+    const browser = cookieValue(cookies, browserCookie(c.host, r.app))
+      ?? (c.host.id === r.app && !secureCookies(c.host) ? cookieValue(cookies, "mcp_auth") : undefined);
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
     const bound = stepBrowser(browserInitial, { type: "bindBrowser", matchesDigest: safeEqual(sha256hex(browser), r.browserHash) });
     if (bound.phase !== "CheckingClient") return undefined;
@@ -747,10 +751,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const invitation = signupInvitation(c.app, typedInvitation);
     if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.", sent);
 
+    let signupAge;
+    if (joinableAge(input.age) && input.age < adultAge) {
+      const date = signupAdultDate(birth);
+      signupAge = { initialMinorAge: input.age, eligibleAt: Date.UTC(date.year, date.month - 1, date.day, 12) };
+    }
     const pending = { ...r, step: "enrolling" as const };
     if (!await store.advanceAuthRequest(r, pending, now)) return expired();
     try {
-      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation);
+      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation, signupAge);
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();

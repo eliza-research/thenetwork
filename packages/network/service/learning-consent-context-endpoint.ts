@@ -34,7 +34,8 @@ export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => n
   if (!current()) return json({ error: "turn_scope_invalid" }, 403);
   try {
     return await d.sql.begin(async tx => {
-      await tx`select set_config('app.app_id',${review.app},true)`;
+      await tx`select set_config('app.app_id',${review.app},true),
+        set_config('app.age_as_of',${new Date(now).toISOString()},true)`;
       // Resolve the canonical person first, then use the normal person/member/turn lock order.
       const [candidate] = await tx`select p.id from platform.inbound i join platform.people p on p.phone_hash=i.sender_hash
         join network.members n on n.person_id=p.id and n.app_id=${review.app} and n.id=${review.memberId}
@@ -43,8 +44,9 @@ export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => n
       await tx`select id from platform.people where id=${candidate.id} for share`;
       const [member] = await tx`select n.id from network.members n join platform.people p on p.id=n.person_id
         join platform.memberships m on m.person_id=p.id and m.app_id=n.app_id and m.member_id=n.id
+        join platform.matching_ages ages on ages.app_id=n.app_id and ages.member_id=n.id
         where p.id=${candidate.id} and p.deleted_at is null and n.app_id=${review.app} and n.id=${review.memberId}
-        and n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18
+        and n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18 and ages.age>=18
         and m.state in ('active','onboarding') and m.review is null
         and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
         and not exists(select 1 from platform.suppression s where s.phone_hash=p.phone_hash)

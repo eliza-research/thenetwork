@@ -17,7 +17,7 @@ export const meta: ComponentMeta<AgentRowProps> = {
     },
     Slop: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const row = within(canvasElement);
-      await expect(row.getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();
+      await expect(row.queryByRole("link", { name: "Open in ChatGPT" })).toBeNull();
       await expect(row.getByRole("link", { name: "Open in Claude" })).toBeTruthy();
     },
     Phone: async ({ canvasElement }: { canvasElement: HTMLElement }) => {

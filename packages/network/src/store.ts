@@ -271,7 +271,8 @@ export class PgStore implements NetworkStore {
   async save(state: NetworkState, also?: (tx: SQL) => Promise<void>): Promise<void> {
     const rows = consoleRows(state, state.savedAt, this.city);
     await this.sql.begin(async tx => {
-      await tx`select set_config('app.app_id', ${this.app}, true)`;
+      await tx`select set_config('app.app_id', ${this.app}, true),
+        set_config('app.age_as_of', ${new Date(state.savedAt).toISOString()}, true)`;
       // What the last save held, so rows the state dropped are deleted (and only rows this store wrote).
       const prev = await tx`select coalesce(jsonb_path_query_array(state, '$.opps[*].id'), '[]'::jsonb) as opps, coalesce(jsonb_path_query_array(state, '$.requests[*].id'), '[]'::jsonb) as reqs
         from network.network_state where id = ${this.id}`;

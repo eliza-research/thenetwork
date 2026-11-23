@@ -10,6 +10,8 @@ Check code use, refresh, ownership, ban and revocation, scoped tools, and reques
 
 The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) drives the VibeLang shell from confirmed consent through authority and one commit for request consumption, grant, code and both audit rows. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
+Browser cookie names are part of the HTTP shell. Local app origins on one loopback hostname share the browser's cookie jar. Each app has a separate pending request cookie. On HTTP loopback, the server reads the old shared cookie if the app cookie is unavailable. HTTPS uses a secure host-only cookie. The browser authorization rule checks the app, expiry, and browser digest. The [platform end-to-end tests](../../tests/e2e/platform.e2e.test.ts) cover pending requests on two app origins.
+
 The [signup draft rules](../mcpSignupDraft.md) drive draft preparation,
 session-bound reads, discard, and expiry. The draft waits for the
 person's final Join submission.
@@ -102,7 +104,9 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 // pg-store.ts, pages.ts and tools.ts read beside this model; compared again with the working tree after 723bc367,
 // which removes comments and adds the birthday field of the signup form). The host, app, consents and prefill items
 // above agree with the code. The signup form sends a birthday and the server computes the age from it; the model
-// keeps age as a class (minor, under13) and does not model the Join submission, so it names no form field. Known
+// keeps age as a class (minor, under13) and does not model the Join submission. The private eligibility date
+// belongs to memberAge.md, "A private signup date can end a birthday-only minor restriction." Neither a
+// birthday nor an eligibility date enters the request, grant, or assistant view in this model. Known
 // drift that this comparison does not fix:
 //  - submitProfile and prepareSignup: the code counts every well-formed profile or draft call of a grant before the
 //    status check (mcp: store.hit on profile:grant when args.ok), and spec/connectorTools.md says that a refused call
