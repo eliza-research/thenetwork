@@ -173,3 +173,11 @@
 {"text":"Ana said any of them works.","answer":"unclear","keys":[]}
 {"text":"Saturday works. Ana said, Sat Sun both.","answer":"yes","keys":["b"]}
 {"text":"\"Sunday works,\" Ana said. Saturday works.","answer":"yes","keys":["b"]}
+{"text":"\"Saturday works\"","answer":"unclear","keys":[]}
+{"text":"I said \"Saturday works\"","answer":"unclear","keys":[]}
+{"text":"ok \"Saturday\" works","answer":"unclear","keys":[]}
+{"text":"yes, Ana said hi","answer":"yes","keys":["a","b","c"]}
+{"text":"Yes, I've always wanted to try this","answer":"yes","keys":["a","b","c"]}
+{"text":"Yes, the app says it's nearby","answer":"yes","keys":["a","b","c"]}
+{"text":"my sister wants to come, Saturday works","answer":"unclear","keys":[]}
+{"text":"I've wanted to go there forever, Saturday works","answer":"yes","keys":["b"]}

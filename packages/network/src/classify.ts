@@ -112,6 +112,17 @@ function describesAnotherPerson(text: string): boolean {
   return !!speaker && !NOT_A_PERSON.test(speaker);
 }
 
+/**
+ * Where a third-party report starts inside a segment, or -1 when the words are the member's own.
+ * A speaker that follows I/we is the member, not a report: DISCLOSURE takes any word as the
+ * speaker, so "always wanted" and "the app says" would otherwise read as a report.
+ */
+function reportStart(segment: string): number {
+  const m = DISCLOSURE.exec(segment);
+  if (!m || NOT_A_PERSON.test(m[1]!) || /\b(?:i|we)(?:'?ve)?\s+$|\b(?:i|we)'$/i.test(segment.slice(0, m.index))) return -1;
+  return m.index;
+}
+
 /** Teachers, coaches and parents talk about school; that is not a sign the sender is a minor (network-consent-10). */
 const ADULT_SCHOOL_CTX = /\b(teach|teacher|teaching|coach|coaching|tutor|tutoring|professor|my (kid|kids|son|daughter|students?|class|child|children)|our (kids|students)|i work (at|in) a (high |middle )?school|went to (high|middle) school|in high school i|back in (high|middle) school|my high school (days|years|friends))\b/;
 /** First-person signs of being under 18 that are not an age. One sentence at a time. */
@@ -967,15 +978,19 @@ function partOf(minute: number): TimeMention["part"] {
 }
 
 function probeChoiceAuthored(prefix: string): boolean {
-  return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]|\b(?:but|though|however)\b/).at(-1)!);
+  return !quoteStillOpen(prefix) && reportStart(prefix.split(/[.!?\n]|\b(?:but|though|however)\b/).at(-1)!) < 0;
 }
 
 function authoredYes(text: string): boolean {
-  const segments = text.split(/([.!?\n]|\b(?:but|though|however)\b)/g);
+  // A quoted day is not the member's yes: mask quoted text before scanning.
+  const unquoted = [...text].map((ch, i) => (quoteStillOpen(text.slice(0, i)) ? " " : ch)).join("");
+  const segments = unquoted.split(/([.!?\n]|\b(?:but|though|however)\b)/g);
   let own = "";
   for (let i = 0; i < segments.length; i += 2) {
     const segment = segments[i]!;
-    own += describesAnotherPerson(segment) ? " ".repeat(segment.length) : segment;
+    // Blank only from the report start, so a yes before it ("yes, Ana said hi") survives.
+    const at = reportStart(segment);
+    own += at < 0 ? segment : segment.slice(0, at) + " ".repeat(segment.length - at);
     if (i + 1 < segments.length) own += segments[i + 1]!;
   }
   return consentScan(own).answer === "yes";
@@ -1543,7 +1558,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   if (past || refusedGroup && !/^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/.test(t)) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
-  if (c.answer === "yes" && authoredYes(t)) return { answer: "yes", keys: open, why: c.why };
+  // A named offered time dropped for authorship (quoted or reported) is not a pick, and a yes
+  // that only reaches it through the quote is not a yes to every offered time.
+  const droppedNamedTime = mentions.some(m => !memberChoiceAt(m.at) && matchingOffered(m).length > 0);
+  if (c.answer === "yes" && authoredYes(t) && !droppedNamedTime) return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;
 }
