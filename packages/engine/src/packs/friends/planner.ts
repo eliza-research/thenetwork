@@ -33,7 +33,7 @@
 import type { Category, MemberId } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import {
-  canReservePartner, type Event as WeekEvent, friendTableHasMinimumCandidates, friendTableTriesNextStarter, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
+  canReservePartner, type Event as WeekEvent, friendStandbyCanRemain, friendTableHasMinimumCandidates, friendTableTriesNextStarter, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
   recurringAvailable, step as stepWeek,
 } from "../../../../core/src/generated/friendsWeek.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
@@ -597,8 +597,20 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       out.partners.push(fp);
     }
   }
-  // Alternates are never invited elsewhere this run.
   week = stepWeek(week, { type: "finishWeek" });
   for (const p of out.plans) p.alternates = p.alternates.filter(id => newPlanAlternateCanRemain(week, id));
+
+  // spec/friendsWeek.md, "A standby has no initial invitation and holds one bench place"
+  const plans = [...out.sessions, ...out.offers.map(offer => offer.first), ...out.repeats, ...out.plans, ...out.partners];
+  const initialInvitees = new Set(plans.flatMap(plan => plan.invited));
+  if (pol.openTable) for (const plan of out.plans) for (const id of plan.alternates) initialInvitees.add(id);
+  const standbys = new Set<MemberId>();
+  for (const plan of pol.openTable ? out.repeats : [...out.repeats, ...out.plans]) {
+    plan.alternates = plan.alternates.filter(id => {
+      if (!friendStandbyCanRemain(initialInvitees.has(id), standbys.has(id))) return false;
+      standbys.add(id);
+      return true;
+    });
+  }
   return out;
 }
