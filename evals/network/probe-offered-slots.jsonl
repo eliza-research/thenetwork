@@ -43,3 +43,5 @@
 {"text":"Both Saturday and Sunday don't work.","answer":"unclear","keys":[]}
 {"text":"Saturday and Monday. Both work.","answer":"unclear","keys":[]}
 {"text":"Either option C","labels":["Thursday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
+{"text":"Either Saturday or Sunday. No other times.","answer":"yes","keys":["b","c"]}
+{"text":"Both of those are out.","answer":"unclear","keys":[]}
