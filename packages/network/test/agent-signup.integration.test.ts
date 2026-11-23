@@ -452,6 +452,14 @@ test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages
     expect(staffAge).toEqual([{ app_id: "friends", member_id: firstMembership.memberId, age: expect.any(Number),
       banned: false, staff_held: false, report_held: false }]);
 
+    const crossAppAge = await runtime.scoped(async tx => {
+      await tx`set local role network_observatory_cross_app`;
+      const [rights] = await tx`select has_table_privilege(current_user, 'platform.signup_eligibility', 'select') as reads_private_date`;
+      expect(rights?.reads_private_date).toBe(false);
+      return tx`select * from platform.observatory_person_ages where person_id = ${firstPerson.id}`;
+    });
+    expect(crossAppAge).toEqual([{ person_id: firstPerson.id, age: staffAge[0]?.age }]);
+
     await w.service.accounts.deleteAll({ e164: firstNumber, personId: firstPerson.id });
     expect(await w.service.people.signupAgeAt(firstPerson.id, w.clock.now())).toBeUndefined();
 
