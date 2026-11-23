@@ -413,3 +413,7 @@
 {"text": "Wait for Ana to approve sharing my number with Bo. Share my number with Ari.", "want": "contact_share"}
 {"text": "Ari has to approve my number first. Ari already approved my photo. Share my number with him.", "want": "none"}
 {"text": "Ari has to approve my number first. Ari already approved my number. Share my number with him.", "want": "contact_share"}
+{"text": "Ari must approve this first. Ari already approved that. Share my number with him.", "want": "none"}
+{"text": "Ari must approve sharing my number with him first. Ari already approved sharing my number with her. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to agree to share my number with Ari. Share my number with Ari.", "want": "none"}
+{"text": "Ana must approve sharing my number with Ari first. Ana already approved sharing my number with Ari. Share my number with Ari.", "want": "contact_share"}

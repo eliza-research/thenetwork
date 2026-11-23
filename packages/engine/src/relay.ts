@@ -568,14 +568,13 @@ const PRIOR_ASSENT_CONTINUATION = /,\s*(?:and|but|however|yet)\b/iu;
 
 function priorAssentItemKey(value: string, request: RegExpMatchArray, contact: boolean): string | undefined {
   const item = value.replace(/^(?:for|to)\s+/u, "");
-  if (/^(?:it|this|that)$/u.test(item)) return "it";
-  if (/^(?:me|us)$/u.test(item)) return item;
-  if (contact && PRIOR_CONTACT_SWAP.test(item)) return "number swap";
-  const words = item.replace(/^(?:me\s+)?(?:sharing|sending|giving|forwarding|passing|showing|texting)\s+/u, "");
+  if (/^(?:it|this|that|me|us)$/u.test(item) || (contact && PRIOR_CONTACT_SWAP.test(item))) return item;
+  const words = item.replace(/^(?:me\s+)?(?:shar(?:e|ing)|send(?:ing)?|giv(?:e|ing)|forward(?:ing)?|pass(?:ing)?|show(?:ing)?|text(?:ing)?)\s+/u, "");
   const directive = "send " + words;
   const transfer = linkedPrivateTransfer(directive);
   if (!transfer || transfer[0] !== directive || !linkedTransferMatchesRequest(transfer, request, contact)) return;
-  return (transfer.groups?.contact ?? transfer.groups?.photo ?? "it") + " " + (namedPrivateRecipient(transfer) ?? "");
+  // Use the transfer shape to check scope without replacing the member's item or recipient words.
+  return item;
 }
 
 function assentKey(actor: string, action: string, item: string): string {
