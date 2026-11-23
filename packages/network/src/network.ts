@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, directAgreementIdiom, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -125,7 +125,8 @@ import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
   immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
-  reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
+  reportRestrictsMatching, safetyQuestionAcceptsName, safetyQuestionAppliesTarget, safetyQuestionIsCurrent, safetyQuestionResolves, step as stepSafetyCase,
+  type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
@@ -135,7 +136,7 @@ import { currentPairAllowed } from "../../core/src/generated/currentPairRestrict
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -167,11 +168,48 @@ export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind
 const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
   .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
 
+const COMPLETE_SAFETY_CONTROL = /^(?:(?:yes|yeah|sure|ok(?:ay)?)[\s,!.]+)?(?:yes|yeah|yep|yup|sure(?: thing)?|ok(?:ay)?|correct|no|nope|nah|naw|not (?:right )?now)(?:[\s,]+(?:please|pls|thanks|thank you))?$/;
+
+function safetyReplyConsent(text: string) {
+  if (isCompleteParticipationRefusal(text)) return "no";
+  const normalized = safetyName(text);
+  const complete = COMPLETE_SAFETY_CONTROL.test(normalized) || ACK_ONLY.test(normalized) || directAgreementIdiom(text);
+  return complete ? consentOf(text).answer : "unclear";
+}
+
+const CONFIRM_SAFETY_QUESTION = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|correct|that's (?:him|her|them))[.!,\s]*$/i;
+const CANCEL_SAFETY_QUESTION = /^[^\p{L}\p{M}\p{N}_]*(?:never ?mind|nvm|forget it|cancel that)[^\p{L}\p{M}\p{N}_]*$/iu;
+const NO_SAFETY_TARGET = /^[^\p{L}\p{M}\p{N}_]*(?:nobody|no one|none|no|nope|nah|naw)[^\p{L}\p{M}\p{N}_]*$/iu;
+const SAFETY_TARGET_PREFIX = /^(?:i (?:mean|meant)|it'?s)\s+/;
+
+function safetyQuestionReply(text: string) {
+  const normalized = text.normalize("NFKC").replace(/[‘’]/g, "'").replace(/\s+/g, " ");
+  const confirms = CONFIRM_SAFETY_QUESTION.test(normalized);
+  const refuses = NO_SAFETY_TARGET.test(normalized);
+  const cancels = CANCEL_SAFETY_QUESTION.test(normalized);
+  const name = safetyName(text);
+  const explicitlyNamed = SAFETY_TARGET_PREFIX.test(name);
+  const consent = safetyReplyConsent(normalized);
+  const implicitConfirmation = !explicitlyNamed && (consent === "yes" || CONFIRM_SAFETY_QUESTION.test(name));
+  const implicitRefusal = !explicitlyNamed && (consent === "no" || refuses);
+  return { confirms, refuses, cancels, acceptsName: safetyQuestionAcceptsName(implicitConfirmation, implicitRefusal, cancels) };
+}
+
+function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
+  const reply = safetyName(text).replace(/^(?:no|nope)(?:[,.!?;:]\s*| )/, "");
+  const clause = reply.split(/[,.!?;:]/, 1)[0]!.trim();
+  if (names.some(name => name && clause === `not ${safetyName(name)}`)) return true;
+  if (competing) return false;
+  if (["not him", "not her", "not them"].includes(clause)) return true;
+  const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
+  return ["someone else", "somebody else"].some(phrase => replacement === phrase || replacement.startsWith(`${phrase} `));
+}
+
 export function pendingReportReplyName(text: string): string | undefined {
   const body = text.trim();
-  if (ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || consentOf(body).answer !== "unclear") return;
-  const name = safetyName(body.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
-  return name || undefined;
+  if (!safetyQuestionReply(body).acceptsName || ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || safetyReplyConsent(body) !== "unclear") return;
+  const name = safetyName(body).replace(SAFETY_TARGET_PREFIX, "");
+  return name && safetyQuestionReply(name).acceptsName ? name : undefined;
 }
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -878,9 +916,6 @@ const ASK_EVERY_DAYS = 7;
 
 /** "block him", "report my date": a block or report about the member's counterpart, not a name. */
 const PRONOUN_TARGET = /^(?:him|her|them|they|he|she|my date|my match|(?:the|this|that) (?:guy|girl|person|dude|man|woman))\b/i;
-/** A reply to "Who do you mean?" that drops the question. */
-const NEVER_MIND = /^\W*(?:never ?mind|nvm|nobody|no one|none|forget it|no|nope|cancel that)\W*$/i;
-
 /** Actual NYC presence for the whole requested window; conversation ownership grants no location. */
 export function presentInNyc(snapshot: WorldSnapshot, id: MemberId, from: number, to: number): boolean {
   const member = snapshot.members.find(m => m.id === id);
@@ -1250,7 +1285,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
-    if (m.pendingSafety && !mcp && this.answerWho(m, body)) return;
+    if (m.pendingSafety && !mcp && this.answerWho(m, body, msg.signedReceivedAt)) return;
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -2545,26 +2580,33 @@ export class ConsentNetwork implements NetworkUnderTest {
    * The member's answer to "Who do you mean?" (within a day). A bare yes can confirm the one
    * person named in the question if another action is not also waiting for a reply.
    */
-  private answerWho(m: MemberState, body: string): boolean {
+  private answerWho(m: MemberState, body: string, signedReceivedAt: number | undefined): boolean {
     const p = m.pendingSafety!;
-    m.pendingSafety = undefined;
-    if (this.now() - p.at > DAY) return false;
+    const now = this.now();
+    const oldestQuestion = now - DAY;
+    if (!safetyQuestionIsCurrent(p.at, oldestQuestion)) { m.pendingSafety = undefined; return false; }
+    if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return false;
     const text = body.trim();
-    const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
-    const exact = this.resolveTarget(m, name, p.verb === "report").target;
+    const reply = safetyQuestionReply(text);
+    const name = safetyName(text).replace(SAFETY_TARGET_PREFIX, "");
+    const exact = reply.acceptsName ? this.resolveTarget(m, name, p.verb === "report").target : undefined;
     const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && safetyName(value) === name) ? exact : undefined;
     const competing = m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
-    const confirmed = !competing && p.targets?.length === 1
-      && /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i.test(text)
-      ? this.members.get(p.targets[0]!) : undefined;
+    const sole = p.targets?.length === 1 ? this.members.get(p.targets[0]!) : undefined;
+    const confirmed = !competing && reply.confirms ? sole : undefined;
     const target = named ?? confirmed;
-    if (target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id))) {
-      this.applyBlock(m, p.verb, p.kind, target);
+    const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
+    const cancels = reply.cancels || (!competing && reply.refuses);
+    const rulesOutTarget = !!sole && excludesSoleSafetyTarget(text, [this.fullNames.get(sole.id), sole.display, sole.first], !!competing);
+    // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+    if (!safetyQuestionResolves(!!allowedTarget, !!competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return false;
+    m.pendingSafety = undefined;
+    if (allowedTarget && safetyQuestionAppliesTarget(true, rulesOutTarget)) {
+      this.applyBlock(m, p.verb, p.kind, allowedTarget);
       return true;
     }
     if (competing) return false;
-    if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
-    if (text.split(/\s+/).length > 4) return false;
+    if (cancels) { this.ack(m, "Okay."); return true; }
     if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return true; }
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
@@ -5459,8 +5501,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         m.interruptionSurvey = undefined;
         continue;
       }
+      const safetyQuestionOpen = !!m.pendingSafety && safetyQuestionIsCurrent(m.pendingSafety.at, now - DAY);
       if (survey.sentAt !== undefined || !interruptionFeedbackAskDue(now - survey.answeredAt, eligible,
-        !!m.awaiting || !!m.pendingSafety || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
+        !!m.awaiting || safetyQuestionOpen || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
       const code = interruptionFeedbackCode(this.app.id, m.id, survey.opportunityId);
       const responseKey = `${this.app.id.toUpperCase()} ${code}`;
       const body = `Was that invitation worth a text? Reply WORTH YES ${responseKey} or WORTH NO ${responseKey}.`;

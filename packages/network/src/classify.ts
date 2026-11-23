@@ -823,6 +823,18 @@ export function consentOf(body: string): Consent {
   return { answer, why };
 }
 
+// Use the same refusal phrases when the complete reply could instead be a person’s name.
+const COMPLETE_REFUSAL = new RegExp(`^(?:${REFUSAL_RX.map(rx => rx.source).join("|")}|(?:(?:i|we) )?(?:${CANT.source}))$`);
+const REFUSAL_COURTESY_LEAD = /^(?:(?:sorry|please|thanks|thank you|ok(?:ay)?|yeah|yes|sure|actually)[\s,.!;:]+)+/;
+const REFUSAL_COURTESY_TAIL = /(?:[\s,.!;:]+(?:please|pls|sorry|thanks|thank you))+$/;
+
+export function isCompleteParticipationRefusal(body: string): boolean {
+  if (readParticipationWithdrawal(body).reading === "DirectWithdrawal") return true;
+  const whole = normText(body).replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
+  const direct = whole.replace(REFUSAL_COURTESY_LEAD, "").replace(REFUSAL_COURTESY_TAIL, "");
+  return COMPLETE_REFUSAL.test(whole) || COMPLETE_REFUSAL.test(direct);
+}
+
 /** A member's free-text yes or no (probes, plan probes, crew offers, the booked plan). */
 export const parseYesNo = (body: string): YesNo => consentOf(body).answer;
 
