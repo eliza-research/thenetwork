@@ -24,7 +24,7 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
-import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
+import { relayNameCollisionRefuses, relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
@@ -144,8 +144,12 @@ export interface RelayCallOptions {
 /** One member as the canonical owners see them (runtime.ts relayParties). Unknown is never eligible. */
 export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean }
 
+/** Fold a first name for comparison (Unicode, curly quotes, case). */
+const foldRelayName = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+
 const NOTICE = {
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
+  ambiguousName: "You've matched with more than one person with that name, so I can't tell who you mean.",
   swapWait: "I'll share your number as soon as they say they want to swap numbers too.",
   swapAlready: "I already asked them; I'll share your number if they want to swap too.",
   photoOff: "I can't send photos to a match yet.",
@@ -169,10 +173,21 @@ export class RelayDesk {
     this.s = { threads: x.threads ?? [], log: x.log ?? [], held: x.held ?? [], swaps: x.swaps ?? [] };
   }
 
+  private openMatches(from: MemberId, matchId?: string): RelayMatch[] {
+    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId));
+  }
+
   /** The member's open match (newest first), if any; `matchId` narrows it to that one match. */
   matchFor(from: MemberId, matchId?: string): RelayMatch | undefined {
-    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
-      .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
+    return this.openMatches(from, matchId).sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
+  }
+
+  private otherCounterpartMatches(from: MemberId, to: MemberId, name: string): boolean {
+    return this.openMatches(from).some(match => {
+      const other = match.participants.find(id => id !== from && id !== to);
+      const otherName = other === undefined ? undefined : this.host.member(other)?.firstName;
+      return otherName !== undefined && foldRelayName(otherName) === name;
+    });
   }
 
   /** One member request: decide through the engine, deliver `rendered`, keep the log. Idempotent on `itemId`. */
@@ -183,10 +198,15 @@ export class RelayDesk {
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
     if (ask.targetName !== undefined) {
+      const targetName = foldRelayName(ask.targetName);
       const recipient = this.host.member(to)?.firstName;
-      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
-      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
+      if (!relayTextRecipientAllowed(true, recipient !== undefined && foldRelayName(recipient) === targetName)) {
         return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+      }
+      // spec/relayRequestAddress.md, "A name identifies one recipient on an unselected relay"
+      const selectedItem = ask.matchId !== undefined;
+      if (relayNameCollisionRefuses(selectedItem, !selectedItem && this.otherCounterpartMatches(ask.from, to, targetName))) {
+        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.ambiguousName };
       }
     }
     const now = this.host.now();
