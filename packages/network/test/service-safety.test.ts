@@ -396,6 +396,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const competingSlopProbe = async (id: string, counterpart = slopBen) => {
       const now = clock.now();
       const deliveryId = `${id}.probe`;
+      const body = "Are you open to a date?";
       await s.runtimeFor("slop")!.unitOfWork(net => {
         const state = net.exportState();
         const meeting = state.opps.find(opp => opp.id === `slop.clarification-meeting.${slopBen}`)!;
@@ -403,11 +404,12 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
         state.opps.push({ ...meeting, id, stage: "probing", meetingAt: undefined, bookedTold: undefined,
           participants: [slopAri, counterpart], status: [[slopAri, "probing"], [counterpart, "probing"]], createdAt: now,
           deadline: now + HOUR, contacted: [slopAri, counterpart] });
-        reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId };
+        reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId, probeInboundCount: reporter.msgsIn };
+        reporter.lastSent = { body, at: now, consentProbe: id };
         net.importState(state);
       });
       await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, type, status, opportunity_id, proactive, system, ts)
-        values ('slop', ${deliveryId}, ${slopAri}, 'outbound', 'imessage', 'Are you open to a date?', 'probe',
+        values ('slop', ${deliveryId}, ${slopAri}, 'outbound', 'imessage', ${body}, 'probe',
           'dry_run', ${id}, true, false, ${new Date(now)})`;
       clock.advance(MINUTE);
     };
@@ -593,11 +595,30 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([]);
   }, T);
 
+  // spec/safetyCase.md, "A complete name or confirmation identifies one safety target"
+  test("an unmatched explicitly named safety reply cannot confirm a different offered person", async ({ onTestFinished }) => {
+    const { askSlop, reports, signed } = await signedSafetyFixture(onTestFinished);
+    await askSlop("unmatched-explicit-safety-name");
+    expect(await signed("answer-unmatched-safety-name", "I mean Yes", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([]);
+  }, T);
+
+  test("an explicit pronoun can still confirm the sole offered safety target", async ({ onTestFinished }) => {
+    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+    await askSlop("explicit-safety-pronoun");
+    expect(await signed("answer-explicit-safety-pronoun", "I mean him", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+  }, T);
+
   const safetyControlCases = [
     { name: "Nvm", reply: "nvm", probeReply: undefined },
     { name: "No", reply: "no", probeReply: undefined },
     { name: "No", reply: "no", probeReply: "unavailable" },
     { name: "Yes", reply: "yes", probeReply: "available" },
+    { name: "Nah", reply: "nah", probeReply: "unavailable" },
+    { name: "Naw", reply: "naw", probeReply: undefined },
+    { name: "Sure", reply: "sure", probeReply: "available" },
+    { name: "Okay", reply: "okay", probeReply: "available" },
   ];
   for (const { name, reply, probeReply } of safetyControlCases) {
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
