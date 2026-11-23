@@ -150,6 +150,8 @@ const scenarios: Scenario[] = [
     followUp: { text: "Thursday works.", picked: [thursday.start] } },
   { scene: "a separate acceptance survives a qualified won't-work statement",
     slots: three, text: "Saturday for me won't work. Thursday works.", picked: [thursday.start] },
+  { scene: "a conditional refusal cannot award the named consequence",
+    slots: three, text: "If Saturday for me won't work, Thursday works.", picked: [] },
   { scene: "a separate refusal declines the opportunity after a qualified time constraint",
     slots: three, text: "Monday works.", picked: [],
     followUp: { text: "Saturday for me won't work. No thanks.", picked: [] } },

@@ -27,7 +27,8 @@ an exact clock keeps that clock and its named day together. A member can
 say “for me” before the refusal, or give a scheduling reason after it.
 A refusal of a named time keeps the opportunity open. A separate
 affirmative clause can select another offered time, and a separate
-refusal can decline the opportunity. A broad yes with “both” in the refused
+refusal can decline the opportunity. A condition stays attached to its
+time refusal and leaves the consequence unresolved. A broad yes with “both” in the refused
 list leaves the time choice open when the member chooses no other
 time. Fallback selection keeps any stated time-of-day limit before
 calling the modeled answer action. The signed booking test checks the

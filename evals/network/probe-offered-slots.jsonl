@@ -139,3 +139,4 @@
 {"text":"Saturday for me won't work. Thursday works.","answer":"yes","keys":["a"]}
 {"text":"Saturday for me won't work. No thanks.","answer":"no","keys":[]}
 {"text":"Saturday for me doesn't look good.","answer":"unclear","keys":[]}
+{"text":"If Saturday for me won't work, Thursday works.","answer":"unclear","keys":[]}

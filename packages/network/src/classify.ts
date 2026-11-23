@@ -1272,7 +1272,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const tail = t.slice(end);
     if (!QUALIFIED_TIME_REFUSAL.test(tail)) return;
     const refusal = REFUSES_OFFERED_TIME.exec(tail)?.[0];
-    if (refusal) qualifiedTimeRefusals.set(end, end + refusal.length);
+    const clause = clauseAt(t, at, end - at);
+    if (refusal && !/\bif\b/.test(clause) && !COND_RX.test(clause)) qualifiedTimeRefusals.set(end, end + refusal.length);
   };
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
