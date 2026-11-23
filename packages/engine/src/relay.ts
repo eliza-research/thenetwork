@@ -596,18 +596,23 @@ const INDEPENDENT_RENEWAL_STATUS = /^(?:(?:i am|we are) (?:running late|at (?:wo
 const UNRESOLVED_RENEWAL_PAYLOAD = /\b(?:it|this|that|either|both|instead|ask(?:ing)?|confirm(?:ing)?|wait(?:ing)?|delay(?:ing)?|get back to you|transfer|decid(?:e|ed|ing)|(?:re)?think(?:ing)?|reconsider(?:ing)?|not ready|maybe|perhaps|doubts?|hesitant|torn|conflicted|on the fence|recipient|destination|permission|approval|consent|private)\b/u;
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
-const PRIVATE_CONDITION_MARKER = String.raw`if|when(?:ever)?|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const FLEXIBLE_PRIVATE_TIMING = String.raw`whenever|any\s*time`;
+const RECURRING_PRIVATE_CONDITION = String.raw`${FLEXIBLE_PRIVATE_TIMING}|(?:(?:each\s+and\s+)?every(?:\s+single)?|each)\s+time`;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
 const TRAILING_PRIVATE_CONDITION = new RegExp(
   String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b.*)$`,
   "iu",
 );
-const POLITE_PRIVATE_CONDITION =
-  /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when(?:ever)?\s+you\s+(?:can|get a chance|have a chance))\b|^whenever(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)|you(?:'re| are)\s+ready))?\b/iu;
+const POLITE_PRIVATE_CONDITION = new RegExp(
+  String.raw`^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|(?:when|${RECURRING_PRIVATE_CONDITION})\s+you\s+(?:can|get a chance|have a chance))\b|^(?:${FLEXIBLE_PRIVATE_TIMING})(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)|you(?:'re| are)\s+ready))?\b`,
+  "iu",
+);
 const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
+const PRIVATE_CONDITION_FACT = /^(?!(?:(?:the|my)\s+)?(?:send|share|relay|forward)\b)[^,]+?\s+(?:is|are)\s+(?:(?:in|on|at)\s+(?:the|an?)\s+\S|(?:free|available|closed)\s*$)/iu;
 const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
 const PRIVATE_RESPONSE_FOLLOWUP = new RegExp(
-  String.raw`^whenever\s+${OTHER}\s+(?:repl(?:y|ies)|responds?)\s*,\s*(?:please\s+)?tell me(?:\s+how it went)?\s*$`,
+  String.raw`^(?:${RECURRING_PRIVATE_CONDITION})\s+${OTHER}\s+(?:repl(?:y|ies)|responds?|reports?\s+(?:an?|the)\s+(?:problem|issue))\s*,\s*(?:please\s+)?tell me(?:\s+how it went)?\s*$`,
   "iu",
 );
 const INDEPENDENT_WHEN_QUESTION = /^when(?:ever)?\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
@@ -616,12 +621,15 @@ const INCOMPLETE_CONDITION_ACTION = new RegExp(
   String.raw`\b(?:(?:do|handle|take care of)(?:\s+(?:it|that|this))?|(?:${TRANSFER}|show|tell)|tell\s+${OTHER}\s+(?:it|that|this))(?:\s+(?:now|then|myself))?\s*$`,
   "u",
 );
-const LINKED_PRIVATE_OBJECT = String.raw`(?:(?<contact>${CONTACT_RELAY_ITEM})|(?<photo>${PHOTO_RELAY_ITEM})|it|this|that)\b`;
+const LINKED_PRIVATE_REFERENCE = String.raw`(?:it|(?:this|that)(?=$|[.,:;!?]|\s+(?:to|with|now|please|pls|${PRIVATE_CONDITION_MARKER})\b))`;
+const LINKED_PRIVATE_OBJECT = String.raw`(?:(?<contact>${CONTACT_RELAY_ITEM})|(?<photo>${PHOTO_RELAY_ITEM})|${LINKED_PRIVATE_REFERENCE})\b`;
 const LINKED_PRIVATE_SEND = new RegExp(
   String.raw`\b(?:${TRANSFER}|show)\s+(?:(?<recipient>${OTHER})\s+)?${LINKED_PRIVATE_OBJECT}(?:\s+(?:to|with)\s+(?<destination>${OTHER}))?`, "iu",
 );
-const LINKED_PRIVATE_ACCESS = new RegExp(
-  String.raw`\b(?!(?:you|u|we|i)\b)(?<recipient>${OTHER})\s+(?:can|could|may)\s+have\s+${LINKED_PRIVATE_OBJECT}`, "iu",
+const LINKED_PRIVATE_ACCESS_LEAD = String.raw`\b(?!(?:you|u|we|i)\b)(?<recipient>${OTHER})\s+(?:can|could|may|will)\s+(?:have|get|receive)\s+`;
+const LINKED_PRIVATE_ACCESS = new RegExp(String.raw`${LINKED_PRIVATE_ACCESS_LEAD}${LINKED_PRIVATE_OBJECT}`, "iu");
+const NAMED_CONDITION_ACCESS = new RegExp(
+  String.raw`^${LINKED_PRIVATE_ACCESS_LEAD}(?:the|this|that)\s+(?<object>(?:(?!(?:and|or|but|then|to|with)\b)[\p{L}'-]+(?:\s+|$))+)\s*$`, "iu",
 );
 const LINKED_PRIVATE_LEAD = /^[\s,:–—]*(?:(?:and|but|then|only)[,\s:–—]+)*/iu;
 const PRIVATE_RECIPIENT_REFERENCE = /^(?:he|she|they|him|her|them|my\s+(?:match|date))$/i;
@@ -678,7 +686,11 @@ function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean
   return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
 }
 
-function privateClauseIsConditional(clause: string, source: string, detached: boolean): boolean {
+function reportsPrivateTransfer(tail: string): boolean {
+  return PRIVATE_RELAY_POST_ATTRIBUTION.test(/[,–—][^,–—]*$/u.exec(tail)?.[0] ?? "");
+}
+
+function privateClauseIsConditional(clause: string, source: string, detached: boolean, request: RegExpMatchArray, contact: boolean): boolean {
   const qualifier = TRAILING_PRIVATE_CONDITION.exec(clause);
   if (!qualifier) return false;
   if (clause !== source) return true;
@@ -689,15 +701,26 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   }
   const polite = POLITE_PRIVATE_CONDITION.exec(condition);
   if (polite && PRIVATE_RELAY_COURTESY.test(condition.slice(polite[0].length))) return false;
-  if (detached && PRIVATE_RESPONSE_FOLLOWUP.test(condition)) return false;
   if (detached || /^\s*,\s*and\b/i.test(clause)) {
+    if (PRIVATE_RESPONSE_FOLLOWUP.test(condition)) return false;
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
-    if (main && (TEXT_REQ.test(main)
-      || (detached && (PRIVATE_CONDITION_STATEMENT.test(main) || PRIVATE_CONDITION_FOLLOWUP.test(main))))) {
+    if (main) {
+      const transfer = linkedPrivateTransfer(main);
+      if (transfer) {
+        const tail = main.slice(transfer.index + transfer[0].length);
+        return !reportsPrivateTransfer(tail)
+          && (linkedTransferMatchesRequest(transfer, request, contact) || !PRIVATE_RELAY_COURTESY.test(tail));
+      }
       const words = main.toLowerCase();
-      return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
-        || INCOMPLETE_CONDITION_ACTION.test(words)
-        || (PRIVATE_CONDITION_ITEM_NAME.test(words) && (PRIVATE_RELAY_ACTION.test(words) || /\btell\b/u.test(words)));
+      const object = NAMED_CONDITION_ACCESS.exec(words)?.groups?.object;
+      if (object && !PRIVATE_CONDITION_ITEM_NAME.test(object) && !UNRESOLVED_RENEWAL_PAYLOAD.test(object)) return false;
+      const independentStatement = detached ? PRIVATE_CONDITION_STATEMENT.test(main)
+        : PRIVATE_CONDITION_FACT.test(main) && !PRIVATE_CONDITION_ITEM_NAME.test(words) && !UNRESOLVED_RENEWAL_PAYLOAD.test(words);
+      if (TEXT_REQ.test(main) || (detached && PRIVATE_CONDITION_FOLLOWUP.test(main)) || independentStatement) {
+        return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
+          || INCOMPLETE_CONDITION_ACTION.test(words)
+          || (PRIVATE_CONDITION_ITEM_NAME.test(words) && (PRIVATE_RELAY_ACTION.test(words) || /\btell\b/u.test(words)));
+      }
     }
   }
   return true;
@@ -713,26 +736,30 @@ function namedPrivateRecipient(transfer: RegExpExecArray | undefined): string | 
   return name && !PRIVATE_RECIPIENT_REFERENCE.test(name) ? name : undefined;
 }
 
+function linkedTransferMatchesRequest(transfer: RegExpExecArray, request: RegExpMatchArray, contact: boolean): boolean {
+  if (contact ? transfer.groups?.photo : transfer.groups?.contact) return false;
+  const recipient = namedPrivateRecipient(transfer);
+  const selected = recipient && namedPrivateRecipient(linkedPrivateTransfer(request[0]));
+  return !selected || selected === recipient;
+}
+
 function linkedTransferIsConditional(sentence: string, source: string, request: RegExpMatchArray, contact: boolean): boolean {
   const lead = PRIVATE_NOTICE_THEN.exec(sentence)?.[0].length ?? 0;
   const transfer = linkedPrivateTransfer(sentence.slice(lead));
-  if (!transfer || (contact ? transfer.groups?.photo : transfer.groups?.contact)) return false;
-  const recipient = namedPrivateRecipient(transfer);
-  const selected = recipient && namedPrivateRecipient(linkedPrivateTransfer(request[0]));
-  if (selected && selected !== recipient) return false;
+  if (!transfer || !linkedTransferMatchesRequest(transfer, request, contact)) return false;
   const end = lead + transfer.index + transfer[0].length;
   const tail = sentence.slice(end);
-  const attribution = /[,–—][^,–—]*$/u.exec(tail);
-  if (sentence.slice(0, end) !== source.slice(0, end) || attribution && PRIVATE_RELAY_POST_ATTRIBUTION.test(attribution[0])) return false;
+  if (sentence.slice(0, end) !== source.slice(0, end) || reportsPrivateTransfer(tail)) return false;
   const time = LINKED_PRIVATE_TIME.exec(tail);
-  return privateClauseIsConditional(tail, source.slice(end), false)
+  return privateClauseIsConditional(tail, source.slice(end), false, request, contact)
     || (time !== null && tail === source.slice(end) && PRIVATE_RELAY_COURTESY.test(tail.slice(time[0].length)));
 }
 
 function conditionsPrivateRequest(text: string, source: string, start: number, request: RegExpMatchArray, contact: boolean): boolean {
   const clause = text.slice(start).split(RELAY_SENTENCE, 1)[0]!;
   const requestTail = source.slice(start, start + clause.length);
-  if (privateClauseIsConditional(clause, requestTail, false) || linkedTransferIsConditional(clause, requestTail, request, contact)) return true;
+  if (privateClauseIsConditional(clause, requestTail, false, request, contact)
+    || linkedTransferIsConditional(clause, requestTail, request, contact)) return true;
   const boundary = /^[.!?;…\n]+\s*/u.exec(text.slice(start + clause.length));
   if (!boundary) return false;
   const adjacentStart = start + clause.length + boundary[0].length;
@@ -743,7 +770,7 @@ function conditionsPrivateRequest(text: string, source: string, start: number, r
     const offset = adjacentStart + part.index!;
     const authored = source.slice(offset, offset + sentence.length);
     if (adjacent && text[offset + sentence.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(sentence)) return false;
-    if (adjacent && privateClauseIsConditional(sentence, authored, true)
+    if (adjacent && privateClauseIsConditional(sentence, authored, true, request, contact)
       || linkedTransferIsConditional(sentence, authored, request, contact)) return true;
     if (authored !== sentence || !independentRenewalFollowup(sentence)) return false;
     adjacent = false;
