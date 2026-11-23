@@ -22,7 +22,7 @@
 // The simulated hiring world (packages/sim/src/apps/peon) writes seats directly and never uses
 // these functions, so the pinned peon gates do not move. Pure; reads no hidden truth.
 import type { Edge, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
-import { initial, remainingOpenings, seatRecordOccupies, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
+import { initial, normalJobSeatUsesOpenBudget, remainingOpenings, seatRecordOccupies, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
 import type { EngineInput } from "../../types.ts";
 import { JOB_INTENT, SAFETY, T } from "./schema.ts";
 
@@ -66,7 +66,10 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
     if (typeof owner.age !== "number" || !Number.isInteger(owner.age) || owner.age < 18) continue;
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
-    members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
+    members.push({
+      ...owner, id, state: normalJobSeatUsesOpenBudget(owner.state) ? "open" : owner.state,
+      age: 18, joinedAt: p.createdAt, seatOwner: owner.id,
+    } as Member);
     edges.push({ from: owner.id, to: id, type: "avoid", strength: 1, explicit: false, createdAt: p.createdAt });
     let posted: number | undefined;
     for (const f of snap.facets) {

@@ -322,7 +322,7 @@ revoke select on network.channel_identities from network_observatory;
 revoke select on network.network_state from network_observatory;
 alter default privileges in schema network grant select on tables to network_observatory;
 
--- The legacy console role reads the Ntwrk state and delivery-evidence views. The blanket grant
+-- The legacy console role reads the Ntwrk state, delivery-evidence and booking receipt views. The blanket grant
 -- includes views already present when this repeatable schema runs, so restore their app scope here.
 do $$
 declare v text;
@@ -330,7 +330,8 @@ begin
   for v in select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
            where n.nspname = 'network' and c.relkind = 'v'
              and ((c.relname like 'network\_state\_console%' and c.relname <> 'network_state_console_ntwrk')
-               or (c.relname like 'outbound\_evidence\_%' and c.relname <> 'outbound_evidence_ntwrk')) loop
+               or (c.relname like 'outbound\_evidence\_%' and c.relname <> 'outbound_evidence_ntwrk')
+               or (c.relname like 'booking\_receipts\_%' and c.relname <> 'booking_receipts_ntwrk')) loop
     execute format('revoke select on network.%I from network_observatory', v);
   end loop;
 end $$;

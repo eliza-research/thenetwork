@@ -40,3 +40,18 @@ pure def lawMismatchedMeetingGivesNoRepeatConsent(answeredMeeting: str, sourceMe
 pure def lawRepeatNeedsBothResponses(firstYes: bool, eligible: bool, pairAvailable: bool, alreadyQueued: bool): bool =
   not(queueRepeat(firstYes, false, eligible, pairAvailable, alreadyQueued))
 ```
+
+### Use a public event only when both members can attend it
+
+A repeat can use a public event when both members permit its category
+and format and can be in its city for the full time. Rank only eligible
+events. If none fits, consider the ordinary repeat format under the
+same current pair checks.
+
+```quint
+pure def repeatEventMayAnchor(bothEligible: bool, coversEvent: bool): bool =
+  bothEligible and coversEvent
+
+pure def lawRepeatEventNeedsFullPresence(bothEligible: bool): bool =
+  not(repeatEventMayAnchor(bothEligible, false))
+```

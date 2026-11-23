@@ -54,12 +54,14 @@ interface DispatchOptions {
   now: number
   repeatMs: number
   maxPostsPerHour: number
+  sourceReadable(key: string): boolean
   post(notices: Notice[]): Promise<boolean>
 }
 
 error AlertStoreFailure { message: string, cause: unknown }
 
-function prepareAlerts(alerts: Alert[], stored: AlertState[], now: number, repeatMs: number) {
+function prepareAlerts(alerts: Alert[], stored: AlertState[], options: DispatchOptions) {
+  const { now, repeatMs, sourceReadable } = options
   const states = new Map(stored.map(state => [state.key, state]))
   const notices: Notice[] = []
   const firing: AlertState[] = []
@@ -86,7 +88,7 @@ function prepareAlerts(alerts: Alert[], stored: AlertState[], now: number, repea
   }
 
   for (const state of states.values()) {
-    const decision = chooseMissingPlan(state.open, seen.has(state.key), state.lastSentAt !== undefined)
+    const decision = chooseMissingPlan(state.open, seen.has(state.key), state.lastSentAt !== undefined, sourceReadable(state.key))
     if (decision === "CloseQuietly") state.open = false
     else if (decision === "SendResolution") {
       resolved.push(state)
@@ -100,11 +102,11 @@ function prepareAlerts(alerts: Alert[], stored: AlertState[], now: number, repea
 /** Run inside the adapter's existing exclusive store transaction. */
 export function dispatchOperationsAlerts(alerts: Alert[], tx: AlertTx, options: DispatchOptions): Promise<DispatchResult> {
   return runPromise(effect {
-    const { now, repeatMs, maxPostsPerHour } = options
+    const { now, maxPostsPerHour } = options
     const history = try tryPromise({
       try: () => tx.load(), catch: cause => new AlertStoreFailure({ message: "Could not load alert episodes", cause }),
     })
-    const { episodes, notices, firing, resolved } = prepareAlerts(alerts, history, now, repeatMs)
+    const { episodes, notices, firing, resolved } = prepareAlerts(alerts, history, options)
     let postsLastHour = try tryPromise({
       try: () => tx.postsSince(now - alertPostWindowMs), catch: cause => new AlertStoreFailure({ message: "Could not count recent alert posts", cause }),
     })

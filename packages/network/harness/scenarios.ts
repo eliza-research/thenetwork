@@ -34,6 +34,13 @@ const nth = (ps: Persona[], i: number) => ps[i % ps.length]!;
 const at = (start: number, day: number, hourNy: number) => start + day * DAY + (hourNy - 13) * HOUR; // the world starts 13:00 New York time
 const say = (persona: MemberId, text: string): WorldAction => ({ do: "say", persona, text });
 
+function recordScenarioIntent(person: Persona, intent: Persona["public"]["statedIntents"][number]) {
+  const existing = person.public.statedIntents.findIndex(item => item.desireId === intent.desireId && item.category === intent.category);
+  const index = existing >= 0 ? existing : person.public.statedIntents.push(intent) - 1;
+  const known = person.knowledge?.chat.intents;
+  if (known && !known.includes(index)) known.push(index);
+}
+
 const outbound = (r: RunRecord[]) => r.filter((x): x is Extract<RunRecord, { type: "message" }> => x.type === "message" && x.msg.direction === "outbound");
 const logs = (r: RunRecord[], kind: string) => r.filter((x): x is Extract<RunRecord, { type: "network_log" }> => x.type === "network_log" && x.kind === kind);
 const inOppAfter = (ctx: ScenarioCtx, id: MemberId, t: number) =>
@@ -261,26 +268,32 @@ export const SCENARIOS: NetScenario[] = [
     id: "request_fulfilled", title: "Ask and receive", days: 5,
     description: "A member asks for something specific. The Network acknowledges, finds someone whose known profile fits, checks with them anonymously, and introduces them within days.",
     setup(ps, s) {
-      // A member whose want has a clear counterpart nearby (same want, or the skill it needs).
-      const a = adults(ps);
-      let pick: { asker: Persona; desire: string } | undefined;
-      for (const p of a) {
-        const d = p.hidden.desires.find(x => { const def = desireById.get(x.id); return def && !["romance", "social"].includes(def.category) && def.pool; });
-        if (!d) continue;
-        const def = desireById.get(d.id)!;
-        const partner = a.find(o => o.id !== p.id && o.hidden.desires.some(x => desireById.get(x.id)?.pool === def.pool) && o.public.statedIntents.some(i => i.desireId === x(o, def.pool!))
-          && travelMinutes(neighborhood(p.routine.homeArea), neighborhood(o.routine.homeArea)) <= 30);
-        if (partner) { pick = { asker: p, desire: def.text }; break; }
+      const def = desireById.get("climbing_partner")!;
+      const a = adults(ps).filter(p => p.joinDay === 0 && p.archetype !== "busy_parent");
+      const area = neighborhood("Williamsburg");
+      const cast = a.filter(p => travelMinutes(area, neighborhood(p.routine.homeArea)) <= 15).slice(0, 5);
+      const asker = cast[0];
+      if (!asker || cast.length < 2) throw new Error("The request scenario needs nearby climbers");
+      for (const person of cast) {
+        recordScenarioIntent(person, { desireId: def.id, text: def.text, category: "hobby" });
+        if (!person.public.statedInterests.includes("climbing")) person.public.statedInterests.push("climbing");
+        const known = person.knowledge?.chat.interests;
+        if (known && !known.includes("climbing")) known.push("climbing");
       }
-      const asker = pick?.asker ?? a[0]!;
-      return { ids: { asker: asker.id }, actions: [{ at: at(s, 1, 11), action: say(asker.id, `Anyone around who'd want to ${pick?.desire ?? "make a few new friends in the city"}? I'm near ${asker.routine.homeArea}.`) }] };
+      // Give the cast time to onboard before the first morning matching run reserves seats.
+      return { ids: { asker: asker.id }, actions: [
+        { at: at(s, 1, 9), action: say(asker.id, `Find me a climbing partner near ${asker.routine.homeArea}.`) },
+      ] };
     },
     check(ctx) {
       const id = ctx.ids.asker!;
       const askAt = firstSaid(ctx, id);
       const req = ctx.net.requests.find(r => r.memberId === id && r.kind === "people" && r.at === askAt);
       const ack = outbound(ctx.records).some(m => m.msg.memberId === id && m.t === askAt && /On it|couldn't find someone/.test(m.msg.body));
-      const probed = !!req?.oppId && logs(ctx.records, "probe_sent").some(l => l.detail.oppId === req.oppId && l.detail.memberId !== id);
+      const proposals = new Set(logs(ctx.records, "request_result")
+        .filter(l => l.detail.requestId === req?.id && l.detail.outcome === "probing")
+        .map(l => l.detail.oppId));
+      const probed = logs(ctx.records, "probe_sent").some(l => proposals.has(l.detail.oppId) && l.detail.memberId !== id);
       return [
         c("request understood", !!req && !!req.desireId, req ? `desire ${req.desireId}, outcome ${req.outcome}` : "no request"),
         c("acknowledged", ack, ""),
@@ -294,6 +307,9 @@ export const SCENARIOS: NetScenario[] = [
     setup(ps, s) {
       const a = adults(ps).filter(p => p.routine.homeArea === "Williamsburg" || p.routine.homeArea === "Greenpoint" || p.routine.homeArea === "Bushwick");
       const cast = a.slice(0, 4);
+      for (const person of cast) recordScenarioIntent(person, {
+        desireId: "local_events", text: "Meet people at local public events", category: "events",
+      });
       return { ids: Object.fromEntries(cast.map((p, i) => [`p${i}`, p.id])), actions: cast.map((p, i) => ({ at: at(s, 2, 10 + i), action: say(p.id, i % 2 ? "Anything fun going on this weekend?" : "Anything fun near Williamsburg this weekend?") })) };
     },
     check(ctx) {
@@ -379,8 +395,6 @@ export class ScriptedJoinAgent extends PolicyPersonaAgent {
   constructor(start: number, private joinText: Record<MemberId, string>) { super(start); }
   override async joinMessage(ctx: PersonaContext) { return this.joinText[ctx.persona.id] ?? super.joinMessage(ctx); }
 }
-
-function x(o: Persona, pool: string) { return o.hidden.desires.find(d => desireById.get(d.id)?.pool === pool)?.id ?? ""; }
 
 export async function runScenario(s: NetScenario, opts: { seed?: number } = {}): Promise<{ scenario: NetScenario; checks: Check[]; pass: boolean; ctx: ScenarioCtx }> {
   const seed = opts.seed ?? 7;

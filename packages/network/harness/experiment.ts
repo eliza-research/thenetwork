@@ -11,11 +11,14 @@
 // --live-asks: personas ask only for wants that are still live in hidden truth (sim PolicyOptions).
 // --time-aware: personas answer offered times and booked plans from a hidden week, and attendance
 // depends on the meeting time (sim PolicyOptions.timeAware and WorldOptions.timeAware).
+// --matching-off: keep the matching arms from sending new intros while the rest of the world runs.
 // --plans off: the Network's planner and plan lane off (default on). --sim-plans on|off: personas
 // answer plan probes, the weekly check-in and crew offers, and plan meetings use the plan oracle
 // (sim WorldOptions.plans); default on when the Network runs plans. --capital: an NC ledger records
 // every event and the Network reads the levers from it (default: events are counted, levers off).
 // Every arm reports the judge's scores (computeMetrics) too, so the Observatory lab can call this.
+import { confirmsProactiveDelivery, observedMembershipMs } from "../../core/src/generated/consolePanels.ts";
+import { simulatedMatchingMode } from "../../core/src/generated/simulationMatching.ts";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { gini } from "@thenetwork/core";
 export { gini };
@@ -27,6 +30,7 @@ import { PolicyPersonaAgent, PRIMED_MODEL, StubNetwork, World, type NetworkUnder
 import { loadPersonas } from "../../../scripts/synthetic/load.ts";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
 import { createEngine } from "../../sim/src/engineAdapter.ts";
+import { simulationSeed } from "../../sim/src/input.ts";
 import { friendFactory } from "./growth.ts";
 import { ConsentNetwork, type NetworkOptions } from "../src/network.ts";
 import { capitalWiring } from "../src/capital.ts";
@@ -92,7 +96,10 @@ export async function nycPersonas(dir = DATA_DIR): Promise<Persona[]> {
   return (await loadPersonas(dir)).filter(p => p.homeCity === "nyc");
 }
 
-export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
+const EXPERIMENT_ARMS = ["push_baseline", "push_v2", "consent"] as const;
+type ExperimentArm = typeof EXPERIMENT_ARMS[number];
+
+export async function runArm(arm: ExperimentArm, o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
   const personas = await nycPersonas();
   const manifest = await fileAt(`${DATA_DIR}/manifest.json`).json();
   const start = manifest.snapshotNow as number;
@@ -104,12 +111,13 @@ export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { 
     engine: { cities: ["nyc"], ...o.network?.engine },
   });
   const simPlans = o.simPlans ?? (arm === "consent" && o.network?.plans !== false);
-  const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false });
+  const matchingEnabled = simulatedMatchingMode(true, o.network?.matchingEnabled === false) === "SimulationMatchingOpen";
+  const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false, matchingEnabled });
   const records: RunRecord[] = [];
   const w = new World({
     seed: o.seed, personas, days: o.days, start, writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
     ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}),
-    engine: consent ? undefined : wrapNycOnly(createEngine()), spawnFriend: friendFactory({ seed: o.seed }), onRecord: r => records.push(r),
+    engine: consent || !matchingEnabled ? undefined : wrapNycOnly(createEngine()), spawnFriend: friendFactory({ seed: o.seed }), onRecord: r => records.push(r),
   });
   await w.begin();
   await w.advanceTo(w.end);
@@ -132,16 +140,16 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
   // Invitations = proposal messages; yes = decisions to accept them.
   const invites = records.filter(r => r.type === "message" && r.msg.direction === "outbound" && r.msg.meta?.type === "proposal" && propIds.has(String(r.msg.meta?.proposalId)));
   const decisions = records.filter((r): r is Extract<RunRecord, { type: "decision" }> => r.type === "decision" && r.messageType === "proposal" && !!r.proposalId && propIds.has(r.proposalId));
-  const yesBy = new Map<string, Set<string>>(), noBy = new Map<string, Set<string>>();
+  const yesBy = new Map<string, Set<string>>();
   // A booked plan (the reveal with an opt-out) counts the member's own decision: silence is a yes,
   // a decliner who stays silent is still a no. Other invitations count the words they sent.
   const bookedMsgs = new Set(invites.filter(r => r.type === "message" && r.msg.meta?.booked).map(r => (r as Extract<RunRecord, { type: "message" }>).msg.id));
   for (const d of decisions) {
     const said = bookedMsgs.has(d.messageId) && d.decision && d.decision !== "none" ? d.decision : d.intent;
-    const m = said === "accept" || said === "counter" ? yesBy : said === "decline" || said === "booked_cancel" ? noBy : undefined;
-    if (!m) continue;
-    if (!m.has(d.proposalId!)) m.set(d.proposalId!, new Set());
-    m.get(d.proposalId!)!.add(d.memberId);
+    if (said !== "accept") continue;
+    const accepted = yesBy.get(d.proposalId!) ?? new Set<string>();
+    accepted.add(d.memberId);
+    yesBy.set(d.proposalId!, accepted);
   }
   const inviteYes = [...yesBy.values()].reduce((s, x) => s + x.size, 0);
   // A proposal is "all yes" when every invited participant accepted (groups: at least 3 and nobody declined... we count strict all-yes).
@@ -162,8 +170,12 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
   const compatible = props.filter(p => p.oracle.compatible).length;
   const unsafe = props.filter(p => p.oracle.unsafe).length;
   const adversarialIn = props.filter(p => p.proposal.participants.some(id => personas.get(id)?.hidden.adversarial)).length;
-  const proactive = records.filter(r => r.type === "message" && r.msg.direction === "outbound" && r.msg.meta?.proactive && r.msg.status === "delivered").length;
+  const proactive = records.filter(r => r.type === "message" && r.msg.direction === "outbound" && r.msg.meta?.proactive && confirmsProactiveDelivery(r.msg.status)).length;
   const joined = records.filter(r => r.type === "join").length;
+  const joinAt = new Map(records.filter((r): r is Extract<RunRecord, { type: "join" }> => r.type === "join").map(r => [r.memberId, r.t]));
+  const runStart = records.find(r => r.type === "run_start")?.t ?? 0;
+  const runEnd = w.clock.now();
+  const memberWeeks = [...joinAt.values()].reduce((sum, at) => sum + observedMembershipMs(runStart, runEnd, at), 0) / (7 * DAY);
   const initial = new Set(records.filter(r => r.type === "persona" && r.persona.joinDay <= 0).map(r => (r as any).persona.id));
   const newJoined = records.filter(r => r.type === "join" && !initial.has(r.memberId)).length;
   const optOuts = records.filter(r => r.type === "opt_out").length;
@@ -174,13 +186,11 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     proposalsAllYes: allYes, proposalAllYesRate: r3(allYes / Math.max(1, props.length)),
     meetingsHeld: held, meanEnjoyment: r3(enjSum / Math.max(1, enjN)), enjoyedShare: r3(enjoyed / Math.max(1, held)),
     precision: r3(compatible / Math.max(1, props.length)), unsafe, adversarialInProposals: adversarialIn,
-    proactivePerMemberWeek: r3(proactive / Math.max(1, joined) / (days / 7)), optOuts, newMembersJoined: newJoined,
+    proactivePerMemberWeek: memberWeeks > 0 ? r3(proactive / memberWeeks) : 0, optOuts, newMembersJoined: newJoined,
     judge: { invariants: 0, byRule: {}, canaryLeaks: 0, minorContacts: 0 }, scorecard: { worthwhile: 0, optIn: null, completion: 0, firstOutcome14d: 0 },
   };
   const jm = computeMetrics(records, consent ? { requireReview: true } : {});
   res.judge = { invariants: jm.invariants.total, byRule: jm.invariants.byRule, canaryLeaks: jm.privacy.canaryLeaks, minorContacts: jm.safety.minorContacts, examples: jm.invariants.examples };
-  const joinAt = new Map(records.filter((r): r is Extract<RunRecord, { type: "join" }> => r.type === "join").map(r => [r.memberId, r.t]));
-  const runStart = records.find(r => r.type === "run_start")?.t ?? 0;
   const firstGood = new Map<string, number>();
   for (const o of outcomes) for (const [id, a] of Object.entries(o.attendance)) if (a.showed && a.enjoyment >= 0.6 && !firstGood.has(id)) firstGood.set(id, o.at);
   const early = [...joinAt].filter(([, t]) => t - runStart <= 7 * DAY);
@@ -204,12 +214,14 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     const c = consent.counters;
     const fulfilled = consent.requests.filter(r => r.kind === "people" && r.outcome === "fulfilled");
     const hours = fulfilled.map(r => (r.fulfilledAt! - r.at) / 3_600_000).sort((a, b) => a - b);
+    const middle = Math.floor(hours.length / 2);
+    const lowerMiddle = Math.floor((hours.length - 1) / 2);
     const people = consent.requests.filter(r => r.kind === "people");
     res.scorecard.optIn = r3(c.probeYes / Math.max(1, c.probeYes + c.probeNo + c.probeExpired));
     Object.assign(res, {
       probes: c.probesSent, probeYesRate: res.scorecard.optIn,
       requests: people.length, requestFulfillRate: r3(fulfilled.length / Math.max(1, people.length)),
-      requestMedianHours: hours.length ? Math.round(hours[Math.floor(hours.length / 2)]!) : null,
+      requestMedianHours: hours.length ? Math.round((hours[lowerMiddle]! + hours[middle]!) / 2) : null,
       abuseHandled: c.abuse, holds: c.holds, invitesSent: c.invitesSent, gate: consent.gateReasons, counters: { ...c },
       falseFlags: records.filter(r => r.type === "network_log" && r.kind === "abuse" && !personas.get(String(r.detail.memberId))?.hidden.adversarial).length,
       falseRestricted: [...consent.trust.all()].filter(([id, t]) => t.level !== "ok" && !personas.get(id)?.hidden.adversarial && !t.events.some(e => e.kind === "block_abuse")).length,
@@ -271,17 +283,24 @@ if (import.meta.main) {
     "primed-met": { type: "string" }, "primed-partial": { type: "string" }, "primed-identity": { type: "string" }, "max-new": { type: "string" },
     plans: { type: "string", default: "on" }, "sim-plans": { type: "string" }, capital: { type: "boolean", default: false },
     paraphrase: { type: "boolean", default: false },
+    "matching-off": { type: "boolean", default: false },
   } });
+  const seed = simulationSeed(a.seed);
+  const selected = a.only === undefined ? EXPERIMENT_ARMS : a.only.split(",");
+  const knownArm = (name: string): name is ExperimentArm => EXPERIMENT_ARMS.some(arm => arm === name);
+  if (!selected.every(knownArm)) {
+    console.error(`unknown experiment arm: ${selected.filter(name => !knownArm(name)).map(name => name || "<empty>").join(", ")}; known: ${EXPERIMENT_ARMS.join(", ")}`);
+    process.exit(2);
+  }
   if (a["primed-met"]) PRIMED_MODEL.met = Number(a["primed-met"]);
   if (a["primed-partial"]) PRIMED_MODEL.partial = Number(a["primed-partial"]);
   if (a["primed-identity"]) PRIMED_MODEL.identity = Number(a["primed-identity"]);
-  const arms = (a.only ? a.only.split(",") : ["push_baseline", "push_v2", "consent"]) as ("push_baseline" | "push_v2" | "consent")[];
   const out: ArmResult[] = [];
-  for (const arm of arms) {
+  for (const arm of selected) {
     const t0 = performance.now();
-    const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}) };
+    const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}), ...(a["matching-off"] ? { matchingEnabled: false } : {}) };
     const r = await runArm(arm, {
-      days: Number(a.days), seed: Number(a.seed), liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
+      days: Number(a.days), seed, liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
       ...(a["sim-plans"] ? { simPlans: a["sim-plans"] === "on" } : {}),
     });
     out.push(r);

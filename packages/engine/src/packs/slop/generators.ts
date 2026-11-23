@@ -23,7 +23,7 @@ import { cellMiles, cellOfZip, ZIPS, type Cell } from "./zips.ts";
 export const SLOP_GENERATOR = "slop_reciprocal";
 
 const DATING: MemberCheck = { category: SLOP_LANE, role: "peer", format: "one_to_one", timeSensitive: false };
-const profilesOf = (w: World) => slopProfiles(w.input, w.canonical);
+const profilesOf = (w: World) => slopProfiles(w.input);
 
 /** The member probed first: the one with the live want (asked most recently), then the more responsive one. */
 export function firstOf(a: SlopProfile, b: SlopProfile, now: number): [SlopProfile, SlopProfile] {

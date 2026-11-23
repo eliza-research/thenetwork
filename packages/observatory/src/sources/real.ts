@@ -9,19 +9,23 @@
 // build a WorldSnapshot from the database and run engine-v1 on it in memory; proposals are shown as
 // ghosts and never written (PRD 34.6).
 import { SQL } from "../../../core/src/runtime/postgres.ts";
-import { consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
+import { heldMeetingMinimum, observatoryMeetingHeld, observatoryProposalCounts } from "../../../core/src/generated/observatoryRoster.ts";
+import { consoleBookingReceiptCurrent, consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
+import { confirmationWindowHours } from "../../../core/src/generated/meetingSettlement.ts";
 import {
   DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
 import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
+import { confirmedProactiveDeliveryStatuses } from "../../../core/src/generated/consolePanels.ts";
 import { runEngineSummarized } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
+import { ACCEPTED_PARTICIPATION_STATUSES, countsAsAcceptance } from "../projector.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
-import { emptyCounters, Store, zeroCounts } from "../store.ts";
+import { edgeId, emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
   BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, DeliveryReason, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
@@ -30,7 +34,9 @@ import type {
 import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
 import type { GatheringRequest } from "../gatherings.ts";
-import { Listeners, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
+import { staffSearchHitVisible } from "../../../core/src/generated/staffSearch.ts";
+import { staffHistoryHasEarlier, staffHistoryPageSize } from "../../../core/src/generated/staffHistory.ts";
+import { Listeners, searchPattern, snippet, type DataSource, type HistoryCursor, type ViewOptions } from "./source.ts";
 
 export interface RealOptions {
   url?: string;
@@ -52,17 +58,32 @@ export interface RealOptions {
   service?: ServiceConfig | false;
 }
 
-/** The booked plan's opt-out window (the Network's OPT_OUT_HOURS, which it does not export; game mode reads it from SimMeta.booked). */
-const BOOKED_OPT_OUT_HOURS = 48;
-const SAID_YES = ["accepted", "countered", "confirmed", "attended", "no_show", "cancelled_with_notice"];
 const HELD = ["COMPLETED", "FEEDBACK_COLLECTED"];
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
 export const HIDDEN_MESSAGE = "[member message hidden]";
 
 interface MessageEvidenceKey { id: string; member_id: string; direction: string; system: boolean; status: string }
+interface HistoryRow { id: string; history_at: string }
+type MessageHistoryRow = MessageEvidenceKey & HistoryRow;
+type EventHistoryRow = EventRow & HistoryRow;
+
+function historyPage<Row extends HistoryRow>(rows: Row[], membersEvents = false) {
+  const page = rows.slice(0, staffHistoryPageSize(membersEvents));
+  const oldest = page.at(-1);
+  const before = oldest && staffHistoryHasEarlier(rows.length, membersEvents)
+    ? Buffer.from(JSON.stringify([oldest.history_at, oldest.id])).toString("base64url") : undefined;
+  return { rows: page.reverse(), before };
+}
 interface DeliveryEvidence {
   app_id: AppId; member_id: string; message_id: string; status: string | null; reason: DeliveryReason | null;
   leak_stopped: boolean; staff_released: boolean; attempted: boolean;
+}
+interface BookingReceiptView {
+  app_id: AppId; opportunity_id: string; member_id: string; booking_at: Date; received_at: Date;
+}
+interface ParticipationRow {
+  opportunity_id: string; member_id: string; role: string; status: ParticipantStatus; enjoyment: number | null;
+  reviewed: boolean; approved: boolean; invalidated: boolean; published: boolean;
 }
 const guardLabel: Record<ConsoleDeliveryGuard, ObsMessage["guard"]> = {
   DeliveryGuardUnrecorded: undefined, DeliveryGuardBlocked: "blocked", DeliveryGuardReleased: "released", DeliveryGuardChecked: "passed",
@@ -301,18 +322,37 @@ export class RealSource implements DataSource {
     const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv] = await Promise.all([
       sql`select id, name, home_city, home_area, account_status, participation_state, opted_out, age, invited_by, community, occupation, joined_at from network.members where app_id = ${app}`,
       sql`select member_id, count(*) filter (where direction = 'inbound')::int as msgs_in, count(*) filter (where direction = 'outbound')::int as msgs_out,
-            count(*) filter (where direction = 'outbound' and proactive and status = 'delivered')::int as proactive
+            count(*) filter (where direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive
           from network.messages where app_id = ${app} and not system group by member_id`,
-      sql`select p.member_id, count(*)::int as proposals,
-            count(*) filter (where p.status = any(${`{${SAID_YES.join(",")}}`}::text[]))::int as accepted,
-            count(*) filter (where p.status = 'attended')::int as meetings,
-            coalesce(sum(p.enjoyment) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[])), 0)::float8 as enjoyment_sum,
-            count(*) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[]))::int as enjoyment_n
-          from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
+      sql`with held as (
+            select o.id from network.opportunities o
+            join network.participations a on a.app_id = o.app_id and a.opportunity_id = o.id
+            where o.app_id = ${app} and o.source <> 'shadow' and o.state = any(${`{${HELD.join(",")}}`}::text[])
+              and a.role = 'participant' and a.status = 'attended'
+            group by o.id having count(*) >= ${heldMeetingMinimum}
+          )
+          select p.member_id,
+            count(*) filter (where p.status = any(${`{${ACCEPTED_PARTICIPATION_STATUSES.join(",")}}`}::text[]))::int as accepted,
+            count(*) filter (where p.status = 'attended' and h.id is not null)::int as meetings,
+            coalesce(sum(p.enjoyment) filter (where p.status = 'attended' and h.id is not null), 0)::float8 as enjoyment_sum,
+            count(p.enjoyment) filter (where p.status = 'attended' and h.id is not null)::int as enjoyment_n
+          from network.participations p left join held h on h.id = p.opportunity_id
           where p.app_id = ${app} and p.role = 'participant' group by p.member_id`,
-      sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app}`,
+      sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app} order by from_id, to_id, type`,
       sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`,
-      sql`select opportunity_id, member_id, role, status, enjoyment::text::float8 as enjoyment from network.participations where app_id = ${app}`,
+      sql<ParticipationRow[]>`select p.opportunity_id,p.member_id,p.role,p.status,p.enjoyment::text::float8 as enjoyment,
+        rv.opportunity_id is not null as reviewed, coalesce(rv.decision='approve',false) as approved, rv.invalidated is not null as invalidated,
+        case when p.role='participant' and rv.decision='approve' and rv.invalidated is not null then exists (
+          select 1 from network.messages m
+          left join network.${sql(`outbound_evidence_${app}`)} e on e.app_id=m.app_id and e.member_id=m.member_id and e.message_id=m.id
+          where m.app_id=p.app_id and m.opportunity_id=p.opportunity_id and m.member_id=p.member_id
+            and m.direction='outbound' and not m.system and m.type in ('probe','plan_probe','proposal')
+            and (e.reason='accepted_by_provider' or e.status in ('delivered','read')
+              or (e.message_id is null and m.status='delivered'))
+        ) else false end as published
+        from network.participations p
+        left join network.review_items rv on rv.app_id=p.app_id and rv.opportunity_id=p.opportunity_id
+        where p.app_id=${app}`,
       sql`select summary from network.matching_runs where app_id = ${app} order by at desc, id desc limit 40`,
       // Only types the feed shows: probes and refusals would push everything else out of the last 300.
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${app} and type = any(${`{${FEED_TYPES.join(",")}}`}::text[]) order by at desc, id desc limit 300`,
@@ -320,7 +360,7 @@ export class RealSource implements DataSource {
             (select count(*) from network.messages where app_id = ${app} and not system)::int as messages,
             (select count(*) from network.messages where app_id = ${app} and not system and direction = 'inbound')::int as inbound,
             (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound')::int as outbound,
-            (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound' and proactive and status = 'delivered')::int as proactive,
+            (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive,
             (select count(*) from network.messages where app_id = ${app} and direction = 'outbound' and type = 'proposal')::int as invites,
             (select count(*) from network.opportunities where app_id = ${app} and meeting_at is not null)::int as meetings_scheduled,
             (select count(*) from network.events where app_id = ${app} and type = 'member_blocked')::int as blocks,
@@ -332,8 +372,8 @@ export class RealSource implements DataSource {
       sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at, origin, seconds_spent::text::float8 as seconds_spent, edits, rerolls, invalidated from network.review_items where app_id = ${app}`
         .catch(() => sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at from network.review_items where app_id = ${app}`).catch(() => []),
       this.ageInfo(sql),
-      // The booked plan: when it reached each member (the reveal), and who called it off.
-      sql`select opportunity_id, member_id, min(ts) as ts from network.messages where app_id = ${app} and direction = 'outbound' and type = 'proposal' and opportunity_id is not null group by 1, 2`,
+      sql.unsafe<BookingReceiptView[]>(`select app_id, opportunity_id, member_id, booking_at, received_at
+        from network.booking_receipts_${app} where app_id=$1`, [app]),
       // The time keys each member picked (the offered labels are in the message text only).
       sql`select at, type, payload from network.events where app_id = ${app} and type in ('probe_answer', 'time_answer', 'booked_cancelled') order by at, id`,
     ]);
@@ -347,6 +387,15 @@ export class RealSource implements DataSource {
 
     const msgBy = new Map(msgAgg.map((r: any) => [r.member_id, r]));
     const partBy = new Map(partAgg.map((r: any) => [r.member_id, r]));
+    const proposals = new Map<string, number>(), partsBy = new Map<string, ParticipationRow[]>();
+    for (const p of parts) {
+      const group = partsBy.get(p.opportunity_id) ?? [];
+      group.push(p);
+      partsBy.set(p.opportunity_id, group);
+      if (p.role === "participant" && observatoryProposalCounts(p.reviewed, p.approved, p.invalidated, p.published)) {
+        proposals.set(p.member_id, (proposals.get(p.member_id) ?? 0) + 1);
+      }
+    }
     this.recordAges = new Map((members as any[]).map(r => [r.id as string, r.age as number | null]));
     for (const r of members as any[]) {
       const mm = msgBy.get(r.id) as any, pp = partBy.get(r.id) as any;
@@ -364,21 +413,31 @@ export class RealSource implements DataSource {
         ...(opt?.calendar ? { calendar: true } : {}), ...(opt?.weekly ? { weekly: true } : {}),
         counters: {
           ...emptyCounters(), msgsIn: mm?.msgs_in ?? 0, msgsOut: mm?.msgs_out ?? 0, proactive: mm?.proactive ?? 0,
-          proposals: pp?.proposals ?? 0, accepted: pp?.accepted ?? 0, meetings: pp?.meetings ?? 0,
+          proposals: proposals.get(r.id) ?? 0, accepted: pp?.accepted ?? 0, meetings: pp?.meetings ?? 0,
           enjoymentSum: pp?.enjoyment_sum ?? 0, enjoymentN: pp?.enjoyment_n ?? 0,
         },
       };
       upsertIfChanged(s.members, m, x => s.upsertMember(x));
     }
+    const currentEdges = new Map<string, ObsEdge>();
     for (const r of edges as any[]) {
       if (!s.members.has(r.from_id) || !s.members.has(r.to_id)) continue;
-      const e = { from: r.from_id, to: r.to_id, type: r.type as EdgeType, strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: (r.explicit ? "graph" : "learned") as ObsEdge["origin"] };
-      s.addEdge(e);
+      const id = edgeId(r.type, r.from_id, r.to_id);
+      const edge: ObsEdge = { id, from: r.from_id, to: r.to_id, type: r.type as EdgeType,
+        strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: r.explicit ? "graph" : "learned" };
+      const prior = currentEdges.get(id);
+      if (!prior || edge.strength > prior.strength || (edge.strength === prior.strength && edge.createdAt > prior.createdAt)) {
+        currentEdges.set(id, edge);
+      }
     }
-    const partsBy = new Map<string, any[]>();
-    for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
-    const told = new Map<string, Record<string, number>>(), times = new Map<string, NonNullable<ObsOpportunity["times"]>>(), cancelled = new Map<string, BookedPlan["cancelled"]>();
-    for (const r of bookedMsgs as any[]) told.set(r.opportunity_id, { ...told.get(r.opportunity_id), [r.member_id]: ms(r.ts) ?? 0 });
+    s.replaceEdges(currentEdges);
+    const receipts = new Map<string, BookingReceiptView[]>();
+    for (const receipt of bookedMsgs) {
+      const group = receipts.get(receipt.opportunity_id) ?? [];
+      group.push(receipt);
+      receipts.set(receipt.opportunity_id, group);
+    }
+    const times = new Map<string, NonNullable<ObsOpportunity["times"]>>(), cancelled = new Map<string, BookedPlan["cancelled"]>();
     for (const e of picksEv as any[]) {
       const p = e.payload ?? {}, opp = p.oppId as string | undefined, id = p.memberId as string | undefined;
       if (!opp || !id) continue;
@@ -394,8 +453,8 @@ export class RealSource implements DataSource {
         explanations: Object.fromEntries(Object.entries(r.explanations ?? {}).map(([k, v]) => [k, scrubText(String(v), this.reveal)])),
         exploration: r.exploration, participants, alternates: ps.filter(p => p.role === "alternate").map(p => p.member_id),
         state: r.state, reason: r.reason ?? undefined,
-        status: Object.fromEntries(ps.filter(p => p.role === "participant").map(p => [p.member_id, p.status as ParticipantStatus])),
-        enjoyment: Object.fromEntries(ps.filter(p => p.enjoyment !== null && p.status === "attended").map(p => [p.member_id, p.enjoyment])),
+        status: Object.fromEntries(ps.filter(p => p.role === "participant").map(p => [p.member_id, p.status])),
+        enjoyment: Object.fromEntries(ps.flatMap(p => p.status === "attended" && p.enjoyment !== null ? [[p.member_id, p.enjoyment] as const] : [])),
         createdAt: ms(r.created_at) ?? 0, updatedAt: ms(r.updated_at) ?? 0, meetingAt: ms(r.meeting_at), runId: r.run_id ?? undefined,
       };
       const rv = reviewBy.get(r.id);
@@ -404,7 +463,16 @@ export class RealSource implements DataSource {
         o.origin = rv.origin ?? undefined;
       }
       if (times.has(r.id)) o.times = times.get(r.id);
-      if (o.meetingAt !== undefined && told.has(r.id)) o.booked = { at: o.meetingAt, optOutHours: BOOKED_OPT_OUT_HOURS, told: told.get(r.id)!, cancelled: cancelled.get(r.id) ?? {} };
+      const told: BookedPlan["told"] = {};
+      for (const receipt of receipts.get(o.id) ?? []) {
+        const receivedAt = ms(receipt.received_at) ?? -1;
+        if (consoleBookingReceiptCurrent(receipt.app_id === app && ms(receipt.booking_at) === o.meetingAt,
+          o.participants.includes(receipt.member_id), true, receivedAt, s.clock.now)) told[receipt.member_id] = receivedAt;
+      }
+      const calledOff = cancelled.get(o.id);
+      if (o.meetingAt !== undefined && (Object.keys(told).length || calledOff)) {
+        o.booked = { at: o.meetingAt, optOutHours: confirmationWindowHours, told, cancelled: calledOff ?? {} };
+      }
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
     }
     const dbRuns = (runs as any[]).map(r => r.summary as EngineRunSummary).reverse();
@@ -417,11 +485,11 @@ export class RealSource implements DataSource {
     c.meetingsScheduled = t.meetings_scheduled; c.blocks = t.blocks; c.adversarialAttempts = t.adversarial; c.invariantViolations = t.invariants;
     for (const o of s.opps.values()) {
       if (o.source === "shadow") continue;
-      const held = HELD.includes(o.state);
+      const held = HELD.includes(o.state) && observatoryMeetingHeld(o.participants.filter(id => o.status[id] === "attended").length);
       if (held) c.meetingsHeld++;
       for (const id of o.participants) {
         const st = o.status[id];
-        if (st && SAID_YES.includes(st)) c.accepts++;
+        if (countsAsAcceptance(st)) c.accepts++;
         if (st === "declined") c.declines++;
         if (st === "attended") { c.attended++; if (held && o.enjoyment[id] !== undefined) { c.enjoymentSum += o.enjoyment[id]!; c.enjoymentN++; } }
         if (st === "no_show") c.noShows++;
@@ -506,7 +574,7 @@ export class RealSource implements DataSource {
       sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system`,
       sql`select type, payload->>'reason' as reason, count(*)::int as n from network.events where app_id = ${app} and at >= ${since} and type in ('send_refused', 'guard_blocked') group by 1, 2`,
       sql`select type, actor_id, at, payload->>'from' as inviter, payload->>'newMemberId' as invitee, payload->>'rule' as rule from network.events
-          where app_id = ${app} and type in ('member_opted_out', 'invite', 'growth_ask', 'invariant_violation')`,
+          where app_id = ${app} and type in ('invite', 'growth_ask', 'invariant_violation')`,
       // Messages about an opportunity that went out (or would have, dry-run): not refused, held or blocked.
       // Every message that went out (or would have, dry-run): not refused, held or blocked. The text is read
       // here only to apply the judge's connection-offer rule; it never leaves this function.
@@ -571,15 +639,13 @@ export class RealSource implements DataSource {
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
     // Scorecard and growth.
-    const optOutAt = new Map<string, number>();
-    for (const e of all) if (e.type === "member_opted_out" && e.actor_id) optOutAt.set(e.actor_id, ms(e.at) ?? 0);
     const inviteRows = all.filter(e => e.type === "invite");
     const inviters = new Set(inviteRows.map(e => e.inviter).filter(Boolean)).size;
     const invitees = new Set<string>(inviteRows.length ? inviteRows.map(e => e.invitee).filter(Boolean) : [...s.members.values()].filter(m => m.invitedBy).map(m => m.id));
     const members = [...s.members.values()];
     const messages: MsgMeta[] = (msgs as any[]).map(m => ({ memberId: m.member_id, ts: ms(m.ts) ?? 0, direction: m.direction, proactive: m.proactive, status: m.status }));
     const card = scorecard({
-      now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
+      now, start: this.store.clock.start, members, opps, messages, requests, invites: s.counts.invites, accepts: s.counts.accepts,
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
       inviters, minorContacts, leaks, worthwhileAnswers: survey[0] ?? { yes: 0, total: 0 },
     });
@@ -626,14 +692,14 @@ export class RealSource implements DataSource {
     if (!m || !this.sql) return undefined;
     const sql = this.sql;
     const rv = this.reveal || !!opts.reveal;
-    const [prof, facets, intents, presence, msgs] = await Promise.all([
+    const [prof, facets, intents, presence, messages] = await Promise.all([
       sql`select name, bio, occupation, home_area from network.members where app_id = ${this.app} and id = ${id}`,
       sql`select * from network.facets where app_id = ${this.app} and member_id = ${id} order by kind, id`,
       sql`select * from network.intents where app_id = ${this.app} and member_id = ${id} order by created_at`,
       sql`select * from network.presence where app_id = ${this.app} and member_id = ${id}`,
-      this.messages(id, rv),
+      this.messages(id, rv, "member", opts.historyBefore?.messages),
     ]);
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
+    const evidence = await this.deliveryEvidence(messages.rows);
     const p = (prof as any[])[0] ?? {};
     return {
       member: rv && p.name ? { ...m, name: p.name } : m,
@@ -644,17 +710,21 @@ export class RealSource implements DataSource {
       presence: (presence as any[]).map(presenceOf),
       edges: [...this.store.edges.values()].filter(e => e.from === id || e.to === id),
       opportunities: [...this.store.opps.values()].filter(o => o.participants.includes(id)).sort((a, b) => b.createdAt - a.createdAt),
-      messages: (msgs as any[]).map(r => this.messageOf(r, rv, evidence.get(r.id))),
+      messages: messages.rows.map(r => this.messageOf(r, rv, evidence.get(r.id))),
+      ...(messages.before ? { historyBefore: { messages: messages.before } } : {}),
     };
   }
 
   /** A member's messages. Unless revealed, inbound bodies are not selected at all (only their length). */
-  private messages(id: string, rv: boolean) {
+  private async messages(id: string, rv: boolean, scope: "member" | "opportunity", before?: HistoryCursor) {
     const sql = this.sql!;
-    return rv
-      ? sql`select id, member_id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`
-      : sql`select id, member_id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
-            from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`;
+    return historyPage(await sql<MessageHistoryRow[]>`select id, member_id, ts, direction, status, type, opportunity_id, proactive, system,
+      to_char(ts at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as history_at,
+      ${rv ? sql`body` : sql`case when direction = 'inbound' then null else body end as body, length(body)::int as body_len`}
+      from network.messages where app_id = ${this.app}
+      and ${scope === "member" ? sql`member_id = ${id}` : sql`opportunity_id = ${id}`}
+      ${before ? sql`and (ts, id) < (${before.at}::timestamptz, ${before.id})` : sql``}
+      order by ts desc, id desc limit ${staffHistoryPageSize(false) + 1}`);
   }
 
   /** Reads only the app's shaped evidence, including when the queue has advanced past the message projection. */
@@ -674,21 +744,25 @@ export class RealSource implements DataSource {
     const rv = this.reveal || !!opts.reveal;
     const theirs = new Set([...this.store.opps.values()].filter(o => o.source !== "shadow" && o.participants.includes(id)).map(o => o.id));
     // Include every member reference that onTimeline may use, including members replaced in earlier rosters.
-    const [msgs, events, pending] = await Promise.all([
-      this.messages(id, rv),
-      sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
+    const before = opts.historyBefore?.events;
+    const [messages, rows, pending] = await Promise.all([
+      this.messages(id, rv, "member", opts.historyBefore?.messages),
+      sql<EventHistoryRow[]>`select id::text as id, at, actor_type, actor_id, type, object_type, object_id, payload,
+          to_char(at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as history_at from network.events
           where app_id = ${this.app} and (actor_id = ${id} or object_id = ${id}
              or ${id} in (payload->>'memberId', payload->>'from', payload->>'newMemberId', payload->>'out', payload->>'in', payload->>'target', payload->>'by')
              or payload->'participants' ? ${id} or payload->'members' ? ${id} or payload->'attendance' ? ${id}
-             or (object_type = 'opportunity' and object_id = any(${`{${[...theirs].map(x => `"${x.replace(/"/g, "")}"`).join(",")}}`}::text[])))
-          order by at, id limit 5000`,
+             or (object_type = 'opportunity' and object_id = any(${sql.array([...theirs], "text")})))
+          ${before ? sql`and (at, network.events.id) < (${before.at}::timestamptz, ${before.id}::bigint)` : sql``}
+          order by at desc, network.events.id desc limit ${staffHistoryPageSize(true) + 1}`,
       this.stateRow("deferred_sends").then(rows => rows.map(r => ({ d: (typeof r.deferred_sends === "string" ? JSON.parse(r.deferred_sends) : r.deferred_sends ?? []).filter((x: any) => x?.memberId === id) }))),
     ]);
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
+    const events = historyPage(rows, true);
+    const evidence = await this.deliveryEvidence(messages.rows);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     const entries: TimelineEntry[] = [
-      ...(msgs as any[]).map((r): TimelineEntry => { const message = this.messageOf(r, rv, evidence.get(r.id)); return { t: message.ts, kind: "message", message }; }),
-      ...(events as any[]).filter(e => onTimeline(e as EventRow, id, theirs)).map((e): TimelineEntry => ({ t: ms(e.at) ?? 0, kind: "event", event: describe(e as EventRow, name) })),
+      ...messages.rows.map((r): TimelineEntry => { const message = this.messageOf(r, rv, evidence.get(r.id)); return { t: message.ts, kind: "message", message }; }),
+      ...events.rows.filter(e => onTimeline(e, id, theirs)).map((e): TimelineEntry => ({ t: ms(e.at as Date | string) ?? 0, kind: "event", event: describe(e, name) })),
     ];
     // Stable: at the same instant, what the system did comes before the message it sent.
     entries.sort((a, b) => a.t - b.t || (a.kind === b.kind ? 0 : a.kind === "event" ? -1 : 1));
@@ -696,6 +770,7 @@ export class RealSource implements DataSource {
     const list = (typeof d === "string" ? JSON.parse(d) : d) ?? [];
     return {
       memberId: id, entries,
+      ...(messages.before || events.before ? { historyBefore: { messages: messages.before, events: events.before } } : {}),
       pending: (list as any[]).map(x => ({ kind: String(x.kind), ...(x.type ? { type: x.type } : {}), ...(x.proposalId ? { opportunityId: x.proposalId } : {}) })),
     };
   }
@@ -725,23 +800,28 @@ export class RealSource implements DataSource {
     };
   }
 
-  async opportunity(id: string): Promise<OpportunityDetail | undefined> {
+  async opportunity(id: string, opts: ViewOptions = {}): Promise<OpportunityDetail | undefined> {
     const o = this.store.opps.get(id);
     if (!o) return undefined;
     const sql = o.source !== "shadow" ? this.sql : undefined;
-    const msgs = !sql ? [] : this.reveal
-      ? await sql`select id, member_id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and opportunity_id = ${id} order by ts, id`
-      : await sql`select id, member_id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
-                  from network.messages where app_id = ${this.app} and opportunity_id = ${id} order by ts, id`;
-    const events = !sql ? [] : await sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
-      where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id} order by at, id limit 2000`;
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
+    const before = opts.historyBefore?.events;
+    const [messages, rows] = sql ? await Promise.all([
+      this.messages(id, this.reveal, "opportunity", opts.historyBefore?.messages),
+      sql<EventHistoryRow[]>`select id::text as id, at, actor_type, actor_id, type, object_type, object_id, payload,
+        to_char(at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as history_at from network.events
+        where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id}
+        ${before ? sql`and (at, network.events.id) < (${before.at}::timestamptz, ${before.id}::bigint)` : sql``}
+        order by at desc, network.events.id desc limit ${staffHistoryPageSize(false) + 1}`,
+    ]) : [{ rows: [] as MessageHistoryRow[], before: undefined }, []];
+    const events = historyPage(rows);
+    const evidence = await this.deliveryEvidence(messages.rows);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     return {
       opportunity: o, members: o.participants.map(x => this.store.member(x)!).filter(Boolean),
-      messages: (msgs as any[]).map(r => ({ ...this.messageOf(r, this.reveal, evidence.get(r.id)), memberId: r.member_id })),
+      messages: messages.rows.map(r => ({ ...this.messageOf(r, this.reveal, evidence.get(r.id)), memberId: r.member_id })),
       run: o.runId ? this.store.runs.find(r => r.id === o.runId) : undefined,
-      events: (events as any[]).map(e => describe(e as EventRow, name)),
+      events: events.rows.map(e => describe(e, name)),
+      ...(messages.before || events.before ? { historyBefore: { messages: messages.before, events: events.before } } : {}),
     };
   }
 
@@ -868,32 +948,68 @@ export class RealSource implements DataSource {
   /** Outbound agent messages (scrubbed unless revealed) and system events. Never what a member wrote. */
   async search(q: string, limit = 100): Promise<SearchHit[]> {
     const sql = this.sql;
-    if (!sql) return [];
+    if (!sql || limit <= 0) return [];
     const re = searchPattern(q);
     const like = `%${q.trim().replace(/[\\%_]/g, x => `\\${x}`)}%`;
-    const [msgs, events] = await Promise.all([
-      sql`select id, member_id, ts, direction, status, system, body, type, opportunity_id
-        from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like} order by ts desc limit ${limit}`,
-      // Feedback events hold what a member wrote: never searched.
-      sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${this.app} and type <> 'feedback_given' order by at desc, id desc limit 5000`,
+    const batch = Math.max(100, Math.min(limit, 250));
+    const name = (id: string) => this.store.member(id)?.name ?? id;
+    type Cursor = { id: string; cursor_at: string };
+    type MessageRow = MessageEvidenceKey & Cursor & { ts: Date; body: string; type: string | null; opportunity_id: string | null };
+
+    // Read bounded pages in database order. Apply the result limit after the visibility and scrub checks.
+    const collect = async <Row extends Cursor>(
+      page: (before?: Cursor) => Promise<Row[]>,
+      project: (rows: Row[]) => SearchHit[] | Promise<SearchHit[]>,
+    ): Promise<SearchHit[]> => {
+      const hits: SearchHit[] = [];
+      let before: Cursor | undefined;
+      while (hits.length < limit) {
+        const rows = await page(before);
+        hits.push(...await project(rows));
+        if (rows.length < batch) break;
+        before = rows.at(-1);
+      }
+      return hits.slice(0, limit);
+    };
+    const [messages, events] = await Promise.all([
+      collect(
+        before => sql<MessageRow[]>`select id, member_id, ts, ts::text as cursor_at, direction, status, system, body, type, opportunity_id
+          from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like}
+          ${before ? sql`and (ts, id) < (${before.cursor_at}::timestamptz, ${before.id})` : sql``}
+          order by ts desc, id desc limit ${batch}`,
+        async rows => {
+          const evidence = await this.deliveryEvidence(rows);
+          const hits: SearchHit[] = [];
+          for (const row of rows) {
+            const readable = !deliveryOf(this.app, row, evidence.get(row.id)).withheld;
+            if (!readable || !this.store.members.has(row.member_id)) continue;
+            const rendered = scrubText(row.body, this.reveal);
+            if (!staffSearchHitVisible(readable, re.test(rendered))) continue;
+            hits.push({ memberId: row.member_id, memberName: name(row.member_id), t: ms(row.ts) ?? 0,
+              kind: "message", snippet: snippet(rendered, re), ...(row.type ? { type: row.type } : {}),
+              ...(row.opportunity_id ? { opportunityId: row.opportunity_id } : {}) });
+          }
+          return hits;
+        },
+      ),
+      collect(
+        before => sql<(EventRow & Cursor)[]>`select e.id::text as id, e.at, e.at::text as cursor_at, e.actor_type, e.actor_id, e.type, e.object_type, e.object_id, e.payload
+          from network.events e where e.app_id = ${this.app} and e.type <> 'feedback_given'
+          ${before ? sql`and (e.at, e.id) < (${before.cursor_at}::timestamptz, ${before.id}::bigint)` : sql``}
+          order by e.at desc, e.id desc limit ${batch}`,
+        rows => {
+          const hits: SearchHit[] = [];
+          for (const row of rows) {
+            const d = describe(row, name);
+            if (!d.memberId || !staffSearchHitVisible(this.store.members.has(d.memberId), re.test(d.text) || re.test(d.type))) continue;
+            hits.push({ memberId: d.memberId, memberName: name(d.memberId), t: d.t, kind: "event", snippet: d.text,
+              type: d.type, ...(d.opportunityId ? { opportunityId: d.opportunityId } : {}) });
+          }
+          return hits;
+        },
+      ),
     ]);
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
-    const name = (x: string) => this.store.member(x)?.name ?? x;
-    const hits: SearchHit[] = [];
-    for (const r of msgs as any[]) {
-      if (!this.store.members.has(r.member_id) || deliveryOf(this.app, r, evidence.get(r.id)).withheld) continue;
-      const text = scrubText(r.body, this.reveal);
-      // The match must survive scrubbing: a phone number or email is not findable by searching for it.
-      if (!re.test(text)) continue;
-      hits.push({ memberId: r.member_id, memberName: name(r.member_id), t: ms(r.ts) ?? 0, kind: "message", snippet: snippet(text, re), ...(r.type ? { type: r.type } : {}), ...(r.opportunity_id ? { opportunityId: r.opportunity_id } : {}) });
-    }
-    for (const e of events as any[]) {
-      if (hits.length >= limit * 2) break;
-      const d = describe(e as EventRow, name);
-      if (!d.memberId || !this.store.members.has(d.memberId) || !(re.test(d.text) || re.test(d.type))) continue;
-      hits.push({ memberId: d.memberId, memberName: name(d.memberId), t: d.t, kind: "event", snippet: d.text, type: d.type, ...(d.opportunityId ? { opportunityId: d.opportunityId } : {}) });
-    }
-    return hits.sort((a, b) => b.t - a.t).slice(0, limit);
+    return [...messages, ...events].sort((a, b) => b.t - a.t).slice(0, limit);
   }
 
   // ------------------------------------------------------------------ controls

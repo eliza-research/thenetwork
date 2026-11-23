@@ -3,15 +3,17 @@
 // whose pairs all have a searched pair value. ORDER IS PART OF THE CONTRACT: the run log's
 // funnel.byGenerator serializes in this order, and network_growth consumes the intents that the
 // earlier generators left unmatched.
-import { needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
+import { boundedHelperCanRank, needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
+import { welcomePairMayRank } from "../../../../core/src/generated/currentPairRestrictions.ts";
 import { laneLimits, laneOffered, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../../../core/src/generated/pairValue.ts";
-import { recentRepeatSource, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
+import { directIntentKeepsHobby } from "../../../../core/src/generated/networkIntentLane.ts";
+import { recentRepeatSource, repeatEventMayAnchor, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import type { GeneratorName } from "../../config.ts";
-import { isHomeEntry, isMinor, memberReason } from "../../filters.ts";
+import { isHomeEntry, isMinor, memberReason, pairReason } from "../../filters.ts";
 import {
   circleCandidate, eventMembers, eventRiskText, label, makeCandidate, pairCandidate, searchFor, warmPathValue, type GenCtx, type MatchedFields,
 } from "../../genkit.ts";
@@ -129,7 +131,9 @@ function anchoredPairs(ctx: GenCtx): AnchoredRun {
 function anchoredCandidate(w: World, pair: AnchoredPair, rest: Pick<MatchedFields, "kind" | "generator" | "channels" | "via" | "warm">, prefix: string): Candidate {
   const { profile, partner, value, intent, offer, cofounderIntents } = pair;
   const a = profile.memberId, b = partner.memberId;
-  const category = laneCategory(profile.lane);
+  // spec/networkIntentLane.md, "A direct introduction keeps its hobby purpose"
+  const hobby = directIntentKeepsHobby(rest.generator === "intent_to_capability", profile.lane === "Friend", intent.category === "hobby");
+  const category = hobby ? "hobby" : laneCategory(profile.lane);
   return pairCandidate(w, profile, partner, value, {
     ...rest, category, roles: { [a]: roleOf(profile), [b]: roleOf(partner) }, format: "one_to_one",
     objective: cofounderIntents ? "Meet a potential cofounder" : `${prefix}: ${label(offer) ?? CATEGORY_LABEL[category]}`,
@@ -246,7 +250,8 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
           const id = profile.memberId;
           const covered = coverage(want.seeks, memberTags(w, id).offers);
           if ((want.seeks.length > 0 && covered === 0) || !w.get(id)?.m.prefs.formats.includes(format)
-            || memberReason(w, id, { category: "help", role: "helper", format, timeSensitive: false })) return [];
+            || !boundedHelperCanRank(memberReason(w, id, { category: "help", role: "helper", format, timeSensitive: false }) === null,
+              w.canMeet([a, id]))) return [];
           const acquainted = w.edgeHas(a, id, "met") || w.edgeHas(a, id, "knows") || w.edgeHas(a, id, "helped");
           return [{ profile, value, covered, acquainted, offer: coveringOffer(w, id, want.seeks) }];
         }).sort((x, y) => y.covered - x.covered || Number(home && y.acquainted) - Number(home && x.acquainted)
@@ -254,7 +259,8 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
       };
       let need = helpersNeeded(text);
       let ranked = rankHelpers(need > 1 ? "small_group" : "one_to_one");
-      if (needsSecondHomeHelper(home, need, ranked[0]?.acquainted === true)) {
+      if (home && need === 1) ranked = ranked.filter(helper => helper.acquainted);
+      if (needsSecondHomeHelper(home, need, ranked.length > 0)) {
         need = 2;
         ranked = rankHelpers("small_group");
       }
@@ -263,7 +269,9 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
       const floor = groupPairFloor(asker.lane, need + 1);
       ranked = ranked.filter(h => h.value >= floor);
       if (ranked.length < need) { ctx.unmatchedIntents.add(intent.id); continue; }
-      const fits = (helpers: readonly Helper[], h: Helper) => helpers.every(g => searchedValue(ctx, g.profile, h.profile) >= floor);
+      const fits = (helpers: readonly Helper[], h: Helper) =>
+        helpers.every(g => searchedValue(ctx, g.profile, h.profile) >= floor)
+        && w.canMeet([a, ...helpers.map(g => g.profile.memberId), h.profile.memberId]);
       // Up to three helper-set variants so one busy helper does not sink the whole request.
       const seenSets = new Set<string>();
       let proposed = false;
@@ -273,7 +281,7 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
           if (helpers.length >= need) break;
           if (fits(helpers, h)) helpers.push(h);
         }
-        if (helpers.length < need) break;
+        if (helpers.length < need) continue;
         const setKey = helpers.map(h => h.profile.memberId).sort().join(",");
         if (seenSets.has(setKey)) continue;
         seenSets.add(setKey);
@@ -384,16 +392,25 @@ export function secondEncounter(ctx: GenCtx): Candidate[] {
     if (!wantsRepeat(a, b, r.id) || !wantsRepeat(b, a, r.id)) continue;
     const ma = w.get(a), mb = w.get(b);
     const pair = bestLanePair(ctx, a, b);
-    if (!ma || !mb || !pair) continue;
+    if (!ma || !mb || !pair || !w.canMeet([a, b])) continue;
+    const matchesFormat = (category: Category, format: Format) =>
+      ma.m.prefs.formats.includes(format) && mb.m.prefs.formats.includes(format)
+      && pairReason(w, a, b, category, pair.a.lane) === null
+      && memberReason(w, a, { category, role: "peer", format, timeSensitive: false }) === null
+      && memberReason(w, b, { category, role: "peer", format, timeSensitive: false }) === null;
     // Next context: the upcoming event with the most shared interests (earliest first on a tie).
     const theirs = memberTags(w, b).interests;
     const hits = new Map<NetworkEvent, number>();
     for (const tag of memberTags(w, a).interests) if (theirs.has(tag)) for (const ev of eventsByTag.get(tag) ?? []) hits.set(ev, (hits.get(ev) ?? 0) + 1);
-    const event = [...hits].sort((x, y) => y[1] - x[1] || x[0].start - y[0].start || compareText(x[0].id, y[0].id))[0]?.[0];
+    const event = [...hits].sort((x, y) => y[1] - x[1] || x[0].start - y[0].start || compareText(x[0].id, y[0].id))
+      .find(([ev]) => {
+        const overlap = w.overlap([a, b], ev.start, ev.end, ev.city);
+        const covers = overlap?.city === ev.city && overlap.intervals.some(([start, end]) => start <= ev.start && end >= ev.end);
+        return repeatEventMayAnchor(matchesFormat(ev.category, "event"), covers);
+      })?.[0];
     const category: Category = event?.category ?? laneCategory(pair.a.lane);
     const format: Format = event ? "event" : "one_to_one";
-    if (memberReason(w, a, { category, role: "peer", format, timeSensitive: false })
-      || memberReason(w, b, { category, role: "peer", format, timeSensitive: false })) continue;
+    if (!event && !matchesFormat(category, format)) continue;
     const shared = ma.share.find(f => f.tags.some(t => mb.share.some(g => g.tags.includes(t))));
     out.push(pairCandidate(w, pair.a, pair.b, pair.value, {
       kind: "second_encounter", generator: "second_encounter", category,
@@ -428,7 +445,8 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
     if (!profile) continue;
     const others = searchFor(ctx, profile).kept.map(k => k.profile).filter(p => {
       const mi = w.get(p.memberId);
-      return !!mi && !mi.newcomer && (mi.m.state === "open" || mi.m.state === "normal");
+      return !!mi && !mi.newcomer && (mi.m.state === "open" || mi.m.state === "normal")
+        && welcomePairMayRank(pairReason(w, n, p.memberId, category, WELCOME_LANE) === null, w.canMeet([n, p.memberId]));
     });
     const floor = laneLimits(WELCOME_LANE).circlePairFloor;
     const host = others.find(p => w.get(p.memberId)?.isHost && searchedValue(ctx, profile, p) >= floor
@@ -437,7 +455,8 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
     const group = [profile, host];
     for (const p of others) {
       if (group.length >= WELCOME_MAX) break;
-      if (p !== host && group.every(g => searchedValue(ctx, g, p) >= floor)) group.push(p);
+      if (p !== host && group.every(g => searchedValue(ctx, g, p) >= floor)
+        && w.canMeet([...group.map(member => member.memberId), p.memberId])) group.push(p);
     }
     const circle = group.length >= WELCOME_MIN ? circleOf(ctx, WELCOME_LANE, group) : undefined;
     if (!circle) continue;

@@ -32,6 +32,19 @@ export function lawNetworkIntentDefaultsOnlyWithNoSpecificRoute(professional: bo
   return networkIntentRoute(true, "NoRoute", professional) === (professional ? "IntroRoute" : "FriendRoute");
 }
 
+/** Story: Use my request as the purpose of the introduction / A direct introduction keeps its hobby purpose (spec/networkIntentLane.md) */
+//@ pure
+export function directIntentKeepsHobby(direct: boolean, friendLane: boolean, hobbyIntent: boolean): boolean {
+  return direct && friendLane && hobbyIntent;
+}
+
+/** Story: Use my request as the purpose of the introduction / A direct introduction keeps its hobby purpose (spec/networkIntentLane.md) */
+//@ pure
+export function lawKeepsHobbyOnlyForDirectFriendIntent(direct: boolean, friendLane: boolean, hobbyIntent: boolean): boolean {
+  //@ ensures \result === true
+  return directIntentKeepsHobby(direct, friendLane, hobbyIntent) === (direct && friendLane && hobbyIntent);
+}
+
 /** Story: Use my request as the purpose of the introduction / Each cofounder peer explicitly opts in under their app account (spec/networkIntentLane.md) */
 //@ pure
 export function cofounderPeersOptedIn(firstIntentLive: boolean, secondIntentLive: boolean): boolean {

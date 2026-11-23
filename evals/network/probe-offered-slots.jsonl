@@ -33,6 +33,24 @@
 {"text": "Evenings work", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
 {"text": "Yes, evenings are pretty open", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
 {"text": "Evening", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
+{"text":"Saturday was great.","answer":"unclear","keys":[]}
+{"text":"Sat was great.","answer":"unclear","keys":[]}
+{"text":"Yes, last Saturday was great.","answer":"unclear","keys":[]}
+{"text":"I was free Saturday.","answer":"unclear","keys":[]}
+{"text":"The first one was great.","answer":"unclear","keys":[]}
+{"text":"Last Saturday was great, Sunday works.","answer":"yes","keys":["c"]}
+{"text":"Saturday was great, neither works.","answer":"yes","keys":[]}
+{"text":"Saturday was great, no thanks.","answer":"no","keys":[]}
+{"text":"Saturday would be great.","answer":"yes","keys":["b"]}
+{"text":"If Saturday was great, Sunday works.","answer":"unclear","keys":[]}
+{"text":"Last Saturday was great and Sunday works.","answer":"yes","keys":["c"]}
+{"text":"Sunday works and last Saturday was great.","answer":"yes","keys":["c"]}
+{"text":"Saturday and Sunday were great.","answer":"unclear","keys":[]}
+{"text":"Last Saturday was great and Sunday works?","answer":"unclear","keys":[]}
+{"text":"Last Saturday was great and Sunday works for them.","answer":"unclear","keys":[]}
+{"text":"Last Saturday was great, except Sunday.","answer":"unclear","keys":[]}
+{"text":"Last Saturday was great, anything except Sunday.","answer":"yes","keys":["a","b"]}
+{"text":"Last Saturday was great and neither works.","answer":"yes","keys":[]}
 {"text":"both Saturday and Sunday","answer":"yes","keys":["b","c"]}
 {"text":"Saturday and Sunday both work","answer":"yes","keys":["b","c"]}
 {"text":"both Sat and Sun","answer":"yes","keys":["b","c"]}

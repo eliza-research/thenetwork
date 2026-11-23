@@ -3,10 +3,12 @@
 // not by transcript vibes. pass^k: a scenario passes only if it passes on k seeds.
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { DAY, MINUTE, type City, type OpportunityKind, type Proposal } from "@thenetwork/core";
-import type { RunRecord } from "@thenetwork/core";
+import type { LoggedMessage, MemberId, RunRecord, SimMeta } from "@thenetwork/core";
+import { observatoryMeetingHeld } from "../../core/src/generated/observatoryRoster.ts";
 import type { Metrics } from "./judge/metrics.ts";
 import { generatePersonas } from "./generator.ts";
 import type { AdversarialKind, Archetype, Persona, Responsiveness, Trip } from "./persona.ts";
+import { simulatedNameMatcher } from "./simulated-names.ts";
 import { desireById } from "./taxonomy.ts";
 import { nextLocalHour } from "./time.ts";
 import { DEFAULT_START, runWorld, type WorldAction, type WorldOptions, type WorldResult } from "./world.ts";
@@ -71,6 +73,7 @@ export interface Scenario {
 export interface ExpectationResult { expectation: Expectation; status: "pass" | "fail" | "skipped"; detail: string }
 /** `vacuous`: every expectation was skipped for this network, so nothing was checked and the run does not pass. */
 export interface ScenarioResult { name: string; seed: number; pass: boolean; vacuous: boolean; results: ExpectationResult[]; world: WorldResult }
+type MeetingOutcome = Extract<RunRecord, { type: "outcome" }>;
 
 export async function loadScenario(path: string): Promise<Scenario> {
   return (await fileAt(path).json()) as Scenario;
@@ -115,8 +118,8 @@ function buildScriptedPersona(spec: ScenarioPersonaSpec, seed: number): Persona 
 
 export interface ScenarioRunOptions {
   seed?: number;
-  /** Factory for the network under test; receives the scenario (e.g. to read `stub` options). */
-  network: (s: Scenario) => NetworkUnderTest;
+  /** Factory for the network under test, using the scenario options and effective seed. */
+  network: (s: Scenario, seed: number) => NetworkUnderTest;
   engine?: Engine;
   agent?: PersonaAgent;
   writeLog?: boolean;
@@ -132,7 +135,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
   const personas = [...scripted, ...background];
   const cityOf = (ref: string) => scripted.find(p => p.id === ref)?.homeCity ?? "sf";
   const actions: WorldOptions["actions"] = [];
-  for (const spec of s.personas) if (spec.join) actions.push({ at: resolveAt(spec.join, start, spec.city ?? "sf"), action: { do: "join", persona: spec.ref } });
+  for (const spec of s.personas) if (spec.join) actions.push({ at: resolveAt(spec.join, start, cityOf(spec.ref)), action: { do: "join", persona: spec.ref } });
   for (const a of s.actions) {
     let action: WorldAction;
     if (a.do === "propose") {
@@ -152,7 +155,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
     actions.push({ at: resolveAt(a.at, start, cityOf(a.persona)), action });
   }
   return {
-    seed, personas, days: s.days, start, network: o.network(s), engine: o.engine, agent: o.agent, actions,
+    seed, personas, days: s.days, start, network: o.network(s, seed), engine: o.engine, agent: o.agent, actions,
     writeLog: o.writeLog ?? false, runsDir: o.runsDir, runId: `scenario-${s.name}-s${seed}`,
   };
 }
@@ -169,6 +172,31 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
   const start = DEFAULT_START;
   const tag = [networkName, ...(engineName ? ["engine", engineName] : [])];
   const msgs = recs.filter((r): r is Extract<RunRecord, { type: "message" }> => r.type === "message").map(r => r.msg);
+  const personas = new Map(w.personas.map(persona => [persona.id, { id: persona.id, name: persona.name }]));
+  const rosters = new Map<string, { at: number; participants: readonly MemberId[]; alternates?: readonly MemberId[] }[]>();
+  for (const record of recs) {
+    if (record.type === "persona") personas.set(record.persona.id, record.persona);
+    if (record.type !== "proposal" && record.type !== "meeting_scheduled") continue;
+    const id = record.type === "proposal" ? record.proposal.id : record.proposalId;
+    const participants = record.type === "proposal" ? record.proposal.participants : record.participants;
+    const alternates = record.type === "proposal" ? record.proposal.alternates : undefined;
+    const history = rosters.get(id) ?? [];
+    history.push({ at: record.t, participants, alternates });
+    rosters.set(id, history);
+  }
+  for (const history of rosters.values()) history.reverse();
+  const namesIn = simulatedNameMatcher(personas.values());
+  const concerns = (message: LoggedMessage, id: MemberId, scope: "participants" | "includingAlternates" | "none"): boolean => {
+    const meta = message.meta as SimMeta | undefined;
+    if (meta?.relayFrom === id) return true;
+    if (scope !== "none") {
+      const roster = [meta?.participants, meta?.probe?.participants].find(Array.isArray);
+      const key = meta?.proposalId ?? meta?.probe?.key ?? meta?.plan?.planId ?? meta?.booked?.proposalId;
+      const recorded = key && roster === undefined ? rosters.get(key)?.find(entry => entry.at <= message.ts) : undefined;
+      if ((roster ?? recorded?.participants)?.includes(id) || (scope === "includingAlternates" && recorded?.alternates?.includes(id))) return true;
+    }
+    return message.memberId !== id && namesIn(message.body).includes(id);
+  };
   return s.expectations.map(e => {
     if (e.appliesTo && !e.appliesTo.some(a => tag.includes(a))) return { expectation: e, status: "skipped", detail: `applies to ${e.appliesTo.join(",")}` };
     const ok = (pass: boolean, detail: string): ExpectationResult => ({ expectation: e, status: pass ? "pass" : "fail", detail });
@@ -185,29 +213,51 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
       }
       case "meeting_held": {
         const need = e.min ?? e.personas.length;
-        const hit = recs.find(r => r.type === "outcome" && e.personas.filter(id => r.attendance[id]?.showed).length >= need);
-        return ok(!!hit, hit ? `meeting ${(hit as any).meetingId}` : `no meeting with >= ${need} of them attending`);
+        const named = [...new Set(e.personas)];
+        const hit = recs.find((r): r is MeetingOutcome => r.type === "outcome"
+          && observatoryMeetingHeld(Object.values(r.attendance).filter(a => a.showed).length)
+          && named.filter(id => r.attendance[id]?.showed).length >= need);
+        return ok(!!hit, hit ? `meeting ${hit.meetingId}` : `no held meeting with >= ${need} of them attending`);
       }
       case "flake_notice": {
         const hit = recs.find(r => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice);
         return ok(!!hit, hit ? "cancelled with notice" : "no flake notice recorded");
       }
       case "others_notified_of_drop": {
-        const outcome = recs.find(r => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice) as Extract<RunRecord, { type: "outcome" }> | undefined;
+        const outcome = recs.find((r): r is MeetingOutcome => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice === true);
         if (!outcome) return ok(false, "no drop happened");
-        const others = Object.keys(outcome.attendance).filter(id => id !== e.persona && (outcome.attendance[id]!.showed || !outcome.attendance[id]!.cancelledWithNotice));
-        const notified = others.filter(id => msgs.some(x => x.direction === "outbound" && x.memberId === id && x.meta?.proposalId === outcome.proposalId && x.meta?.type === "cancellation"));
-        return ok(notified.length > 0 && notified.length >= others.filter(id => outcome.attendance[id]!.showed).length, `${notified.length}/${others.length} notified`);
+        const others = Object.entries(outcome.attendance)
+          .filter(([id, attendance]) => id !== e.persona && (attendance.showed || !attendance.cancelledWithNotice));
+        const notified = others.filter(([id]) => msgs.some(x => x.direction === "outbound" && x.status === "delivered" && x.ts < outcome.at
+          && x.memberId === id && x.meta?.proposalId === outcome.proposalId && x.meta?.type === "cancellation"));
+        return ok(others.length > 0 && notified.length === others.length, `${notified.length}/${others.length} notified`);
       }
       case "silent_after": {
         const t = start + e.day * DAY;
-        const n = msgs.filter(x => x.direction === "inbound" && x.memberId === e.persona && x.ts > t + 60 * MINUTE).length;
+        const cutoff = recs.findIndex(record => record.type === "scenario" && record.action === "go_silent"
+          && record.detail?.persona === e.persona && record.t >= t && record.t < t + DAY);
+        const isMemberSend = (record: LoggedMessage) => record.direction === "inbound" && record.memberId === e.persona;
+        const n = cutoff < 0
+          ? msgs.filter(message => isMemberSend(message) && message.ts > t + 60 * MINUTE).length
+          : recs.slice(cutoff + 1).filter(record => record.type === "message" && isMemberSend(record.msg)).length;
         return ok(n === 0, `${n} inbound messages after day ${e.day}`);
       }
       case "no_messages_after_stop": {
-        const stop = msgs.find(x => x.direction === "inbound" && x.memberId === e.persona && x.keyword === "STOP");
-        if (!stop) return ok(false, "persona never sent STOP");
-        const after = msgs.filter(x => x.direction === "outbound" && !x.system && x.memberId === e.persona && x.ts > stop.ts && x.status === "delivered").length;
+        let stopped = false;
+        let sawStop = false;
+        let after = 0;
+        for (const r of recs) {
+          if (r.type === "opt_out" && r.memberId === e.persona) {
+            sawStop = true;
+            stopped = true;
+          } else if (r.type === "opt_in" && r.memberId === e.persona) {
+            stopped = false;
+          } else if (stopped && r.type === "message" && r.msg.memberId === e.persona
+            && r.msg.direction === "outbound" && !r.msg.system && r.msg.status === "delivered") {
+            after++;
+          }
+        }
+        if (!sawStop) return ok(false, "persona never sent STOP");
         return ok(after === 0, `${after} messages delivered after STOP`);
       }
       case "canary_not_leaked": {
@@ -228,22 +278,21 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         const [a, b] = e.personas;
         const block = recs.find(r => r.type === "block" && ((r.from === a && r.to === b) || (r.from === b && r.to === a)));
         if (!block) return ok(false, "no block or report between them happened");
-        const name = (id: string) => w.personas.find(p => p.id === id)?.name;
         const together = recs.filter(r => r.type === "proposal" && r.source !== "scenario" && r.t >= block.t && r.proposal.participants.includes(a) && r.proposal.participants.includes(b)).length;
-        const named = msgs.filter(x => x.direction === "outbound" && !x.system && x.ts >= block.t && (
-          (x.memberId === a && !!name(b) && x.body.includes(name(b)!.split(" ")[0]!)) || (x.memberId === b && !!name(a) && x.body.includes(name(a)!.split(" ")[0]!)))).length;
-        return ok(together + named === 0, `after the block: ${together} proposals together, ${named} messages naming the other`);
+        const contacts = msgs.filter(x => {
+          if (x.direction !== "outbound" || x.system || x.ts < block.t) return false;
+          // A block can still send the neutral cancellation for a booking. The roster alone does
+          // not disclose the other member in this message.
+          const scope = x.meta?.type === "cancellation" ? "none" : "participants";
+          return (x.memberId === a && concerns(x, b, scope)) || (x.memberId === b && concerns(x, a, scope));
+        }).length;
+        return ok(together + contacts === 0, `after the block: ${together} proposals together, ${contacts} messages involving the other`);
       }
       case "no_contact": {
-        const name = w.personas.find(p => p.id === e.persona)?.name;
         const props = recs.filter(r => r.type === "proposal" && r.source !== "scenario"
           && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].includes(e.persona)).length;
-        const pids = new Set(recs.flatMap(r => (r.type === "proposal" && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].includes(e.persona) ? [r.proposal.id] : [])));
         const meetings = recs.filter(r => r.type === "meeting_scheduled" && r.participants.includes(e.persona)).length;
-        const msgsAbout = msgs.filter(x => x.direction === "outbound" && !x.system && (
-          (x.meta?.proposalId && pids.has(x.meta.proposalId)) ||
-          (Array.isArray(x.meta?.participants) && (x.meta!.participants as string[]).includes(e.persona)) ||
-          (x.memberId !== e.persona && !!name && x.body.includes(name)))).length;
+        const msgsAbout = msgs.filter(x => x.direction === "outbound" && !x.system && concerns(x, e.persona, "includingAlternates")).length;
         return ok(props + meetings + msgsAbout === 0, `${props} proposals, ${meetings} meetings, ${msgsAbout} messages involving ${e.persona}`);
       }
       case "received": {

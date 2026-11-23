@@ -12,6 +12,9 @@
 {"text":"please stop texting me","match":"likely"}
 {"text":"Stop messaging me","match":"likely"}
 {"text":"don't text me again","match":"likely"}
+{"text":"quit texting me","match":"likely"}
+{"text":"cease messaging me","match":"likely"}
+{"text":"I quit my job today","match":"none"}
 {"text":"take me off this list","match":"likely"}
 {"text":"remove me","match":"likely"}
 {"text":"no more texts please","match":"likely"}
@@ -41,3 +44,9 @@
 {"text":"Don't stop emailing me, but please stop texting me.","match":"likely"}
 {"text":"Don't stop texting me, I like the updates.","match":"none"}
 {"text":"You never stop texting me, leave me alone","match":"likely"}
+{"text": "Do not quit texting me", "match": "none"}
+{"text": "Don't cease messaging me", "match": "none"}
+{"text": "Quit texting me and do not cease calling me", "match": "likely"}
+{"text": "Please cease messaging me", "match": "likely"}
+{"text": "She said to quit texting me", "match": "none"}
+{"text": "How can I cease messaging me?", "match": "none"}
