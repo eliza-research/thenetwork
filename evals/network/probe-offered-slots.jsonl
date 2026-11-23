@@ -67,3 +67,9 @@
 {"text":"Either of those, but not both.","answer":"yes","keys":["a","b","c"]}
 {"text":"Either Saturday or Sunday, not either.","answer":"unclear","keys":[]}
 {"text":"\"Either Saturday or Sunday\", but not both.","answer":"unclear","keys":[]}
+{"text":"sat and sun both","answer":"yes","keys":["b","c"]}
+{"text":"sat sun both","answer":"unclear","keys":[]}
+{"text":"the 2nd and 3rd both work","answer":"unclear","keys":[]}
+{"text":"Both Saturday, not Thursday.","answer":"unclear","keys":[]}
+{"text":"Either Saturday works, but not both.","answer":"yes","keys":["b"]}
+{"text":"Saturday works and we both like coffee.","answer":"yes","keys":["b"]}
