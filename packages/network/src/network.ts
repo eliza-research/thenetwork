@@ -125,7 +125,7 @@ import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
   immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
-  reportRestrictsMatching, safetyQuestionAcceptsName, safetyQuestionAppliesTarget, safetyQuestionExclusion, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer,
+  reportRestrictsMatching, safetyQuestionAcceptsName, safetyQuestionAppliesTarget, safetyQuestionExclusion, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer, safetyReplyAfterExclusion,
   step as stepSafetyCase,
   type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
@@ -178,19 +178,24 @@ function safetyReplyConsent(text: string) {
   return complete ? consentOf(text).answer : "unclear";
 }
 
-function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
+function readSoleSafetyTargetExclusion(text: string, names: readonly (string | undefined)[], competing: boolean) {
   const reply = text.normalize("NFKC").trim().replace(/^(?:no|nope)(?:[,.!?;:]\s*|\s+)/i, "");
-  const openingSentence = sentencesOf(reply, true)[0]!.text;
+  // Keep semicolon qualifiers with the opening sentence. Replacing one character preserves offsets.
+  const first = sentencesOf(reply.replaceAll(";", ","), true)[0]!;
+  const openingSentence = first.text;
   const opening = openingSentence.split(/[,.!?;:]/, 1)[0]!;
   const clause = safetyName(opening);
   const rejectsName = names.some(name => name && clause === `not ${safetyName(name)}`);
   const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
   const openingIsQuestion = openingSentence.includes("?");
-  const rejectsWithCorrection = !openingIsQuestion && /^it was (?:someone|somebody) else$/.test(safetyName(openingSentence));
+  const rejectsWithCorrection = first.at === 0 && !openingIsQuestion && /^it was (?:someone|somebody) else$/.test(safetyName(openingSentence));
   const refersToAnotherPerson = !openingIsQuestion && ["someone else", "somebody else"].some(phrase =>
-    replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `)));
+    replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `))) && consentOf(openingSentence).why !== "hedged";
   const unnamedRejection = refersToAnotherPerson || ["not him", "not her", "not them"].includes(clause);
-  return safetyQuestionExclusion(rejectsName || rejectsWithCorrection, unnamedRejection, competing);
+  return {
+    excludes: safetyQuestionExclusion(rejectsName || rejectsWithCorrection, unnamedRejection, competing),
+    separateReply: rejectsWithCorrection ? reply.slice(first.at + openingSentence.length).trim() : undefined,
+  };
 }
 
 const SAFETY_TARGET_PREFIX = /^(?:i (?:mean|meant)|it'?s)\s+/;
@@ -1256,7 +1261,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; m.interruptionSurvey = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
     if (msg.keyword === "HELP") return;
-    const body = msg.body.trim();
+    let body = msg.body.trim();
     // Classify first, the first message included (audit P1-4): the age policy runs before the
     // welcome and before the trust-hold return (P2-17).
     const parsed = classify(body);
@@ -1327,7 +1332,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
-    if (m.pendingSafety && !mcp && this.answerWho(m, body, msg.signedReceivedAt)) return;
+    if (m.pendingSafety && !mcp) {
+      const remaining = this.answerWho(m, body, msg.signedReceivedAt);
+      if (remaining === undefined) return;
+      if (remaining !== body) {
+        body = remaining;
+        this.understood = undefined;
+        c = classify(body);
+      }
+    }
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -2627,14 +2640,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * The member's answer to "Who do you mean?" (within a day). A bare yes can confirm the one
-   * person named in the question if another action is not also waiting for a reply.
+   * person named in the question if another action is not also waiting for a reply. Return the
+   * text still available for another prompt, or undefined when this question handled it all.
    */
-  private answerWho(m: MemberState, body: string, signedReceivedAt: number | undefined): boolean {
+  private answerWho(m: MemberState, body: string, signedReceivedAt: number | undefined): string | undefined {
     const p = m.pendingSafety!;
     const now = this.now();
     const oldestQuestion = now - DAY;
-    if (!safetyQuestionIsCurrent(p.at, oldestQuestion)) { m.pendingSafety = undefined; return false; }
-    if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return false;
+    if (!safetyQuestionIsCurrent(p.at, oldestQuestion)) { m.pendingSafety = undefined; return body; }
+    if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return body;
     const text = body.trim();
     const reply = safetyQuestionReply(text);
     const matches = new Map<MemberId, MemberState>();
@@ -2652,20 +2666,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     const target = named ?? confirmed;
     const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
     const cancels = reply.cancels || (!competing && reply.refuses);
-    const rulesOutTarget = !!sole && excludesSoleSafetyTarget(text, [this.fullNames.get(sole.id), sole.display, sole.first], competing);
+    const exclusion = sole && readSoleSafetyTargetExclusion(text, [this.fullNames.get(sole.id), sole.display, sole.first], competing);
+    const rulesOutTarget = exclusion?.excludes ?? false;
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
-    if (!safetyQuestionResolves(!!allowedTarget, competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return false;
+    if (!safetyQuestionResolves(!!allowedTarget, competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return body;
     m.pendingSafety = undefined;
     if (allowedTarget && safetyQuestionAppliesTarget(true, rulesOutTarget)) {
       this.applyBlock(m, p.verb, p.kind, allowedTarget);
-      return true;
+      return;
     }
-    if (competing) return false;
-    if (cancels) { this.ack(m, "Okay."); return true; }
-    if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return true; }
+    if (competing) return safetyReplyAfterExclusion(competing, exclusion?.separateReply !== undefined, body, exclusion?.separateReply ?? "") || undefined;
+    if (cancels) { this.ack(m, "Okay."); return; }
+    if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return; }
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
-    return true;
   }
 
   /**

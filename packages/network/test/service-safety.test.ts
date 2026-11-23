@@ -645,23 +645,27 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
   }, T);
 
   const replacementReplies = [
-    { scenario: "a complete replacement", reply: "It was someone else.", keepsQuestion: false },
+    { scenario: "a complete replacement", reply: "It was someone else.", keepsQuestion: false, expectedProbe: "probing" },
     { scenario: "a replacement before an independent question", reply: "It was someone else. Can we still meet Friday?", keepsQuestion: false },
+    { scenario: "a replacement with leading no", reply: "No, it was someone else.", keepsQuestion: false, expectedProbe: "probing" },
+    { scenario: "an independent yes after a replacement with leading no", reply: "No, it was somebody else. Yes.", keepsQuestion: false, expectedProbe: "available" },
     { scenario: "incidental help with scheduling", reply: "Someone else can pick up my kid, so yes.", keepsQuestion: true },
     { scenario: "a tag question", reply: "It was someone else, right?", keepsQuestion: true },
     { scenario: "a question with grouped punctuation", reply: "It was somebody else!?", keepsQuestion: true },
     { scenario: "a replacement qualified by maybe", reply: "It was someone else, maybe.", keepsQuestion: true },
     { scenario: "a replacement qualified by I think", reply: "It was somebody else, I think.", keepsQuestion: true },
+    { scenario: "a replacement qualified after a semicolon", reply: "It was someone else; maybe.", keepsQuestion: true, expectedProbe: "probing" },
     { scenario: "a bare pronoun rejection", reply: "not him", keepsQuestion: true },
   ];
-  for (const { scenario, reply, keepsQuestion } of replacementReplies) {
+  for (const { scenario, reply, keepsQuestion, expectedProbe } of replacementReplies) {
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
     test(`#626 signed replacement attribution handles ${scenario}`, async ({ onTestFinished }) => {
-      const { askSlop, clock, competingSlopProbe, pending, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+      const { askSlop, clock, competingSlopProbe, pending, probeStatus, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
       const askedAt = await askSlop("replacement-safety-ask");
       await competingSlopProbe("slop.replacement-competing-probe");
       expect(await signed("replacement-safety-answer", reply, "slop")).toMatchObject({ app: "slop" });
       expect(await reports("slop")).toEqual([]);
+      if (expectedProbe) expect(await probeStatus("slop.replacement-competing-probe")).toBe(expectedProbe);
       if (keepsQuestion) {
         expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
       } else {

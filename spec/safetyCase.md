@@ -233,7 +233,7 @@ pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf
 
 This rule applies when the reply reaches the app that holds the safety question. A signed reply can answer or close it only if the gateway received the reply at or after the question opened and at or before the current time. An exact allowed name answers the question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting. Any pending reply slot, including a meeting feedback prompt, counts as another prompt.
 
-An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. The complete opening statement "it was someone else" or "it was somebody else" does the same even when another prompt is waiting. A question or an incidental statement about someone else supplies no exclusion. Without a competing prompt, a direct unnamed rejection such as "not him" can end the question in the same way. A competing prompt can still handle the reply after cancellation or exclusion.
+An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. The complete opening statement "it was someone else" or "it was somebody else" does the same even when another prompt is waiting. A question, a qualified guess, or an incidental statement about someone else supplies no exclusion. Without a competing prompt, a direct unnamed rejection such as "not him" can end the question in the same way. A competing prompt can still handle the reply after cancellation or exclusion. If the opening sentence says it was someone else, that sentence and its leading "no" or "nope" answer only the safety question. Pass any separate reply after that sentence to the competing prompt.
 
 Read a bare confirmation, refusal, or cancellation as a control reply, even when the words match a member's name. A control reply cannot select an exact name on the current app or on another app. A member can give a full name or use "I mean" to name someone in the current app when their displayed name matches a control reply.
 
@@ -262,6 +262,15 @@ pure def lawCompetingPromptNeedsExplicitSafetyExclusion(ambiguousExclusion: bool
 
 pure def lawExplicitSafetyExclusionStillApplies(ambiguousExclusion: bool, competingPrompt: bool): bool =
   safetyQuestionExclusion(true, ambiguousExclusion, competingPrompt)
+
+pure def safetyReplyAfterExclusion(competingPrompt: bool, replacementSentence: bool, reply: str, separateReply: str): str =
+  if (not(competingPrompt)) "" else if (replacementSentence) separateReply else reply
+
+pure def lawSafetyReplacementSendsOnlySeparateReply(competingPrompt: bool, reply: str, separateReply: str): bool =
+  safetyReplyAfterExclusion(competingPrompt, true, reply, separateReply) == (if (competingPrompt) separateReply else "")
+
+pure def lawSafetyReplacementAloneDoesNotAnswerAnotherPrompt(competingPrompt: bool, reply: str): bool =
+  safetyReplyAfterExclusion(competingPrompt, true, reply, "") == ""
 
 pure def safetyQuestionResolves(allowedTarget: bool, competingPrompt: bool, cancels: bool, excludesTarget: bool, shortReply: bool): bool =
   safetyQuestionAppliesTarget(allowedTarget, excludesTarget) or cancels or excludesTarget or (not(competingPrompt) and shortReply)

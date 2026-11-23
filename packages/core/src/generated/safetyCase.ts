@@ -341,6 +341,12 @@ export function safetyQuestionExclusion(explicitExclusion: boolean, ambiguousExc
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function safetyReplyAfterExclusion(competingPrompt: boolean, replacementSentence: boolean, reply: string, separateReply: string): string {
+  return !competingPrompt ? "" : (replacementSentence ? separateReply : reply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestion: number): boolean {
   //@ ensures \result === true
   return !(askedAt < oldestQuestion) || !safetyQuestionIsCurrent(askedAt, oldestQuestion);
@@ -369,8 +375,36 @@ export function lawExplicitSafetyExclusionStillApplies(ambiguousExclusion: boole
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function lawSafetyReplacementSendsOnlySeparateReply(competingPrompt: boolean, reply: string, separateReply: string): boolean {
+  //@ ensures \result === true
+  return safetyReplyAfterExclusion(competingPrompt, true, reply, separateReply) === (competingPrompt ? separateReply : "");
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawSafetyReplacementAloneDoesNotAnswerAnotherPrompt(competingPrompt: boolean, reply: string): boolean {
+  //@ ensures \result === true
+  return safetyReplyAfterExclusion(competingPrompt, true, reply, "") === "";
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function safetyQuestionResolves(allowedTarget: boolean, competingPrompt: boolean, cancels: boolean, excludesTarget: boolean, shortReply: boolean): boolean {
   return safetyQuestionAppliesTarget(allowedTarget, excludesTarget) || cancels || excludesTarget || (!competingPrompt && shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawTargetExclusionClosesWithoutFiling(allowedTarget: boolean, competingPrompt: boolean, shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return safetyQuestionResolves(allowedTarget, competingPrompt, false, true, shortReply) && !safetyQuestionAppliesTarget(allowedTarget, true);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawLongUnrelatedReplyKeepsSafety(competingPrompt: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionResolves(false, competingPrompt, false, false, false);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
@@ -392,20 +426,6 @@ export function lawCancellationResolvesSafety(competingPrompt: boolean, shortRep
 export function lawAllowedTargetResolvesSafety(competingPrompt: boolean, cancels: boolean, shortReply: boolean): boolean {
   //@ ensures \result === true
   return safetyQuestionResolves(true, competingPrompt, cancels, false, shortReply);
-}
-
-/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
-//@ pure
-export function lawTargetExclusionClosesWithoutFiling(allowedTarget: boolean, competingPrompt: boolean, shortReply: boolean): boolean {
-  //@ ensures \result === true
-  return safetyQuestionResolves(allowedTarget, competingPrompt, false, true, shortReply) && !safetyQuestionAppliesTarget(allowedTarget, true);
-}
-
-/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
-//@ pure
-export function lawLongUnrelatedReplyKeepsSafety(competingPrompt: boolean): boolean {
-  //@ ensures \result === true
-  return !safetyQuestionResolves(false, competingPrompt, false, false, false);
 }
 
 /** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
