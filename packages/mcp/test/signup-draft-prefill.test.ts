@@ -132,6 +132,34 @@ test("a recorded age below 13 hides and scrubs the draft; a birthday below 13 on
   expect(canBeMatched(lowest)).toBe(false);
 });
 
+test("a verified signup birthday advances the member's age when the Clock reaches the birthday", async () => {
+  const e = setup();
+  e.clock.t = Date.UTC(2026, 9, 7, 12);
+  const clientId = await draftFor(e, "friends.help", PHONE_A);
+  const page = await openSignup(e, "friends.help", clientId, PHONE_A);
+  const response = await page.join({ firstName: "Ari", birthdate: "2008-10-08", homeCity: "sf", smsConsent: "yes" });
+  expect(await response.text()).toContain("Signup confirmed.");
+  const currentAge = async () => e.accounts.lowestAge(PHONE_A, await e.accounts.personFor(PHONE_A));
+
+  e.clock.t = Date.UTC(2026, 9, 8, 11, 59, 59);
+  expect(await currentAge()).toBe(17);
+  e.clock.t = Date.UTC(2026, 9, 8, 12);
+  expect(await currentAge()).toBe(18);
+});
+
+test("a verified birthday keeps a lower age previously stated on the phone", async () => {
+  const e = setup();
+  e.clock.t = Date.UTC(2026, 9, 7, 12);
+  await e.accounts.recordAge(PHONE_A, undefined, 16);
+  const clientId = await draftFor(e, "friends.help", PHONE_A);
+  const page = await openSignup(e, "friends.help", clientId, PHONE_A);
+  const response = await page.join({ firstName: "Ari", birthdate: "2008-10-08", homeCity: "sf", smsConsent: "yes" });
+  expect(await response.text()).toContain("Signup confirmed.");
+
+  e.clock.t = Date.UTC(2026, 9, 8, 12);
+  expect(await e.accounts.lowestAge(PHONE_A, await e.accounts.personFor(PHONE_A))).toBe(16);
+});
+
 test("the birthday is refused when it is missing, malformed, impossible, in the future or over 120 years ago, and the age counts on the Clock date", async () => {
   const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
   const page = await openSignup(e, "friends.help", clientId, PHONE_A);

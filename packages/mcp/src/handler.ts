@@ -9,11 +9,12 @@ import {
   browserSignupJoinAllowed, browserSignupMemberAllowed, browserSignupOpenAllowed, browserSignupOwnerBindingAllowed,
   initial as browserInitial, mayCompareBrowserDigest, sessionMatchesConsent, step as stepBrowser,
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
+import { adultAge, joinableAge } from "../../core/src/generated/memberAge.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
   type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
   ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial,
-  signupClockDay, solveCheck,
+  signupAdultDate, signupClockDay, solveCheck,
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
@@ -750,10 +751,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const invitation = signupInvitation(c.app, typedInvitation);
     if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.", sent);
 
+    let signupAge;
+    if (joinableAge(input.age) && input.age < adultAge) {
+      const date = signupAdultDate(birth);
+      signupAge = { initialMinorAge: input.age, eligibleAt: Date.UTC(date.year, date.month - 1, date.day, 12) };
+    }
     const pending = { ...r, step: "enrolling" as const };
     if (!await store.advanceAuthRequest(r, pending, now)) return expired();
     try {
-      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation);
+      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation, signupAge);
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();

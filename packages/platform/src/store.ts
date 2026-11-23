@@ -2,7 +2,7 @@
 // interface with two implementations: MemoryPeopleStore (tests, dev) and PgPeopleStore (pg-store.ts).
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
-import { confirmedUnderage, recordedAgeFloorApplies } from "../../core/src/generated/memberAge.ts";
+import { confirmedUnderage, keepLaterEligibilityDate, lowerAge, recordedAgeFloorApplies, signupAgeAt } from "../../core/src/generated/memberAge.ts";
 import { phoneChangePastRetention, rateCounterCutoff, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -89,6 +89,7 @@ const rateKind = (bucket: string) => bucket.split(":", 1)[0]!;
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
 export interface RecordedMemberAge { personId: string | null; phoneHash: string }
+export interface SignupAge { initialMinorAge: number; eligibleAt: number }
 
 export async function reconcileRecordedAgeFloor(
   store: Pick<PeopleStore, "ageFloor" | "findPhoneByHash" | "withPhoneAgeGuard">,
@@ -119,6 +120,8 @@ export interface PeopleStore {
   heldPhones(): Promise<PhoneIdentity[]>;
   /** The lowest age ever stated for a keyed phone hash (no app, no person; kept after a delete of everything). */
   ageFloor(phoneHash: string): Promise<number | undefined>;
+  signupAgeAt(personId: string, now: number): Promise<number | undefined>;
+  saveSignupAge(personId: string, age: SignupAge): Promise<void>;
   noteAgeFloor(phoneHash: string, age: number, at: number): Promise<number>;
   clearAgeFloor(phoneHash: string): Promise<void>;
   /** Independent keyed-phone guard for age recording and temporary facts. Its callback must not acquire withLock. */
@@ -134,7 +137,7 @@ export interface PeopleStore {
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
   putMembership(m: Membership): Promise<void>;
   /** Commit the exact member, opt-in and session binding if current ownership and bans allow enrollment. */
-  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean>;
+  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, signupAge?: SignupAge): Promise<boolean>;
   restrictBannedMemberships(personId: string): Promise<void>;
 
   /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
@@ -227,6 +230,7 @@ export class MemoryPeopleStore implements PeopleStore {
   readonly blocks = new Map<string, { from: string; to: string; originApp: AppId; at: number }>();
   readonly suppression = new Map<string, { reason: string; at: number }>();
   readonly ageFloors = new Map<string, { age: number; at: number }>();
+  private readonly signupAges = new Map<string, SignupAge>();
   readonly challenges = new Map<string, OtpChallenge>();
   readonly sessions = new Map<string, Session>();
   readonly limits = new Map<string, { windowStart: number; count: number; lastAt: number }>();
@@ -261,6 +265,17 @@ export class MemoryPeopleStore implements PeopleStore {
   async setPhoneHold(e164: string, hold: PhoneHold | null) { const ph = this.phones.get(e164); if (ph) ph.hold = hold; }
   async heldPhones() { return [...this.phones.values()].filter(p => p.hold !== null).map(p => ({ ...p })); }
   async ageFloor(phoneHash: string) { return this.ageFloors.get(phoneHash)?.age; }
+  async signupAgeAt(personId: string, now: number) {
+    const saved = this.signupAges.get(personId);
+    return saved && signupAgeAt(saved.initialMinorAge, saved.eligibleAt, now);
+  }
+  async saveSignupAge(personId: string, age: SignupAge) {
+    const previous = this.signupAges.get(personId);
+    this.signupAges.set(personId, previous ? {
+      initialMinorAge: lowerAge(previous.initialMinorAge, age.initialMinorAge),
+      eligibleAt: keepLaterEligibilityDate(previous.eligibleAt, age.eligibleAt),
+    } : age);
+  }
   private readonly ageLocks = new Map<string, Promise<unknown>>();
   private ageCleanup?: (phoneHash: string, age: number) => Promise<void>;
   setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>) { this.ageCleanup = fn; }
@@ -296,7 +311,7 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const x of this.members.values()) if (x.memberId === m.memberId && (x.app !== m.app || x.personId !== m.personId)) throw new Error("member id in use");
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });
   }
-  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, signupAge?: SignupAge): Promise<boolean> {
     return this.withLock(`person-phone-binding:${m.personId}`, async () => {
       const owner = this.people.get(m.personId);
       const phone = this.phones.get(consent.e164);
@@ -308,6 +323,7 @@ export class MemoryPeopleStore implements PeopleStore {
       await this.putMembership(m);
       await this.addConsent(consent);
       await this.attachPerson(consent.e164, m.personId);
+      if (signupAge) await this.saveSignupAge(m.personId, signupAge);
       return true;
     });
   }
@@ -499,8 +515,9 @@ export class MemoryPeopleStore implements PeopleStore {
         this.suppression.delete(hash);
       } else {
         if (!this.suppression.has(hash)) this.suppression.set(hash, { reason: "deleted", at });
-        const age = person?.lowestAge;
-        if (hasAgeToPreserve(!!person, age != null) && age != null && age < (this.ageFloors.get(hash)?.age ?? Infinity)) {
+        const birthdayAge = person ? await this.signupAgeAt(person.id, at) : undefined;
+        const age = Math.min(person?.lowestAge ?? Infinity, birthdayAge ?? Infinity);
+        if (hasAgeToPreserve(!!person, Number.isFinite(age)) && age < (this.ageFloors.get(hash)?.age ?? Infinity)) {
           this.ageFloors.set(hash, { age, at });
         }
       }
@@ -516,6 +533,7 @@ export class MemoryPeopleStore implements PeopleStore {
       for (const [k, g] of this.grants) if (g.personId === personId) this.grants.delete(k);
       // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
       for (const [k, ph] of this.phones) if (ph.personId === personId) this.phones.delete(k);
+      this.signupAges.delete(personId);
       if (person) Object.assign(person, { lowestAge: null, deletedAt: at });
       for (const [k, c] of this.phoneChanges) if (c.personId === personId) this.phoneChanges.delete(k);
     }

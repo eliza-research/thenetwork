@@ -207,6 +207,7 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
 
 type SignupWorld = {
   service: NetworkService;
+  clock: SimClock;
   connector: NonNullable<Awaited<ReturnType<typeof createServiceMcp>>> & { store: PgOAuthStore };
   env: ReturnType<typeof setup>;
   harness: ReturnType<typeof setup>;
@@ -238,7 +239,7 @@ async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Prom
           headers, method: req.method, redirect: "manual", ...(req.body ? { body: await req.arrayBuffer() } : {}),
         });
       } };
-      await run({ service, connector: connector as SignupWorld["connector"], env, harness });
+      await run({ service, clock, connector: connector as SignupWorld["connector"], env, harness });
     } finally {
       await server.stop(true);
       await connector.store.close();
@@ -369,7 +370,7 @@ test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup pa
   });
 }, 60_000);
 
-test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup page joins but can never be matched", async () => {
+test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup page joins but stays out of matching as a minor", async () => {
   await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
     const site = "friends.help", number = "+12125550166";
     const browser = browserOn(w, site);
@@ -385,6 +386,68 @@ test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup pag
     const lowest = await w.service.accounts.lowestAge(number, person);
     expect(lowest).toBe(15);
     expect(canBeMatched(lowest)).toBe(false);
+  });
+}, 60_000);
+
+test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages while a lower recorded age stays binding", async () => {
+  await withSignupWorld(["friends:nyc"], async w => {
+    const site = "friends.help";
+    const firstNumber = "+12125550178", secondNumber = "+12125550179";
+    await w.service.accounts.recordAge(secondNumber, undefined, 16);
+
+    for (const number of [firstNumber, secondNumber]) {
+      const browser = browserOn(w, site);
+      const opened = await openConnection(w, site, browser, `birthday-${number}`);
+      const rid = hiddenField(opened.html, "rid");
+      await confirmPhone(w, browser, rid, number);
+      const joined = await submitSignup(browser, rid, { firstName: "Jo", birthdate: "2008-10-10" });
+      expect(joined.status).toBe(200);
+      expect(joined.html).toContain("Signup confirmed.");
+    }
+
+    const runtime = w.service.runtimeFor("friends");
+    if (!runtime) throw new Error("No Friends runtime after signup");
+    const agesFor = async (number: string) => {
+      const person = await w.service.accounts.personFor(number);
+      if (!person) throw new Error("No person after signup");
+      const membership = await w.service.people.getMembership(person.id, "friends");
+      if (!membership) throw new Error("No Friends membership after signup");
+      return {
+        account: await w.service.accounts.lowestAge(number, person),
+        matching: await runtime.scoped(async tx => (await tx`select age from platform.matching_ages
+          where app_id = 'friends' and member_id = ${membership.memberId}`)[0]?.age),
+      };
+    };
+
+    const firstPerson = (await w.service.accounts.personFor(firstNumber))!;
+    const firstMembership = (await w.service.people.getMembership(firstPerson.id, "friends"))!;
+    const cachedMinor = () => runtime.readState(n => n.memberList().find(member => member.id === firstMembership.memberId)?.minor);
+
+    w.clock.set(Date.UTC(2026, 9, 10, 11, 59, 59));
+    expect(await agesFor(firstNumber)).toEqual({ account: 17, matching: 17 });
+    expect(await cachedMinor()).toBe(true);
+    w.clock.advance(1_000);
+    expect.soft(await agesFor(firstNumber)).toEqual({ account: 18, matching: 18 });
+    expect(await agesFor(secondNumber)).toEqual({ account: 16, matching: 16 });
+
+    await runtime.tick();
+    expect(await cachedMinor()).toBe(false);
+    expect(firstMembership.profile).toEqual({ homeCity: "nyc" });
+    const staffAge = await runtime.scoped(async tx => {
+      await tx`set local role network_observatory_friends`;
+      const [rights] = await tx`select has_table_privilege(current_user, 'platform.signup_eligibility', 'select') as reads_private_date`;
+      expect(rights?.reads_private_date).toBe(false);
+      const row = await tx`select * from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`;
+      await tx`select set_config('app.age_as_of', '2000-01-01T00:00:00Z', true)`;
+      expect(await tx`select * from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`).toEqual(row);
+      return row;
+    });
+    expect(staffAge).toEqual([{ app_id: "friends", member_id: firstMembership.memberId, age: expect.any(Number),
+      banned: false, staff_held: false, report_held: false }]);
+
+    await w.service.accounts.deleteAll({ e164: firstNumber, personId: firstPerson.id });
+    expect(await w.service.people.signupAgeAt(firstPerson.id, w.clock.now())).toBeUndefined();
+
   });
 }, 60_000);
 

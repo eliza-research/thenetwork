@@ -1212,7 +1212,7 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral?: ReferralJoin; verifiedRecipientHash?: string }) {
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; ageFromBirthday?: boolean; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral?: ReferralJoin; verifiedRecipientHash?: string }) {
     const at = this.clock.now();
     const now = new Date(at);
     const homeCity = info.homeCity ?? homeCityOf(m.profile.homeCity) ?? rt.city;
@@ -1223,7 +1223,7 @@ export class NetworkService implements RuntimeHost {
       if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, m.personId)) return false;
       if (referral && !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) throw new InvitationUnavailable();
       await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at, invited_by)
-        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
+        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.ageFromBirthday ? null : info.age}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
         on conflict (id) do update set person_id = excluded.person_id, name = excluded.name, home_city = excluded.home_city, home_area = excluded.home_area,
           account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false,
           invited_by = coalesce(excluded.invited_by, network.members.invited_by)`;
@@ -1320,7 +1320,7 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
-    if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age })) throw new JoinReviewRequired();
+    if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, ageFromBirthday: ctx.signupAge !== undefined })) throw new JoinReviewRequired();
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
     await this.learnJoinProfile(rt, ctx.person.id, ctx.e164, ctx.membership);
   }
@@ -1363,7 +1363,8 @@ export class NetworkService implements RuntimeHost {
       await accounts.store.putMembership(ctx.membership);
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
-      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
+      if (ctx.signupAge) await accounts.store.saveSignupAge(ctx.person.id, ctx.signupAge);
+      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, ageFromBirthday: ctx.signupAge !== undefined }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
       if ("kind" in referral) {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
       }
@@ -2876,7 +2877,9 @@ export class NetworkService implements RuntimeHost {
     const m = await people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
-    const read = (tx: SQL) => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)}
+    const read = (tx: SQL) => tx`select a.age, f.tags, f.valid_from from network.members m
+      join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
+      left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)}
       and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`;
     const rows = (transaction ? await read(transaction) : await rt.scoped(read)) as any[];
     if (!rows.length || !(rows[0].age >= 18)) return false;

@@ -339,7 +339,7 @@ pure val laterValues = rValues
 
 The signup form asks for the birthday (the label is "Birthday"), not for the age. The person types it in the browser as a date (`yyyy-mm-dd`). The form never shows a birthday before the person types it, and it never shows the sent birthday again after the server refuses the form. A hint below the field tells the person that a member under 18 is never matched for dates or for work and that today nobody under 18 is introduced to anyone. It also tells the person that friendship is the only kind of introduction that can open to people under 18, only with people within 2 years of their own age. The hint does not promise an introduction.
 
-The handler takes the year, the month and the day from the sent text, and it takes the date of today from the platform Clock. The date of today is the calendar date in the latest time zone (UTC-12), so the form never counts a person older than the calendar where the person is. The birthday is refused with an error on the birthday field when the date is missing, when the text is not `yyyy-mm-dd`, when the date does not exist (such as February 30, or February 29 in a year that is not a leap year), when the date is after today, or when the age on today's date is more than 120. The age on a date is the number of full years since the birthday: before the birthday of this year, it is one year less than the difference of the years. A person born on February 29 becomes one year older on March 1 in a year that is not a leap year. The handler gives that age to the join step, which declines an age below 13 with nothing stored, as before. The join step stores the age, not the birthday.
+The handler takes the year, the month and the day from the sent text, and it takes the date of today from the platform Clock. The date of today is the calendar date in the latest time zone (UTC-12), so the form never counts a person older than the calendar where the person is. The birthday is refused with an error on the birthday field when the date is missing, when the text is not `yyyy-mm-dd`, when the date does not exist (such as February 30, or February 29 in a year that is not a leap year), when the date is after today, or when the age on today's date is more than 120. The age on a date is the number of full years since the birthday: before the birthday of this year, it is one year less than the difference of the years. A person born on February 29 becomes one year older on March 1 in a year that is not a leap year. The handler gives that age to the join step, which declines an age below 13 with nothing stored, as before. For a member who is 13 through 17, the handler gives the join step the initial age and the private date they will turn 18 at the start of the UTC-12 day. The join step never stores the typed birthday. A February 29 birthday reaches adult eligibility on March 1 when the eighteenth year is not a leap year.
 
 ```quint
 type CalendarDate = { year: int, month: int, day: int }
@@ -379,6 +379,15 @@ pure def calendarDateOfDay(epochDay: int): CalendarDate =
   val mp = (5 * doy + 2) / 153
   val month = if (mp < 10) mp + 3 else mp - 9
   { year: yoe + era * 400 + (if (month <= 2) 1 else 0), month: month, day: doy - (153 * mp + 2) / 5 + 1 }
+
+pure def signupAdultDate(birth: CalendarDate): CalendarDate =
+  val year = birth.year + 18
+  if (birth.month == 2 and birth.day == 29 and not(isLeapYear(year)))
+    { year: year, month: 3, day: 1 }
+  else { year: year, month: birth.month, day: birth.day }
+
+pure def lawAdultSignupDateCountsEighteen(birth: CalendarDate): bool =
+  calendarDateExists(birth) implies ageOnDate(birth, signupAdultDate(birth)) == 18
 
 pure def lawBirthdayNotYetGivesOneYearLess(birth: CalendarDate, today: CalendarDate): bool =
   birthdayNotYetThisYear(birth, today) implies ageOnDate(birth, today) == today.year - birth.year - 1
