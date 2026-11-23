@@ -191,9 +191,13 @@ test("fresh Slop onboarding preserves the member's age and matching tags across 
     expect(quoted.tags, text).toEqual(fresh.tags);
   }
 
-  for (const text of ['Yesterday, I told her “I’m underage.”', 'I’ve literally said “I’m underage.”']) {
+  for (const text of [
+    'Yesterday, I told her “I’m underage.”',
+    'I’ve literally said “I’m underage.”',
+    'Yesterday I told her “I’m in 7th grade.”',
+  ]) {
     const repeated = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
-    expect(repeated.state).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
+    expect(repeated.state, text).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
     expect(repeated.tags).toEqual([]);
   }
 

@@ -224,9 +224,10 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
     }
     for (const r of MINOR_SIGNS) for (const m of all(r.rx, s.text)) {
       const start = s.start + m.index;
-      if (!ownYouthCue(t, start, start + m[0].length)) continue;
+      const end = start + m[0].length;
+      if (!ownYouthCue(t, start, end)) continue;
       out.minor ??= cand(true as const, s, m, 0.9);
-      const a = r.age?.(m);
+      const a = r.age && unquotedOwnAgeEvidence(t, start, end) ? r.age(m) : undefined;
       if (a !== undefined && a >= 10 && a < 18 && (!out.age || a < out.age.value)) { out.age = cand(a, s, m, 0.85); out.strict = false; }
     }
   }
