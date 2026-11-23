@@ -134,7 +134,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
   });
-  const fresh = async () => { await applySchema(URL_, { reset: true, lockTimeout: "5s" }); };
+  const fresh = async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    phoneSeq = 40;
+  };
 
   // spec/staffSafetyService.md, "Live enrollment and ban projection use the current person"
   test("a membership that joins during a staff ban is restricted in its Network runtime", async () => {
@@ -380,7 +383,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const askSlop = async (id: string) => {
       const at = clock.now();
       expect(await signed(id, "Report him, he harassed me.", "slop")).toMatchObject({
-        outcome: "handled", app: "slop", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)],
+        outcome: "handled", app: "slop", replies: [expect.stringContaining(`Who do you mean: ${otherNames?.[0] ?? "Ben"}?`)],
       });
       expect(await pending("slop")).toMatchObject({ at, targets: [slopBen] });
       clock.advance(MINUTE);
@@ -582,6 +585,55 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       .toMatchObject({ app: "slop" });
     expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
     expect(await reports("slop")).toEqual([]);
+  }, T);
+
+  const safetyControlCases = [
+    { name: "Nvm", reply: "nvm", probeReply: undefined },
+    { name: "No", reply: "no", probeReply: undefined },
+    { name: "No", reply: "no", probeReply: "unavailable" },
+    { name: "Yes", reply: "yes", probeReply: "available" },
+  ];
+  for (const { name, reply, probeReply } of safetyControlCases) {
+    // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+    test(`a signed ${reply} does not name ${name} with ${probeReply ? "a competing probe" : "only a safety question"}`, async ({ onTestFinished }) => {
+      const { askSlop, competingSlopProbe, pending, probeStatus, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, [name, "Ben"]);
+      const askedAt = await askSlop("controls-safety-ask");
+      const probe = "slop.control-reply-competing-probe";
+      if (probeReply) await competingSlopProbe(probe);
+
+      expect(await signed("controls-safety-reply", reply, "slop")).toMatchObject({ app: "slop" });
+      expect.soft(await reports("slop")).toEqual([]);
+      if (probeReply) {
+        expect(await probeStatus(probe)).toBe(probeReply);
+        expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
+        expect(await signed("controls-qualified-name", `I mean ${name}`, "slop")).toMatchObject({ app: "slop" });
+        expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+      } else {
+        expect(await pending("slop")).toBeUndefined();
+      }
+    }, T);
+  }
+
+  // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+  test("an unqualified cancellation cannot route to the app where it looks like a name", async ({ onTestFinished }) => {
+    const { askSlop, clock, pending, peonAri, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, ["Nvm", "Ben"]);
+    const askedAt = await askSlop("shared-control-safety-ask");
+    await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts)
+      values ('peon', 'shared-control-competing-probe', ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.',
+        'dry_run', 'peon.shared-control-competing-opportunity', true, false, ${new Date(clock.now())})`;
+    clock.advance(MINUTE);
+
+    expect.soft(await signed("shared-control-ordinary-route", "nvm")).toMatchObject({ app: "peon" });
+    expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
+    expect(await reports("slop")).toEqual([]);
+  }, T);
+
+  // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+  test("an exact name with a non-ASCII letter remains a name", async ({ onTestFinished }) => {
+    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, ["Noé", "Ben"]);
+    await askSlop("non-ascii-name-safety-ask");
+    expect(await signed("non-ascii-name-safety-answer", "Noé", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
   }, T);
 
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {

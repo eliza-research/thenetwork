@@ -262,6 +262,12 @@ export function safetyQuestionUsesSoleOffer(soleOffer: boolean, competingPrompt:
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function safetyQuestionAcceptsName(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
+  return !(confirmation || refusal || cancellation);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarget: boolean): boolean {
   return allowedTarget && !excludesTarget;
 }
@@ -292,6 +298,13 @@ export function lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: boolean, 
 export function lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean): boolean {
   //@ ensures \result === true
   return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawSafetyControlCannotNameTarget(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
+  //@ ensures \result === true
+  return !(confirmation || refusal || cancellation) || !safetyQuestionAcceptsName(confirmation, refusal, cancellation);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */

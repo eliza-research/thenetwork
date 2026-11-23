@@ -177,6 +177,8 @@ This rule applies when the reply reaches the app that holds the safety question.
 
 An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. Without a competing prompt, a direct unnamed rejection such as "not him" or "it was someone else" can end the question in the same way. An incidental mention does not count as a rejection. A competing prompt can still handle the reply after cancellation or exclusion.
 
+Read a bare confirmation, refusal, or cancellation as a control reply, even when the words match a member's name. A control reply cannot select an exact name on the current app or on another app. A member can give a full name or use "I mean" to name someone in the current app when their displayed name matches a control reply.
+
 When the reply supplies no allowed target, cancellation, or exclusion, a competing prompt keeps the safety question open. A bare yes or no can answer that prompt. Without another prompt, a short unresolved reply ends the question. A longer unrelated reply keeps it available through the one-day reply window. After that window, the stored question cannot intercept a reply or delay an invitation survey.
 
 ```quint
@@ -196,6 +198,12 @@ pure def lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: bool, competingP
 
 pure def lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: bool, competingPrompt: bool, exactConfirmation: bool): bool =
   not(safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true))
+
+pure def safetyQuestionAcceptsName(confirmation: bool, refusal: bool, cancellation: bool): bool =
+  not(confirmation or refusal or cancellation)
+
+pure def lawSafetyControlCannotNameTarget(confirmation: bool, refusal: bool, cancellation: bool): bool =
+  (confirmation or refusal or cancellation) implies not(safetyQuestionAcceptsName(confirmation, refusal, cancellation))
 
 pure def safetyQuestionAppliesTarget(allowedTarget: bool, excludesTarget: bool): bool =
   allowedTarget and not(excludesTarget)
