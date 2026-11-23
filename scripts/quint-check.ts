@@ -6,7 +6,7 @@ import { availableParallelism, cpus, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
-const MODEL_DIR = "spec/models";
+export const MODEL_DIR = "spec/models";
 const OUTPUT_DIR = "runs/quint-models";
 const QUINT = join(ROOT, "tools/vibestack/node_modules/.bin/quint");
 const SIMULATOR = join(ROOT, "tools/vibestack/vibestack/simulator.ts");
@@ -14,7 +14,15 @@ const SEED = "0x5eed";
 // Match the pinned Quint CLI's Rust default, independently of the runner's --jobs setting.
 const RUST_THREADS = String(cpus().length);
 
-function tangle(name: string): string {
+export function modelName(file: string): string | undefined {
+  return /^[a-z][a-z0-9_]*\.md$/.test(file) ? basename(file, ".md") : undefined;
+}
+
+export function modelNames(): string[] {
+  return readdirSync(join(ROOT, MODEL_DIR)).sort().flatMap((file) => modelName(file) ?? []);
+}
+
+export function modelSource(name: string): string {
   if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid Quint model name: ${name}`);
   const spec = `${MODEL_DIR}/${name}.md`;
   const markdown = readFileSync(join(ROOT, spec), "utf8");
@@ -22,8 +30,13 @@ function tangle(name: string): string {
   if (blocks.length !== 1 || !new RegExp(`^module ${name}\\b`, "m").test(blocks[0][1])) {
     throw new Error(`${spec} must contain one complete Quint module named ${name}`);
   }
+  return blocks[0][1];
+}
+
+function tangle(name: string): string {
+  const source = modelSource(name);
   const file = `${OUTPUT_DIR}/${name}.qnt`;
-  writeFileSync(join(ROOT, file), blocks[0][1]);
+  writeFileSync(join(ROOT, file), source);
   return file;
 }
 
@@ -218,8 +231,7 @@ if (import.meta.main) {
     process.exit(1);
   }
   const named = argv.filter((a, i) => !a.startsWith("--") && argv[i - 1] !== "--jobs" && argv[i - 1] !== "--safety-samples");
-  const names = named.length ? [...new Set(named.map((a) => basename(a).replace(/\.(qnt|md)$/, "")))] : readdirSync(join(ROOT, MODEL_DIR))
-    .filter((f) => /^[a-z][a-z0-9_]*\.md$/.test(f)).sort().map((f) => basename(f, ".md"));
+  const names = named.length ? [...new Set(named.map((a) => basename(a).replace(/\.(qnt|md)$/, "")))] : modelNames();
   if (!names.length) {
     console.error(`No Quint models in ${MODEL_DIR}/`);
     process.exit(1);
