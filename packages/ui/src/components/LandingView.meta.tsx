@@ -23,7 +23,7 @@ export const meta: ComponentMeta<LandingViewProps> = {
       const view = within(canvasElement);
       await expect(view.getAllByRole("heading")).toHaveLength(1);
       await expect(view.getByRole("button", { name: "Copy" })).toBeTruthy();
-      await expect(view.getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();
+      await expect(view.queryByRole("link", { name: "Open in ChatGPT" })).toBeNull();
       await expect(view.getByRole("link", { name: "Open in Claude" })).toBeTruthy();
     },
   },
