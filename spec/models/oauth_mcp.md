@@ -10,6 +10,8 @@ Check code use, refresh, ownership, ban and revocation, scoped tools, and reques
 
 The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) drives the VibeLang shell from confirmed consent through authority and one commit for request consumption, grant, code and both audit rows. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
+Browser cookie names are part of the HTTP shell. Local app origins on one loopback hostname share the browser's cookie jar. Each app has a separate pending request cookie. The browser authorization rule still checks the app, expiry, and browser digest. The [platform end-to-end tests](../../tests/e2e/platform.e2e.test.ts) cover pending requests on two app origins.
+
 The [signup draft rules](../mcpSignupDraft.md) drive draft preparation,
 session-bound reads, discard, and expiry. The draft waits for the
 person's final Join submission.
