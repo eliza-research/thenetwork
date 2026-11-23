@@ -891,7 +891,7 @@ const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
  */
 const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
-const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|aren'?t\b|weren'?t\b|can'?t\b|cannot\b)/;
+const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:both|all)\s+)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|aren'?t\b|weren'?t\b|can'?t\b|cannot\b)/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -902,31 +902,6 @@ function negatedAt(t: string, i: number, len: number): boolean {
   for (const m of t.slice(0, i).matchAll(CLAUSE_START)) from = m.index! + m[0].length;
   return NEG_CUE.test(t.slice(from, i)) || NEG_AFTER.test(t.slice(i + len));
 }
-/** A bare join between two times: "and", "or", a comma, "&" or "/". Any other word ends the join. */
-const CONJUNCTION_JOIN = /^\s*(?:(?:,|&|\/)\s*)?(?:and|or)\s+|^\s*(?:,|&|\/)\s+/;
-/** The start of a time a join can lead to: a day, a clock time, a day group or a part of the day. */
-const CONJOINED_TIME = new RegExp(
-  String.raw`^(?:${DAY_TOKEN})\b|^\d{1,2}(?::[0-5]\d)?\s*[ap]m\b|^(?:noon|midnight)\b|^(?:weekdays?|weekends?|weeknights?|mornings?|afternoons?|lunch|evenings?|nights?|after work)\b`,
-);
-/**
- * True when the words at `i` are refused through a joined time after them: a refusal after a
- * conjunction covers every time the conjunction joins ("Saturday and Sunday don't work" refuses
- * Sunday by the words after it, and Saturday through the join). The joins must be bare: a word
- * between the times ("Saturday works, Sunday doesn't") ends the shared scope.
- */
-function conjunctionRefused(t: string, i: number, len: number): boolean {
-  let rest = t.slice(i + len);
-  for (;;) {
-    const join = CONJUNCTION_JOIN.exec(rest);
-    if (!join) return false;
-    rest = rest.slice(join[0].length);
-    const head = CONJOINED_TIME.exec(rest);
-    if (!head) return false;
-    rest = rest.slice(head[0].length);
-    if (NEG_AFTER.test(rest)) return true;
-  }
-}
-
 /** The clause (between punctuation) around position i. */
 function clauseAt(t: string, i: number, len: number): string {
   let from = 0;
@@ -1012,6 +987,37 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
     }
   }
   return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
+}
+
+const NAMED_TIME_JOIN = String.raw`\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)`;
+const BARE_NAMED_TIME_JOIN = new RegExp(`^${NAMED_TIME_JOIN}$`);
+const JOINED_SHORT_DAY = new RegExp(String.raw`^(${NAMED_TIME_JOIN})(${DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|")})\b`);
+
+/** Reuse the full time spans. An independent choice word between times ends the shared refusal. */
+function joinedTimeRefusals(text: string, mentions: TimeMention[], memberChoiceAt: (at: number) => boolean): Set<TimeMention> {
+  // A short final day can lack ordinary day context before the refusal. Recover it only after
+  // a named time and a bare join, so "the sun doesn't..." alone is still ordinary prose.
+  const byStart = new Set(mentions.map(mention => mention.at));
+  for (const mention of [...mentions]) {
+    const tail = JOINED_SHORT_DAY.exec(text.slice(mention.end));
+    if (!tail) continue;
+    const at = mention.end + tail[1]!.length, end = mention.end + tail[0].length;
+    if (byStart.has(at) || !NEG_AFTER.test(text.slice(end)) || !memberChoiceAt(at)) continue;
+    const day = DAY_WORDS.find(([word]) => tail[2]!.search(word) === 0)?.[1];
+    if (day) { mentions.push({ at, end, day }); byStart.add(at); }
+  }
+  const ordered = [...mentions].sort((a, b) => a.at - b.at);
+  const refused = new Set<TimeMention>();
+  for (let index = ordered.length - 2; index >= 0; index--) {
+    const first = ordered[index]!, next = ordered[index + 1]!;
+    if (first.end > next.at || !BARE_NAMED_TIME_JOIN.test(text.slice(first.end, next.at))
+      || !memberChoiceAt(first.at) || !memberChoiceAt(next.at)) continue;
+    if (refused.has(next) || NEG_AFTER.test(text.slice(next.end))) {
+      refused.add(first);
+      refused.add(next);
+    }
+  }
+  return refused;
 }
 
 const probeOrdinal = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
@@ -1232,7 +1238,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return { key: o.key, day, knownDay: day !== undefined && DAY_WORDS.some(([, name]) => name === day),
       weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute) };
   });
-  for (const m of timeMentions(t, !explicitTimesOnly || clarifiedTimes)) {
+  const mentions = timeMentions(t, !explicitTimesOnly || clarifiedTimes);
+  const joinedRefusals = joinedTimeRefusals(t, mentions, memberChoiceAt);
+  const joinedRefusalClauses = new Set([...joinedRefusals].map(m => clauseAt(t, m.at, m.end - m.at)));
+  for (const m of mentions) {
     if (!memberChoiceAt(m.at)) continue;
     if (partExclusion && m.at >= partExclusion.index && m.at < partExclusionEnd) continue;
     const prefix = t.slice(0, m.at);
@@ -1243,7 +1252,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
         m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
-    const refused = exclusion || negatedAt(t, m.at, m.end - m.at) || conjunctionRefused(t, m.at, m.end - m.at);
+    const refused = exclusion || negatedAt(t, m.at, m.end - m.at) || joinedRefusals.has(m);
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
     } else if (refused) {
@@ -1290,7 +1299,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       ? { ...unclear, why: "slot" } : explicitYes(current);
   }
   const strongAll = explicitTimesOnly ? EXPLICIT_ALL.exec(t) ?? (clarifiedTimes ? EXPLICIT_PAIR_ALL.exec(t) : null) : ALL.exec(t);
-  const weakCues = (explicitTimesOnly && !clarifiedTimes) || strongAll ? [] : [...t.matchAll(ALL_WEAK)].filter(cue => memberChoiceAt(cue.index!));
+  const weakCues = (explicitTimesOnly && !clarifiedTimes) || strongAll ? [] : [...t.matchAll(ALL_WEAK)].filter(cue => {
+    const clause = clauseAt(t, cue.index!, cue[0].length);
+    const refusalOnly = joinedRefusalClauses.has(clause) && !pickedClauses.has(clause);
+    return memberChoiceAt(cue.index!) && !(refusalOnly && picked.length > 0);
+  });
   const weakAt = weakCues[0];
   const weakRefusal = weakCues.some(cue => refusedClauses.has(clauseAt(t, cue.index!, cue[0].length)));
   const oneSlot = /(?:\bbut\s+|,\s*)not\s+both[.!\s]*$/.exec(t);

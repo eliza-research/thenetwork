@@ -85,3 +85,10 @@
 {"text":"Saturday and Sunday aren't good","answer":"unclear","keys":[]}
 {"text":"Saturday and Sunday are out for me","answer":"unclear","keys":[]}
 {"text":"Saturday works, Sunday doesn't","answer":"yes","keys":["b"]}
+{"text":"Saturday morning and Sunday afternoon don't work for me, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Saturday at 11am and Sunday at 2pm don't work for me, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Saturday,Sunday don't work for me, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Sat/Sun don't work for me, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday both don't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Saturday and Sunday both don't","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday both don't work.","answer":"unclear","keys":[]}

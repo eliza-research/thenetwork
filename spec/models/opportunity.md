@@ -20,9 +20,14 @@ The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a
 
 The same declined action covers a standalone “afraid not,” “not a chance,” or
 “no chance.” A qualified use of those words stays in the unresolved action.
-The probe reader also removes explicitly excluded options. Its fallback
-selection keeps any stated time-of-day limit before it calls the modeled
-answer action.
+The probe reader also removes explicitly excluded options. A trailing
+refusal applies to the exact times joined in its list, including their
+stated clocks or parts of the day. A separate affirmative clause can
+select another offered time. A broad yes with “both” in the refused
+list leaves the time choice open when the member chooses no other
+time. Fallback selection keeps any stated time-of-day limit before
+calling the modeled answer action. The signed booking test checks the
+selected start.
 
 A negative or conditional cancellation uses the same booked-reply guard. Exact local start and date-only selection use the one-booking rule in the executable spec. The standalone state machine uses deterministic traces for the special interpretations and abstracts from a second simultaneous booked reply. A [number-swap withdrawal](../opportunityLifecycle.md#a-number-swap-refusal-does-not-decline-the-booked-meeting) keeps the booking unless the member also refuses attendance. The relay model owns the transfer state. The trace below follows the booked slot and makes sure the counterpart receives cancellation only after the attendance refusal.
 
