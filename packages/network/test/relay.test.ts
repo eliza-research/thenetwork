@@ -206,6 +206,93 @@ test("a polite signed relay keeps the payload's negation and uses the named matc
   expect(await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%eat meat%'`).toHaveLength(0);
 });
 
+const samPhones = { a: "+12125550183", b: "+12125550184" };
+let samA = "", samB = "";
+
+async function onboardSam(key: "a" | "b", age: number): Promise<string> {
+  const phone = samPhones[key];
+  for (const [index, text] of ["friends.help", `Sam, ${age}`, "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"].entries()) {
+    clock.advance(MINUTE);
+    expect((await signed(TURN_PATH, `sam-${key}-setup-${index}`, JSON.stringify(turn(phone, `sam-${key}-setup-${index}`, text)))).status).toBe(200);
+  }
+  return open(phone, `sam-${key}-open`);
+}
+
+async function ensureSams() {
+  if (!samA) samA = await onboardSam("a", 29);
+  if (!samB) samB = await onboardSam("b", 34);
+}
+
+/** Two open matches for Bo at once, each with its own counterpart and meeting day. */
+async function resetNamedMatches(matches: { id: string; other: string; dayOffset: number }[]) {
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op") ?? state.opps[0]!;
+    const earliest = clock.now() + DAY;
+    const daytime = Math.floor(earliest / DAY) * DAY + 16 * HOUR;
+    clock.set(daytime < earliest ? daytime + DAY : daytime);
+    const now = clock.now();
+    state.opps = matches.map(m => ({
+      ...swapMatchTemplate, id: m.id, participants: [bo, m.other],
+      status: [[bo, "yes"], [m.other, "yes"]], contacted: [bo, m.other],
+      createdAt: now, meetingAt: now + m.dayOffset * DAY, deadline: now + m.dayOffset * DAY,
+    } as any));
+    if (state.relay) state.relay.swaps = [];
+    net.importState(state);
+  });
+}
+
+test("a named relay request is refused when two matches share the name", async () => {
+  await ensureSams();
+  await resetNamedMatches([
+    { id: "two-sam-a", other: samA, dayOffset: 1 },
+    { id: "two-sam-b", other: samB, dayOffset: 2 },
+  ]);
+  const before = await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%shellfish%'`;
+  const response = await post(await ask("bo", "two-sam-request", "Could you tell Sam I don't eat shellfish?"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%shellfish%'`).toHaveLength(before.length);
+}, 60_000);
+
+test("a named relay request reaches the unique match with that name, even when it is not the newest", async () => {
+  await ensureSams();
+  await resetNamedMatches([
+    { id: "named-sam-a", other: samA, dayOffset: 1 },
+    { id: "named-ari", other: ari, dayOffset: 2 },
+  ]);
+  const toSam = async () => sql`select id, body from network.messages where app_id='friends' and direction='outbound' and member_id=${samA} and body like '%shellfish%'`;
+  expect(await toSam()).toHaveLength(0);
+  const response = await post(await ask("bo", "named-sam-request", "Could you tell Sam I don't eat shellfish?"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "pass", delivered: false });
+  expect(await toSam()).toEqual([{ id: expect.any(String), body: 'Bo says: "I don\'t eat shellfish"' }]);
+}, 60_000);
+
+test("a named number request is refused when two matches share the name", async () => {
+  await ensureSams();
+  await resetNamedMatches([
+    { id: "two-sam-swap-a", other: samA, dayOffset: 1 },
+    { id: "two-sam-swap-b", other: samB, dayOffset: 2 },
+  ]);
+  const response = await post(await ask("bo", "two-sam-swap-request", "Please send Sam my number."));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false });
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === "two-sam-swap-a" || swap.matchId === "two-sam-swap-b")).toHaveLength(0);
+}, 60_000);
+
+test("a named number request waits on the unique match with that name, even when it is not the newest", async () => {
+  await ensureSams();
+  await resetNamedMatches([
+    { id: "named-sam-swap-a", other: samA, dayOffset: 1 },
+    { id: "named-sam-swap-ari", other: ari, dayOffset: 2 },
+  ]);
+  const response = await post(await ask("bo", "named-sam-swap-request", "Please send Sam my number."));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "hold", delivered: false });
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === "named-sam-swap-a")).toHaveLength(1);
+}, 60_000);
+
 const sharesQueued = async () => (await sql`select id from network.messages where app_id='friends'
   and direction='outbound' and body like '%asked me to send you%'`).length;
 const pendingNumberSwaps = () => service.runtimeFor("friends")!.unitOfWork(net => net.exportState().relay?.swaps ?? []);

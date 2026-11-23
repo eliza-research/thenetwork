@@ -144,8 +144,12 @@ export interface RelayCallOptions {
 /** One member as the canonical owners see them (runtime.ts relayParties). Unknown is never eligible. */
 export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean }
 
+/** Fold a first name for comparison (Unicode, curly quotes, case). */
+const foldRelayName = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+
 const NOTICE = {
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
+  ambiguousName: "You've matched with more than one person with that name, so I can't tell who you mean.",
   swapWait: "I'll share your number as soon as they say they want to swap numbers too.",
   swapAlready: "I already asked them; I'll share your number if they want to swap too.",
   photoOff: "I can't send photos to a match yet.",
@@ -169,23 +173,38 @@ export class RelayDesk {
     this.s = { threads: x.threads ?? [], log: x.log ?? [], held: x.held ?? [], swaps: x.swaps ?? [] };
   }
 
+  /** The member's open matches (newest first); `matchId` narrows them to that one match. */
+  private openMatches(from: MemberId, matchId?: string): RelayMatch[] {
+    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
+      .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1));
+  }
+
   /** The member's open match (newest first), if any; `matchId` narrows it to that one match. */
   matchFor(from: MemberId, matchId?: string): RelayMatch | undefined {
-    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
-      .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
+    return this.openMatches(from, matchId)[0];
+  }
+
+  /** The member's open matches whose counterpart has this first name. */
+  private namedMatches(from: MemberId, targetName: string): RelayMatch[] {
+    return this.openMatches(from).filter(m => foldRelayName(this.host.member(m.participants.find(p => p !== from)!)?.firstName ?? "") === foldRelayName(targetName));
   }
 
   /** One member request: decide through the engine, deliver `rendered`, keep the log. Idempotent on `itemId`. */
   async request(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> {
     const prior = this.prior(ask.itemId);
     if (prior) return { ...prior, replayed: true };
-    const match = this.matchFor(ask.from, ask.matchId);
+    let match = this.matchFor(ask.from, ask.matchId);
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+    if (ask.targetName !== undefined && ask.matchId === undefined) {
+      const named = this.namedMatches(ask.from, ask.targetName);
+      if (named.length === 0) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+      if (named.length > 1) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.ambiguousName };
+      match = named[0]!;
+    }
     const to = match.participants.find(p => p !== ask.from)!;
     if (ask.targetName !== undefined) {
       const recipient = this.host.member(to)?.firstName;
-      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
-      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
+      if (!relayTextRecipientAllowed(true, recipient !== undefined && foldRelayName(recipient) === foldRelayName(ask.targetName))) {
         return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
       }
     }

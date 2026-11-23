@@ -11,7 +11,9 @@ ask, or let the recipient know something. The message can contain a
 negation or a question of its own. The ordinary text leak and safety
 checks still apply. A quoted or reported instruction does not direct
 the agent. A named recipient must match the counterpart of the selected
-mutual match.
+mutual match. When the sender names a recipient, the selected mutual match is
+the open match whose counterpart has that name. When no open match has that
+name, or more than one does, the request is refused.
 
 ```quint
 pure def relayTextRecipientAllowed(named: bool, counterpartMatches: bool): bool =
