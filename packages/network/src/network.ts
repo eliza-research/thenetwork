@@ -2425,8 +2425,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private answerWho(m: MemberState, body: string): boolean {
     const p = m.pendingSafety!;
-    m.pendingSafety = undefined;
-    if (this.now() - p.at > DAY) return false;
+    if (this.now() - p.at > DAY) { m.pendingSafety = undefined; return false; }
     const text = body.trim();
     const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
     const exact = this.resolveTarget(m, name, p.verb === "report").target;
@@ -2437,13 +2436,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       ? this.members.get(p.targets[0]!) : undefined;
     const target = named ?? confirmed;
     if (target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id))) {
+      m.pendingSafety = undefined;
       this.applyBlock(m, p.verb, p.kind, target);
       return true;
     }
     if (competing) return false;
-    if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
+    if (NEVER_MIND.test(text)) { m.pendingSafety = undefined; this.ack(m, "Okay."); return true; }
     if (text.split(/\s+/).length > 4) return false;
-    if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return true; }
+    if (p.verb === "block") { m.pendingSafety = undefined; this.applyBlock(m, p.verb, p.kind, undefined); return true; }
+    m.pendingSafety = undefined;
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
     return true;
