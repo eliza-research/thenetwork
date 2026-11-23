@@ -305,7 +305,8 @@ module relay {
   // signals after claiming the receipt. An operative unmet condition can supply uncertainty before
   // the private request. The reader checks authorship, scope and any stated completion.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
-  // supplies none. A later independent directive can supply one, and an ordinary text envelope
+  // supplies none. A later independent directive can supply one, whether it follows a sentence
+  // boundary or a comma after a complete clause, and an ordinary text envelope
   // still follows the text path. Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)

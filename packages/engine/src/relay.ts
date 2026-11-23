@@ -724,9 +724,19 @@ function directRelayLead(prefix: string): boolean {
     .split(RELAY_SENTENCE).at(-1)!;
   if (DIRECT_RELAY_LEAD.test(clause)) return true;
   const comma = clause.lastIndexOf(",");
+  if (comma < 0) return false;
   const aside = clause.slice(0, comma);
-  return comma >= 0 && RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)
-    && DIRECT_RELAY_LEAD.test(clause.slice(comma + 1).replace(/^\s*(?:but|however)\b/i, ""));
+  const afterComma = clause.slice(comma + 1).replace(/^\s*(?:and|but|then|however)\b/i, "");
+  if (!DIRECT_RELAY_LEAD.test(afterComma)) return false;
+  if (RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)) return true;
+  // A comma after a complete clause joins an independent directive: the clause
+  // before the comma is finished, so the transfer after it speaks for the member.
+  // A hesitation ("Hold on, ...") revises the pending request instead, and a
+  // leading condition ("every time he asks, ...") states when it applies rather
+  // than asking now, so neither joins a new directive.
+  return aside.trim().length > 0 && !INCOMPLETE_RELAY_ASIDE.test(aside)
+    && !/^\s*(?:(?:hold|hang)\s+on|wait|scratch that)\b/i.test(aside)
+    && !new RegExp(`^\\s*(?:${PRIVATE_CONDITION_MARKER})\\b`, "iu").test(aside);
 }
 
 // spec/relayDecision.md, "A member can take back a pending number swap"
@@ -982,7 +992,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const bodyStart = t.length - payload.length;
     const delegates = (candidate: RegExpMatchArray) => TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(bodyStart, start + candidate.index!));
     // An outer delegation does not subsume a later direct request. A declarative text body is separate.
-    if (!contacts.some(delegates) && !photos.some(delegates)) {
+    if (!contacts.some(delegates) && !photos.some(delegates) && !privateRequest) {
       const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(payload);
       const body = (modal && declarative ? payload.replace(/\?$/, "") : payload).trim();
       const target = envelope[2]!;

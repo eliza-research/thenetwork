@@ -417,3 +417,7 @@
 {"text": "Ari must approve sharing my number with him first. Ari already approved sharing my number with her. Share my number with him.", "want": "none"}
 {"text": "Wait for Ana to agree to share my number with Ari. Share my number with Ari.", "want": "none"}
 {"text": "Ana must approve sharing my number with Ari first. Ana already approved sharing my number with Ari. Share my number with Ari.", "want": "contact_share"}
+{"text": "Tell them I asked Ana to send him my number, and send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana to send him my number, please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana to send him my number, but send Ari my number.", "want": "contact_share"}
+{"text": "Ask them to send me their number, and send them my number.", "want": "contact_share"}
