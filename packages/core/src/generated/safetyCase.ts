@@ -256,8 +256,8 @@ export function safetyQuestionIsCurrent(askedAt: number, oldestQuestion: number)
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
-export function safetyQuestionResolves(allowedTarget: boolean, competingPrompt: boolean, cancels: boolean, shortReply: boolean): boolean {
-  return allowedTarget || cancels || (!competingPrompt && shortReply);
+export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarget: boolean): boolean {
+  return allowedTarget && !excludesTarget;
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
@@ -269,30 +269,43 @@ export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestio
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function safetyQuestionResolves(allowedTarget: boolean, competingPrompt: boolean, cancels: boolean, excludesTarget: boolean, shortReply: boolean): boolean {
+  return safetyQuestionAppliesTarget(allowedTarget, excludesTarget) || cancels || excludesTarget || (!competingPrompt && shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function lawCompetingPromptKeepsUnresolvedSafety(shortReply: boolean): boolean {
   //@ ensures \result === true
-  return !safetyQuestionResolves(false, true, false, shortReply);
+  return !safetyQuestionResolves(false, true, false, false, shortReply);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
 export function lawCancellationResolvesSafety(competingPrompt: boolean, shortReply: boolean): boolean {
   //@ ensures \result === true
-  return safetyQuestionResolves(false, competingPrompt, true, shortReply);
+  return safetyQuestionResolves(false, competingPrompt, true, false, shortReply);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
 export function lawAllowedTargetResolvesSafety(competingPrompt: boolean, cancels: boolean, shortReply: boolean): boolean {
   //@ ensures \result === true
-  return safetyQuestionResolves(true, competingPrompt, cancels, shortReply);
+  return safetyQuestionResolves(true, competingPrompt, cancels, false, shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawTargetExclusionClosesWithoutFiling(allowedTarget: boolean, competingPrompt: boolean, shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return safetyQuestionResolves(allowedTarget, competingPrompt, false, true, shortReply) && !safetyQuestionAppliesTarget(allowedTarget, true);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
 export function lawLongUnrelatedReplyKeepsSafety(competingPrompt: boolean): boolean {
   //@ ensures \result === true
-  return !safetyQuestionResolves(false, competingPrompt, false, false);
+  return !safetyQuestionResolves(false, competingPrompt, false, false, false);
 }
 
 /** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */

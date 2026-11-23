@@ -214,6 +214,45 @@ describe("block and report targets in a group plan", () => {
     expect(w.net.safetyReports()).toHaveLength(0);
   });
 
+  test.each([true, false])("an explicit exclusion of Ben ends the safety question (competing probe: %s)", async competing => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const pending = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pending()?.targets).toEqual(["b"]);
+    if (competing) {
+      w.propose(["a", "c"]);
+      await w.runUntil(() => w.probed("a"), 2 * DAY);
+      expect(w.probed("a")).toBe(true);
+    }
+
+    await w.say("a", "No, not Ben. He wasn't there last week.");
+    expect(pending()).toBeUndefined();
+    expect(w.net.safetyReports()).toEqual([]);
+    await w.say("a", "yes");
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(w.net.exportState().blocks).not.toContain("a|b");
+  });
+
+  test("someone else in an unrelated reply keeps the safety question", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const pending = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pending()?.targets).toEqual(["b"]);
+    await w.say("a", "I cannot make Friday because I am picking someone else up");
+    expect(pending()?.targets).toEqual(["b"]);
+    expect(w.net.safetyReports()).toEqual([]);
+    await w.say("a", "Ben");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
   test.each([true, false])("an invitation survey considers only a current safety question (current: %s)", async current => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
     await w.onboard("a", "b");

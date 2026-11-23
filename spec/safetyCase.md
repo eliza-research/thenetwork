@@ -173,7 +173,11 @@ pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf
 
 ### An unrelated reply keeps a current safety question
 
-A named allowed target answers the safety question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting. An explicit cancellation ends the question and lets any competing prompt handle the reply. Otherwise, if another prompt is waiting and the reply supplies no allowed target, continue the ordinary turn and keep the safety question. A bare yes or no can answer that prompt. Without another prompt, a short unresolved reply ends the question. A reply that rules out the named person also ends the question, so a later bare confirmation cannot file against that person. A longer reply with no allowed target or cancellation keeps the question available through the one-day reply window. After that window, the stored question cannot intercept a reply or delay an invitation survey.
+This rule applies when the reply reaches the app that holds the safety question. A signed reply can answer or close it only if the gateway received the reply at or after the question opened and at or before the current time. An exact allowed name answers the question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting.
+
+An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. Without a competing prompt, a direct unnamed rejection such as "not him" or "it was someone else" can end the question in the same way. An incidental mention does not count as a rejection. A competing prompt can still handle the reply after cancellation or exclusion.
+
+When the reply supplies no allowed target, cancellation, or exclusion, a competing prompt keeps the safety question open. A bare yes or no can answer that prompt. Without another prompt, a short unresolved reply ends the question. A longer unrelated reply keeps it available through the one-day reply window. After that window, the stored question cannot intercept a reply or delay an invitation survey.
 
 ```quint
 pure def safetyQuestionIsCurrent(askedAt: int, oldestQuestion: int): bool = askedAt >= oldestQuestion
@@ -181,20 +185,27 @@ pure def safetyQuestionIsCurrent(askedAt: int, oldestQuestion: int): bool = aske
 pure def lawExpiredSafetyQuestionCannotAct(askedAt: int, oldestQuestion: int): bool =
   askedAt < oldestQuestion implies not(safetyQuestionIsCurrent(askedAt, oldestQuestion))
 
-pure def safetyQuestionResolves(allowedTarget: bool, competingPrompt: bool, cancels: bool, shortReply: bool): bool =
-  allowedTarget or cancels or (not(competingPrompt) and shortReply)
+pure def safetyQuestionAppliesTarget(allowedTarget: bool, excludesTarget: bool): bool =
+  allowedTarget and not(excludesTarget)
+
+pure def safetyQuestionResolves(allowedTarget: bool, competingPrompt: bool, cancels: bool, excludesTarget: bool, shortReply: bool): bool =
+  safetyQuestionAppliesTarget(allowedTarget, excludesTarget) or cancels or excludesTarget or (not(competingPrompt) and shortReply)
 
 pure def lawCompetingPromptKeepsUnresolvedSafety(shortReply: bool): bool =
-  not(safetyQuestionResolves(false, true, false, shortReply))
+  not(safetyQuestionResolves(false, true, false, false, shortReply))
 
 pure def lawCancellationResolvesSafety(competingPrompt: bool, shortReply: bool): bool =
-  safetyQuestionResolves(false, competingPrompt, true, shortReply)
+  safetyQuestionResolves(false, competingPrompt, true, false, shortReply)
 
 pure def lawAllowedTargetResolvesSafety(competingPrompt: bool, cancels: bool, shortReply: bool): bool =
-  safetyQuestionResolves(true, competingPrompt, cancels, shortReply)
+  safetyQuestionResolves(true, competingPrompt, cancels, false, shortReply)
+
+pure def lawTargetExclusionClosesWithoutFiling(allowedTarget: bool, competingPrompt: bool, shortReply: bool): bool =
+  safetyQuestionResolves(allowedTarget, competingPrompt, false, true, shortReply) and
+    not(safetyQuestionAppliesTarget(allowedTarget, true))
 
 pure def lawLongUnrelatedReplyKeepsSafety(competingPrompt: bool): bool =
-  not(safetyQuestionResolves(false, competingPrompt, false, false))
+  not(safetyQuestionResolves(false, competingPrompt, false, false, false))
 ```
 
 ### A ban allows only carrier commands and app leave

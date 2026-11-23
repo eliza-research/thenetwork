@@ -324,12 +324,14 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await other.people.isBanned(other.accounts.phoneHash(proposed))).toBe(false);
   });
 
-  test("a shared signed safety clarification returns to its exact pending report", async () => {
+  const signedSafetyFixture = async (onTestFinished: (stop: () => Promise<void>) => void) => {
     await fresh();
     const clock = new SimClock(START);
     const secret = "synthetic-safety-clarification-turn-secret";
     const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret } });
     await s.start();
+    const server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: request => s.fetch(request) });
+    onTestFinished(() => server.stop(true));
     const ari = newPhone(), ben = newPhone(), peonContact = newPhone();
     for (const [phone, name] of [[ari, "Ari, 30"], [ben, "Ben, 32"]] as const) {
       expect(await text(s, clock, phone, "slop")).toBe("join_asked");
@@ -358,15 +360,53 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     });
     await recordMeeting("slop", [slopAri, slopBen]);
     await recordMeeting("peon", [peonAri, peonBen]);
-    const signed = async (messageId: string, text: string, app?: AppId, receivedAt = clock.now()) => {
-      const input: TurnRequest = { channel: "blooio", transport: "imessage", from: ari, to: null, messageId,
+    const signed = async (messageId: string, text: string, app?: AppId, receivedAt = clock.now(), to: string | null = null) => {
+      const input: TurnRequest = { channel: "blooio", transport: "imessage", from: ari, to, messageId,
         text, receivedAt, ...(app ? { app } : {}) };
       const body = JSON.stringify(input);
       const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) });
-      const response = await s.fetch(new Request("http://localhost" + TURN_PATH, { method: "POST", body, headers }));
+      const response = await fetch(new URL(TURN_PATH, server.url), { method: "POST", body, headers });
       expect(response.status).toBe(200);
       return await response.json() as TurnResponse;
     };
+    const reports = async (app: "slop" | "peon") => (await s.runtimeFor(app)!.pg.load())?.reports;
+    const pending = async (app: "slop" | "peon") => (await s.runtimeFor(app)!.pg.load())?.members
+      .find(member => member.id === (app === "slop" ? slopAri : peonAri))?.pendingSafety;
+    const askSlop = async (id: string) => {
+      const at = clock.now();
+      expect(await signed(id, "Report him, he harassed me.", "slop")).toMatchObject({
+        outcome: "handled", app: "slop", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)],
+      });
+      expect(await pending("slop")).toMatchObject({ at, targets: [slopBen] });
+      clock.advance(MINUTE);
+      return at;
+    };
+    const probeStatus = (id: string) => s.runtimeFor("slop")!.readState(net =>
+      net.exportState().opps.find(opp => opp.id === id)?.status.find(([member]) => member === slopAri)?.[1]);
+    const competingSlopProbe = async (id: string) => {
+      const now = clock.now();
+      const deliveryId = `${id}.probe`;
+      await s.runtimeFor("slop")!.unitOfWork(net => {
+        const state = net.exportState();
+        const meeting = state.opps.find(opp => opp.id === `slop.clarification-meeting.${slopBen}`)!;
+        const reporter = state.members.find(member => member.id === slopAri)!;
+        state.opps.push({ ...meeting, id, stage: "probing", meetingAt: undefined, bookedTold: undefined,
+          status: [[slopAri, "probing"], [slopBen, "probing"]], createdAt: now,
+          deadline: now + HOUR, contacted: [slopAri, slopBen] });
+        reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId };
+        net.importState(state);
+      });
+      await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, type, status, opportunity_id, proactive, system, ts)
+        values ('slop', ${deliveryId}, ${slopAri}, 'outbound', 'imessage', 'Are you open to a date?', 'probe',
+          'dry_run', ${id}, true, false, ${new Date(now)})`;
+      clock.advance(MINUTE);
+    };
+
+    return { s, otp, ari, slopAri, slopBen, peonAri, recordMeeting, signed, reports, pending, askSlop, probeStatus, competingSlopProbe, clock };
+  };
+
+  test("a shared signed safety clarification returns to its exact pending report", async ({ onTestFinished }) => {
+    const { s, otp, ari, slopAri, slopBen, peonAri, recordMeeting, signed, reports, pending, clock } = await signedSafetyFixture(onTestFinished);
     const askedAt = clock.now();
     const ask = await signed("pending-safety-ask", "Report him, he harassed me.", "slop");
     expect(ask).toMatchObject({ outcome: "handled", app: "slop", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)] });
@@ -379,8 +419,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect((await s.memberApps(ari)).find(row => row.app === "peon")?.lastItem).toBe(clock.now());
       clock.advance(MINUTE);
     };
-    const reports = async (app: "slop" | "peon") => (await s.runtimeFor(app)!.pg.load())?.reports;
     await competingPeonItem();
+    const slopBefore = await pending("slop");
+    expect(await signed("unqualified-cross-app-exclusion", safetyExclusion)).toMatchObject({ app: "peon" });
+    expect(await pending("slop")).toEqual(slopBefore);
+    expect(await reports("slop")).toEqual([]);
     expect(await signed("unrelated-reply", "Thanks")).toMatchObject({ app: "peon" });
     expect(await signed("forced-peon-reply", "Ben", "peon")).toMatchObject({ app: "peon" });
     await competingPeonItem();
@@ -392,7 +435,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       outcome: "handled", app: "peon", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)],
     });
     await competingPeonItem();
+    const peonBefore = await pending("peon");
     expect(await signed("ambiguous-app-reply", "Ben")).toMatchObject({ outcome: "handled", replies: [] });
+    expect(await pending("slop")).toEqual(slopBefore);
+    expect(await pending("peon")).toEqual(peonBefore);
     expect(await reports("slop")).toEqual([]);
     expect(await reports("peon")).toEqual([]);
     expect(await signed("drop-peon-report", "Never mind", "peon")).toMatchObject({ app: "peon" });
@@ -418,6 +464,40 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await signed("pending-multiword-name-answer", "Mary Jane")).toMatchObject({ outcome: "handled", app: "slop" });
     expect(await reports("slop")).toHaveLength(2);
     expect(await reports("slop")).toEqual(expect.arrayContaining([expect.objectContaining({ subjectId: slopMary })]));
+  }, T);
+
+  const safetyExclusion = "No, not Ben. He wasn't there last week.";
+  const dedicatedLine = "+12125550999";
+  const addDedicatedLine = () => sql`insert into platform.app_lines (line_e164, app_id, city, provider, env)
+    values (${dedicatedLine}, 'slop', 'nyc', 'blooio', 'dev')`;
+
+  for (const [route, app, to] of [["named app", "slop", null], ["dedicated line", undefined, dedicatedLine]] as const) {
+    test(`an explicit safety exclusion via the ${route} clears the question and answers the competing probe`, async ({ onTestFinished }) => {
+      const { askSlop, competingSlopProbe, pending, probeStatus, reports, s, signed, clock } = await signedSafetyFixture(onTestFinished);
+      if (to) await addDedicatedLine();
+      await askSlop("pending-local-safety-ask");
+      const probe = "slop.competing-safety-probe";
+      await competingSlopProbe(probe);
+      expect(await probeStatus(probe)).toBe("probing");
+      expect(await signed("exclude-local-safety", safetyExclusion, app, clock.now(), to)).toMatchObject({ app: "slop" });
+      expect.soft(await pending("slop")).toBeUndefined();
+      expect(await probeStatus(probe)).toBe("unavailable");
+      expect(await reports("slop")).toEqual([]);
+      expect(await s.runtimeFor("slop")!.readState(net => net.exportState().blocks)).toEqual([]);
+      clock.advance(MINUTE);
+      expect(await signed("excluded-local-safety-replayed-name", "Ben", app, clock.now(), to)).toMatchObject({ app: "slop" });
+      expect(await reports("slop")).toEqual([]);
+    }, T);
+  }
+
+  test("a signed cancellation received before a dedicated app question cannot clear it", async ({ onTestFinished }) => {
+    const { askSlop, pending, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+    await addDedicatedLine();
+    const askedAt = await askSlop("pending-current-safety");
+    expect(await signed("stale-dedicated-cancellation", "Never mind", undefined, askedAt - MINUTE, dedicatedLine))
+      .toMatchObject({ app: "slop" });
+    expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
+    expect(await reports("slop")).toEqual([]);
   }, T);
 
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {
