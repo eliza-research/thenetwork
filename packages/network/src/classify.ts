@@ -756,18 +756,32 @@ export type { TimeOption };
 // Day names. A full name always counts; a short form ("sun", "sat", "wed", "mon") counts only in a
 // day context (before a time, a daypart, "or", "and", a comma or the end), so "if the sun's out",
 // "sat down" or "c'mon" never pick a day.
-const DAY_ABBR_CONTEXT = "(?=\\.?(?:\\s*(?:\\d|@|at\\b|or\\b|and\\b|too\\b|&|\\/|works?\\b|is (?:good|fine|great|best|better)\\b|morning|afternoon|evening|night|eve\\b)|\\s*[,;!?.]|\\s*$))";
-const day = (full: string, abbr: string) => new RegExp(`\\b${full}s?\\b|(?<!')\\b(?:${abbr})\\b${DAY_ABBR_CONTEXT}`, "g");
-const DAY_WORDS: [RegExp, string][] = [
-  [day("sunday", "sun"), "Sunday"], [day("monday", "mon"), "Monday"], [day("tuesday", "tues?"), "Tuesday"], [day("wednesday", "weds?"), "Wednesday"],
-  [day("thursday", "thu|thur|thurs"), "Thursday"], [day("friday", "fri"), "Friday"], [day("saturday", "sat"), "Saturday"],
-];
+const DAY_NAMES = [
+  ["Sunday", "sun"], ["Monday", "mon"], ["Tuesday", "tues?"], ["Wednesday", "weds?"],
+  ["Thursday", "thu|thur|thurs"], ["Friday", "fri"], ["Saturday", "sat"],
+] as const;
+const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|works?\b|`
+  + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
+const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
+  new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
+]);
+const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
 const NEITHER = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times|other times?)\b/;
 const NO_OTHER_TIMES = /\b(?:no|not) other times?\b/g;
 /** "Any of them", "whichever", "any time": every option. */
 const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|whichever|any ?time|all good)\b/;
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
 const ALL_WEAK = /\b(?:either|both)\b(?:\s+of\s+(?:them|(?:those|these)(?:\s+(?:times|options|slots))?)\b)?/g;
+const BOTH_TIME_LEAD = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?both\b/;
+const BOTH_TIME_TAIL = /^\s*(?:(?:work(?:s)?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please)?\s*$/;
+const BOTH_TIME_QUALIFIER = /^\s+(?:(?:at|around|by|after|before)\s+\d{1,2}(?::[0-5]\d)?(?:\s*[ap]m)?|\d{1,2}(?::[0-5]\d)?\s*[ap]m|(?:(?:at|in the)\s+)?(?:noon|midnight|mornings?|afternoons?|evenings?|nights?|lunch|after work))\b/;
+const NAMED_TIME_EXCLUSION = String.raw`except|other than|apart from|aside from|excluding|barring`;
+const BOTH_TIME_BOUNDARY = new RegExp(String.raw`[.,;!?\n]|\b(?:but|${NAMED_TIME_EXCLUSION})\b`);
+const TRAILING_BOTH_DAY_PAIR = new RegExp(
+  String.raw`(?:^|[.;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
+    + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+both\b`,
+  "dgu",
+);
 const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
 const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
 const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
@@ -804,7 +818,7 @@ function clauseAt(t: string, i: number, len: number): string {
 
 const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\b/g;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
-const NAMED_EXCLUSION = /\b(?:(?:any day|any ?time|anything|everything|all|whichever) but|except|other than|apart from|aside from|excluding|barring)\s+(?:on\s+)?$/;
+const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:(?:any day|any ?time|anything|everything|all|whichever) but|${NAMED_TIME_EXCLUSION})\s+(?:on\s+)?$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type TimeMention = { at: number; end: number; day?: string; minute?: number; part?: "morning" | "afternoon" | "evening" };
@@ -818,8 +832,22 @@ function partOf(minute: number): TimeMention["part"] {
   return minute >= 5 * 60 && minute < 12 * 60 ? "morning" : minute >= 12 * 60 && minute < 17 * 60 ? "afternoon" : "evening";
 }
 
-function timeMentions(text: string): TimeMention[] {
+function probeChoiceAuthored(prefix: string): boolean {
+  return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]/).at(-1)!);
+}
+
+function timeMentions(text: string, recoverTrailingPair: boolean): TimeMention[] {
   const days = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
+  if (recoverTrailingPair) {
+    for (const pair of text.matchAll(TRAILING_BOTH_DAY_PAIR)) {
+      if (!probeChoiceAuthored(text.slice(0, pair.index + 1))) continue;
+      const tail = text.slice(pair.index + pair[0].length);
+      if (!BOTH_TIME_QUALIFIER.test(tail) && !BOTH_TIME_TAIL.test(tail.split(BOTH_TIME_BOUNDARY, 1)[0]!)) continue;
+      const [at, end] = pair.indices!.groups!.last!;
+      const day = DAY_WORDS.find(([rx]) => text.slice(at, end).search(rx) === 0)?.[1];
+      if (day && !days.some(mention => mention.at === at)) days.push({ at, end, day });
+    }
+  }
   const times: TimeMention[] = [...text.matchAll(CLOCK_MENTION)].map(m => ({ at: m.index!, end: m.index! + m[0].length, minute: clockMinute(m) }));
   for (const m of text.matchAll(DAYPART_MENTION)) {
     const part = /^morning/.test(m[0]) ? "morning" : /^(?:afternoon|lunch)/.test(m[0]) ? "afternoon" : "evening";
@@ -917,7 +945,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const clock = [...o.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
     return { key: o.key, day: o.label.split(" ")[0], minute: clock ? clockMinute(clock) : undefined };
   });
-  for (const m of timeMentions(t)) {
+  for (const m of timeMentions(t, !explicitTimesOnly)) {
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (!m.part || o.minute !== undefined && partOf(o.minute) === m.part)).map(o => o.key);
     const exclusion = NAMED_EXCLUSION.test(t.slice(0, m.at));
@@ -970,6 +998,18 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (unresolved.length || ordinalMissing || [...pos].some(key => !all.includes(key))
       || [...pickedClauses].some(clause => refusedClauses.has(clause))
       || weakNegated) return { ...unclear, why: "slot" };
+    const bothCues = weakCues.filter(cue => {
+      if (cue.index! >= weakLimit || !cue[0].startsWith("both")) return false;
+      return probeChoiceAuthored(t.slice(0, cue.index!));
+    });
+    if (bothCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
+    const namesPair = bothCues.some(cue => {
+      const clause = clauseAt(t, cue.index!, cue[0].length);
+      if (pickedClauses.has(clause) && BOTH_TIME_LEAD.test(clause)) return true;
+      const rest = t.slice(cue.index! + cue[0].length).split(BOTH_TIME_BOUNDARY, 1)[0]!;
+      return BOTH_TIME_TAIL.test(rest) && !/\b(?:we|you|they)\s+$/.test(t.slice(0, cue.index!));
+    });
+    if (namesPair && picked.length < 2) return { ...unclear, why: "slot" };
     const chosen = picked.filter(key => !neg.has(key));
     return chosen.length ? explicitYes(pickedTimes(chosen, open)) : { ...unclear, why: "slot" };
   }
