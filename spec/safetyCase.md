@@ -171,6 +171,32 @@ pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf
   reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) implies receivedAt >= askedAt
 ```
 
+### An unrelated reply keeps a current safety question
+
+A named allowed target answers the safety question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting. An explicit cancellation ends the question and lets any competing prompt handle the reply. Otherwise, if another prompt is waiting and the reply supplies no allowed target, continue the ordinary turn and keep the safety question. A bare yes or no can answer that prompt. Without another prompt, a short unresolved reply ends the question. A longer reply with no allowed target or cancellation keeps the question available through the one-day reply window. After that window, the stored question cannot intercept a reply or delay an invitation survey.
+
+```quint
+pure def safetyQuestionIsCurrent(askedAt: int, oldestQuestion: int): bool = askedAt >= oldestQuestion
+
+pure def lawExpiredSafetyQuestionCannotAct(askedAt: int, oldestQuestion: int): bool =
+  askedAt < oldestQuestion implies not(safetyQuestionIsCurrent(askedAt, oldestQuestion))
+
+pure def safetyQuestionResolves(allowedTarget: bool, competingPrompt: bool, cancels: bool, shortReply: bool): bool =
+  allowedTarget or cancels or (not(competingPrompt) and shortReply)
+
+pure def lawCompetingPromptKeepsUnresolvedSafety(shortReply: bool): bool =
+  not(safetyQuestionResolves(false, true, false, shortReply))
+
+pure def lawCancellationResolvesSafety(competingPrompt: bool, shortReply: bool): bool =
+  safetyQuestionResolves(false, competingPrompt, true, shortReply)
+
+pure def lawAllowedTargetResolvesSafety(competingPrompt: bool, cancels: bool, shortReply: bool): bool =
+  safetyQuestionResolves(true, competingPrompt, cancels, shortReply)
+
+pure def lawLongUnrelatedReplyKeepsSafety(competingPrompt: bool): bool =
+  not(safetyQuestionResolves(false, competingPrompt, false, false))
+```
+
 ### A ban allows only carrier commands and app leave
 
 A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.

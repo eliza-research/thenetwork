@@ -1,7 +1,7 @@
 // "Who do you mean?" in a group plan names only people the member was booked with: an invitee who
 // was only probed (no names) is no counterpart, and a member who only got the probe is shown no names.
 import { describe, expect, test } from "vitest";
-import { DAY } from "@thenetwork/core";
+import { DAY, HOUR } from "@thenetwork/core";
 import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
 
@@ -149,33 +149,32 @@ describe("block and report targets in a group plan", () => {
     expect(w.net.exportState().blocks.includes("a|b")).toBe(false);
   });
 
-  test("an ambiguous answer that falls back to a competing probe keeps the safety question", async () => {
+  test.each([["yes", true], ["no", true], ["never mind", false]] as const)("a competing probe and a %s safety reply", async (reply, keepsQuestion) => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
     await w.onboard("a", "b", "c");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
     await w.run(5 * DAY);
     expect(w.meetings.length).toBe(1);
-    let from = w.mark();
+    const from = w.mark();
     await w.say("a", "report him, he was creepy");
     expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
-    const pendingOf = () => (w.net.exportState() as any).members.find((m: any) => m.id === "a")?.pendingSafety;
+    const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
     expect(pendingOf()).toBeDefined();
     expect(w.net.safetyReports()).toHaveLength(0);
 
-    // A competing probe arrives: "yes" answers the probe, never the safety question.
+    // A competing probe gets a yes. An explicit cancellation clears the safety question.
     w.propose(["a", "c"]);
     await w.runUntil(() => w.probed("a"), 2 * DAY);
     expect(w.probed("a")).toBe(true);
-    await w.say("a", "yes");
-    expect(w.probed("a")).toBe(false);
+    await w.say("a", reply);
+    if (keepsQuestion) expect(w.probed("a")).toBe(false);
     expect(w.net.exportState().blocks.includes("a|b")).toBe(false);
     expect(w.net.safetyReports()).toHaveLength(0);
-    // The ambiguous fallback changes no safety state: the question is still open.
-    expect(pendingOf()).toBeDefined();
+    expect(!!pendingOf()).toBe(keepsQuestion);
 
     await w.say("a", "Ben");
-    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual(keepsQuestion ? [["a", "b"]] : []);
   });
 
   test("a long answer that names nobody keeps the safety question", async () => {
@@ -184,15 +183,37 @@ describe("block and report targets in a group plan", () => {
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
     await w.run(5 * DAY);
-    let from = w.mark();
+    const from = w.mark();
     await w.say("a", "report him, he was creepy");
     expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
-    const pendingOf = () => (w.net.exportState() as any).members.find((m: any) => m.id === "a")?.pendingSafety;
+    const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
     expect(pendingOf()).toBeDefined();
     await w.say("a", "I mean the tall guy from Saturday");
     expect(pendingOf()).toBeDefined();
     await w.say("a", "Ben");
     expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
+  test.each([true, false])("an invitation survey considers only a current safety question (current: %s)", async current => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    const invitation = w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const state = w.net.exportState();
+    const member = state.members.find(m => m.id === "a")!;
+    expect(member.pendingSafety?.targets).toEqual(["b"]);
+    member.awaiting = undefined;
+    member.unsol = { state: [] };
+    member.interruptionSurvey = { opportunityId: invitation, answeredAt: w.clock.now() - 2 * DAY };
+    if (!current) member.pendingSafety!.at -= DAY + HOUR;
+    w.net.importState(state);
+
+    const from = w.mark();
+    await w.run(12 * HOUR);
+    expect(w.to("a", from).some(message => message.body.includes("Was that invitation worth a text?"))).toBe(!current);
+    expect(w.net.safetyReports()).toHaveLength(0);
   });
 
   test("reporting someone not a counterpart after 'Who do you mean?' does not file a report", async () => {

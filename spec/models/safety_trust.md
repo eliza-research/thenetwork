@@ -718,6 +718,17 @@ module safety_trust {
     }
   }
 
+  // No allowed name or explicit cancellation. A competing prompt, or a long unrelated answer,
+  // leaves the current question available. Other actions model what the reply does after fallback.
+  action keepWhoAfterUnrelatedReply(m: Mid, competing: bool, shortReply: bool): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      competing or not(shortReply),
+      s' = { ...s, lastAction: "whoReplyPreserved" },
+    }
+  }
+
   pure def currentWhoOffer(st: State, m: Mid, name: str): bool = {
     val p = st.pendingWho.get(m)
     val target = midOf(st, m.app, name)
@@ -1029,6 +1040,7 @@ module safety_trust {
       disclose(k, app, a, meant, kind, flag),
       report(a, app, b, verb, kind, flag),
       answerWho(m),
+      keepWhoAfterUnrelatedReply(m, flag, flag2),
       answerWhoShared(m, app, flag),
       abuse(m, risk),
       staffHoldBy(m, scope, onlyRep),
@@ -1591,6 +1603,16 @@ module safety_trust {
       .then(report("ana", "slop", "ben", "report", "harassment", true))
       .then(answerWho(ANA_S))
       .expect(s.reports.exists(r => r.reporter == ANA_S and r.met) and everyMetReportFiled)
+
+  run unrelatedRepliesKeepWhoTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(keepWhoAfterUnrelatedReply(ANA_S, true, true))
+      .then(keepWhoAfterUnrelatedReply(ANA_S, false, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.pendingWho.get(ANA_S).target == "ben" and s.reports == Set())
+      .then(answerWho(ANA_S))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.reporter == ANA_S and r.met))
 
   // ------------------------------------------------------------------ wave 4 run tests
   pure val CY_S1: Mid = { app: "slop", p: "cy", g: 1 }

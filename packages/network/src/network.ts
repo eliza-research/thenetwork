@@ -125,7 +125,7 @@ import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
   immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
-  reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
+  reportRestrictsMatching, safetyQuestionIsCurrent, safetyQuestionResolves, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
@@ -805,7 +805,8 @@ const ASK_EVERY_DAYS = 7;
 /** "block him", "report my date": a block or report about the member's counterpart, not a name. */
 const PRONOUN_TARGET = /^(?:him|her|them|they|he|she|my date|my match|(?:the|this|that) (?:guy|girl|person|dude|man|woman))\b/i;
 /** A reply to "Who do you mean?" that drops the question. */
-const NEVER_MIND = /^\W*(?:never ?mind|nvm|nobody|no one|none|forget it|no|nope|cancel that)\W*$/i;
+const CANCEL_SAFETY_QUESTION = /^\W*(?:never ?mind|nvm|forget it|cancel that)\W*$/i;
+const NO_SAFETY_TARGET = /^\W*(?:nobody|no one|none|no|nope)\W*$/i;
 
 /** Actual NYC presence for the whole requested window; conversation ownership grants no location. */
 export function presentInNyc(snapshot: WorldSnapshot, id: MemberId, from: number, to: number): boolean {
@@ -2425,7 +2426,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private answerWho(m: MemberState, body: string): boolean {
     const p = m.pendingSafety!;
-    if (this.now() - p.at > DAY) { m.pendingSafety = undefined; return false; }
+    if (!safetyQuestionIsCurrent(p.at, this.now() - DAY)) { m.pendingSafety = undefined; return false; }
     const text = body.trim();
     const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
     const exact = this.resolveTarget(m, name, p.verb === "report").target;
@@ -2435,16 +2436,18 @@ export class ConsentNetwork implements NetworkUnderTest {
       && /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i.test(text)
       ? this.members.get(p.targets[0]!) : undefined;
     const target = named ?? confirmed;
-    if (target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id))) {
-      m.pendingSafety = undefined;
-      this.applyBlock(m, p.verb, p.kind, target);
+    const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
+    const cancels = CANCEL_SAFETY_QUESTION.test(text) || (!competing && NO_SAFETY_TARGET.test(text));
+    // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+    if (!safetyQuestionResolves(!!allowedTarget, !!competing, cancels, text.split(/\s+/).length <= 4)) return false;
+    m.pendingSafety = undefined;
+    if (allowedTarget) {
+      this.applyBlock(m, p.verb, p.kind, allowedTarget);
       return true;
     }
     if (competing) return false;
-    if (NEVER_MIND.test(text)) { m.pendingSafety = undefined; this.ack(m, "Okay."); return true; }
-    if (text.split(/\s+/).length > 4) return false;
-    if (p.verb === "block") { m.pendingSafety = undefined; this.applyBlock(m, p.verb, p.kind, undefined); return true; }
-    m.pendingSafety = undefined;
+    if (cancels) { this.ack(m, "Okay."); return true; }
+    if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return true; }
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
     return true;
@@ -5229,8 +5232,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         m.interruptionSurvey = undefined;
         continue;
       }
+      const safetyQuestionOpen = !!m.pendingSafety && safetyQuestionIsCurrent(m.pendingSafety.at, now - DAY);
       if (survey.sentAt !== undefined || !interruptionFeedbackAskDue(now - survey.answeredAt, eligible,
-        !!m.awaiting || !!m.pendingSafety || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
+        !!m.awaiting || safetyQuestionOpen || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
       const code = interruptionFeedbackCode(this.app.id, m.id, survey.opportunityId);
       const responseKey = `${this.app.id.toUpperCase()} ${code}`;
       const body = `Was that invitation worth a text? Reply WORTH YES ${responseKey} or WORTH NO ${responseKey}.`;
