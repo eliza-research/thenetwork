@@ -127,3 +127,7 @@
 {"text":"Sat Sun.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"Sat Sun.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Yeah, we can meet in the sun Saturday.","answer":"yes","keys":["b"]}
+{"text":"Sat and Sun are good.","answer":"yes","keys":["b","c"]}
+{"text":"Sat and Sun please.","answer":"yes","keys":["b","c"]}
+{"text":"Sat or Sun are fine.","answer":"yes","keys":["b","c"]}
+{"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}

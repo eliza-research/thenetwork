@@ -875,7 +875,7 @@ const BOTH_TIME_BOUNDARY = new RegExp(String.raw`[.,;!?\n]|\b(?:but|${NAMED_TIME
 const PROBE_DAY_LIST_WORD = String.raw`\b(?:${DAY_TOKEN})\b`;
 const DIRECT_PROBE_DAY_LIST = new RegExp(
   String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
-    + String.raw`(?<days>${PROBE_DAY_LIST_WORD}(?:\s+(?:and|or)\s+${PROBE_DAY_LIST_WORD})*\s+${PROBE_DAY_LIST_WORD}(?:\s+(?:(?:and|or)\s+)?${PROBE_DAY_LIST_WORD})*)`
+    + String.raw`(?<days>${PROBE_DAY_LIST_WORD}(?:\s+(?:(?:and|or)\s+)?${PROBE_DAY_LIST_WORD})+)`
     + String.raw`(?=(?:\s+(?:both|either)\b)?(?:\s+(?:${OFFERED_PAIR_AFFIRMATIVE}))?\s*(?:$|${BOTH_TIME_BOUNDARY.source}))`,
   "dgu",
 );
