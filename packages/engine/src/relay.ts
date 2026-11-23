@@ -561,9 +561,9 @@ const RELAY_SHORT_RETRACTION = "no|wait|cancel|(?:hold|hang) on";
 const RELAY_EXPLICIT_RETRACTION = "scratch that|cancel that|take that back|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
 const RELAY_LATE_DOUBT = "maybe|hmm|idk|(?:i(?:'m| am) )?(?:not ready|reconsidering)|on second thought|let me think|ugh actually";
 const RELAY_UNPUNCTUATED_DOUBT =
-  String.raw`(?:let me think(?:\s+(?:(?:about|on|over|through)\s+(?:it|this|that)|it over))?(?:\s+(?:first|more|again|a bit))?`
+  String.raw`(?:(?:let me|lemme) think(?:\s+(?:(?:about|on|over|through)\s+(?:it|this|that|him|her|them)|it over|for a (?:sec(?:ond)?|bit|minute)))?(?:\s+(?:first|(?:some )?more|again|a bit|tonight|and get back to you))?`
   + String.raw`|on second thought\s+(?:no|i(?:'ll|\s+(?:should|will))\s+wait)|hmm\s+idk)\s*(?:[,;:–—]\s*|$)`;
-const COLLOQUIAL_RETRACTION = /^[,\s–—]*(?:lol|ok(?:ay)?|oh|ugh)[,\s]+(?:never ?mind|nvm|wait\s*[,–—]\s*no)\b(\s*[,;:–—]\s*|\s*)/iu;
+const COLLOQUIAL_RETRACTION = /^[,\s–—]*(?:lol|haha|ok(?:ay)?|oh|ugh|nah|hmm)[,\s]+(?:never ?mind|nvm|wait\s*[,–—]\s*no)\b(\s*[,;:–—]\s*|\s*)/iu;
 const COLLOQUIAL_RETRACTION_REASON = /^(?:i|we|he|she|they)\b/iu;
 const COLLOQUIAL_RETRACTION_ITEM = new RegExp(
   String.raw`^(?:(?:my|the|this|that|these)\s+)?(?:(?<contact>${CONTACT_RELAY_NAME})|${PHOTO_RELAY_NAME})\b\s*(?:[,;:–—]|$)`,
