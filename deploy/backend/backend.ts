@@ -28,7 +28,7 @@ import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // site host (which picks the app) and keeps the signed visitor IP for the rate limits; any other
 // request loses every proxy and forwarding header, so a client can never pick either one.
 import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
-import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
+import { assertBootConfig, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { isProxyHeader, PROXY_HEADERS, signedPath, signProxyHeaders, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
@@ -100,7 +100,7 @@ export const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 
 /** Reads and checks the environment. Fails closed: a deployed environment without its secrets does not start. */
 export function loadConfig(e: Env = process.env, argv: string[] = []): BackendConfig {
-  const env = requirePlatformEnv(e);
+  const env = assertBootConfig(e);
   const isolatedRoute = networkRoutePolicy(e);
   const databaseUrl = e.NETWORK_DATABASE_URL || e.DATABASE_URL;
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;

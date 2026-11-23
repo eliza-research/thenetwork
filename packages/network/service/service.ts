@@ -127,7 +127,7 @@ import {
 import { SeedInvitations } from "../../platform/src/seed-invitations.ts";
 import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
-import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
+import { devShortcutsAllowed, isProduction, MIN_SECRET_LENGTH, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
@@ -450,7 +450,9 @@ export class NetworkService implements RuntimeHost {
     this.seedInvitations = new SeedInvitations(key, () => this.clock.now());
     this.profileFactEdits = new ProfileFactEdits(key, () => this.clock.now());
     this.homeHelpVenueKey = createSecretKey(Buffer.from(hkdfSync("sha256", key, "thenetwork", "private-home-help-venue-v1", 32)));
-    try { this.tokens = parseTokenGrants(o.tokens, { explicitApp: isProduction(this.env) }); } catch (e) { throw new Error(String((e as Error).message).replace("OBSERVATORY_TOKENS", "NETWORK_SERVICE_TOKENS")); }
+    const minLength = devShortcutsAllowed(this.env) ? undefined : MIN_SECRET_LENGTH;
+    try { this.tokens = parseTokenGrants(o.tokens, { explicitApp: isProduction(this.env), minLength }); } catch (e) { throw new Error(String((e as Error).message).replace("OBSERVATORY_TOKENS", "NETWORK_SERVICE_TOKENS")); }
+    if (minLength && this.consoleToken && this.consoleToken.length < minLength) throw new Error(`NETWORK_SERVICE_CONSOLE_TOKEN must be at least ${minLength} characters`);
     // Cloud holds the turn secret; it must never also be a staff bearer (PR #4: the agent credential was never the console token).
     const turnSecret = this.env.SERVICE_TURN_SECRET;
     if (turnSecret && [...this.tokens.keys(), ...(this.consoleToken ? [this.consoleToken] : [])].some(t => safeEqual(t, turnSecret))) {
@@ -808,7 +810,7 @@ export class NetworkService implements RuntimeHost {
     // The database and the process must agree on the environment (the 555-01xx guard reads the database's).
     const declared = platformEnv(this.env);
     const [envRow] = await this.sql`select value from platform.settings where key = 'environment'`;
-    if (declared && envRow && envRow.value !== declared) throw new Error(`PLATFORM_ENV is ${declared} but platform.settings.environment is ${envRow.value}: fix one of them`);
+    if (declared && envRow?.value !== declared) throw new Error(`PLATFORM_ENV is ${declared} but platform.settings.environment is ${envRow ? envRow.value : "missing"}: fix one of them`);
     const injected = this.relayClassifier;
     this.relayHookFor = injected ? () => injected : relayClassifierFromEnv(this.env, this.log, this.cost);
     for (const rt of this.runtimes.values()) await rt.start();

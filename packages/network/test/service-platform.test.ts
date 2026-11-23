@@ -644,7 +644,7 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     const otp = new FakeOtp();
     const { s } = service(clock, {
       env: { PLATFORM_ENV: "production", TURNSTILE_SECRET_KEY: "0x4AAA", PLATFORM_HASH_KEY: k, PLATFORM_SESSION_SECRET: k, PLATFORM_PROXY_SECRET: k },
-      tokens: "admin@*:adm-tok", publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
+      tokens: `admin@*:${k}`, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
     });
     const res = await s.publicFetch(new Request("https://slop.date/api/auth/otp/start", { method: "POST", headers: { host: "slop.date", "content-type": "application/json" }, body: JSON.stringify({ phone: newPhone() }) }));
     expect([res.status, (await res.json()).error]).toEqual([400, "turnstile"]);
