@@ -185,12 +185,16 @@ test("the birthday is refused when it is missing, malformed, impossible, in the 
   const leap = setup(), leapClient = await draftFor(leap, "friends.help", PHONE_A);
   const leapPage = await openSignup(leap, "friends.help", leapClient, PHONE_A);
   expect(await (await leapPage.join({ firstName: "Ari", birthdate: "2012-02-29", homeCity: "sf", smsConsent: "yes" })).text()).toContain("Signup confirmed.");
-  expect((await leap.people.getPerson((await leap.accounts.personFor(PHONE_A))!.id))!.lowestAge).toBe(14);
+  const leapPerson = (await leap.accounts.personFor(PHONE_A))!;
+  expect(leapPerson.lowestAge).toBeNull();
+  expect(await leap.accounts.lowestAge(PHONE_A, leapPerson)).toBe(14);
 
   const birthday = setup(), birthdayClient = await draftFor(birthday, "friends.help", PHONE_A);
   const birthdayPage = await openSignup(birthday, "friends.help", birthdayClient, PHONE_A);
   expect(await (await birthdayPage.join({ firstName: "Ari", birthdate: "2013-10-08", homeCity: "sf", smsConsent: "yes" })).text()).toContain("Signup confirmed.");
-  const thirteen = (await birthday.people.getPerson((await birthday.accounts.personFor(PHONE_A))!.id))!.lowestAge;
+  const birthdayPerson = (await birthday.accounts.personFor(PHONE_A))!;
+  expect(birthdayPerson.lowestAge).toBeNull();
+  const thirteen = await birthday.accounts.lowestAge(PHONE_A, birthdayPerson);
   expect(thirteen).toBe(13);
   expect(canBeMatched(thirteen)).toBe(false);
 });

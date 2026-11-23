@@ -336,7 +336,12 @@ test("staging builds keep the served entry, skills and signed router on configur
     const prompt = `Read ${origins.slop}/SKILL.md and follow it.`;
     expect(home).toContain(`>${prompt}</code>`);
     expect(home).toContain(`https://claude.ai/new?q=${encodeURIComponent(prompt)}`);
-    for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
+    expect(home).not.toContain('href="https://chatgpt.com/');
+    const hubHome = readFileSync(join(hubDirectory, "index.html"), "utf8");
+    const hubSkill = readFileSync(join(hubDirectory, "SKILL.md"), "utf8");
+    const hubPrompt = `Read ${origins.ntwrk}/SKILL.md?version=${encodeURIComponent(skillVersion(hubSkill))} and follow it.`;
+    expect(hubHome).toContain(`https://chatgpt.com/?q=${encodeURIComponent(hubPrompt)}`);
+    for (const origin of ["https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
       const href = [...home.matchAll(/href="([^"]+)"/g)].map(m => m[1]!).find(href => href.startsWith(`${origin}?q=`));
       expect(href, origin).toBeDefined();
       expect(new URL(href!).searchParams.get("q"), origin).toBe(prompt);
@@ -356,6 +361,7 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(skill).toContain(`${origins.slop}/`);
     expect(skill).toContain(`${origins.ntwrk}/mcp/slop`);
     expect(skill).not.toContain(`${origins.slop}/mcp`);
+    expect(skill).not.toContain(`${origins.ntwrk}/mcp/slop/openai`);
     expect(skill).toContain("native connector authorization");
     expect(skill).not.toContain("/api/auth/otp/");
     for (const path of ["privacy", "terms"]) expect(skill).toContain(`${origins.slop}/${path}`);
@@ -363,7 +369,7 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(skill).not.toContain("https://slop.date");
     const index = await (await fetch(`${base}/.well-known/agent-skills/index.json`)).json() as { skills: { url: string; digest: string }[] };
     expect(await (await fetch(base + index.skills[0]!.url)).text()).toBe(skill);
-    expect(readFileSync(join(hubDirectory, "SKILL.md"), "utf8")).toContain(`${origins.ntwrk}/`);
+    expect(hubSkill).toContain(`${origins.ntwrk}/`);
     for (const path of ["/api/app", "/mcp", "/oauth/authorize", "/.well-known/oauth-protected-resource/mcp"]) {
       expect((await (await fetch(base + path)).json()).id).toBe("slop");
     }
