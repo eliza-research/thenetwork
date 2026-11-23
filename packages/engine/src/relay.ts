@@ -33,7 +33,7 @@
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
 import { relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
-import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, relayMinorEstimate, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -234,11 +234,8 @@ export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) =
 // spec/memberAge.md, "A half age needs age wording to confirm an under-13 refusal".
 const CURRENT_TEEN_NUMBER = `1[3-7](?![.,]\\d|${AGE_BIRTHDAY_AFTER_AGE}|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
 
-const TEEN_NEAR = `(?:1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen)(?![.,]\\d|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
-const GRADE_END = `(?=\\s*(?:$|\\.(?!\\d)|[,!?;:)]|but\\b|so\\b|btw\\b|lol\\b|haha\\b|lmao\\b|here\\b|tho(?:ugh)?\\b|and\\b|now\\b))`;
-
 /** A self-disclosed minor age or school year (blocks and flags the age for the platform). */
-export const MINOR_SIGNAL = R(`\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?${CURRENT_TEEN_NUMBER}(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|(?<!\\d[.,])\\b${CURRENT_TEEN_NUMBER}\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\b(?:i'?m|i am|im)\\s+(?:almost|nearly|turning|about to (?:be|turn))\\s+${TEEN_NEAR}(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi|km|percent|%|feet|ft|times|for\\b|of\\b))|\\bi(?:(?:'ll| will) be| turn)\\s+${TEEN_NEAR}\\s+(?:in|on|next|this|soon)\\b|\\b(?:i'?m|i am|im)\\s+in\\s+(?:the\\s+)?(?:[6-9]|1[0-2])(?:st|nd|rd|th)?\\s+grade${GRADE_END}|\\b(?:i'?m|i am|im)\\s+in\\s+(?:the\\s+)?(?:sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\\s+grade${GRADE_END}|\\b(?:i'?m|i am|im)\\s+a\\s+(?:[6-9]|1[0-2])(?:st|nd|rd|th)\\s+grader\\b|\\b(?:i'?m|i am|im)\\s+(?:a\\s+)?(?:freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)\\b|\\b(?:i'?m|i am|im)\\s+a\\s+(?:high school|hs)\\s+(?:freshman|sophomore|junior|senior|student)\\b|^\\s*(?:almost|nearly|turning)\\s+(?:1[6-8]|sixteen|seventeen|eighteen)\\b(?:\\s+(?:in\\s+\\w+|next\\s+\\w+|this\\s+\\w+|soon))?\\s*[.!?]*\\s*$|^\\s*(?:1[6-8]|sixteen|seventeen|eighteen)\\s+(?:next\\s+(?:week|month|year)|in\\s+(?:a few\\s+)?(?:weeks|months))\\s*[.!?]*\\s*$|\\bhomeroom\\b`);
+export const MINOR_SIGNAL = R(`\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?${CURRENT_TEEN_NUMBER}(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|(?<!\\d[.,])\\b${CURRENT_TEEN_NUMBER}\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b`);
 
 const DIGIT_WORDS: Record<string, string> = { zero: "0", oh: "0", o: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
 /** A phone number spelled in words or digits with any separators ("three four seven, five five five, ..."): 7+ digits in a row. */
@@ -263,7 +260,7 @@ export function classifyRelayText(text: string): { codes: string[]; minorSignal:
   const lower = normalized.toLowerCase();
   const ageText = normalizeAgeInitialism(lower);
   const ageVariants = ageText === lower ? vs : textVariants(ageText);
-  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
+  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
 }
 
 // ----------------------------------------------------------------------------------- photo ids

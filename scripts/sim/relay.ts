@@ -98,6 +98,8 @@ export async function relayBlock(b: Block): Promise<void> {
       "hey im 15f btw", "im 16/x from brooklyn", "17m here", "I'm 18 in two weeks",
       "I'm turning 16 next month", "I'm turning 16 in May", "I turn 16 next month",
       "I'll be 16 in May", "I'm almost 16", "I'm nearly 16", "almost 16",
+      "I'm turning 18 next month", "I'll be 18 in May", "turning 16 next month", "16 next month",
+      'I said "I\'m turning 16 next month"', 'She said "hi" and I\'m turning 16 next month',
       "I'm in 7th grade", "I'm in seventh grade", "I'm a 7th grader",
       "I'm a sophomore in high school", "I'm a high school junior",
       "I'm 16.5 years old", "I'm 15.5 y.o. and I live in NYC"]) {
@@ -109,7 +111,10 @@ export async function relayBlock(b: Block): Promise<void> {
       "I'm 1 of 3 siblings", "I'm 2 drinks in", 'she said "I am 10 years old"',
       "I'm 18.5 years old", "I'm 15.5 miles away", "I'm 15 y.o. in two years",
       "I'm 15 years old in two years", "My child is 12.5 years old",
-      "I'm almost 30", "I'm in 12th grade as a teacher",
+      "I'm almost 30", "I'm in 12th grade as a teacher", "I'm in 12th grade, as a teacher",
+      "I'm almost 150 miles away", "I'm turning 165 degrees clockwise", "I'm turning 16.5 degrees",
+      "I'm turning sixteen degrees", "I'm turning 16 in two years", "Imagine I'm turning 15",
+      'She said "I\'m turning 16 next month"', "My cousin said I am in seventh grade",
       "My race result is 29.15 years old"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
   });
 

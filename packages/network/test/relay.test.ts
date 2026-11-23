@@ -44,11 +44,19 @@ const ask=async(who:"ari"|"bo",messageId:string,text:string):Promise<RelaySendRe
 const post=async(body:RelaySendRequest)=>signed(RELAY_PATH,`${body.messageId}:relay`,JSON.stringify(body));
 const staff=(path:string,token:string,method="GET",b?:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method,headers:{authorization:`Bearer ${token}`,...(b?{"content-type":"application/json"}:{})},...(b?{body:JSON.stringify(b)}:{})}));
 
+async function enrollRelayMember(phone: string, nameAndAge: string, prefix: string) {
+  for (const [index, text] of ["friends.help", nameAndAge, "I enjoy hiking and cooking",
+    "Saturday afternoons work for me", "Small groups are good"].entries()) {
+    clock.advance(MINUTE);
+    const id = prefix + "-" + index;
+    expect((await signed(TURN_PATH, id, JSON.stringify(turn(phone, id, text)))).status).toBe(200);
+  }
+}
+
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});await start();
-  for(const [who,name] of [["ari","Ari, 29"],["bo","Bo, 31"]] as const)for(const [index,text] of ["friends.help",name,"I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()){
-    clock.advance(MINUTE);expect((await signed(TURN_PATH,`${who}-setup-${index}`,JSON.stringify(turn(phones[who],`${who}-setup-${index}`,text)))).status).toBe(200);
-  }
+  for (const [who, name] of [["ari", "Ari, 29"], ["bo", "Bo, 31"]] as const)
+    await enrollRelayMember(phones[who], name, who + "-setup");
   ari=await open(phones.ari,"ari-open");bo=await open(phones.bo,"bo-open");
   // A plan both said yes to (the matching path itself is covered elsewhere): the relay opens on it.
   const now=clock.now();
@@ -600,4 +608,63 @@ test.each([
   expect({ decision: (await response.json()).decision, newShares: await sharesQueued() - before,
     pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
     .toEqual({ decision: shares ? "pass" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
+}, 60_000);
+
+let ageEstimatePair = 0;
+test.each([
+  { label: "measurement in miles", body: "I'm almost 150 miles away.", minor: false },
+  { label: "turn in degrees", body: "I'm turning 165 degrees clockwise.", minor: false },
+  { label: "quoted birthday", body: 'She said "I\'m turning 16 next month".', minor: false },
+  { label: "unfinished reported birthday", body: "She said “I'm turning 16 next month", minor: false },
+  { label: "indirect grade", body: "My cousin said I am in seventh grade.", minor: false },
+  { label: "quoted grade", body: "She said ‘I'm in seventh grade’.", minor: false },
+  { label: "adult school role", body: "I'm in 12th grade as a teacher.", minor: false },
+  { label: "distant birthday", body: "I'm turning 16 in two years.", minor: false },
+  { label: "hypothetical birthday", body: "What if I'm turning 16 next month?", minor: false },
+  { label: "short almost age", body: "almost 16", minor: true },
+  { label: "short turning age", body: "turning 16 next month", minor: true },
+  { label: "short birthday", body: "16 next month", minor: true },
+  { label: "own birthday quotation", body: "I said “I'm turning 16 next month”", minor: true },
+  { label: "own grade quotation", body: "I said ‘I'm in seventh grade’", minor: true },
+  { label: "unfinished casual birthday", body: "“I'm turning 16 next month", minor: true },
+])("a signed age estimate only affects the relay item: $label", async ({ label, body, minor }) => {
+  const id = "relay-age-estimate-" + randomUUID();
+  const pair = ++ageEstimatePair;
+  const senderPhone = "+12125550" + (100 + 2 * pair);
+  const recipientPhone = "+12125550" + (101 + 2 * pair);
+  await enrollRelayMember(senderPhone, "Ari, 29", id + "-ari");
+  await enrollRelayMember(recipientPhone, "Bo, 29", id + "-bo");
+  const sender = await open(senderPhone, id + "-ari-open"), recipient = await open(recipientPhone, id + "-bo-open");
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
+    const now = clock.now();
+    state.opps.push({ ...swapMatchTemplate!, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY,
+      participants: [sender, recipient], status: [[sender, "yes"], [recipient, "yes"]], contacted: [sender, recipient] });
+    net.importState(state);
+  });
+  const before = (await service.accounts.personFor(senderPhone))?.lowestAge;
+  expect(before).toBe(29);
+
+  const text = "tell Bo " + body, messageId = id + "-text";
+  expect(await open(senderPhone, messageId, text)).toBe(sender);
+  const response = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
+  expect(response.status).toBe(200);
+  const decision = minor ? "block" : "pass";
+  expect(await response.json()).toMatchObject({ decision, delivered: false });
+  const records = await sql`select decision, age_signal from network.relay_records
+    where app_id='friends' and opportunity_id=${id} and from_member=${sender}`;
+  expect([...records]).toEqual([{ decision, age_signal: minor }]);
+  const sent = await sql`select body from network.messages
+    where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`;
+  expect(sent).toHaveLength(minor ? 0 : 1);
+  expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(before);
+  expect(await service.runtimeFor("friends")!.unitOfWork(net =>
+    net.exportState().opps.find(opp => opp.id === id)?.stage)).toBe("scheduled");
+  if (label === "short turning age") {
+    const messageId = id + "-followup", text = "tell Bo the coffee shop is open.";
+    expect(await open(senderPhone, messageId, text)).toBe(sender);
+    const followup = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
+    expect(await followup.json()).toMatchObject({ decision: "pass", delivered: false });
+  }
 }, 60_000);
