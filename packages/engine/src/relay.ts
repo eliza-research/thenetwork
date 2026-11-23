@@ -32,7 +32,7 @@
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
-import { canBeMatched, labelHash, LeakGuard, quoteStillOpen, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { canBeMatched, labelHash, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -472,9 +472,13 @@ const DECLINES_PENDING_SEND = new RegExp(
 );
 const PRIVATE_RELAY_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?|email)|(?:this|that|the|my|these) (?:photos?|pics?|pictures?|selfies?|images?))\b/;
 const PRIVATE_RELAY_ACTION = /\b(?:send(?:ing)?|sent|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\b/;
-const PRIVATE_RELAY_REFERENCE = /\b(?:send|share|give|pass|forward|show|text)\s+(?:it|that|this)\b/;
+const PRIVATE_RELAY_REFERENCE = /\b(?:send|share|give|pass|forward|show|text)\s+(?:it|that|this)\b(?=\s*(?:$|(?:to|with|yet|please|pls|now)\b))/;
 const INCOMPLETE_SHARE_REFUSAL = new RegExp(SHARE_NEG.source + "\\s*$");
 const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
+// A quotation can contain a refusal or a command, but it does not speak for the member.
+const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;
+
+const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"').replace(RELAY_QUOTATION, " ").trim();
 
 // spec/relayDecision.md, "A member can take back a pending number swap"
 function refusesNumberSwap(clauses: readonly string[]): boolean {
@@ -489,7 +493,7 @@ function refusesNumberSwap(clauses: readonly string[]): boolean {
 const relayClauses = (text: string): string[] => text.replace(SWAP_GO_AHEAD, " ").split(RELAY_CLAUSE);
 
 export function withdrawsRelaySwap(text: string): boolean {
-  return refusesNumberSwap(relayClauses(text.replace(/[’‘`´]/g, "'").toLowerCase()));
+  return refusesNumberSwap(relayClauses(ownRelayWords(text.replace(/[’‘`´]/g, "'")).toLowerCase()));
 }
 
 /**
@@ -499,20 +503,21 @@ export function withdrawsRelaySwap(text: string): boolean {
  */
 export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
-  const low = t.toLowerCase();
-  const contact = CONTACT_REQ.exec(t);
-  const item = contact ?? PHOTO_REQ.exec(t);
-  if (item) {
+  const spoken = ownRelayWords(t);
+  const contact = CONTACT_REQ.test(spoken);
+  if (contact || PHOTO_REQ.test(spoken)) {
+    const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
-    const hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(t));
+    const hedged = HEDGE.test(low) || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = clauses.some(clause => NEG.test(clause) || INCOMPLETE_SHARE_REFUSAL.test(clause)
       || (SHARE_NEG.test(clause) && (PRIVATE_RELAY_REFERENCE.test(clause)
         || (PRIVATE_RELAY_ACTION.test(clause) && PRIVATE_RELAY_ITEM.test(clause)))))
-      || (contact !== null && refusesNumberSwap(clauses));
-    return privateRelayRequestAllowed(refused, hedged || quoteStillOpen(low.slice(0, item.index).replace(/[“”]/g, '"')))
+      || (contact && refusesNumberSwap(clauses));
+    return privateRelayRequestAllowed(refused, hedged)
       ? { kind: contact ? "contact_share" : "photo" } : { kind: "none" };
   }
+  const low = t.toLowerCase();
   const m = TEXT_REQ.exec(t);
   if (m && !NEG.test(low) && !/\bwon'?t\b/.test(low)) return { kind: "text", body: m[1]!.trim() };
   return { kind: "none" };

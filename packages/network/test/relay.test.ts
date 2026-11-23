@@ -212,6 +212,7 @@ test.each([
   "I'll not give Ari my number",
   "My number is off limits, send Ari my number",
   "I can't believe it, “send Ari my number”",
+  "I would not send Ari my number. I can still make Saturday.",
 ])("the relay does not send a private item after %s", async (text) => {
   const id = "refused-share-" + randomUUID();
   const before = await sharesQueued();
@@ -252,6 +253,9 @@ test.each([
   "I did not miss your message, send Ari my number",
   "I mustn't be late, send Ari my number",
   "I'll not lie, send Ari my number",
+  "Ari said “I would not send them my number.” Send Ari my number.",
+  "Ari said 'I won't send them my number.' Send Ari my number.",
+  "I would not send that calendar invite, but send Ari my number.",
 ])("the signed action preserves the same pending request after %s", async (text) => {
   const id = "affirmed-swap-" + randomUUID();
   const before = await sharesQueued();
@@ -266,3 +270,19 @@ test.each([
     .toMatchObject({ decision: "pass", delivered: false });
   expect(await sharesQueued()).toBe(before + 2);
 }, 60_000);
+
+test.each(["Ari said “Don't send my number.”", "Ari said ‘don't send it please’."])(
+  "a quoted refusal keeps the pending number swap after %s", async (text) => {
+    const id = "quoted-swap-" + randomUUID();
+    const before = await sharesQueued();
+    await startNumberSwap(id, "bo");
+    const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+    expect(original).toBeDefined();
+    const report = await ask("bo", id + "-quotation", text);
+    expect(await (await post(report)).json()).toMatchObject({ decision: "none", senderNotice: "" });
+    expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
+    expect(await (await post(await ask("ari", id + "-second", "send Bo my number"))).json())
+      .toMatchObject({ decision: "pass", delivered: false });
+    expect(await sharesQueued()).toBe(before + 2);
+  }, 60_000,
+);
