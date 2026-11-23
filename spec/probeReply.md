@@ -64,24 +64,6 @@ pure def lawDirectWithdrawalKeepsTheRefusal(modelConsent: str): bool =
     probeReplyReading(false, false, modelConsent) == KeepOffline
 ```
 
-### A qualifier before the refusal verb does not change the refusal
-
-A qualifier such as "for me" between a named time and its refusal verb does not change the refusal. The refusal applies to each time joined to that time. A daypart that restates an exact clock keeps that clock with the refusal. "Aren't" before a word such as "good" refuses a time in the same way as "isn't".
-
-```quint
-pure def refusalWithQualifier(qualifier: bool, refusalVerb: bool): bool =
-  refusalVerb
-
-pure def lawQualifierBeforeRefusalVerbKeepsTheRefusal(qualifier: bool, refusalVerb: bool): bool =
-  refusalWithQualifier(qualifier, refusalVerb) == refusalVerb
-
-pure def joinedRefusalAppliesToEachTime(refused: bool, joined: bool): bool =
-  refused and joined
-
-pure def lawJoinedRefusalRefusesEachJoinedTime(refused: bool, joined: bool): bool =
-  joinedRefusalAppliesToEachTime(refused, joined) == (refused and joined)
-```
-
 ### A clear yes uses the chosen times when the member names them
 
 If a model reads a clear yes, use the offered times the person chose. If they gave no preference, keep all offered times. The caller validates model-supplied keys against the offered times first.

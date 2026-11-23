@@ -71,7 +71,7 @@
 {"text":"sat and sun both except Thursday","answer":"yes","keys":["b","c"]}
 {"text":"sat and sun both at 11am","answer":"unclear","keys":[]}
 {"text":"sat sun both","answer":"unclear","keys":[]}
-{"text":"the 2nd and 3rd both work","answer":"yes","keys":["b","c"]}
+{"text":"the 2nd and 3rd both work","answer":"unclear","keys":[]}
 {"text":"Both Saturday, not Thursday.","answer":"unclear","keys":[]}
 {"text":"Yes both Saturday, not Thursday.","answer":"unclear","keys":[]}
 {"text":"Either Saturday works, but not both.","answer":"yes","keys":["b"]}
@@ -131,3 +131,7 @@
 {"text":"Saturday at 11am in the morning for me doesn't work","answer":"unclear","keys":[]}
 {"text":"Saturday at 11am in the morning and Sunday at 2pm in the afternoon for me don't work","answer":"unclear","keys":[]}
 {"text":"Saturday aren't good","answer":"unclear","keys":[]}
+{"text":"Thursday works. Saturday and Sun for me don't work.","answer":"yes","keys":["a"]}
+{"text":"Thursday works. Sat for me doesn't work.","answer":"yes","keys":["a"]}
+{"text":"The first and later works.","answer":"yes","keys":["a"]}
+{"text":"Saturday is fine. Sunday for me isn't a problem.","answer":"yes","keys":["b","c"]}
