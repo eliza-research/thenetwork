@@ -689,10 +689,10 @@ const UNRESOLVED_RENEWAL_PAYLOAD = /\b(?:it|this|that|either|both|instead|ask(?:
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const FLEXIBLE_PRIVATE_TIMING = String.raw`whenever|any\s*time`;
-const RECURRING_PRIVATE_CONDITION = String.raw`${FLEXIBLE_PRIVATE_TIMING}|(?:(?:each\s+and\s+)?every(?:\s+single)?|each)\s+time`;
+const RECURRING_PRIVATE_CONDITION = String.raw`${FLEXIBLE_PRIVATE_TIMING}|(?:(?:each\s+and\s+)?every(?:\s+single)?|each)\s*time`;
 const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
 const TRAILING_PRIVATE_CONDITION = new RegExp(
-  String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b.*)$`,
+  String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(?:(?:wait|hold(?:\s+(?:it|off|on))?)\s+(?=(?:until|till)\b))?(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER}|till)\b.*)$`,
   "iu",
 );
 const POLITE_PRIVATE_CONDITION = new RegExp(
@@ -715,11 +715,16 @@ const INCOMPLETE_CONDITION_ACTION = new RegExp(
 );
 const LINKED_PRIVATE_REFERENCE = String.raw`(?:it|(?:this|that)(?=$|[.,:;!?]|\s+(?:to|with|now|please|pls|${PRIVATE_CONDITION_MARKER})\b))`;
 const LINKED_PRIVATE_OBJECT = String.raw`(?:(?<contact>${CONTACT_RELAY_ITEM}|(?:this|that|the)\s+(?:${CONTACT_RELAY_NAME}))|(?<photo>${PHOTO_RELAY_ITEM})|${LINKED_PRIVATE_REFERENCE})\b`;
-const LINKED_PRIVATE_SEND = new RegExp(
-  String.raw`\b(?:${TRANSFER}|show)\s+(?:(?<recipient>${OTHER})\s+)?${LINKED_PRIVATE_OBJECT}(?:\s+(?:to|with)\s+(?<destination>${OTHER}))?`, "iu",
+const linkedPrivateSend = (verbs: string, particle: string): RegExp => new RegExp(
+  String.raw`\b(?:${verbs})\s+(?:(?<recipient>${OTHER})\s+)?${LINKED_PRIVATE_OBJECT}${particle}(?:\s+(?:to|with)\s+(?<destination>${OTHER}))?`, "iu",
 );
+const LINKED_PRIVATE_SEND = linkedPrivateSend(String.raw`${TRANSFER}|show`, "");
+const LINKED_PRIVATE_HANDOFF = linkedPrivateSend(String.raw`${TRANSFER}|show|hand`,
+  String.raw`(?:\s+(?:over|on|along)(?=\s*$|\s*[,.;:!?]|\s+(?:to|with|now|please|pls|till|${PRIVATE_CONDITION_MARKER})\b))?`);
 const LINKED_PRIVATE_ACCESS_LEAD = String.raw`\b(?!(?:you|u|we|i)\b)(?<recipient>${OTHER})\s+(?:can|could|may|will)\s+(?:have|get|receive)\s+`;
 const LINKED_PRIVATE_ACCESS = new RegExp(String.raw`${LINKED_PRIVATE_ACCESS_LEAD}${LINKED_PRIVATE_OBJECT}`, "iu");
+const LINKED_PRIVATE_FOR = new RegExp(String.raw`\b${LINKED_PRIVATE_OBJECT}(?:'s|’s|\s+is)\s+for\s+(?<recipient>${OTHER})`, "iu");
+const CONDITIONED_PRIVATE_TRANSFERS = [LINKED_PRIVATE_HANDOFF, LINKED_PRIVATE_ACCESS, LINKED_PRIVATE_FOR];
 const NAMED_CONDITION_ACCESS = new RegExp(
   String.raw`^${LINKED_PRIVATE_ACCESS_LEAD}(?:the|this|that)\s+(?<object>(?:(?!(?:and|or|but|then|to|with)\b)[\p{L}'-]+(?:\s+|$))+)\s*$`, "iu",
 );
@@ -818,8 +823,8 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   return true;
 }
 
-function linkedPrivateTransfer(sentence: string): RegExpExecArray | undefined {
-  return [LINKED_PRIVATE_SEND.exec(sentence), LINKED_PRIVATE_ACCESS.exec(sentence)].find(transfer => transfer !== null
+function linkedPrivateTransfer(sentence: string, forms = [LINKED_PRIVATE_SEND, LINKED_PRIVATE_ACCESS]): RegExpExecArray | undefined {
+  return forms.map(form => form.exec(sentence)).find(transfer => transfer !== null
     && DIRECT_RELAY_LEAD.test(sentence.slice(0, transfer.index).replace(LINKED_PRIVATE_LEAD, ""))) ?? undefined;
 }
 
@@ -837,7 +842,7 @@ function linkedTransferMatchesRequest(transfer: RegExpExecArray, request: RegExp
 
 function linkedTransferIsConditional(sentence: string, source: string, request: RegExpMatchArray, contact: boolean): boolean {
   const lead = PRIVATE_NOTICE_THEN.exec(sentence)?.[0].length ?? 0;
-  const transfer = linkedPrivateTransfer(sentence.slice(lead));
+  const transfer = linkedPrivateTransfer(sentence.slice(lead), CONDITIONED_PRIVATE_TRANSFERS);
   if (!transfer || !linkedTransferMatchesRequest(transfer, request, contact)) return false;
   const end = lead + transfer.index + transfer[0].length;
   const tail = sentence.slice(end);
