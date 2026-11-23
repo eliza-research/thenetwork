@@ -232,6 +232,7 @@
 {"text": "send him my number, and every time he asks, it is okay", "want": "none"}
 {"text": "send him my number. every time he asks, tell me", "want": "none"}
 {"text": "send him my number. every time he asks, he can have it", "want": "none"}
+{"text": "send him my number. every time he asks, he can have it, Ana said", "want": "contact_share"}
 {"text": "send him my photo. each time he asks, he can have it", "want": "none"}
 {"text": "send him my number. anytime he asks, he will get it", "want": "none"}
 {"text": "send him my number. every time he asks, he can have my photo", "want": "contact_share"}

@@ -655,6 +655,10 @@ function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean
   return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
 }
 
+function reportsPrivateTransfer(tail: string): boolean {
+  return PRIVATE_RELAY_POST_ATTRIBUTION.test(/[,–—][^,–—]*$/u.exec(tail)?.[0] ?? "");
+}
+
 function privateClauseIsConditional(clause: string, source: string, detached: boolean, request: RegExpMatchArray, contact: boolean): boolean {
   const qualifier = TRAILING_PRIVATE_CONDITION.exec(clause);
   if (!qualifier) return false;
@@ -671,8 +675,11 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
     if (main) {
       const transfer = linkedPrivateTransfer(main);
-      if (transfer) return linkedTransferMatchesRequest(transfer, request, contact)
-        || !PRIVATE_RELAY_COURTESY.test(main.slice(transfer.index + transfer[0].length));
+      if (transfer) {
+        const tail = main.slice(transfer.index + transfer[0].length);
+        return !reportsPrivateTransfer(tail)
+          && (linkedTransferMatchesRequest(transfer, request, contact) || !PRIVATE_RELAY_COURTESY.test(tail));
+      }
       const words = main.toLowerCase();
       const independentStatement = detached ? PRIVATE_CONDITION_STATEMENT.test(main)
         : PRIVATE_CONDITION_FACT.test(main) && !PRIVATE_CONDITION_ITEM_NAME.test(words) && !UNRESOLVED_RENEWAL_PAYLOAD.test(words);
@@ -709,8 +716,7 @@ function linkedTransferIsConditional(sentence: string, source: string, request: 
   if (!transfer || !linkedTransferMatchesRequest(transfer, request, contact)) return false;
   const end = lead + transfer.index + transfer[0].length;
   const tail = sentence.slice(end);
-  const attribution = /[,–—][^,–—]*$/u.exec(tail);
-  if (sentence.slice(0, end) !== source.slice(0, end) || attribution && PRIVATE_RELAY_POST_ATTRIBUTION.test(attribution[0])) return false;
+  if (sentence.slice(0, end) !== source.slice(0, end) || reportsPrivateTransfer(tail)) return false;
   const time = LINKED_PRIVATE_TIME.exec(tail);
   return privateClauseIsConditional(tail, source.slice(end), false, request, contact)
     || (time !== null && tail === source.slice(end) && PRIVATE_RELAY_COURTESY.test(tail.slice(time[0].length)));
