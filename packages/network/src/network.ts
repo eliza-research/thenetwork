@@ -125,7 +125,7 @@ import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
   immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
-  reportRestrictsMatching, safetyQuestionAppliesTarget, safetyQuestionIsCurrent, safetyQuestionResolves, step as stepSafetyCase,
+  reportRestrictsMatching, safetyQuestionAppliesTarget, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer, step as stepSafetyCase,
   type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
@@ -174,11 +174,24 @@ function excludesSoleSafetyTarget(text: string, names: readonly (string | undefi
   return ["someone else", "somebody else"].some(phrase => replacement === phrase || replacement.startsWith(`${phrase} `));
 }
 
-export function pendingReportReplyName(text: string): string | undefined {
+const SAFETY_CLARIFICATION_CONFIRMATION = /^(?:yes|yeah|yep|yup|correct|(?:that's )?(?:him|her|them))$/;
+
+function safetyReplyNames(text: string): string[] {
+  const literal = safetyName(text).replace(/^(?:i (?:mean|meant)|it's)\s+/, "");
+  if (!literal) return [];
+  if (text.normalize("NFKC").includes("?")) return [literal];
+  const qualified = safetyName(literal
+    .replace(/^(?:yes|yeah|yep|yup|correct|ok|okay)[,.!\s]+/, "")
+    .replace(/[,\s]+(?:please|pls|thanks|thank you)$/, ""));
+  // Either reading can be an exact name. Keep both so an ambiguous result cannot file a report.
+  return qualified && qualified !== literal ? [literal, qualified] : [literal];
+}
+
+export function pendingReportReplyNames(text: string): string[] {
   const body = text.trim();
-  if (ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || consentOf(body).answer !== "unclear") return;
-  const name = safetyName(body.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
-  return name || undefined;
+  if (ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body)) return [];
+  return safetyReplyNames(body).filter(name => !SAFETY_CLARIFICATION_CONFIRMATION.test(name)
+    && consentOf(name).answer === "unclear");
 }
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -1161,9 +1174,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
     if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
     if (reportChoice) {
-      const name = pendingReportReplyName(body);
-      const matches = this.memberReply && !msg.reaction && name && msg.signedReceivedAt !== undefined
-        ? this.pendingReportChoices(m.id, name, msg.signedReceivedAt) : [];
+      const names = pendingReportReplyNames(body);
+      const matches = this.memberReply && !msg.reaction && names.length && msg.signedReceivedAt !== undefined
+        ? this.pendingReportChoices(m.id, names, msg.signedReceivedAt) : [];
       const current = matches[0];
       if (matches.length === 1 && current?.askedAt === reportChoice.askedAt
         && current.targetId === reportChoice.targetId && current.kind === reportChoice.kind) {
@@ -2415,7 +2428,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Exact displayed choices in the saved question that still name a current counterpart. */
-  pendingReportChoices(memberId: MemberId, name: string, receivedAt: number): PendingReportChoice[] {
+  pendingReportChoices(memberId: MemberId, replyNames: readonly string[], receivedAt: number): PendingReportChoice[] {
     const pending = this.members.get(memberId)?.pendingSafety;
     const now = this.now();
     if (pending?.verb !== "report" || !reportClarificationTimeCurrent(pending.at, receivedAt, now, now - DAY)) return [];
@@ -2426,7 +2439,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (offered.length !== pending.targets?.length) return [];
     const counterparts = new Set(this.counterparts(memberId).map(candidate => candidate.m.id));
     const names = this.namesFor(offered);
-    return offered.flatMap((target, index) => counterparts.has(target.id) && safetyName(names[index]!) === name
+    return offered.flatMap((target, index) => counterparts.has(target.id) && replyNames.includes(safetyName(names[index]!))
       ? [{ askedAt: pending.at, targetId: target.id, kind: pending.kind }]
       : []);
   }
@@ -2442,14 +2455,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!safetyQuestionIsCurrent(p.at, oldestQuestion)) { m.pendingSafety = undefined; return false; }
     if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return false;
     const text = body.trim();
-    const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
-    const exact = this.resolveTarget(m, name, p.verb === "report").target;
-    const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && safetyName(value) === name) ? exact : undefined;
-    const competing = m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
+    const names = safetyReplyNames(text);
+    const matches = new Map<MemberId, MemberState>();
+    for (const name of names) {
+      const match = this.resolveTarget(m, name, p.verb === "report").target;
+      if (match && [this.fullNames.get(match.id), match.display, match.first].some(value => value && safetyName(value) === name)) {
+        matches.set(match.id, match);
+      }
+    }
+    const named = matches.size === 1 ? matches.values().next().value : undefined;
+    const competing = !!m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
     const sole = p.targets?.length === 1 ? this.members.get(p.targets[0]!) : undefined;
-    const confirmed = !competing && sole
-      && /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i.test(text)
-      ? sole : undefined;
+    const exactConfirmation = !text.normalize("NFKC").includes("?") && names.some(name => SAFETY_CLARIFICATION_CONFIRMATION.test(name));
+    const confirmed = safetyQuestionUsesSoleOffer(!!sole, competing, exactConfirmation, matches.size > 0) ? sole : undefined;
     const target = named ?? confirmed;
     const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
     const cancels = CANCEL_SAFETY_QUESTION.test(text) || (!competing && NO_SAFETY_TARGET.test(text));

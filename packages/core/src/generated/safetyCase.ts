@@ -256,6 +256,12 @@ export function safetyQuestionIsCurrent(askedAt: number, oldestQuestion: number)
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function safetyQuestionUsesSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean, hasNamedMatch: boolean): boolean {
+  return soleOffer && !competingPrompt && exactConfirmation && !hasNamedMatch;
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarget: boolean): boolean {
   return allowedTarget && !excludesTarget;
 }
@@ -265,6 +271,27 @@ export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarg
 export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestion: number): boolean {
   //@ ensures \result === true
   return !(askedAt < oldestQuestion) || !safetyQuestionIsCurrent(askedAt, oldestQuestion);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: boolean, exactConfirmation: boolean, hasNamedMatch: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, true, exactConfirmation, hasNamedMatch);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: boolean, competingPrompt: boolean, hasNamedMatch: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, false, hasNamedMatch);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */

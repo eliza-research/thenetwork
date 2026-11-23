@@ -275,6 +275,152 @@ describe("block and report targets in a group plan", () => {
     expect(w.net.safetyReports()).toHaveLength(0);
   });
 
+  test.each(["him and Cy", "him? actually, don't report him", "him?", "my date"])(
+    "a pronoun with other words cannot file the sole pending report: %s", async answer => {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+      await w.onboard("a", "b");
+      w.propose(["a", "b"]);
+      await w.answerProbes(["a", "b"]);
+      await w.run(5 * DAY);
+      await w.say("a", "report him, he was creepy");
+      await w.say("a", answer);
+      expect(w.net.safetyReports()).toEqual([]);
+    },
+  );
+
+  test("an ambiguous qualified name cannot confirm a different offered person", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Yeah Yes"), climber("c", "Yes Moss"), climber("d", "Dana Shaw")], { review: "auto" });
+    await w.onboard("a", "b", "c", "d");
+    const recentMatch = w.propose(["a", "d"]);
+    await w.answerProbes(["a", "d"]);
+    await w.run(5 * DAY);
+    const state = w.net.exportState();
+    const recent = state.opps.find(opp => opp.id === recentMatch)!;
+    expect(recent.meetingAt).toBeDefined();
+    state.opps.push({ ...recent, id: "older-counterparts", stage: "done", participants: ["a", "b", "c"],
+      bookedTold: ["a", "b", "c"], meetingAt: recent.meetingAt! - DAY, status: [["a", "yes"], ["b", "yes"], ["c", "yes"]] });
+    w.net.importState(state);
+
+    const from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(sent => sent.body)).toEqual([expect.stringMatching(/^Who do you mean: Dana\?/)]);
+
+    await w.say("a", "Yeah Yes");
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(w.net.exportState().blocks).toEqual([]);
+  });
+
+  test("a name with a word around it, or a pronoun, answers 'Who do you mean?'", async () => {
+    // One person named: a pronoun, or the name with a yes / please around it, files the report.
+    for (const answer of ["him", "yes, Ben", "Ben please", "him please", "yeah, Ben"]) {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+      await w.onboard("a", "b");
+      w.propose(["a", "b"]);
+      await w.answerProbes(["a", "b"]);
+      await w.run(5 * DAY);
+      const from = w.mark();
+      await w.say("a", "report him, he was creepy");
+      expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+      await w.say("a", answer);
+      expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+    }
+    // Two people named: the name with a word around it blocks the one named.
+    for (const answer of ["Ben please", "yes, Ben"]) {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      await w.onboard("a", "b", "c");
+      const id = w.propose(["a", "b", "c"]);
+      for (let i = 0; i < 6 && w.meetings.length === 0; i++) {
+        await w.runUntil(() => ["a", "b", "c"].some(x => w.probed(x)), 2 * DAY);
+        for (const x of ["a", "b", "c"]) if (w.probed(x)) await w.say(x, "yes");
+      }
+      expect(w.net.exportState().opps.find(o => o.id === id)?.stage).toBe("scheduled");
+      const from = w.mark();
+      await w.say("a", "block him");
+      expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/Who do you mean: (Ben or Cy|Cy or Ben)\?/);
+      await w.say("a", answer);
+      expect(w.net.exportState().blocks).toEqual(["a|b"]);
+    }
+    // Guard: a longer answer that merely mentions the name blocks nobody.
+    for (const answer of ["Ben's friend", "not Ben, Cy"]) {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      await w.onboard("a", "b", "c");
+      w.propose(["a", "b", "c"]);
+      await w.answerProbes(["a", "b", "c"]);
+      await w.run(5 * DAY);
+      const from = w.mark();
+      await w.say("a", "block him");
+      expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/Who do you mean/);
+      await w.say("a", answer);
+      expect(w.net.exportState().blocks).toEqual([]);
+    }
+  });
+
+  test("while another question waits, a named answer still confirms the safety target and a pronoun does not", async () => {
+    const awaiting = (w: Mini, id: string) => w.net.memberList().find(m => m.id === id)?.awaiting?.kind;
+    // A probe waits: a pronoun goes to the probe (asked again), the name with a word around it files the report.
+    // "c" is onboarded up front but never meets "a", so the competing probe can use a fresh pair:
+    // re-proposing the pair that just met is refused by the pair-history rule.
+    const probeSetup = async () => {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      await w.onboard("a", "b", "c");
+      w.propose(["a", "b"]);
+      await w.answerProbes(["a", "b"]);
+      await w.run(5 * DAY);
+      for (const id of ["a", "b"]) if (awaiting(w, id) === "feedback") await w.say(id, "It was great, thanks.");
+      // The meeting left outbound messages unanswered, so "a" is ineligible for a new proposal
+      // until they write back; one inbound resets the streak.
+      await w.say("a", "ok thanks");
+      const id2 = w.propose(["a", "c"]);
+      expect(await w.runUntil(() => w.probed("a"), 4 * DAY)).toBe(true);
+      const from = w.mark();
+      await w.say("a", "report him, he was creepy");
+      expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+      return { w, id2 };
+    };
+    for (const answer of ["him", "that's him"]) {
+      const { w, id2 } = await probeSetup();
+      const from = w.mark();
+      await w.say("a", answer);
+      expect(w.net.safetyReports()).toEqual([]);
+      expect(w.net.exportState().opps.find(opp => opp.id === id2)?.stage).toBe("probing");
+      expect(awaiting(w, "a")).toBe("probe");
+      expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/yes or a no/);
+    }
+    for (const answer of ["yes, Ben", "Ben please"]) {
+      const { w, id2 } = await probeSetup();
+      await w.say("a", answer);
+      expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+      expect(w.net.exportState().opps.find(opp => opp.id === id2)?.stage).toBe("probing");
+    }
+    // A booked date waits: the pronoun is read as the booked confirmation, the named answer files the report.
+    const bookedSetup = async () => {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      await w.onboard("a", "b", "c");
+      const id = w.propose(["a", "b", "c"]);
+      await w.answerProbes(["a", "b", "c"]);
+      for (let i = 0; i < 48 && !["a", "b", "c"].every(x => awaiting(w, x) === "booked"); i++) await w.run(HOUR);
+      expect(["a", "b", "c"].every(x => awaiting(w, x) === "booked")).toBe(true);
+      const from = w.mark();
+      await w.say("a", "report him, he was creepy");
+      expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/Who do you mean: (Ben or Cy|Cy or Ben)\?/);
+      return { w, id };
+    };
+    for (const answer of ["him", "that's him"]) {
+      const { w, id } = await bookedSetup();
+      await w.say("a", answer);
+      expect(w.net.safetyReports()).toEqual([]);
+      expect(w.net.exportState().opps.find(o => o.id === id)?.stage).toBe("scheduled");
+      expect(awaiting(w, "a")).toBeUndefined();
+      expect(w.net.memberList().find(m => m.id === "a")?.pendingAck?.text).toBe(copy.bookedThanks);
+    }
+    {
+      const { w, id } = await bookedSetup();
+      await w.say("a", "yes, Ben");
+      expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+      expect(w.net.exportState().opps.find(opp => opp.id === id)?.stage).toBe("closed");
+    }
+  });
+
   test("reporting someone not a counterpart after 'Who do you mean?' does not file a report", async () => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
     await w.onboard("a", "b");

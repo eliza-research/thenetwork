@@ -40,7 +40,7 @@ async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }
 
 const SECRET = "whsec_shared";
 const NETS = [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }, { id: "peon:nyc" }, { id: "friends:nyc" }];
-let phoneSeq = 40;
+let phoneSeq = 0;
 const newPhone = () => `+121255501${String(++phoneSeq).padStart(2, "0")}`;
 const HOSTS: Record<AppId, string> = { ntwrk: "localhost:5101", slop: "localhost:5102", peon: "localhost:5103", friends: "localhost:5104" };
 const dirs: string[] = [];
@@ -383,7 +383,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     };
     const probeStatus = (id: string) => s.runtimeFor("slop")!.readState(net =>
       net.exportState().opps.find(opp => opp.id === id)?.status.find(([member]) => member === slopAri)?.[1]);
-    const competingSlopProbe = async (id: string) => {
+    const competingSlopProbe = async (id: string, counterpart = slopBen) => {
       const now = clock.now();
       const deliveryId = `${id}.probe`;
       await s.runtimeFor("slop")!.unitOfWork(net => {
@@ -391,8 +391,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
         const meeting = state.opps.find(opp => opp.id === `slop.clarification-meeting.${slopBen}`)!;
         const reporter = state.members.find(member => member.id === slopAri)!;
         state.opps.push({ ...meeting, id, stage: "probing", meetingAt: undefined, bookedTold: undefined,
-          status: [[slopAri, "probing"], [slopBen, "probing"]], createdAt: now,
-          deadline: now + HOUR, contacted: [slopAri, slopBen] });
+          participants: [slopAri, counterpart], status: [[slopAri, "probing"], [counterpart, "probing"]], createdAt: now,
+          deadline: now + HOUR, contacted: [slopAri, counterpart] });
         reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId };
         net.importState(state);
       });
@@ -489,6 +489,58 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(await reports("slop")).toEqual([]);
     }, T);
   }
+
+  test("a qualified name answers a signed safety question without taking a competing probe", async ({ onTestFinished }) => {
+    const { s, askSlop, competingSlopProbe, pending, probeStatus, reports, signed, clock, slopBen } = await signedSafetyFixture(onTestFinished);
+    const cy = newPhone();
+    expect(await text(s, clock, cy, "slop")).toBe("join_asked");
+    expect(await text(s, clock, cy, "Cy, 31")).toBe("joined");
+    const cyId = (await memberOf("slop", cy))!.id;
+    await askSlop("ask-qualified-local");
+    const probe = "slop.competing-qualified-safety-probe";
+    await competingSlopProbe(probe, cyId);
+
+    expect(await signed("pending-local-pronoun", "him please", "slop")).toMatchObject({ app: "slop" });
+    expect(await pending("slop")).toMatchObject({ targets: [slopBen] });
+    expect(await reports("slop")).toEqual([]);
+    expect(await probeStatus(probe)).toBe("probing");
+
+    expect(await signed("answer-qualified-local", "Yes, Ben please", "slop")).toMatchObject({ app: "slop" });
+    expect(await pending("slop")).toBeUndefined();
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+    expect(await probeStatus(probe)).toBe("probing");
+  });
+
+  test("only one matching app can take a qualified shared safety answer", async ({ onTestFinished }) => {
+    const { askSlop, pending, reports, signed, clock, slopBen, peonAri } = await signedSafetyFixture(onTestFinished);
+    await askSlop("ask-qualified-shared-slop");
+    expect(await signed("ask-qualified-shared-peon", "Report him, he harassed me.", "peon")).toMatchObject({
+      outcome: "handled", app: "peon", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)],
+    });
+    clock.advance(MINUTE);
+    const competingPeon = async (id: string) => {
+      await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, type, status, opportunity_id, proactive, system, ts)
+        values ('peon', ${id}, ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.', 'probe',
+          'dry_run', 'peon.competing-qualified-safety-probe', true, false, ${new Date(clock.now())})`;
+      clock.advance(MINUTE);
+    };
+
+    await competingPeon("qualified-shared-probe-ambiguous");
+    expect(await signed("answer-qualified-shared-ambiguous", "Yes, Ben please")).toMatchObject({ outcome: "handled", replies: [] });
+    expect(await pending("slop")).toMatchObject({ targets: [slopBen] });
+    expect(await pending("peon")).toBeDefined();
+    expect(await reports("slop")).toEqual([]);
+    expect(await reports("peon")).toEqual([]);
+
+    expect(await signed("cancel-qualified-shared-peon", "Never mind", "peon")).toMatchObject({ app: "peon" });
+    await competingPeon("qualified-shared-probe-unique");
+    expect(await signed("answer-shared-pronoun", "him please")).toMatchObject({ app: "peon" });
+    expect(await pending("slop")).toMatchObject({ targets: [slopBen] });
+    expect(await signed("answer-qualified-shared-unique", "Yes, Ben please")).toMatchObject({ outcome: "handled", app: "slop" });
+    expect(await pending("slop")).toBeUndefined();
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+    expect(await reports("peon")).toEqual([]);
+  });
 
   test("a signed cancellation received before a dedicated app question cannot clear it", async ({ onTestFinished }) => {
     const { askSlop, pending, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
