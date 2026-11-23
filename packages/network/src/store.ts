@@ -103,8 +103,12 @@ function partStatus(o: NetworkState["opps"][number], s: string | undefined, id: 
   switch (s) {
     case "probing": return "checking";
     case "available": case "unavailable": case "dropped": return s;
-    // A booked plan is confirmed for a member once it reached them (silence = in); before that they are not told yet.
-    case "yes": return o.stage === "done" ? "attended" : o.stage === "scheduled" ? (o.bookedTold?.includes(id) ? "confirmed" : "pending") : "accepted";
+    case "yes": {
+      const mark = o.stage === "done" && o.finalized ? o.settledAttendance?.[id] : undefined;
+      if (mark === "Attended") return "attended";
+      if (mark === "Absent") return "no_show";
+      return o.stage === "scheduled" ? (o.bookedTold?.includes(id) ? "confirmed" : "pending") : "accepted";
+    }
     case "no": return "declined";
     default: return "pending"; // queued, or not contacted yet
   }

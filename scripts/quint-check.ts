@@ -42,7 +42,7 @@ function tangle(name: string): string {
 
 type Bounds = { maxSteps: number; maxSamples: number; verifySteps: number };
 type Simulation = Pick<Bounds, "maxSteps" | "maxSamples"> & { invariant: string };
-type Step = { name: string; args: string[]; expectViolation: boolean; simulation?: Simulation };
+type Step = { name: string; args: string[]; expectViolation: boolean; simulation?: Simulation; expectRun?: string };
 
 function bounds(text: string): Bounds {
   const b: Bounds = { maxSteps: 20, maxSamples: 4000, verifySteps: 8 };
@@ -135,8 +135,25 @@ function stepsFor(file: string, text: string, verify: boolean, safetyCap: number
   } else problems.push(`${file} has no \`val safety\``);
   const witnesses = [...text.matchAll(/^\s*val\s+(witness_\w+)/gm)].map((m) => m[1]);
   if (!witnesses.length) problems.push(`${file} has no \`val witness_*\``);
-  for (const w of witnesses) {
-    addSimulation(w, b.maxSamples, true);
+  const traces = new Map<string, string>();
+  for (const [, witness, trace] of text.matchAll(/^\/\/\s*quint-witness:\s+(witness_\w+)\s+(\w+)\s*$/gm)) {
+    if (!witnesses.includes(witness) || traces.has(witness)) {
+      problems.push(`${file} has an unknown or repeated witness trace for ${witness}`);
+      continue;
+    }
+    const run = new RegExp(String.raw`^\s*run ${trace}\s*=(.*(?:\n[ \t]{4,}[^\n]*)*)`, "m").exec(text)?.[1];
+    if (!run?.includes(`.expect(not(${witness}))`)) {
+      problems.push(`${file} ${trace} must assert .expect(not(${witness}))`);
+      continue;
+    }
+    traces.set(witness, trace);
+  }
+  for (const witness of witnesses) {
+    const trace = traces.get(witness);
+    if (trace) steps.push({ name: `${witness} (replayed by ${trace})`,
+      args: ["test", file, "--main", main, "--seed", SEED, "--match", `^${trace}$`],
+      expectViolation: false, expectRun: trace });
+    else addSimulation(witness, b.maxSamples, true);
   }
   if (verify) {
     steps.push({ name: "verify safety", args: ["verify", file, "--main", main, "--invariant", "safety",
@@ -177,7 +194,8 @@ async function checkModel(file: string, verify: boolean, typecheckOnly: boolean,
         }
         // Use the same CLI result and diagnostics on errors, safety failures and unreached witnesses.
         const r = await command([QUINT, ...step.args]);
-        const ok = step.expectViolation ? r.code !== 0 && /invariant violated/i.test(r.out) : r.code === 0;
+        const ok = step.expectViolation ? r.code !== 0 && /invariant violated/i.test(r.out)
+          : r.code === 0 && (step.expectRun === undefined || r.out.includes(`${step.expectRun} passed 1 test(s)`));
         // A diagnostic retry cannot erase a counterexample the evaluator already found.
         const disagreement = ok && !step.expectViolation && simulated === "violation";
         const out = disagreement ? `Invariant violated in the compiled simulation. The CLI retry did not reproduce it.\n${r.out}` : r.out;

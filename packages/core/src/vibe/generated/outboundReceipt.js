@@ -49,6 +49,23 @@ export function lawDeliveredIgnoresFailure(phase) {
     //@ ensures \result === true
     return !(phase === "ProviderDelivered" || phase === "ProviderRead") || !canApplyReceipt({ phase: phase }, "ProviderFailed");
 }
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) */
+//@ pure
+export function keepScrubbedRecipientCount(phase, nonmember, hadAddress, windowOpen) {
+    return (phase === "ProviderDelivered" || phase === "ProviderRead") && nonmember && hadAddress && windowOpen;
+}
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) */
+//@ pure
+export function lawFailedReceiptHasNoScrubbedRecipientCount(nonmember, hadAddress, windowOpen) {
+    //@ ensures \result === true
+    return !keepScrubbedRecipientCount("ProviderFailed", nonmember, hadAddress, windowOpen);
+}
+/** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) */
+//@ pure
+export function lawScrubbedRecipientCountRequiresOpenWindow(phase, nonmember, hadAddress) {
+    //@ ensures \result === true
+    return !keepScrubbedRecipientCount(phase, nonmember, hadAddress, false);
+}
 /** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function canHoldUnrecordedReceipt(outbound) {

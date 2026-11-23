@@ -170,6 +170,59 @@ export function lawEmergencyCheckInNeedsReceipt(attributedReport: boolean): bool
   return !emergencyCheckInReport(false, attributedReport);
 }
 
+/** Story: Block or report a person directly / Direct polite safety requests use the existing counterpart chooser (spec/safetyCase.md) */
+//@ pure
+export function safetyRequestMayResolveTarget(directCommand: boolean, conditionalOrDelayed: boolean): boolean {
+  return directCommand && !conditionalOrDelayed;
+}
+
+/** Story: Block or report a person directly / Direct polite safety requests use the existing counterpart chooser (spec/safetyCase.md) */
+//@ pure
+export function lawConditionalSafetyRequestCannotResolveTarget(directCommand: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyRequestMayResolveTarget(directCommand, true);
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function acceptsReportEvidence(affirmative: boolean, casualContact: boolean): boolean {
+  return affirmative && !casualContact;
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function lawCasualContactDoesNotEstablishHarm(affirmative: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsReportEvidence(affirmative, true);
+}
+
+/** Story: Block or report a person directly / Report language distinguishes physical harm from casual contact (spec/safetyCase.md) */
+//@ pure
+export function lawDeniedEvidenceDoesNotEstablishHarm(casualContact: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsReportEvidence(false, casualContact);
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function acceptsMinorReportEvidence(eligibleSubject: boolean, minorAgeSignal: boolean, affirmative: boolean): boolean {
+  return eligibleSubject && minorAgeSignal && affirmative;
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function lawMinorReportNeedsAffirmation(eligibleSubject: boolean, minorAgeSignal: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsMinorReportEvidence(eligibleSubject, minorAgeSignal, false);
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function lawMinorReportNeedsAnEligibleSubject(minorAgeSignal: boolean, affirmative: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsMinorReportEvidence(false, minorAgeSignal, affirmative);
+}
+
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
 export function reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision, sameMember: boolean, reportMatches: boolean): ReportPhase {

@@ -7,16 +7,30 @@ import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 
-test.each(["general", "time"] as const)("a join notice waits through a %s probe clarification", async clarification => {
+const climber = (id: string, name: string) => ({
+  id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
+  wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }],
+});
+
+test.each([
+  { scene: "for the current invitee", namesake: false, clarification: undefined },
+  { scene: "for the current namesake", namesake: true, clarification: undefined },
+  { scene: "through a general clarification", namesake: false, clarification: "general" },
+  { scene: "through a time clarification", namesake: false, clarification: "time" },
+] as const)("a join notice waits $scene", async ({ namesake, clarification }) => {
   const w = new Mini([
     { id: "a", name: "Ana Diaz", age: 31, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"] },
-    { id: "r", name: "Rae Kim", age: 30, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"] },
+    { id: "r", name: "Rae Kim", age: 30, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"], skills: ["climbing_belay"] },
   ], { growth: true, plans: false });
   w.net.init({ ...w.ctx(), invite: (_inviter, first) => first.toLowerCase() });
   await w.onboard("a", "r");
   await w.say("r", "My friend Theo would love this, can you invite them?");
   await w.run(DAY);
-  w.add({ id: "theo", name: "Theo Jones", age: 30, area: "Greenpoint", interests: ["climbing"] });
+  if (namesake) {
+    w.add({ id: "unconfirmed", name: "Theo Hall", age: 31, area: "Greenpoint", interests: ["climbing"] });
+    await w.onboard("unconfirmed");
+  }
+  w.add({ id: "theo", name: "Theo Jones", age: 30, area: "Greenpoint", interests: namesake ? ["jazz"] : ["climbing"] });
   w.members.find(member => member.id === "theo")!.invitedBy = "r";
   // Theo joins in Rae's quiet hours: the standalone notice waits for her window, so it is still
   // pending when Rae writes next, in the same minute (after her quiet hours change back).
@@ -31,30 +45,30 @@ test.each(["general", "time"] as const)("a join notice waits through a %s probe 
   const from = w.mark();
   await w.say("a", "Anyone around who'd want to go climbing this week? I'm near Greenpoint.");
   const opp = [...w.net.opps.values()].find(o => o.participants.includes("a"))!;
+  if (clarification) {
+    if (w.probed("a")) await w.say("a", "yes");
+    expect(w.probed("r")).toBe(true);
+    const offered = opp.offered?.r ?? [];
+    expect(offered.length).toBeGreaterThan(0);
+    const unoffered = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+      .find(day => offered.every(slot => !slot.label.startsWith(day)));
+    expect(unoffered).toBeDefined();
+    const question = clarification === "general"
+      ? "Just to check: is that a yes or a no? Either is fine."
+      : "Which of the offered times work for you? Reply with the letters or the times.";
+    const beforeQuestion = w.mark();
+    await w.say("r", clarification === "general" ? "Maybe." : `${unoffered} works.`);
+    const asked = w.to("r", beforeQuestion).find(sent => sent.meta.type === "question");
+    expect(asked).toMatchObject({ body: question, meta: { proposalId: opp.id } });
+    expect(w.meetings).toHaveLength(0);
+    expect(w.net.memberList().find(m => m.id === "r")?.pendingInviteJoins?.map(notice => notice.inviteeId)).toEqual(["theo"]);
+    await w.say("r", clarification === "general" ? "yes" : `${offered[0]!.label} works.`);
+  } else {
+    for (let i = 0; i < 4; i++) for (const id of ["a", "r"]) if (w.probed(id)) await w.say(id, "yes");
+  }
   expect(opp.participants).toEqual(["a", "r"]);
-  expect(opp.alternates).toContain("theo");
-  if (w.probed("a")) await w.say("a", "yes");
-  expect(w.probed("r")).toBe(true);
-  const offered = opp.offered?.r ?? [];
-  expect(offered.length).toBeGreaterThan(0);
-  const unoffered = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    .find(day => offered.every(slot => !slot.label.startsWith(day)));
-  expect(unoffered).toBeDefined();
-
-  const unclear = clarification === "general" ? "Maybe." : `${unoffered} works.`;
-  const question = clarification === "general"
-    ? "Just to check: is that a yes or a no? Either is fine."
-    : "Which of the offered times work for you? Reply with the letters or the times.";
-  const beforeQuestion = w.mark();
-  await w.say("r", unclear);
-  const asked = w.to("r", beforeQuestion).find(sent => sent.meta.type === "question");
-  expect(w.log("probe_unclear").at(-1)?.detail).toEqual({ memberId: "r", oppId: opp.id });
-  expect(asked?.body).toBe(question);
-  expect(asked?.meta.proposalId).toBe(opp.id);
-  expect(w.meetings).toHaveLength(0);
-  expect(w.net.memberList().find(m => m.id === "r")?.pendingInviteJoins?.map(notice => notice.inviteeId)).toEqual(["theo"]);
-
-  await w.say("r", clarification === "general" ? "yes" : `${offered[0]!.label} works.`);
+  expect(opp.alternates).toContain(namesake ? "unconfirmed" : "theo");
+  if (namesake) expect(opp.alternates).not.toContain("theo");
   expect(w.meetings.map(m => m.proposalId)).toEqual([opp.id]);
   const aboutOpp = w.to("r", from).filter(s => s.meta.proposalId === opp.id || (s.meta.probe as { key?: string } | undefined)?.key === opp.id);
   expect(aboutOpp.some(s => s.meta.type === "proposal")).toBe(true);
@@ -68,12 +82,7 @@ test.each(["general", "time"] as const)("a join notice waits through a %s probe 
   expect(notices[0]!.meta.proposalId).toBeUndefined();
 });
 
-// spec/outreachPolicy.md, "An eligible join receipt can ride on a current reply"
 test("a declined invitee's join notice waits past the replacement's booking reply", async () => {
-  const climber = (id: string, name: string) => ({
-    id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
-    wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }],
-  });
   const w = new Mini([climber("a", "Ana Diaz"), climber("theo", "Theo Jones"), climber("r", "Rae Kim")], { plans: false });
   const theo = w.members.find(member => member.id === "theo")!;
   theo.invitedBy = "r";
@@ -91,8 +100,6 @@ test("a declined invitee's join notice waits past the replacement's booking repl
   expect(opportunity.contacted.has("theo")).toBe(true);
   expect(opportunity.offered?.r?.[0]?.key).toBe("a");
 
-  // The verified join can arrive after the invitee has already started texting.
-  // Quiet hours keep the receipt queued for Rae's next direct reply.
   const rae = w.members.find(member => member.id === "r")!;
   const quiet = rae.prefs!.quietHours;
   const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit" }).format(w.clock.now()));
@@ -118,4 +125,39 @@ test("a declined invitee's join notice waits past the replacement's booking repl
   })]);
   expect(notices[0]!.meta.proposalId).toBeUndefined();
   expect(pendingNames()).toEqual([]);
+});
+
+test("a fresh-time retry keeps a current alternate's join notice pending", async () => {
+  const w = new Mini([climber("a", "Ana Diaz"), climber("theo", "Theo Jones"), climber("r", "Rae Kim")], { plans: false });
+  w.members.find(member => member.id === "theo")!.invitedBy = "r";
+  await w.onboard("a", "theo", "r");
+  const oppId = w.propose(["r", "a"], { alternates: ["theo"] });
+  expect(await w.runUntil(() => w.probed("r"))).toBe(true);
+  const opp = w.net.opps.get(oppId)!;
+  expect(opp.first).toBe("r");
+  expect(opp.alternates).toContain("theo");
+  const oldTimes = opp.offered?.r?.map(option => option.start) ?? [];
+  expect(oldTimes.length).toBeGreaterThan(0);
+
+  const rae = w.members.find(member => member.id === "r")!;
+  const quiet = rae.prefs!.quietHours;
+  const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit" }).format(w.clock.now()));
+  rae.prefs!.quietHours = [hour, (hour + 22) % 24];
+  w.net.welcomeJoined("theo", "r");
+  rae.prefs!.quietHours = quiet;
+  const pending = () => w.net.memberList().find(member => member.id === "r")?.pendingInviteJoins?.map(notice => notice.inviteeId);
+  expect(pending()).toEqual(["theo"]);
+
+  const from = w.mark();
+  await w.say("r", "Yes, but none of those work.");
+  expect(w.log("probe_answer").at(-1)?.detail).toEqual({ oppId, memberId: "r", yes: true, picked: [] });
+  expect(opp.timeRetry).toContain("r");
+  const retry = w.to("r", from).find(message => message.body.startsWith("No problem. Would one of these work instead:"));
+  expect(retry).toMatchObject({ reply: true, meta: { type: "scheduling" } });
+  expect(retry!.meta.proposalId).toBeUndefined();
+  expect(retry!.meta.timeOptions?.length).toBeGreaterThan(0);
+  expect(retry!.meta.timeOptions?.some(option => oldTimes.includes(option.start))).toBe(false);
+  expect(retry!.body).not.toContain("Theo");
+  expect(retry!.meta.invitationJoins).toBeUndefined();
+  expect(pending()).toEqual(["theo"]);
 });

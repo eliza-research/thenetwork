@@ -4,6 +4,8 @@
 import { MatchRun } from "./match/run.ts";
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
+import { mayFollowMemberAlias } from "../../core/src/generated/datingRadius.ts";
+import { matchingExpiryCooldown, matchingPairHistory } from "../../core/src/generated/matchingHistory.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
@@ -15,6 +17,24 @@ import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, Rece
 import type { Interval } from "./interval.ts";
 export type { Interval };
 export const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+export type MemberIdResolver = (id: MemberId) => MemberId;
+
+/** Follow the aliases from this input and give a current member ID priority. */
+export function memberIdResolver(input: Pick<EngineInput, "members" | "idAliases">, knownMemberIds?: ReadonlySet<MemberId>): MemberIdResolver {
+  const aliases = input.idAliases;
+  if (!aliases) return id => id;
+  const memberIds = knownMemberIds ?? new Set(input.members.map(member => member.id));
+  return id => {
+    let current = id;
+    let hops = 0;
+    while (mayFollowMemberAlias(memberIds.has(current), Object.hasOwn(aliases, current), hops)) {
+      current = aliases[current]!;
+      hops++;
+    }
+    return current;
+  };
+}
 
 const BLOCKING_EDGES: ReadonlySet<EdgeType> = new Set<EdgeType>(["blocked", "avoid"]);
 const CAP_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["skill", "offer", "resource"]);
@@ -98,14 +118,8 @@ export class World {
     this.pack = pack;
     this.now = input.now;
     this.embed = embed;
-    const aliases = input.idAliases ?? {};
-    const memberIds = new Set(input.members.map(m => m.id));
-    // Resolve alias chains; unknown ids are kept as-is (they simply never match a member).
-    this.canonical = (id: MemberId) => {
-      let cur = id; let hops = 0;
-      while (!memberIds.has(cur) && aliases[cur] !== undefined && hops++ < 8) cur = aliases[cur]!;
-      return cur;
-    };
+    const memberIds = new Set(input.members.map(member => member.id));
+    this.canonical = memberIdResolver(input, memberIds);
     const C = this.canonical;
     this.dim = embed("dimension probe").length;
     const now = this.now;
@@ -166,25 +180,50 @@ export class World {
     // --- interactions ----------------------------------------------------------------------
     // Canonical and distinct: a record that names one member under two ids counts that member once.
     const distinctIds = (ids: readonly MemberId[]): MemberId[] => [...new Set(ids.map(C))];
-    this.interactions = (input.interactions ?? []).map(r => ({
-      ...r, participants: distinctIds(r.participants),
-      declinedBy: r.declinedBy && distinctIds(r.declinedBy), contributors: r.contributors && distinctIds(r.contributors),
-      acceptedBy: r.acceptedBy && distinctIds(r.acceptedBy), noResponse: r.noResponse && distinctIds(r.noResponse),
-    }));
-    for (const r of this.interactions) {
-      for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
-        const k = pairKey(r.participants[i]!, r.participants[j]!);
-        if (!this.pairInteractions.has(k)) this.pairInteractions.set(k, []);
-        this.pairInteractions.get(k)!.push(r);
-        if ((r.outcome === "pending" || r.outcome === "accepted") && now - r.at < cfg.cooldowns.activeProposalDays * DAY * 4) this.activePairs.add(k);
+    this.interactions = (input.interactions ?? []).map(r => {
+      const declineTimes = new Map<MemberId, number>();
+      for (const [id, at] of Object.entries(r.declinedAt ?? {})) {
+        const memberId = C(id);
+        declineTimes.set(memberId, Math.max(declineTimes.get(memberId) ?? -Infinity, at));
       }
-      if (r.outcome === "declined" || r.outcome === "expired") {
-        const who = r.outcome === "declined" ? (r.declinedBy?.length ? r.declinedBy : r.participants) : r.participants;
-        for (const m of who) {
-          if (!this.memberCategoryDeclines.has(m)) this.memberCategoryDeclines.set(m, new Map());
-          const mm = this.memberCategoryDeclines.get(m)!;
-          mm.set(r.category, Math.max(mm.get(r.category) ?? -Infinity, r.at));
+      return {
+        ...r, participants: distinctIds(r.participants),
+        declinedBy: r.declinedBy && distinctIds(r.declinedBy), contributors: r.contributors && distinctIds(r.contributors),
+        acceptedBy: r.acceptedBy && distinctIds(r.acceptedBy), noResponse: r.noResponse && distinctIds(r.noResponse),
+        noShowBy: r.noShowBy && distinctIds(r.noShowBy),
+        ...(r.declinedAt ? { declinedAt: Object.fromEntries(declineTimes) } : {}),
+      };
+    });
+    for (const r of this.interactions) {
+      const roster = new Set(r.participants);
+      const refused = new Set(r.declinedAt ? (r.declinedBy ?? []).filter(id => Object.hasOwn(r.declinedAt!, id)) : []);
+      const expired = new Set(r.noResponse ?? []);
+      const ids = refused.size ? [...new Set([...roster, ...refused, ...(r.acceptedBy ?? []), ...expired])] : r.participants;
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const a = ids[i]!, b = ids[j]!;
+        const pairRefusals = [a, b].filter(id => refused.has(id));
+        const pairEvidence = matchingPairHistory(roster.has(a) && roster.has(b), pairRefusals.length > 0, refused.size > 0 && r.outcome === "declined");
+        if (pairEvidence === "HistoryOmittedPair") continue;
+        const record: InteractionRecord = pairEvidence === "HistoryRefusedPair"
+          ? { ...r, participants: [a, b], outcome: "declined", declinedBy: pairRefusals, at: Math.max(...pairRefusals.map(id => r.declinedAt![id]!)) }
+          : r;
+        const k = pairKey(a, b);
+        if (!this.pairInteractions.has(k)) this.pairInteractions.set(k, []);
+        this.pairInteractions.get(k)!.push(record);
+        if ((record.outcome === "pending" || record.outcome === "accepted") && now - record.at < cfg.cooldowns.activeProposalDays * DAY * 4) this.activePairs.add(k);
+      }
+      const cooling = new Set(refused);
+      if (r.outcome === "declined") {
+        for (const id of r.declinedBy?.length ? r.declinedBy : roster) cooling.add(id);
+      } else if (r.outcome === "expired") {
+        for (const id of new Set([...roster, ...expired])) {
+          if (matchingExpiryCooldown(r.noResponse !== undefined, expired.has(id), roster.has(id))) cooling.add(id);
         }
+      }
+      for (const id of cooling) {
+        if (!this.memberCategoryDeclines.has(id)) this.memberCategoryDeclines.set(id, new Map());
+        const times = this.memberCategoryDeclines.get(id)!;
+        times.set(r.category, Math.max(times.get(r.category) ?? -Infinity, r.declinedAt?.[id] ?? r.at));
       }
     }
     // Recent proposals (not yet resolved in interactions) are active duplicates for a while.

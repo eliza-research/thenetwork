@@ -184,6 +184,20 @@ test("the thread persists after the date: a text 9 days after the meeting is sti
   expect(rows[0]?.body).toContain("want to go again next weekend");
 },60_000);
 
+test("a polite signed relay keeps the payload's negation and uses the named match", async () => {
+  const modal = await post(await ask("ari", "relay-modal-text", "Could you tell Bo I don't eat dairy?"));
+  expect(modal.status).toBe(200);
+  expect(await modal.json()).toMatchObject({ decision: "pass", delivered: false });
+  const delivered = await sql<{ member_id: string; body: string }[]>`select member_id, body from network.messages
+    where app_id='friends' and direction='outbound' and body like '%dairy%'`;
+  expect([...delivered]).toEqual([{ member_id: bo, body: 'Ari says: "I don\'t eat dairy"' }]);
+
+  const wrong = await post(await ask("ari", "relay-named-other", "Could you tell Charlie I don't eat meat?"));
+  expect(wrong.status).toBe(200);
+  expect(await wrong.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%eat meat%'`).toHaveLength(0);
+});
+
 const sharesQueued = async () => (await sql`select id from network.messages where app_id='friends'
   and direction='outbound' and body like '%asked me to send you%'`).length;
 const pendingNumberSwaps = () => service.runtimeFor("friends")!.unitOfWork(net => net.exportState().relay?.swaps ?? []);

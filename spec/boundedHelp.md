@@ -24,6 +24,11 @@ service has no approved private venue to offer. A repeat request uses the open
 case. Only an adult's request opens a case. The case has a reason code and no
 address, message text or trust penalty. Ordinary bounded help uses the reviewed member request flow.
 
+Requests for child care and transport enter the high-risk route when the child
+and task are stated. The request reader accepts common forms of a child's age
+and phrasing such as “pick my kids up” or “drop my child off.” An object
+pickup or a casual reference to children does not give this signal.
+
 ```quint
 type BoundedHelpRoute = SearchPublicHelp | ReviewHomeEntryHelp | RefuseHighRiskHelp
 
@@ -46,6 +51,8 @@ pure def lawHighRiskHelpTakesPrecedence(homeEntry: bool): bool =
 A home-entry configuration needs at least two helpers, or one helper already
 known to the requester. A home-entry request for one unfamiliar helper needs a
 second helper.
+Rank only helpers with current shared presence. An unavailable acquaintance
+cannot stand in for a second eligible helper.
 
 ```quint
 pure def homeHelperSetAllowed(helperCount: int, knownSingleton: bool): bool =
@@ -53,6 +60,12 @@ pure def homeHelperSetAllowed(helperCount: int, knownSingleton: bool): bool =
 
 pure def needsSecondHomeHelper(homeEntry: bool, requestedHelpers: int, knownSingleton: bool): bool =
   homeEntry and requestedHelpers == 1 and not(knownSingleton)
+
+pure def boundedHelperCanRank(eligible: bool, commonPresence: bool): bool =
+  eligible and commonPresence
+
+pure def lawBoundedHelperNeedsCommonPresence(eligible: bool): bool =
+  not(boundedHelperCanRank(eligible, false))
 
 pure def lawUnfamiliarHomeSingletonIsDisallowed(helperCount: int): bool =
   helperCount < 2 implies not(homeHelperSetAllowed(helperCount, false))

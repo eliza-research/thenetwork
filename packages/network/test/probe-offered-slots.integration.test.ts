@@ -42,7 +42,7 @@ const scenarios: Scenario[] = [
   { scene: "a trailing clock does not silently select mismatched times",
     slots: three, text: "Sat and Sun both at 11am.", picked: [],
     followUp: { text: "Sat and Sun both.", picked: weekend,
-      unqualified: ["Both work.", "Ana said Saturday and Sunday both work.", "\"Saturday and Sunday both work.\""] } },
+      unqualified: ["Both work.", "Ana said Saturday and Sunday both work.", "\"Saturday and Sunday both work.\"", "Ana said, the third works."] } },
   { scene: "an unavailable partly named pair needs clarification",
     slots: [thursday, friday, saturday], text: "Sat and Sun both.", picked: [] },
   { scene: "an unrelated refusal cannot complete one named choice",
@@ -91,6 +91,7 @@ const scenarios: Scenario[] = [
     followUp: { text: "Sunday works.", picked: [sunday.start] } },
 ];
 
+// spec/probeReply.md, "A model reading cannot replace a definite or qualified answer"
 test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted offered times when $scene", async ({ slots, text, picked, followUp, legacyClarification, generalPrelude }) => {
   const url = await migratedDb("probe_offered_slots");
   const clock = new SimClock(Date.UTC(2026, 9, 12, 16));

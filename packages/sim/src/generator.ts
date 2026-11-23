@@ -1,6 +1,7 @@
 // Deterministic, seeded persona generator (no LLM). Fast enough for 2,000-persona worlds
 // and fully reproducible from (seed, options). The LLM generator (llmGenerator.ts) can
 // enrich these with realistic bios and voices afterwards.
+import { requireSimulationCount, requireSimulationShare } from "./input.ts";
 import type { City } from "@thenetwork/core";
 import { Rng, clamp01 } from "@thenetwork/core";
 import {
@@ -105,8 +106,10 @@ export function generatePlantedPersonas(opts: GeneratorOptions & { planted: Plan
 }
 
 function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: PlantedLatent } {
-  const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
   const n = opts.n;
+  requireSimulationCount(n, "personas", 0);
+  for (const field of ["adversarialRate", "minorShare", "disclosureRate"] as const) requireSimulationShare(opts[field], field);
+  const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
   const prefix = opts.idPrefix ?? "m";
   const cityW = { sf: 0.5, nyc: 0.5, ...opts.cityWeights };
   const mix = { ...ARCHETYPE_MIX, ...opts.archetypeMix };

@@ -8,7 +8,7 @@
 // own way). Volunteer shifts are activities at public parks.
 import { fromLocal, HOUR, localParts, type MemberId } from "@thenetwork/core";
 import { plans, type AttentionLedgerEntry } from "@thenetwork/engine";
-import { weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
+import { weeklyCheckinEvidenceMs, weeklyWindowCandidate } from "../../core/src/generated/planFormation.ts";
 import { VENUES, type Venue as GeoVenue } from "./geo.ts";
 import { NY } from "./outreach.ts";
 
@@ -52,17 +52,21 @@ const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  */
 export function statedWindows(tags: readonly string[], now: number, tz = NY): plans.StatedWindows | undefined {
   const lp = localParts(now, tz);
+  const until = now + weeklyCheckinEvidenceMs;
+  const pending = new Set(tags);
   const windows: { start: number; end: number }[] = [];
-  for (let k = 0; k <= 7; k++) {
+  for (let k = 0; k <= 7 && pending.size > 0; k++) {
     const d = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + k));
     const day = DAYS3[d.getUTCDay()]!;
-    for (const t of tags) {
+    for (const t of pending) {
       const [part, dd] = t.split(":");
       const h = PARTS[part ?? ""];
       if (!h || dd !== day) continue;
       const start = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[0], tz);
       const end = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[1], tz);
-      if (end > now) windows.push({ start: Math.max(start, now), end });
+      if (!weeklyWindowCandidate(end, start, now, until)) continue;
+      windows.push({ start: Math.max(start, now), end });
+      pending.delete(t);
     }
   }
   // Adjacent or overlapping parts are one window ("Saturday afternoon and evening" = 12:00-22:00),
@@ -72,7 +76,7 @@ export function statedWindows(tags: readonly string[], now: number, tz = NY): pl
     const last = joined[joined.length - 1];
     if (last && window.start <= last.end) last.end = Math.max(last.end, window.end); else joined.push({ ...window });
   }
-  return joined.length ? { windows: joined, at: now, until: now + weeklyCheckinEvidenceMs } : undefined;
+  return joined.length ? { windows: joined, at: now, until } : undefined;
 }
 
 /** Activities a member named in a check-in ("into live music"): interest tags -> plan activity ids. */

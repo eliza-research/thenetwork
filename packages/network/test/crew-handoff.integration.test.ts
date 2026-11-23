@@ -4,9 +4,8 @@ import { friendsPack, FRIENDS_PLANS, type plans } from "@thenetwork/engine";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
 
-async function crewFixture(handOffAfterSessions = 3) {
+async function crewFixture(handOffAfterSessions = 3, ids = ["a", "b", "c"]) {
   const venue = PLAN_VENUES.find(v => v.activities.includes("day_hike"))!;
-  const ids = ["a", "b", "c"];
   const w = new Mini(ids.map(id => ({
     id, name: `${id.toUpperCase()}nton Q`, age: 30, area: venue.area, interests: ["climbing", "hiking"],
     skills: ["belaying"], wants: [{ objective: "find a hiking group", category: "hobby" as const }],
@@ -27,6 +26,15 @@ async function crewFixture(handOffAfterSessions = 3) {
   const session = () => w.net.reviewQueue().find(q => w.net.exportState().opps.find(o => o.id === q.oppId)?.plan?.crewId === crew.id);
   return { w, ids, crew, session };
 }
+
+test("a newly restricted seat does not keep an eligible crew from reaching review", async () => {
+  const { w, crew, session } = await crewFixture(3, ["a", "b", "c", "d"]);
+  w.edges.push({ from: "d", to: "a", type: "avoid", explicit: true, strength: 1, createdAt: w.clock.now() });
+  expect(await w.runUntil(() => !!session(), 2 * DAY)).toBe(true);
+  expect(session()!.proposal.participants).toEqual(["a", "b", "c"]);
+  expect(crew.sessions).toHaveLength(1);
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+});
 
 test("a conflicting crew occurrence waits for a viable slot and still needs fresh review and replies", async () => {
   // spec/crewOffer.md, "A new recurring session needs a currently usable time"

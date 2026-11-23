@@ -1352,13 +1352,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
           }
         }
-        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
-        if (tool === "read_profile" && r.kind === "ok" && auth) {
+        const outcome = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
+        if (outcome.kind === "profile_refusal" || (tool === "read_profile" && outcome.kind === "ok" && auth)) {
           const live = await bearer(c, resource);
           if (live === "unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
-          if (!live || live === "invalid" || live.grant.id !== auth.grant.id || !tokenCovers(tool, live.token.scopes))
+          if (!auth || !live || live === "invalid" || live.grant.id !== auth.grant.id || !tokenCovers(tool, live.token.scopes))
             return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
+        const r = outcome.kind === "profile_refusal" ? await outcome.read() : outcome;
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "grant_unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
         if (r.kind === "invalid_grant" || r.kind === "grant_held") {

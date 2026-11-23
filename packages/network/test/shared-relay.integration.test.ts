@@ -13,6 +13,7 @@ import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {loadSnapshot} from "../service/snapshot.ts";
+import {importPublicEvents} from "../service/import-public-events.ts";
 import {PgAudit} from "../../observatory/src/staff.ts";
 import type {AuditEntry} from "../../observatory/src/types.ts";
 import type {NetworkState} from "../src/network.ts";
@@ -75,7 +76,7 @@ beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218","+12125550229","+12125550230"]).toContain(input.to);
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218","+12125550227","+12125550228","+12125550229","+12125550230"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){
       posts++;sent.push(input);
       if(input.approvedPhotos){
@@ -195,17 +196,55 @@ test("an explicit attempt to get a private number directly starts a watch and pr
     expect(await request.json()).toMatchObject({outcome:"handled"});
     expect(await rt.readState(n=>[n.trust.level(fromId),n.eligible(fromId,undefined,true)])).toEqual(["watch",false]);
     clock.advance(MINUTE);
+    const title = "Saturday nature walk";
+    expect(await importPublicEvents(sql, clock, async () => Response.json([{
+      guid: "202", title, categories: "Nature | All ages", location: "McCarren Park",
+      coordinates: "40.7206,-73.9518", starttime: "2026-10-10T14:00:00", endtime: "2026-10-10T15:00:00",
+      link: { url: "https://www.nycgovparks.org/events/2026/10/10/relay-fixture-202" },
+    }]))).toEqual({ published: true, events: 1 });
     const plans=await post(TURN_PATH,turn(a,"contact-bypass-concierge","Anything fun this weekend in Williamsburg?"));
     expect(plans.status).toBe(200);
     const answer=await plans.json();
-    expect(answer).toMatchObject({outcome:"handled"});
-    expect(JSON.stringify(answer.replies)).toContain("A few ideas nearby");
+    expect(answer).toMatchObject({outcome:"handled",reason:"solo_events"});
+    expect(answer.replies[0]).toContain(title);
     expect(posts).toBe(before);
   } finally {
+    clock.advance(MINUTE);
+    await importPublicEvents(sql, clock, async () => Response.json([]));
     await rt.unitOfWork(n=>n.trust.forget(fromId));
     await fixturePair();
   }
 },60_000);
+
+test("a signed request for someone else's messaging handle records only the sender's own extraction attempt", async () => {
+  const runtime = service.runtimeFor("friends")!;
+  await runtime.unitOfWork(network => network.trust.forget(fromId));
+  await fixturePair();
+  try {
+    for (const [id, body] of [
+      ["handle-disclosure", "Sam asked, 'Can you send me her WhatsApp?'"],
+      ["handle-own", "My WhatsApp is working again."],
+      ["handle-refusal", "Could you not send me her WhatsApp?"],
+      ["handle-venue", "Can you send me the venue's WhatsApp?"],
+    ] as const) {
+      clock.advance(MINUTE);
+      const response = await post(TURN_PATH, turn(a, id, body));
+      expect(response.status).toBe(200);
+      expect(await runtime.readState(network => network.trust.get(fromId).score)).toBe(0);
+    }
+    clock.advance(MINUTE);
+    const request = turn(a, "handle-private-ask", "Can you send me her WhatsApp?");
+    const response = await post(TURN_PATH, request);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "handled" });
+    expect(await runtime.readState(network => network.trust.get(fromId).score)).toBe(2);
+    expect((await post(TURN_PATH, request)).status).toBe(200);
+    expect(await runtime.readState(network => network.trust.get(fromId).score)).toBe(2);
+  } finally {
+    await runtime.unitOfWork(network => network.trust.forget(fromId));
+    await fixturePair();
+  }
+}, 60_000);
 
 test("a profile from the member's AI assistant that asks for the match's number is never a swap ask: it is scored",async()=>{
   await fixturePair();
@@ -482,14 +521,16 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   }
 },120_000);
 
-test("a signed relay self-age closes the match and lowers the person's age across apps", async () => {
-  const sender = "+12125550217", recipient = "+12125550218";
+test.each([
+  { sender: "+12125550217", recipient: "+12125550218", phrase: "tell them 16f here", floor: 16 },
+  { sender: "+12125550227", recipient: "+12125550228", phrase: "tell them im 12 is that ok", floor: 13 },
+])("a signed relay self-age closes the match and lowers the person's age across apps ($floor)", async ({ sender, recipient, phrase, floor }) => {
   async function join(app: "friends" | "slop", phone: string, name: string) {
     const messages = [app === "friends" ? "friends.help" : "slop.date", name + ", 29",
       "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
     for (const [index, text] of messages.entries()) {
       clock.advance(MINUTE);
-      const id = "relay-age-join:" + app + ":" + name + ":" + index;
+      const id = `relay-age-join:${floor}:${app}:${name}:${index}`;
       expect((await post(TURN_PATH, { ...turn(phone, id, text), app })).status).toBe(200);
     }
     const person = await service.accounts.personFor(phone);
@@ -501,7 +542,7 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   const senderFriends = await join("friends", sender, "Bo");
   const recipientFriends = await join("friends", recipient, "Jae");
   const senderSlop = await join("slop", sender, "Bo");
-  const matchId = "friends.relay-age-pair";
+  const matchId = `friends.relay-age-pair-${floor}`;
   await fixturePair(false, "friends", [senderFriends, recipientFriends], matchId);
   const controls = [
     ["other", "tell them my 15 year old will be with me"],
@@ -511,12 +552,12 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   ] satisfies [string, string][];
   for (const [suffix, phrase] of controls) {
     clock.advance(11 * MINUTE);
-    const request = await open("relay-age-" + suffix, phrase, sender);
+    const request = await open(`relay-age-${floor}-${suffix}`, phrase, sender);
     expect((await post(RELAY_PATH, request)).status).toBe(200);
     expect((await service.accounts.personFor(sender))?.lowestAge).toBe(29);
   }
   clock.advance(11 * MINUTE);
-  const request = await open("relay-age-self", "tell them 16f here", sender);
+  const request = await open(`relay-age-self-${floor}`, phrase, sender);
   const before = posts;
   const response = await post(RELAY_PATH, request);
   expect(response.status).toBe(200);
@@ -525,10 +566,10 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   expect(await replay.json()).toMatchObject({ decision: "block", delivered: false, replayed: true });
   expect(posts).toBe(before);
   expect(await pairClosed(matchId)).toBe(true);
-  expect((await service.accounts.personFor(sender))?.lowestAge).toBe(16);
+  expect((await service.accounts.personFor(sender))?.lowestAge).toBe(floor);
   const snapshot = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
-  expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
-  expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: 16 }]);
+  expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(floor);
+  expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: floor }]);
 }, 60_000);
 
 test("a signed photo request respects the intended item and separately preserves approval", async () => {
