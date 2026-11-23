@@ -222,6 +222,8 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
       }
     }
     for (const r of MINOR_SIGNS) for (const m of all(r.rx, s.text)) {
+      const lead = m[0].length - m[0].trimStart().length;
+      if (quoteStillOpen(t.slice(0, s.start + m.index + lead))) continue;
       out.minor ??= cand(true as const, s, m, 0.9);
       const a = r.age?.(m);
       if (a !== undefined && a >= 10 && a < 18 && (!out.age || a < out.age.value)) { out.age = cand(a, s, m, 0.85); out.strict = false; }

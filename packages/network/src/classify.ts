@@ -191,7 +191,16 @@ export function classify(body: string): Classified {
 
 /** A first-person sign of being under 18, sentence by sentence, never in a teacher's or parent's sentence. */
 export function minorSignOf(text: string): boolean {
-  for (const s of sentencesOf(normText(text))) if (MINOR_SIGNS.test(s.text) && !ADULT_SCHOOL_CTX.test(s.text)) return true;
+  const t = normText(text);
+  for (const s of sentencesOf(t)) {
+    if (ADULT_SCHOOL_CTX.test(s.text)) continue;
+    const re = new RegExp(MINOR_SIGNS.source, "g");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s.text))) {
+      if (!quoteStillOpen(t.slice(0, s.at + m.index))) return true;
+      if (m[0].length === 0) re.lastIndex++;
+    }
+  }
   return false;
 }
 

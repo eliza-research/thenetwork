@@ -285,3 +285,5 @@
 {"text":"I'm 11 1/2 years old","teen":true,"age":11}
 {"text":"I'm 12 and 3 months old","teen":true,"age":12}
 {"text":"She said \"this is true. I'm 12.5 years old.\"","teen":false}
+{"text":"He told me \"I'm underage\"","teen":false}
+{"text":"She said \"I'm in 7th grade\"","teen":false}

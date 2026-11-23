@@ -104,3 +104,8 @@
 {"text":"I'm 11 1/2 years old","minor":true,"declined":true,"age":11}
 {"text":"I'm 12 and 3 months old","minor":true,"declined":true,"age":12}
 {"text":"She said \"this is true. I'm 12.5 years old.\"","minor":false,"declined":false}
+{"text":"She said \"I'm in middle school\"","minor":false}
+{"text":"He told me \"I'm underage\"","minor":false}
+{"text":"She said \"I'm in 7th grade\"","minor":false}
+{"text":"She said \"I'm a high school freshman\"","minor":false}
+{"text":"She said \"I'm in high school\"","minor":false}
