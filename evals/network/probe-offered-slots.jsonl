@@ -142,3 +142,7 @@
 {"text":"Thursday works. Sat for me doesn't work.","answer":"yes","keys":["a"]}
 {"text":"The first and later works.","answer":"yes","keys":["a"]}
 {"text":"Saturday is fine. Sunday for me isn't a problem.","answer":"yes","keys":["b","c"]}
+{"text":"Saturday for me absolutely won't work.","answer":"unclear","keys":[]}
+{"text":"Saturday for me won't work. Thursday works.","answer":"yes","keys":["a"]}
+{"text":"Saturday for me won't work. No thanks.","answer":"no","keys":[]}
+{"text":"Saturday for me doesn't look good.","answer":"unclear","keys":[]}

@@ -27,8 +27,9 @@ refusal to the offered time applies to each time in its list, including
 its ordinal position, clock or part of the day. A daypart that restates
 an exact clock keeps that clock and its named day together. A member can
 say “for me” before the refusal, or give a scheduling reason after it.
-A separate affirmative clause can select
-another offered time. A broad yes with “both” in the refused
+A refusal of a named time keeps the opportunity open. A separate
+affirmative clause can select another offered time, and a separate
+refusal can decline the opportunity. A broad yes with “both” in the refused
 list leaves the time choice open when the member chooses no other
 time. Fallback selection keeps any stated time-of-day limit before
 calling the modeled answer action. The signed booking test checks the
