@@ -1,0 +1,76 @@
+name: Whole-flow Quint
+
+on:
+  pull_request:
+    paths: &quint-paths
+      - 'spec/models/*.md'
+      - '!spec/models/README.md'
+      - 'scripts/quint-check.ts'
+      - 'scripts/quint-ci-plan.ts'
+      - 'packages/core/src/runtime/process.ts'
+      - 'packages/core/src/runtime/streams.ts'
+      - 'tools/vibestack/vibestack/simulator.ts'
+      - 'tools/vibestack/package.json'
+      - 'tools/vibestack/pnpm-lock.yaml'
+      - 'tools/vibestack/pnpm-workspace.yaml'
+      - 'tools/vibestack/.npmrc'
+      - 'tools/vibestack/.pnpmfile.cjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
+      - '.npmrc'
+      - '.pnpmfile.cjs'
+      - '.github/workflows/quint.yml'
+      - '.github/actions/setup-quint/**'
+  push:
+    branches: [main, develop]
+    paths: *quint-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quint-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  whole-flow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Select affected models
+        id: plan
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$BASE" =~ ^[0-9a-f]{40}$ && ! "$BASE" =~ ^0+$ ]] && ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            timeout --kill-after=5s 20s git fetch --no-tags --depth=1 origin "$BASE" || true
+          fi
+          node scripts/quint-ci-plan.ts "$BASE" >> "$GITHUB_OUTPUT"
+      - name: Install the Quint toolchain
+        if: steps.plan.outputs.run == 'true'
+        working-directory: tools/vibestack
+        run: |
+          npm install --global corepack@0.35.0 && corepack enable pnpm
+          corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
+      - name: Install the pinned Quint Rust evaluator
+        if: steps.plan.outputs.run == 'true'
+        uses: ./.github/actions/setup-quint
+      - name: Check whole-flow models at their configured bounds
+        if: steps.plan.outputs.run == 'true'
+        shell: bash
+        env:
+          MODELS: ${{ steps.plan.outputs.models }}
+        run: |
+          read -r -a models <<< "$MODELS"
+          /usr/bin/time -p corepack pnpm@10.24.0 run quint:check --jobs 4 "${models[@]}"

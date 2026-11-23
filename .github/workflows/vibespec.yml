@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
     paths:
       - 'spec/**'
+      - '!spec/models/**'
       - 'packages/core/src/generated/**'
       - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
@@ -26,9 +27,11 @@ on:
       - '.nvmrc'
       - '.github/workflows/vibespec.yml'
       - '.github/actions/setup-dafny/**'
+      - '.github/actions/setup-quint/**'
   pull_request:
     paths:
       - 'spec/**'
+      - '!spec/models/**'
       - 'packages/core/src/generated/**'
       - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
@@ -50,6 +53,7 @@ on:
       - '.nvmrc'
       - '.github/workflows/vibespec.yml'
       - '.github/actions/setup-dafny/**'
+      - '.github/actions/setup-quint/**'
   workflow_dispatch:
     inputs:
       cold_formal_cache:
@@ -103,21 +107,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run spec:setup
       - name: Install the pinned Quint Rust evaluator
-        # Use the published asset directly so GitHub API rate limits cannot block setup.
-        working-directory: tools/vibestack
-        shell: bash
-        run: &install-quint |
-          version="$(node -p 'require("@informalsystems/quint/dist/src/rust/binaryManager.js").QUINT_EVALUATOR_VERSION')"
-          test "$version" = v0.7.1
-          directory="$(node -p 'require("@informalsystems/quint/dist/src/config.js").rustEvaluatorDir("v0.7.1")')"
-          archive="$RUNNER_TEMP/quint-evaluator.tar.gz"
-          curl --fail --silent --show-error --location --retry 4 \
-            "https://github.com/quint-co/quint/releases/download/evaluator/$version/quint_evaluator-x86_64-unknown-linux-gnu.tar.gz" \
-            --output "$archive"
-          printf '%s  %s\n' ce0502bdef65dc26c242a9e56379a9bb26de6f3db38f0e3989339d46a542f5eb "$archive" | sha256sum --check
-          mkdir -p "$directory"
-          tar -xzf "$archive" -C "$directory" quint_evaluator
-          test -x "$directory/quint_evaluator"
+        uses: ./.github/actions/setup-quint
       - name: Require the synthetic Postgres service
         run: |
           bin="$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin | sort -V | tail -n 1)"
@@ -340,9 +330,7 @@ jobs:
         if: steps.shards.outputs.enabled == 'true'
         continue-on-error: true
         timeout-minutes: 2
-        working-directory: tools/vibestack
-        shell: bash
-        run: *install-quint
+        uses: ./.github/actions/setup-quint
       # Generation still requires the snapshot check. Peer work only helps the full check finish.
       - name: Precompute the lighter formal shard after checking generated files
         id: peer-bundle
