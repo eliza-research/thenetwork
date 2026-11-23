@@ -28,7 +28,7 @@ import {
 } from "../../core/src/generated/phoneChange.ts";
 import { joinConsentEvidenceAllowed, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { validAge } from "../../core/src/policy.ts";
-import { canJoinApp, joinAgeCheck, lowestAge, personAgeAt } from "./age.ts";
+import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
@@ -152,7 +152,7 @@ export function joinProfileText(input: Pick<JoinInput, "about" | "neighborhood" 
 
 export type EnrollmentReferral = ReferralJoin | SeedInvitationReferral;
 
-export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; signupAge?: SignupAge; referral?: EnrollmentReferral }
+export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; recordedAge: number | null; input: JoinInput; signupAge?: SignupAge; referral?: EnrollmentReferral }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 type MemberForgetReason = "leave" | "account_erasure" | "phone_reassignment";
 
@@ -359,11 +359,17 @@ export class Accounts {
 
   /** The lowest usable age known for this phone and its verified person. */
   async lowestAge(e164: string, person?: Person): Promise<number | undefined> {
-    const [age, floor] = await Promise.all([
-      person && personAgeAt(this.store, person, this.now()),
+    return (await this.knownAges(e164, person)).effective;
+  }
+
+  /** A private signup age can restrict eligibility without becoming a durable age observation. */
+  async knownAges(e164: string, person?: Person) {
+    const [signupAge, floor] = await Promise.all([
+      person && this.store.signupAgeAt(person.id, this.now()),
       this.store.ageFloor(this.phoneHash(e164)),
     ]);
-    return lowestAge(age, floor);
+    const independent = lowestAge(person?.lowestAge, floor);
+    return { effective: lowestAge(independent, signupAge), independent };
   }
 
   /** Record a stated age: the phone's age floor and the person (if any) keep the lowest. Every app's member follows a lower age. */
@@ -478,7 +484,8 @@ export class Accounts {
     const recordedAge = signupAge ? profileAge : statedAge;
     // A repeated join propagates a lower age and keeps the membership and consent.
     if (membershipCheck.rejoin && recordedAge !== undefined) await this.recordAge(who.e164, person, recordedAge);
-    const age = joinAgeCheck(statedAge, await this.lowestAge(who.e164, person), app);
+    const known = await this.knownAges(who.e164, person);
+    const age = joinAgeCheck(statedAge, known.effective, app);
     const ageCheck = stepEnrollment(membershipCheck, { type: "checkJoinAge", ageEligible: age.ok });
     if (ageCheck.phase === "BelowJoinAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
@@ -505,8 +512,10 @@ export class Accounts {
     }
     let hook: { ok: true } | { ok: false; error: unknown };
     try {
-      // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
-      const ctx = { app, person, membership, e164: who.e164, age: age.effective ?? statedAge, input, signupAge };
+      const ctx = {
+        app, person, membership, e164: who.e164, age: age.effective ?? statedAge,
+        recordedAge: signupAge ? null : lowestAge(recordedAge, known.independent) ?? null, input, signupAge,
+      };
       if (referredJoin) await this.hooks.commitReferredJoin!({ ...ctx, referral: referredJoin });
       else await this.hooks.onJoin?.(ctx);
       hook = { ok: true };

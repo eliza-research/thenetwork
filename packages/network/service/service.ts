@@ -1213,7 +1213,7 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; ageFromBirthday?: boolean; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral?: ReferralJoin; verifiedRecipientHash?: string }) {
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; recordedAge: number | null; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral?: ReferralJoin; verifiedRecipientHash?: string }) {
     const at = this.clock.now();
     const now = new Date(at);
     const homeCity = info.homeCity ?? homeCityOf(m.profile.homeCity) ?? rt.city;
@@ -1224,7 +1224,7 @@ export class NetworkService implements RuntimeHost {
       if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, m.personId)) return false;
       if (referral && !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) throw new InvitationUnavailable();
       await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at, invited_by)
-        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.ageFromBirthday ? null : info.age}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
+        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.recordedAge}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
         on conflict (id) do update set person_id = excluded.person_id, name = excluded.name, home_city = excluded.home_city, home_area = excluded.home_area,
           account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false,
           invited_by = coalesce(excluded.invited_by, network.members.invited_by)`;
@@ -1327,7 +1327,7 @@ export class NetworkService implements RuntimeHost {
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
     if (ctx.signupAge) await this.removeMinorMedia(ctx.person.id);
-    if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, ageFromBirthday: ctx.signupAge !== undefined })) throw new JoinReviewRequired();
+    if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge })) throw new JoinReviewRequired();
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
     await this.learnJoinProfile(rt, ctx.person.id, ctx.e164, ctx.membership);
   }
@@ -1371,7 +1371,7 @@ export class NetworkService implements RuntimeHost {
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
       if (ctx.signupAge) await accounts.store.saveSignupAge(ctx.person.id, ctx.signupAge);
-      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, ageFromBirthday: ctx.signupAge !== undefined }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
+      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
       if ("kind" in referral) {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
       }
@@ -2673,7 +2673,8 @@ export class NetworkService implements RuntimeHost {
       return "join_asked";
     }
     if (answer.phase !== "AwaitingJoinAge" || age === undefined) return "join_asked";
-    const check = joinAgeCheck(age, await this.accounts.lowestAge(e164, person), app);
+    const known = await this.accounts.knownAges(e164, person);
+    const check = joinAgeCheck(age, known.effective, app);
     const ageCheck = stepTextJoin(answer, { type: "checkTextJoinAge", ageAllowed: check.ok });
     if (ageCheck.phase === "RefuseAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
@@ -2706,7 +2707,8 @@ export class NetworkService implements RuntimeHost {
     const stored = stepTextJoin(ageCheck, { type: "recordTextMembership", membershipActive: membership.state === "active" });
     if (stored.phase !== "AwaitingWelcome") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
-    if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity })) return "held";
+    if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age),
+      recordedAge: Math.min(age, known.independent ?? age), firstName: name, homeCity })) return "held";
     // Their answer is their first message: the Network welcomes them as a reply to it.
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).
@@ -2735,7 +2737,7 @@ export class NetworkService implements RuntimeHost {
     const joined: AppInfo[] = [];
     const banned = !!person && !!ntwrk && await this.accounts.banned(e164, person);
     if (networkEnrollmentAllowed(!!person, !!ntwrk, banned) && person && ntwrk) {
-      const lowest = await this.accounts.lowestAge(e164, person);
+      const { effective: lowest, independent } = await this.accounts.knownAges(e164, person);
       const asked = lookingForAsk(lowest);
       // A member under 18 (or of unknown age) is never enrolled in slop.date from this question; they may
       // still join it on its own site (founder decision 1), where matching and photos stay 18+.
@@ -2752,7 +2754,8 @@ export class NetworkService implements RuntimeHost {
         };
         const admitted = await this.people.admitMembership(m, { e164, app: id, state: "opted_in", source: "looking_for",
           wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key);
-        if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
+        if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, recordedAge: independent ?? null,
+          firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
         joined.push(app);
       }
     }
