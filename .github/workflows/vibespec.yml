@@ -282,7 +282,7 @@ jobs:
 
   generation:
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache && 25 || 10 }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -298,9 +298,10 @@ jobs:
       - *formal-complete
       - *formal-checkpoint
       - *select-formal-shards
-      - name: Reuse content-keyed formal tool actions
+      - name: Restore generated model actions
         if: github.event_name != 'workflow_dispatch' || !inputs.cold_formal_cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: generation-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .spec-cache/formal
           key: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ hashFiles('spec/**', 'scripts/spec-snapshots.ts', 'scripts/vibestack.ts', 'tools/vibestack/vibestack/**') }}
@@ -313,6 +314,12 @@ jobs:
           test -z "$(find .spec-cache/formal -mindepth 1 -maxdepth 1 -print -quit)"
       - if: hashFiles('spec/**/*.md', 'packages/core/src/generated/*.ts') != ''
         run: pnpm run spec:check-generated
+      - name: Save generation actions before the simulation shard
+        if: steps.generation-cache.outputs.cache-primary-key && steps.generation-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .spec-cache/formal
+          key: ${{ steps.generation-cache.outputs.cache-primary-key }}
       - name: Install the pinned Quint Rust evaluator for cold precompute
         if: steps.shards.outputs.enabled == 'true'
         working-directory: tools/vibestack
