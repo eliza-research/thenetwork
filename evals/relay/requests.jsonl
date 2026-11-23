@@ -213,6 +213,14 @@
 {"text": "Send him my photo. 🚫📸 I'll show him myself.", "want": "none"}
 {"text": "give him my number if he asks", "want": "none"}
 {"text": "send him my number whenever he asks", "want": "none"}
+{"text": "give him my number every time he asks", "want": "none"}
+{"text": "send him my number every time he asks", "want": "none"}
+{"text": "give him my photo every time he asks", "want": "none"}
+{"text": "every time he asks, give him my number", "want": "none"}
+{"text": "give him my number every time she asks", "want": "none"}
+{"text": "give him my number every time he asks for it", "want": "none"}
+{"text": "send him my number every time you can, thanks", "want": "contact_share"}
+{"text": "send him my number now. every time he replies, tell me", "want": "contact_share"}
 {"text": "send them my number if they ask for it", "want": "none"}
 {"text": "share my number with him if he wants it", "want": "none"}
 {"text": "give her my number only if she asks", "want": "none"}
