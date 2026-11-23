@@ -100,12 +100,19 @@ export function quoteStillOpen(prefix: string): boolean {
 
 /** Check the exact evidence span in the normalized message, across sentence boundaries. */
 export function unquotedOwnAgeEvidence(text: string, start: number, end: number): boolean {
-  return ownAgeEvidenceAllowed(quoteInSpan(text, start, end) !== undefined);
+  const quote = quoteInSpan(text, start, end);
+  const before = quote ? text.slice(0, quote.at).split(/[.!?;\n]/).at(-1)! : "";
+  return ownAgeEvidenceAllowed(!!quote && (SPEECH_FRAME.test(before) || hasClosingQuote(text, quote)));
 }
 
-const OWN_QUOTE = /^\s*(?:i|we)\s+(?:said|told|texted|wrote|replied|posted)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?\s*[:,]?\s*$/;
 const SPEECH_FRAME = /\b(?:say|said|says|tell|told|tells|text|texted|texts|message|messaged|write|wrote|writes|quote|quoted|reply|replied|asked|asks|posted|read|was like|is like)\b[^.!?;\n]*$/;
-const LEADING_ELISION = /^(?:cause|em|sup|til|till|tis|twas)\b/;
+const LEADING_ELISION = /^(?:cause|cos|coz|cuz|bout|round|kay|nother|em|sup|til|till|tis|twas)\b/;
+const OTHER_SPEAKER = /\b(he|she|they|someone|somebody|(?:my|his|her|their|this|that|a|the) (?:[a-z]+ )?(?:friend|sister|brother|sis|bro|cousin|mom|mum|dad|mother|father|teacher|classmate|kid|son|daughter|girl|guy|boy|coworker|roommate|bf|gf|boyfriend|girlfriend|ex))((?: (?!(?:and|n|then|but|so|or)\b)[a-z]+){0,2}) (?:said|says|texted|texts|wrote|writes|told me|tells me|told him|told her|asked|asks|messaged|replied|posted|goes|went|was like|is like)\s*[:,]?\s*$/;
+const HEARD_SPEAKER = /\b(?:heard|hear|overheard) (?:him|her|them|someone|somebody|(?:my|this|a) [a-z]+) (?:say|said|saying|tell|telling)\s*[:,]?\s*$/;
+function anotherSpeaker(before: string): boolean {
+  const m = OTHER_SPEAKER.exec(before);
+  return (!!m && !/\b(?:i|me|we|myself)\s+(?:and|n|&)\s+$/.test(before.slice(0, m.index))) || HEARD_SPEAKER.test(before);
+}
 
 /** A repeat of the sender's own disclosure or an unfinished casual aside can still be a youth cue. */
 export function ownYouthCue(text: string, start: number, end: number): boolean {
@@ -114,7 +121,7 @@ export function ownYouthCue(text: string, start: number, end: number): boolean {
   const before = text.slice(0, quote.at).split(/[.!?;\n]/).at(-1)!;
   const attributed = SPEECH_FRAME.test(before);
   const unfinishedCasual = !attributed && !hasClosingQuote(text, quote);
-  return ownYouthCueAllowed(true, OWN_QUOTE.test(before), unfinishedCasual);
+  return ownYouthCueAllowed(true, !anotherSpeaker(before), unfinishedCasual);
 }
 
 type Quote = { at: number; mark: "'" | '"' };
