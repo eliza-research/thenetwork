@@ -610,12 +610,14 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
   }, T);
 
-  test("a full exact name with a standalone affirmative word still names the safety target", async ({ onTestFinished }) => {
-    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, ["Mara Sure", "Ben"]);
-    await askSlop("full-name-with-affirmative");
-    expect(await signed("answer-full-name-with-affirmative", "Mara Sure", "slop")).toMatchObject({ app: "slop" });
-    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
-  }, T);
+  for (const name of ["Mara Sure", "Joey Pass", "Francis No"]) {
+    test(`the exact full name ${name} still names the safety target`, async ({ onTestFinished }) => {
+      const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, [name, "Ben"]);
+      await askSlop("full-name-with-control-word");
+      expect(await signed("answer-full-name-with-control-word", name, "slop")).toMatchObject({ app: "slop" });
+      expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+    }, T);
+  }
 
   test("a complete explicit pronoun with courtesy confirms the sole offered safety target", async ({ onTestFinished }) => {
     const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
@@ -636,6 +638,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     { name: "No Thanks", reply: "No thanks", probeReply: "unavailable" },
     { name: "Sure Thing", reply: "Sure thing", probeReply: "available" },
     { name: "Not Now", reply: "Not now", probeReply: "unavailable" },
+    { name: "No Can Do", reply: "No can do", probeReply: "unavailable" },
+    { name: "Hard Pass", reply: "Hard pass", probeReply: "unavailable" },
+    { name: "Rather Not", reply: "Rather not", probeReply: "unavailable" },
+    { name: "Not Interested", reply: "Not interested", probeReply: "unavailable" },
     { name: "No", reply: "No thanks", probeReply: "unavailable" },
     { name: "No", reply: "No, thanks", probeReply: undefined },
     { name: "No", reply: "Okay, no", probeReply: "unavailable" },
