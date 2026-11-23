@@ -563,6 +563,7 @@ const PRIVATE_RENEWAL_ANCHOR = new RegExp(
 );
 const TERMINAL_PRIVATE_RETRACTION = /^\s*(?:(?:actually|wait|sorry|lol|ok(?:ay)?|oh|ugh)[,\s]+)?(?:never ?mind|nvm)\b/iu;
 const PRIVATE_RENEWAL_CORRECTION = /^\s*(?:(?:actually|sorry)[,\s:]+)?/iu;
+const UNRESOLVED_RENEWAL_FOLLOWUP = /\b(?:it|this|that|either|both|instead|ask(?:ing)?|confirm(?:ing)?|wait(?:ing)?|decid(?:e|ed|ing)|(?:re)?think(?:ing)?|reconsider(?:ing)?|not ready|maybe|perhaps|doubts?|hesitant|torn|conflicted|on the fence|recipient|destination|permission|approval|consent|private)\b/u;
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const PRIVATE_CONDITION_MARKER = String.raw`if|when(?:ever)?|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
@@ -704,6 +705,17 @@ function privateCourtesy(sentence: string): boolean {
     || (polite !== null && PRIVATE_RELAY_COURTESY.test(words.slice(polite[0].length)));
 }
 
+function independentRenewalFollowup(sentence: string): boolean {
+  const words = sentence.trim().toLowerCase();
+  if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
+  const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
+  const body = envelope?.at(-1) ?? words;
+  const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+  return PRIVATE_CONDITION_STATEMENT.test(statement) && !PRIVATE_CONDITION_ITEM_NAME.test(statement)
+    && !PRIVATE_RELAY_ACTION.test(statement) && !PRIVATE_RELAY_UNCERTAIN.test(statement)
+    && !UNRESOLVED_RENEWAL_FOLLOWUP.test(statement);
+}
+
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[], contact: boolean): boolean {
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
@@ -720,7 +732,6 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
     const question = text.slice(stop).match(RELAY_SENTENCE)?.[0].includes("?") ?? false;
     const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence)?.[0] ?? colloquialRetractionLead(sentence, contact);
     const prefix = lead ?? PRIVATE_RENEWAL_CORRECTION.exec(sentence)![0];
-    // A new shorthand needs a current antecedent and a directly adjacent pause.
     const renewal = authored && !question && (retracted || lead !== undefined)
       ? privateRenewalEnd(sentence.slice(prefix.length), request, referenceAvailable && (adjacentPause || lead !== undefined))
       : undefined;
@@ -736,9 +747,7 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
       referenceAvailable &&= authored && !question && PRIVATE_RENEWAL_ANCHOR.test(sentence);
       adjacentPause = referenceAvailable;
     } else {
-      // Only recognized follow-up can preserve newly renewed consent. An unresolved
-      // later instruction may change the recipient, item, or timing.
-      if (renewedAfterPause && !(authored && (privateCourtesy(sentence) || PRIVATE_RESPONSE_FOLLOWUP.test(sentence.trim())))) {
+      if (renewedAfterPause && !(authored && !question && independentRenewalFollowup(sentence))) {
         retracted = true;
         renewedAfterPause = false;
       }
