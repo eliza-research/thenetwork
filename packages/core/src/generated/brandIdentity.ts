@@ -91,7 +91,7 @@ export function connectorEndpoint(app: AppKey): string {
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
 //@ pure
 export function openaiConnectorEndpoint(app: AppKey): string {
-  return app === "Ntwrk" ? "https://ntwrk.party/mcp/openai" : (app === "Slop" ? "https://ntwrk.party/mcp/slop/openai" : (app === "Peon" ? "https://ntwrk.party/mcp/peon/openai" : "https://ntwrk.party/mcp/friends/openai"));
+  return app === "Ntwrk" ? "https://ntwrk.party/mcp/openai" : (app === "Slop" ? "" : (app === "Peon" ? "https://ntwrk.party/mcp/peon/openai" : "https://ntwrk.party/mcp/friends/openai"));
 }
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
@@ -103,7 +103,7 @@ export function mayName(site: AppKey, named: AppKey, surface: Surface): boolean 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
 //@ pure
 export function hubTextsOnAppSurface(site: AppKey, surface: Surface): string[] {
-  return surface === "SkillSurface" ? ([supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site)] as string[]) : ([supportEmail] as string[]);
+  return surface !== "SkillSurface" ? ([supportEmail] as string[]) : (openaiConnectorEndpoint(site) === "" ? ([supportEmail, agentAccessPage, connectorEndpoint(site)] as string[]) : ([supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site)] as string[]));
 }
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */

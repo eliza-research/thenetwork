@@ -330,7 +330,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
   function canonicalResource(raw: string, c: Pick<Ctx, "issuer" | "host" | "app">): string | undefined {
     const served = servedResource(raw, c);
-    return served && served.app === c.app.id ? served.resource : undefined;
+    return served && served.app === c.app.id && (served.surface !== "openai" || openAiOn(c)) ? served.resource : undefined;
   }
   const challenge = (resource: string, extra: Record<string, string> = {}) =>
     "Bearer " + Object.entries({ resource_metadata: prmUrl(resource), scope: "membership:read", ...extra }).map(([k, v]) => `${k}="${v.replace(/"/g, "'")}"`).join(", ");

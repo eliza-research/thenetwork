@@ -222,14 +222,19 @@ describe.each(SITES)("$domain", (s) => {
       expect(skill).toContain(`“Connect ${s.app === "ntwrk" ? "The Network" : s.domain}” and give`);
       expect(skill).toContain("then come back to this conversation");
       expect(skill).not.toContain("RESPONSE_STYLE");
-      expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+      if (s.app === "slop") {
+        expect(skill).not.toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+        expect(skill.replace(/\s+/g, " ")).toContain("ChatGPT and Codex have no public connector for slop.date.");
+      } else {
+        expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+      }
       expect(skill).toContain("the person opens https://ntwrk.party/oauth/consents in the browser where they connected");
       if (s.app !== "ntwrk") expect(skill).not.toContain(`https://${s.domain}/mcp`);
       expect(skill).not.toContain("cannot add this app's connector");
       if (["friends", "slop", "ntwrk"].includes(s.app)) {
         expect(skill).toContain("native connector authorization");
         expect(skill).toContain(`this app's own connector endpoint, \`https://ntwrk.party${hubPath(s.app)}\``);
-        expect(skill).toContain(`(in ChatGPT, \`https://ntwrk.party${hubPath(s.app)}/openai\`)`);
+        if (s.app !== "slop") expect(skill).toContain(`(in ChatGPT, \`https://ntwrk.party${hubPath(s.app)}/openai\`)`);
         expect(skill.replace(/\s+/g, " ")).toContain("Only if this client cannot add a remote connector at all, or the person cannot add it, say “Signup isn't supported in this agent yet.”");
         expect(skill).toContain("the one link");
         expect(skill).toContain("**Finish signup**");
@@ -382,11 +387,11 @@ test("a local or test MCP_URL moves the ntwrk.party connector endpoints and the 
     const path = site.app === "ntwrk" ? "/mcp" : `/mcp/${site.app}`;
     const production = fill(source, { ...env, MCP_URL: undefined, BACKEND_ORIGIN: undefined }, site.domain);
     expect(production, site.domain).toContain(`https://ntwrk.party${path}`);
-    expect(production, site.domain).toContain(`https://ntwrk.party${path}/openai`);
+    expect(production.includes(`https://ntwrk.party${path}/openai`), site.domain).toBe(site.app !== "slop");
     const local = fill(source, env, site.domain);
     expect(local, site.domain).not.toContain("https://ntwrk.party/mcp");
     expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}`);
-    expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}/openai`);
+    expect(local.includes(`https://ntwrk.party.dev.example.test${path}/openai`), site.domain).toBe(site.app !== "slop");
     expect(production, site.domain).toContain("https://ntwrk.party/oauth/consents");
     expect(local, site.domain).not.toContain("https://ntwrk.party/oauth");
     expect(local, site.domain).toContain("https://ntwrk.party.dev.example.test/oauth/consents");

@@ -453,7 +453,7 @@ Acceptance:
 - The prompt is `Read https://<domain>/SKILL.md?version=<version> and follow it.` The slop.date prompt has no version query. A person can select the prompt without the page script.
 - The Copy button shows only when the page script runs. A press shows "Copied". When the clipboard refuses, the page selects the prompt and the button shows "Selected: press copy".
 - The agent row shows logos only, in this order: ChatGPT, Claude, Grok, Muse, Gemini, Perplexity, Cursor, OpenClaw, Hermes. The agent's name is the hover label of its logo. The accessible name of a tile with a link is "Open in <name>", and of a copy-only tile "Copy the prompt for <name>".
-- The row never shows an agent that the app's connector refuses. The OpenAI surface of the connector serves the endpoint of every app, so each page shows the ChatGPT tile, slop.date included. Only the slop.date endpoint of that surface names slop.date.
+- The row never shows an agent that the app's connector refuses. The ChatGPT tile shows on ntwrk.party, peon.biz and friends.help. slop.date has no public OpenAI connector.
 - A phone, or a Mac with more than one touch point, does not show Cursor. Without the page script, the Muse tile (copy only) does not show.
 - A press on a tile follows its link, if it has one, and copies the prompt. The status line then says that the agent opens, where to paste the prompt, or "Copy the prompt, then paste it into your agent." when the copy fails. Without the page script the status line stays empty.
 - The page shows, in this order: the brand mark, the headline, the prompt, the Copy button, the agent row, the Messages entry, the status line, and the Privacy and Terms links. It has fewer than 45 words and one heading.
@@ -599,7 +599,7 @@ See the [browser phone confirmation and connector handoff](../agentPhoneHandoff.
 
 Acceptance:
 
-- ntwrk.party serves the connector of every app: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app. ChatGPT and Codex use the OpenAI surface, with `/openai` added. Each surface serves the endpoint of each app, slop.date included. On the OpenAI surface, only the slop.date endpoint names slop.date: the endpoint of another app, which the OpenAI plugin uses, never lists slop.date or dating. The slop.date site keeps no OpenAI surface of its own.
+- ntwrk.party serves the full connector of each app: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app. ChatGPT and Codex use the OpenAI surface, with `/openai` added for The Network, peon and friends. The OpenAI surface has no Slop endpoint and names neither slop.date nor dating. The existing private pilot uses the dedicated full endpoint and checks adult eligibility and approval.
 - A grant covers only the app of its endpoint path. A token for one app is refused at the endpoint of another app.
 - `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
 - `read_profile` needs explicit profile read permission and a current active membership for the same app. It returns only safe saved fields and makes no profile change.
@@ -619,7 +619,7 @@ Spec: [connector tools](../connectorTools.md).
 
 Acceptance:
 
-- Each skill names the ntwrk.party endpoint of its own app: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app, with `/openai` added in ChatGPT. The Claude plugin lists the skills of all four apps. The OpenAI plugin, for ChatGPT and Codex, lists the ntwrk.party, peon.biz and friends.help skills only, and its manifest lists `https://ntwrk.party/mcp/openai`. A person who uses slop.date in ChatGPT starts from the slop.date page and adds `https://ntwrk.party/mcp/slop/openai` as a connector.
+- Each skill names the ntwrk.party endpoint of its app. The Claude plugin lists the skills of all four apps. The OpenAI plugin lists the ntwrk.party, peon.biz and friends.help skills, whose endpoints add `/openai`. The manifest lists `https://ntwrk.party/mcp/openai`. A public ChatGPT or Codex client has no Slop signup connector.
 - A site prompt starts signup. A plugin skill or a catalog entry starts signup only when the person asks for it. Otherwise the agent explains the app.
 - An update link opens the agent with `Ask The Network for update T-7F3K9Q`. The agent loads no skill, passes the reference to the updates tool on the person's own connection and never asks for a reference. Without a connection, the agent asks the person to sign in on the app's page and allow access.
 - An update text carries only the reference. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update goes in the text thread.
