@@ -178,3 +178,6 @@
 {"text":"either sat sun","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"either sat sun","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"yeah, either sat sun","answer":"yes","keys":["b","c"]}
+{"text":"sat sun busy, thu works","answer":"yes","keys":["a"]}
+{"text":"sat sun don't work, thu works","answer":"yes","keys":["a"]}
+{"text":"sat sun are out, thu works","answer":"yes","keys":["a"]}
