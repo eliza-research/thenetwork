@@ -25,6 +25,7 @@ import { PHOTO_TEXT } from "../service/photoIntake.ts";
 import { Mini, START } from "./mini.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { presentInNyc } from "../src/network.ts";
+import type { TimeOption } from "../src/classify.ts";
 import { WATCH } from "../src/trust.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
@@ -396,17 +397,17 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     };
     const probeStatus = (id: string) => s.runtimeFor("slop")!.readState(net =>
       net.exportState().opps.find(opp => opp.id === id)?.status.find(([member]) => member === slopAri)?.[1]);
-    const competingSlopProbe = async (id: string, counterpart = slopBen) => {
+    const competingSlopProbe = async (id: string, counterpart = slopBen, options?: TimeOption[]) => {
       const now = clock.now();
       const deliveryId = `${id}.probe`;
-      const body = "Are you open to a date?";
+      const body = options ? "Which times work: " + options.map(option => `${option.key}) ${option.label}`).join(", ") + "?" : "Are you open to a date?";
       await s.runtimeFor("slop")!.unitOfWork(net => {
         const state = net.exportState();
         const meeting = state.opps.find(opp => opp.id === `slop.clarification-meeting.${slopBen}`)!;
         const reporter = state.members.find(member => member.id === slopAri)!;
         state.opps.push({ ...meeting, id, stage: "probing", meetingAt: undefined, bookedTold: undefined,
           participants: [slopAri, counterpart], status: [[slopAri, "probing"], [counterpart, "probing"]], createdAt: now,
-          deadline: now + HOUR, contacted: [slopAri, counterpart] });
+          deadline: now + HOUR, contacted: [slopAri, counterpart], ...(options ? { offered: { [slopAri]: options } } : {}) });
         reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId, probeInboundCount: reporter.msgsIn };
         reporter.lastSent = { body, at: now, consentProbe: id };
         net.importState(state);
@@ -644,6 +645,34 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
   }, T);
 
+  test("#626 a signed semicolon qualifier keeps a lone safety question open", async ({ onTestFinished }) => {
+    const { askSlop, clearSlopReplySlot, pending, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+    await clearSlopReplySlot();
+    const askedAt = await askSlop("626-lone-safety-ask");
+    expect(await signed("626-lone-safety-qualifier", "It was someone else; I think.", "slop")).toMatchObject({ app: "slop" });
+    expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
+    expect(await reports("slop")).toEqual([]);
+  }, T);
+
+  test("#626 a semicolon can separate an offered time choice from a safety correction", async ({ onTestFinished }) => {
+    const { s, askSlop, clock, competingSlopProbe, pending, reports, signed, slopAri, slopBen } = await signedSafetyFixture(onTestFinished);
+    const offer = "slop.626-semicolon-time-probe";
+    const friday = Date.UTC(2026, 9, 16, 23);
+    const saturday = Date.UTC(2026, 9, 17, 15);
+    await askSlop("626-semicolon-time-safety-ask");
+    await competingSlopProbe(offer, slopBen, [
+      { key: "a", label: "Friday 7pm", start: friday, end: friday + HOUR },
+      { key: "b", label: "Saturday 11am", start: saturday, end: saturday + HOUR },
+    ]);
+    await signed("626-semicolon-time-reply", "It was someone else; Friday works.", "slop");
+    const safetyPending = Boolean(await pending("slop"));
+    const picked = await s.runtimeFor("slop")!.readState(net => net.exportState().opps.find(opp => opp.id === offer)?.picks?.[slopAri]);
+    clock.advance(MINUTE);
+    await signed("626-semicolon-time-later-yes", "Yes.", "slop");
+    const reportOnExcludedMember = (await reports("slop"))?.some(report => report.subjectId === slopBen);
+    expect({ safetyPending, picked, reportOnExcludedMember }).toEqual({ safetyPending: false, picked: [friday], reportOnExcludedMember: false });
+  }, T);
+
   const replacementReplies = [
     { scenario: "a complete replacement", reply: "It was someone else.", keepsQuestion: false, expectedProbe: "probing" },
     { scenario: "a replacement before an independent question", reply: "It was someone else. Can we still meet Friday?", keepsQuestion: false },
@@ -655,6 +684,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     { scenario: "a replacement qualified by maybe", reply: "It was someone else, maybe.", keepsQuestion: true },
     { scenario: "a replacement qualified by I think", reply: "It was somebody else, I think.", keepsQuestion: true },
     { scenario: "a replacement qualified after a semicolon", reply: "It was someone else; maybe.", keepsQuestion: true, expectedProbe: "probing" },
+    { scenario: "an independent semicolon yes", reply: "It was someone else; yes.", keepsQuestion: false, expectedProbe: "available" },
+    { scenario: "an independent semicolon yes after leading no", reply: "No, it was someone else; yes.", keepsQuestion: false, expectedProbe: "available" },
+    { scenario: "a semicolon I think qualifier", reply: "It was someone else; I think.", keepsQuestion: true, expectedProbe: "probing" },
     { scenario: "a bare pronoun rejection", reply: "not him", keepsQuestion: true },
   ];
   for (const { scenario, reply, keepsQuestion, expectedProbe } of replacementReplies) {
@@ -704,10 +736,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
   for (const { name, reply, probeReply } of safetyControlCases) {
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
     test(`a signed ${reply} does not name ${name} with ${probeReply ? "a competing probe" : "only a safety question"}`, async ({ onTestFinished }) => {
-      const { askSlop, competingSlopProbe, pending, probeStatus, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, [name, "Ben"]);
+      const { askSlop, clearSlopReplySlot, competingSlopProbe, pending, probeStatus, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, [name, "Ben"]);
       const askedAt = await askSlop("controls-safety-ask");
       const probe = "slop.control-reply-competing-probe";
       if (probeReply) await competingSlopProbe(probe);
+      else await clearSlopReplySlot();
 
       expect(await signed("controls-safety-reply", reply, "slop")).toMatchObject({ app: "slop" });
       expect.soft(await reports("slop")).toEqual([]);

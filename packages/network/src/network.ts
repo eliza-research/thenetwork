@@ -178,10 +178,19 @@ function safetyReplyConsent(text: string) {
   return complete ? consentOf(text).answer : "unclear";
 }
 
+function isSafetyAttributionQualifier(text: string): boolean {
+  const words = safetyName(text);
+  return /^(?:maybe|perhaps|possibly|probably|i think|i guess|(?:i(?:'m| am) )?(?:not sure|unsure))$/.test(words)
+    || (text.includes("?") && /^(?:right|correct|wasn't it)$/.test(words));
+}
+
 function readSoleSafetyTargetExclusion(text: string, names: readonly (string | undefined)[], competing: boolean) {
   const reply = text.normalize("NFKC").trim().replace(/^(?:no|nope)(?:[,.!?;:]\s*|\s+)/i, "");
-  // Keep semicolon qualifiers with the opening sentence. Replacing one character preserves offsets.
-  const first = sentencesOf(reply.replaceAll(";", ","), true)[0]!;
+  let first = sentencesOf(reply, true)[0]!;
+  if (first.text.trimEnd().endsWith(";")) {
+    const tail = reply.slice(first.at + first.text.length).trim();
+    if (isSafetyAttributionQualifier(sentencesOf(tail, true)[0]!.text)) first = sentencesOf(reply.replaceAll(";", ","), true)[0]!;
+  }
   const openingSentence = first.text;
   const opening = openingSentence.split(/[,.!?;:]/, 1)[0]!;
   const clause = safetyName(opening);
@@ -189,8 +198,9 @@ function readSoleSafetyTargetExclusion(text: string, names: readonly (string | u
   const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
   const openingIsQuestion = openingSentence.includes("?");
   const rejectsWithCorrection = first.at === 0 && !openingIsQuestion && /^it was (?:someone|somebody) else$/.test(safetyName(openingSentence));
-  const refersToAnotherPerson = !openingIsQuestion && ["someone else", "somebody else"].some(phrase =>
-    replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `))) && consentOf(openingSentence).why !== "hedged";
+  const qualified = consentOf(openingSentence).why === "hedged" || isSafetyAttributionQualifier(openingSentence.slice(opening.length + 1));
+  const refersToAnotherPerson = !openingIsQuestion && !qualified && ["someone else", "somebody else"].some(phrase =>
+    replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `)));
   const unnamedRejection = refersToAnotherPerson || ["not him", "not her", "not them"].includes(clause);
   return {
     excludes: safetyQuestionExclusion(rejectsName || rejectsWithCorrection, unnamedRejection, competing),
