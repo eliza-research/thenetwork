@@ -238,31 +238,28 @@ describe("block and report targets in a group plan", () => {
   });
 
   test.each([
-    "someone else from the gym",
-    "someone else would be better",
-    "someone else can have saturday",
-    "someone else should come too",
-    "someone else is coming with me",
-  ])("a bare someone-else reply ends the safety question without filing: %s", async answer => {
+    ["someone else", true],
+    ["somebody else", true],
+    ["someone else from the gym", false],
+    ["someone else would be better", false],
+    ["someone else can have saturday", false],
+    ["someone else should come too", false],
+    ["someone else is coming with me", false],
+  ] as const)("a bare someone-else reply respects the safety question: %s", async (answer, excludes) => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
     await w.run(5 * DAY);
-    const from = w.mark();
     await w.say("a", "report him, he was creepy");
-    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
     const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
-    expect(pendingOf()).toBeDefined();
+    expect(pendingOf()?.targets).toEqual(["b"]);
+
     await w.say("a", answer);
-    expect(pendingOf()).toBeUndefined();
-    expect(w.net.safetyReports()).toHaveLength(0);
-    expect(w.to("a", from).some(s => /couldn't tell who you mean/i.test(s.body))).toBe(true);
-    // Later bare "yes" answers must not file against the person just ruled out.
-    await w.say("a", "yes");
-    expect(w.net.safetyReports()).toHaveLength(0);
-    await w.say("a", "yes");
-    expect(w.net.safetyReports()).toHaveLength(0);
+    expect(pendingOf() === undefined).toBe(excludes);
+    expect(w.net.safetyReports()).toEqual([]);
+    await w.say("a", "Ben");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual(excludes ? [] : [["a", "b"]]);
   });
 
   test("a bare someone-else reply with a competing probe keeps the safety question", async () => {

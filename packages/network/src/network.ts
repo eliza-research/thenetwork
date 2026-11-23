@@ -211,7 +211,7 @@ function readSoleSafetyTargetExclusion(text: string, names: readonly (string | u
   const rejectsWithCorrection = first.at === 0 && !openingIsQuestion && /^it was (?:someone|somebody) else$/.test(safetyName(openingSentence));
   const qualified = consentOf(openingSentence).why === "hedged" || isSafetyAttributionQualifier(openingSentence.slice(opening.length + 1));
   const refersToAnotherPerson = !openingIsQuestion && !qualified && ["someone else", "somebody else"].some(phrase =>
-    replacement === phrase || replacement.startsWith(`${phrase} `));
+    replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `)));
   const unnamedRejection = refersToAnotherPerson || ["not him", "not her", "not them"].includes(clause);
   return {
     excludes: safetyQuestionExclusion(rejectsName || rejectsWithCorrection, unnamedRejection, competing),
