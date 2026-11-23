@@ -7,7 +7,7 @@ import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
-import {SimClock,MINUTE,DAY} from "@thenetwork/core";
+import {SimClock,MINUTE,DAY,HOUR} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
@@ -207,7 +207,10 @@ async function resetSwapMatch(id: string) {
   await service.runtimeFor("friends")!.unitOfWork(net => {
     const state = net.exportState();
     swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
-    clock.advance(DAY);
+    // Keep at least one day between cases and start each one during New York daytime.
+    const earliest = clock.now() + DAY;
+    const daytime = Math.floor(earliest / DAY) * DAY + 16 * HOUR;
+    clock.set(daytime < earliest ? daytime + DAY : daytime);
     const now = clock.now();
     state.opps = [{ ...swapMatchTemplate, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
     if (state.relay) state.relay.swaps = [];
