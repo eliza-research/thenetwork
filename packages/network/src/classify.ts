@@ -777,6 +777,7 @@ const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|wh
 const ALL_WEAK = /\b(?:either|both)\b(?:\s+of\s+(?:them|(?:those|these)(?:\s+(?:times|options|slots))?)\b)?/g;
 const BOTH_TIME_LEAD = /^\s*(?:(?:i|we)\s+can\s+(?:do|make)\s+)?both\b/;
 const BOTH_TIME_TAIL = /^\s*(?:(?:work(?:s)?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please)?\s*$/;
+const BOTH_TIME_QUALIFIER = /^\s+(?:(?:at|around|by|after|before|in the)\s+)?(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap]m)?|noon|midnight|mornings?|afternoons?|evenings?|nights?|lunch|after work)\b/;
 const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
 const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
 const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
@@ -980,8 +981,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (unresolved.length || ordinalMissing || [...pos].some(key => !all.includes(key))
       || [...pickedClauses].some(clause => refusedClauses.has(clause))
       || weakNegated) return { ...unclear, why: "slot" };
-    const namesPair = weakCues.some(cue => {
-      if (cue.index! >= weakLimit || !cue[0].startsWith("both")) return false;
+    const bothCues = weakCues.filter(cue => cue.index! < weakLimit && cue[0].startsWith("both"));
+    if (bothCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
+    const namesPair = bothCues.some(cue => {
       const clause = clauseAt(t, cue.index!, cue[0].length);
       if (pickedClauses.has(clause) && BOTH_TIME_LEAD.test(clause)) return true;
       const rest = t.slice(cue.index! + cue[0].length).split(/[.,;!?\n]|\bbut\b/, 1)[0]!;
