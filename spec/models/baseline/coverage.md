@@ -14,12 +14,12 @@ How the ledger was made: six agents read every file and the models on the three 
 
 | Verdict | Files |
 |---|---|
-| covered | 311 |
-| na | 416 |
+| covered | 320 |
+| na | 419 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 727 |
+| total | 739 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
@@ -33,7 +33,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | .github/runtime-eb4f/setup.ts | harness | none | none | na | Setup step for image qualification; no product state or decision. |
 | .github/workflows/deploy-sites.yml | production | boot_config [wave4/boot_config] | none | covered | The sites deploy workflow (M-148) with one proxy secret per Pages project (M-131): approval, Inspect, PATCH and readback, deploy, smoke, in matrix order. |
 | apps/site/prerender.ts | production | spec/sitePages.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
-| apps/site/src/App.tsx | production | spec/browserJoin.md, spec/landingEntry.md, spec/sitePages.md, spec/phonePage.md, spec/homeHelpPage.md, spec/photoUploadPage.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
+| apps/site/src/App.tsx | production | spec/browserJoin.md, spec/landingEntry.md, spec/sitePages.md, spec/phonePage.md, spec/homeHelpPage.md, spec/photoUploadPage.md, spec/photosCheckPage.md, spec/photosMinePage.md, spec/photosViewPage.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
 | apps/site/src/entry-server.tsx | production | spec/brandIdentity.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
 | apps/site/src/main.tsx | production | spec/landingEntry.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | apps/site/src/site.ts | production | spec/sitePages.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
@@ -467,6 +467,9 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/api/join.ts | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
 | packages/ui/src/api/phone.ts | production | spec/phonePage.md | packages/core/src/generated/phonePage.ts | covered | A total map from status and error code to one generated answer variant; tests/e2e/phone-page.e2e.test.ts covers it. |
 | packages/ui/src/api/photoUpload.ts | production | spec/photoUploadPage.md | packages/core/src/generated/photoUploadPage.ts | covered | The token regex, the file facts and the status-to-answer map are a shell; the generated machine decides (tests/e2e/photo-upload-page.e2e.test.ts). |
+| packages/ui/src/api/photosCheck.ts | production | spec/photosCheckPage.md | packages/core/src/generated/photosCheckPage.ts | covered | The body checks, the image fetch and the status-to-answer maps are a shell; the generated machine decides (tests/e2e/photos-check-page.e2e.test.ts). |
+| packages/ui/src/api/photosMine.ts | production | spec/photosMinePage.md | packages/core/src/generated/photosMinePage.ts | covered | The status-to-answer maps, the JSON shape checks, the image fetch and the day format are a shell; the generated machine decides (tests/e2e/photos-mine-page.e2e.test.ts). |
+| packages/ui/src/api/photosView.ts | production | spec/photosViewPage.md | packages/core/src/generated/photosViewPage.ts | covered | The status-to-answer maps, the token check and the image fetch into an object URL are a shell; the generated machine decides (tests/e2e/photos-view-page.e2e.test.ts). |
 | packages/ui/src/api/stepPages.ts | production | spec/oneStepPage.md | packages/core/src/generated/oneStepPage.ts | covered | Maps each API answer to one generated sign-in answer or session value and decides nothing that the spec owns. |
 | packages/ui/src/api/turnstile.ts | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/brand/agentLogos.ts | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
@@ -557,6 +560,12 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/PhoneStep.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/components/PhotoUploadPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/PhotoUploadPageView.tsx | production | spec/photoUploadPage.md | packages/core/src/generated/photoUploadPage.ts | covered | Display only: it shows the machine state and the copy. |
+| packages/ui/src/components/PhotosCheckPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotosCheckPageView.tsx | production | spec/photosCheckPage.md | packages/core/src/generated/photosCheckPage.ts | covered | Display only: it shows the machine state, the photos and the copy. |
+| packages/ui/src/components/PhotosMinePageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotosMinePageView.tsx | production | spec/photosMinePage.md | packages/core/src/generated/photosMinePage.ts | covered | Display only: it shows the machine state, the share marks and the copy. |
+| packages/ui/src/components/PhotosViewPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotosViewPageView.tsx | production | spec/photosViewPage.md | packages/core/src/generated/photosViewPage.ts | covered | Display only: it shows the machine state and the copy; the no-save styles and the context-menu block are a shell (play tests). |
 | packages/ui/src/components/Popover.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Popover.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/PopoverClose.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -688,6 +697,9 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/hooks/useLanding.ts | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
 | packages/ui/src/hooks/usePhonePage.ts | production | spec/phonePage.md | packages/core/src/generated/phonePage.ts, packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of phonePage and oneStepPage and does not recompute them. |
 | packages/ui/src/hooks/usePhotoUploadPage.ts | production | spec/photoUploadPage.md | packages/core/src/generated/photoUploadPage.ts | covered | Calls the generated decisions of photoUploadPage and does not recompute them. |
+| packages/ui/src/hooks/usePhotosCheckPage.ts | production | spec/photosCheckPage.md | packages/core/src/generated/photosCheckPage.ts | covered | Calls the generated decisions of photosCheckPage and does not recompute them; image loads and object URLs are a shell. |
+| packages/ui/src/hooks/usePhotosMinePage.ts | production | spec/photosMinePage.md | packages/core/src/generated/photosMinePage.ts | covered | Calls the generated decisions of photosMinePage and does not recompute them; object URLs are a shell. |
+| packages/ui/src/hooks/usePhotosViewPage.ts | production | spec/photosViewPage.md | packages/core/src/generated/photosViewPage.ts | covered | Calls the generated decisions of photosViewPage and does not recompute them; object URLs and the end-of-window timer are a shell. |
 | packages/ui/src/index.ts | production | none | none | na | Re-exports only. |
 | packages/ui/src/lib/cn.ts | production | none | none | na | Class name and type helpers; no decision. |
 | packages/ui/src/lib/meta.ts | production | none | none | na | Class name and type helpers; no decision. |

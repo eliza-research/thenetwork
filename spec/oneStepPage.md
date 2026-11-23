@@ -10,29 +10,34 @@ A one-step page does one step from a link that the conversation sent. It has no 
 
 ### Each step page is on the sites that can do the step
 
-The phone change step is on every site, because each app has its own session. The home-help step is on ntwrk.party only, because only The Network has home help. The photo upload step is on slop.date only, because only slop.date keeps photos. No page links to a step page: the link comes only from the conversation.
+The phone change step is on every site, because each app has its own session. The home-help step is on ntwrk.party only, because only The Network has home help. The four photo steps are on slop.date only, because only slop.date keeps photos: the photo upload step, the photo check step (the sender sees the photos of one proposal and sends them), the my photos step (the sender sees each photo and who has it) and the photo view step (the receiver sees the photos that a match sent). No page links to a step page: the link comes only from the conversation.
 
 ```quint
 import brandIdentity.* from "./brandIdentity"
 
-type OneStepKind = StepPhone | StepHomeHelp | StepPhotoUpload
+type OneStepKind = StepPhone | StepHomeHelp | StepPhotoUpload | StepPhotoCheck | StepPhotoMine | StepPhotoView
+
+pure def oneStepIsPhoto(kind: OneStepKind): bool =
+  kind == StepPhotoUpload or kind == StepPhotoCheck or kind == StepPhotoMine or kind == StepPhotoView
 
 pure def oneStepOnSite(kind: OneStepKind, app: AppKey): bool =
   if (kind == StepHomeHelp) app == Ntwrk
-  else if (kind == StepPhotoUpload) app == Slop
+  else if (oneStepIsPhoto(kind)) app == Slop
   else true
 
 pure def lawPhotoUploadOnlyOnSlop(app: AppKey): bool = oneStepOnSite(StepPhotoUpload, app) iff app == Slop
+pure def lawPhotoStepsOnlyOnSlop(kind: OneStepKind, app: AppKey): bool =
+  oneStepIsPhoto(kind) implies (oneStepOnSite(kind, app) iff app == Slop)
 pure def lawHomeHelpOnlyOnHub(app: AppKey): bool = oneStepOnSite(StepHomeHelp, app) iff app == Ntwrk
 pure def lawPhoneChangeOnEverySite(app: AppKey): bool = oneStepOnSite(StepPhone, app)
 ```
 
 ### The link stays in the fragment, and only the home-help link is kept across Cloud sign-in
 
-A link that names a plan or holds a token puts it after `#`, so that no server log and no `Referer` header gets it. The phone change link has no fragment: its authority is the session on the current number. The page reads the fragment once, when it opens, and removes it from the address with `history.replaceState` before it sends any request. The Cloud sign-in leaves the page and comes back without the fragment. Thus only the home-help page keeps its link in session storage, just before it leaves for Cloud sign-in, and takes it back once when it opens again. The photo upload step has no sign-in, so its token never leaves the page's memory.
+A link that names a plan or holds a token puts it after `#`, so that no server log and no `Referer` header gets it. The phone change link has no fragment: its authority is the session on the current number. The page reads the fragment once, when it opens, and removes it from the address with `history.replaceState` before it sends any request. The Cloud sign-in leaves the page and comes back without the fragment. Thus only the home-help page keeps its link in session storage, just before it leaves for Cloud sign-in, and takes it back once when it opens again. The photo steps have no sign-in, so their tokens never leave the page's memory.
 
 ```quint
-pure def oneStepNeedsSignIn(kind: OneStepKind): bool = kind != StepPhotoUpload
+pure def oneStepNeedsSignIn(kind: OneStepKind): bool = not(oneStepIsPhoto(kind))
 pure def oneStepLinkInFragment(kind: OneStepKind): bool = kind != StepPhone
 pure def oneStepLinkMayBeKept(kind: OneStepKind): bool = kind == StepHomeHelp
 

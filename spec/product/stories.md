@@ -202,7 +202,7 @@ Models: [opportunity](../models/opportunity.md), [review desk](../models/review_
 
 Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
 
-Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_item.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
+Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_item.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md), [photo check page](../photosCheckPage.md), [my photos page](../photosMinePage.md), [photo view page](../photosViewPage.md).
 
 ## Story F17 — Schedule a meeting
 
@@ -485,7 +485,7 @@ Spec: [landing entry](../landingEntry.md), "Story: Start in Messages instead".
 Acceptance:
 
 - Each site has a landing page, a privacy page, terms and a not-found page. Only peon.biz has a join page.
-- Each site has the one-step page `/phone`. Only ntwrk.party has `/home-help`, and only slop.date has `/photos/add`. On another site these paths show the not-found page. No page links to a one-step page, and each one-step page tells search engines not to index it.
+- Each site has the one-step page `/phone`. Only ntwrk.party has `/home-help`, and only slop.date has `/photos/add`, `/photos/check`, `/photos/mine` and `/photos/view`. On another site these paths show the not-found page. No page links to a one-step page, and each one-step page tells search engines not to index it.
 - The footer of each page has two links: Privacy, then Terms. Both pages exist on each site.
 - The terms page has a text messaging section at `#sms`. It describes the program, the opt-in, the message frequency, STOP for every app on the number, `leave` for one app, START, HELP, the costs, and that no number is shared for marketing.
 - On peon.biz, the terms name the join page and a text as the ways to opt in. On the other sites, the terms name the agent skill and a text, and never name or link a join page.
@@ -773,6 +773,57 @@ Acceptance:
 - The page shows the saved count and one line for each refusal. It never shows a score. Photos are for adults (18+) only.
 
 Spec: [photo upload page](../photoUploadPage.md), [one-step pages](../oneStepPage.md), [photo policy](../photoPolicy.md).
+
+## Story F56 — Check my photo before it goes to my match
+
+> As an adult slop.date member, I want the link in my photo proposal to show me exactly the photos that will go, so that I send only what I chose and nobody else can send it for me.
+
+### The page sends only the proposal that the person saw
+
+Acceptance:
+
+- `/photos/check` is on slop.date only. No page links to it. The page has no sign-in: the link is the authority.
+- The page reads the token from the fragment once, removes it before any request and keeps it in memory only. A malformed token sends nothing.
+- The page shows only the photos that the proposal names, each with its number, its name, its day and "{Name} has it" when the receiver already has it. It shows the notice from the server.
+- "Send" is on only after every named photo shows on the screen. Only "Send" on this page, or YES on the line, consents.
+- "Not this one" lets the person mark 1 to 3 other photos. "Choose these" asks for a new proposal and sends nothing. The person sees the new proposal before "Send" is on.
+- A sent, withdrawn, timed-out or changed link sends nothing, and a link opened on another phone sends nothing. The page then says to text which photo again. It never shows a score. Photos are for adults (18+) only.
+
+Spec: [photo check page](../photosCheckPage.md), [one-step pages](../oneStepPage.md), [photo policy](../photoPolicy.md).
+
+## Story F57 — See who has my photos and take one back
+
+> As an adult slop.date member, I want to open the link from my conversation and see each of my photos and who has it, so that I know what I shared and can take back one share.
+
+### The page lists each photo and each share, and takes back one share at a time
+
+Acceptance:
+
+- `/photos/mine` is on slop.date only. No page links to it. The page has no sign-in: the link is the authority.
+- The page reads the token from the fragment once, removes it before any request and keeps it in memory only. A malformed token sends nothing.
+- Each photo shows its number, its name and its day. Each share shows "{firstName}: asked", "checking" or "ready". The page never says that a match opened a photo.
+- "Take back" works on one share at a time. Only the server answer marks a share taken back or closed. A take-back sends nothing to the match.
+- A timed-out link, a link opened on another phone and a link that does not work show nothing and say to text MY PHOTOS for a new one.
+- The page says that agents see the list only if the person allows it, and never the photos. It never shows a score. The only link is help@ntwrk.party. Photos are for adults (18+) only.
+
+Spec: [my photos page](../photosMinePage.md), [one-step pages](../oneStepPage.md), [photo policy](../photoPolicy.md).
+
+## Story F58 — See the photo my match sent
+
+> As an adult slop.date member who said yes to a photo, I want to open the link from my conversation and see the photo on my phone, so that I see what my match chose to share and nobody else can open it.
+
+### The page opens the photo on one phone and offers no way to save it
+
+Acceptance:
+
+- `/photos/view` is on slop.date only. No page links to it. The page has no sign-in: the link is the authority.
+- The page reads the token from the fragment once, removes it before any request and keeps it in memory only. A malformed token sends nothing.
+- The page sends the open request only when the person taps. The tap step does not name the sender and shows no photo. The first open binds the phone and starts the 24 hours.
+- The page has no download link, no share button and no link to an image. The image cannot be dragged, and the context menu and the long-press callout are off over it. The page releases the photos at the end of the window, on a report and on every closed step. The spec says that a screenshot or another camera stays possible.
+- "Report" needs a confirm. Only the server answer shows "reported". A report that comes after the offer closed says that it did not go, and gives help@ntwrk.party.
+- A link on another phone shows nothing. A withdrawn, ended, expired or reported offer shows the same "no longer available" step, so the receiver never learns of a take-back. Photos are for adults (18+) only.
+
+Spec: [photo view page](../photosViewPage.md), [one-step pages](../oneStepPage.md), [photo policy](../photoPolicy.md).
 
 ## Later stories
 

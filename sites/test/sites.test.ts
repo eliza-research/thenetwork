@@ -112,7 +112,16 @@ describe.each(SITES)("$domain", (s) => {
     const need = ["index.html", "privacy.html", "terms.html", "404.html", "phone.html", ...(s.app === "peon" ? ["join.html"] : []), ...(s.app === "ntwrk" ? ["home-help.html"] : [])];
     if (s.app !== "peon") expect(htmlFiles(s)).not.toContain("join.html");
     if (s.app !== "ntwrk") expect(htmlFiles(s)).not.toContain("home-help.html");
-    expect(existsSync(join(out(s), "photos", "add.html"))).toBe(s.app === "slop");
+    for (const page of ["add", "check", "mine", "view"]) {
+      const file = join(out(s), "photos", `${page}.html`);
+      expect(existsSync(file), `${s.domain} photos/${page}.html`).toBe(s.app === "slop");
+      if (s.app !== "slop" || page === "add") continue;
+      const html = read(s, join("photos", `${page}.html`));
+      expect(html, `photos/${page}.html`).toContain('<meta name="robots" content="noindex">');
+      expect(html, `photos/${page}.html`).not.toContain('property="og:');
+      expect(/<script\b/.test(html), `photos/${page}.html`).toBe(true);
+      expect(html, `photos/${page}.html`).not.toMatch(/href="\/(settings|join)|Sign in/);
+    }
     expect(htmlFiles(s)).not.toContain("sms-terms.html");
 
     expect(htmlFiles(s)).toEqual(expect.arrayContaining(need));
@@ -276,6 +285,7 @@ describe.each(SITES)("$domain", (s) => {
     expect(h).toContain("script-src 'self' https://challenges.cloudflare.com;");
     expect(h).toContain("frame-src https://challenges.cloudflare.com;");
     expect(h).toContain("connect-src 'self';");
+    expect(h).toContain("img-src 'self' data: blob:;");
     expect(h).toContain("X-Frame-Options: DENY");
     expect(h).toContain("Referrer-Policy: no-referrer");
     expect(h).toContain("X-Content-Type-Options: nosniff");

@@ -20,7 +20,15 @@ export interface SiteData {
 }
 
 /** The pages that need the page script: the landing page (Copy, the agent tiles and Messages), the browser join flow and the one-step pages. */
-export type ScriptPage = "LandingPage" | "JoinPage" | "PhonePage" | "HomeHelpPage" | "PhotosAddPage";
+export type ScriptPage =
+  | "LandingPage"
+  | "JoinPage"
+  | "PhonePage"
+  | "HomeHelpPage"
+  | "PhotosAddPage"
+  | "PhotosCheckPage"
+  | "PhotosMinePage"
+  | "PhotosViewPage";
 
 /** True when the page ships the page script. The other pages are complete without it. */
 export function pageNeedsScript(page: SitePage): page is ScriptPage {
@@ -30,6 +38,9 @@ export function pageNeedsScript(page: SitePage): page is ScriptPage {
     case "PhonePage":
     case "HomeHelpPage":
     case "PhotosAddPage":
+    case "PhotosCheckPage":
+    case "PhotosMinePage":
+    case "PhotosViewPage":
       return true;
     case "PrivacyPage":
     case "TermsPage":

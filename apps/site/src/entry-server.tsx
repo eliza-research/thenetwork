@@ -67,6 +67,12 @@ function pageText(brand: Brand, page: SitePage): { title: string; description: s
       return { title: `Home-help address · ${brand.name}`, description: "Add or read a home-help address." };
     case "PhotosAddPage":
       return { title: `Add photos · ${brand.name}`, description: `Add your photos to ${brand.name}.` };
+    case "PhotosCheckPage":
+      return { title: `Check your photo · ${brand.name}`, description: "Check a photo before you send it." };
+    case "PhotosMinePage":
+      return { title: `Your photos · ${brand.name}`, description: "See your photos and who has each one." };
+    case "PhotosViewPage":
+      return { title: `Your photo · ${brand.name}`, description: "Open the photo a match sent you." };
     default: {
       const unknownPage: never = page;
       return unknownPage;

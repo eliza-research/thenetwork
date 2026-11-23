@@ -8,11 +8,17 @@ import {
   NotFoundView,
   PageShell,
   PhonePageView,
+  PhotosCheckPageView,
+  PhotosMinePageView,
+  PhotosViewPageView,
   PhotoUploadPageView,
   useHomeHelpPage,
   useJoin,
   useLanding,
   usePhonePage,
+  usePhotosCheckPage,
+  usePhotosMinePage,
+  usePhotosViewPage,
   usePhotoUploadPage,
 } from "@thenetwork/ui";
 import type { Brand } from "../../../packages/core/src/generated/brandIdentity.ts";
@@ -78,6 +84,24 @@ export function App({ brand, view, site }: AppProps) {
           <PhotosAdd site={site} />
         </PageShell>
       );
+    case "PhotosCheckPage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosCheck />
+        </PageShell>
+      );
+    case "PhotosMinePage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosMine />
+        </PageShell>
+      );
+    case "PhotosViewPage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosView />
+        </PageShell>
+      );
     default: {
       const unknownView: never = view;
       return unknownView;
@@ -139,4 +163,28 @@ function HomeHelp({ site }: StepPartProps) {
  */
 function PhotosAdd({ site }: StepPartProps) {
   return <PhotoUploadPageView {...usePhotoUploadPage({ consentVersion: site.photoConsentVersion })} consentText={site.photoConsentText} />;
+}
+
+/**
+ * The photo check page over the photo check state of `usePhotosCheckPage`.
+ * @model spec/photosCheckPage.md
+ */
+function PhotosCheck() {
+  return <PhotosCheckPageView {...usePhotosCheckPage()} />;
+}
+
+/**
+ * The my photos page over the photo holdings state of `usePhotosMinePage`.
+ * @model spec/photosMinePage.md
+ */
+function PhotosMine() {
+  return <PhotosMinePageView {...usePhotosMinePage()} />;
+}
+
+/**
+ * The photo view page over the photo view state of `usePhotosViewPage`.
+ * @model spec/photosViewPage.md
+ */
+function PhotosView() {
+  return <PhotosViewPageView {...usePhotosViewPage()} />;
 }

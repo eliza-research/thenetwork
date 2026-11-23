@@ -15,10 +15,10 @@ import brandIdentity.* from "./brandIdentity"
 import oneStepPage.* from "./oneStepPage"
 
 type SitePage = LandingPage | PrivacyPage | TermsPage | NotFoundPage | JoinPage | UpdateHandoffPage |
-  PhonePage | HomeHelpPage | PhotosAddPage
+  PhonePage | HomeHelpPage | PhotosAddPage | PhotosCheckPage | PhotosMinePage | PhotosViewPage
 
 pure val sitePageList: List[SitePage] = List(LandingPage, PrivacyPage, TermsPage, NotFoundPage, JoinPage, UpdateHandoffPage,
-  PhonePage, HomeHelpPage, PhotosAddPage)
+  PhonePage, HomeHelpPage, PhotosAddPage, PhotosCheckPage, PhotosMinePage, PhotosViewPage)
 
 pure def keepsBrowserJoin(app: AppKey): bool = siteUsesPart(app, PartJoinFlow)
 
@@ -28,6 +28,9 @@ pure def siteHasPage(app: AppKey, page: SitePage): bool =
   else if (page == PhonePage) oneStepOnSite(StepPhone, app)
   else if (page == HomeHelpPage) oneStepOnSite(StepHomeHelp, app)
   else if (page == PhotosAddPage) oneStepOnSite(StepPhotoUpload, app)
+  else if (page == PhotosCheckPage) oneStepOnSite(StepPhotoCheck, app)
+  else if (page == PhotosMinePage) oneStepOnSite(StepPhotoMine, app)
+  else if (page == PhotosViewPage) oneStepOnSite(StepPhotoView, app)
   else true
 
 pure def lawJoinPageOnlyOnPeon(app: AppKey): bool = siteHasPage(app, JoinPage) iff (app == Peon)
@@ -35,15 +38,23 @@ pure def lawJoinPageOnlyOnPeon(app: AppKey): bool = siteHasPage(app, JoinPage) i
 
 ### Each one-step page is on the sites that can do its step
 
-A one-step page does one step from a link that the conversation sent ([one-step pages](./oneStepPage.md)). `/phone` changes the number of a member and is on every site. `/home-help` adds, removes or shows a home-help address and is on ntwrk.party only. `/photos/add` stores photos from a one-time link and is on slop.date only. No page and no navigation links to them: the link comes only from the conversation. The static host serves them, so they do not run the site router. Each one-step page tells search engines not to index it. On a site that does not do the step, the path shows the not-found page.
+A one-step page does one step from a link that the conversation sent ([one-step pages](./oneStepPage.md)). `/phone` changes the number of a member and is on every site. `/home-help` adds, removes or shows a home-help address and is on ntwrk.party only. `/photos/add` stores photos from a one-time link and is on slop.date only. `/photos/check` shows the photos of one proposal and sends them on "Send", and is on slop.date only. `/photos/mine` shows each photo of the member and who has it, and is on slop.date only. `/photos/view` shows the photos that a match sent, on one phone, and is on slop.date only. No page and no navigation links to them: the link comes only from the conversation. The static host serves them, so they do not run the site router. Each one-step page tells search engines not to index it. On a site that does not do the step, the path shows the not-found page.
 
 ```quint
 pure def oneStepKindOf(page: SitePage): OneStepKind =
   if (page == HomeHelpPage) StepHomeHelp
   else if (page == PhotosAddPage) StepPhotoUpload
+  else if (page == PhotosCheckPage) StepPhotoCheck
+  else if (page == PhotosMinePage) StepPhotoMine
+  else if (page == PhotosViewPage) StepPhotoView
   else StepPhone
 
-pure def isOneStepPage(page: SitePage): bool = page == PhonePage or page == HomeHelpPage or page == PhotosAddPage
+pure def isOneStepPage(page: SitePage): bool =
+  page == PhonePage or page == HomeHelpPage or page == PhotosAddPage or page == PhotosCheckPage or
+    page == PhotosMinePage or page == PhotosViewPage
+
+pure def lawPhotoPagesOnlyOnSlop(app: AppKey, page: SitePage): bool =
+  (isOneStepPage(page) and oneStepIsPhoto(oneStepKindOf(page))) implies (siteHasPage(app, page) iff app == Slop)
 
 pure def lawOneStepPagesFollowTheirStep(app: AppKey, page: SitePage): bool =
   isOneStepPage(page) implies (siteHasPage(app, page) iff oneStepOnSite(oneStepKindOf(page), app))
@@ -102,11 +113,13 @@ The router classifies retired paths, update handoff paths and backend paths befo
 ```quint
 type PathKind = RootPath | PrivacyPath | TermsPath | JoinPath | SettingsPath | SkillPath |
   CatalogIndexPath | OwnCatalogSkillPath | OtherCatalogSkillPath | BackendPath | RobotsPath |
-  UpdateHandoffPath | MalformedUpdateHandoffPath | PhonePath | HomeHelpPath | PhotosAddPath | UnknownPath
+  UpdateHandoffPath | MalformedUpdateHandoffPath | PhonePath | HomeHelpPath | PhotosAddPath | PhotosCheckPath |
+  PhotosMinePath | PhotosViewPath | UnknownPath
 type RequestMethod = GetMethod | HeadMethod | OtherMethod
 type SiteRoute = ServeLanding | ServePrivacy | ServeTerms | ServeJoin | ServeSkill | ServeCatalog |
   ServeRobots | ServeUpdateHandoff | RefuseUpdateHandoff | RefuseUpdateMethod | ForwardToBackend | ServeNotFound |
-  RefuseRetired | RedirectToLanding | RefuseMethod | ServePhone | ServeHomeHelp | ServePhotosAdd
+  RefuseRetired | RedirectToLanding | RefuseMethod | ServePhone | ServeHomeHelp | ServePhotosAdd | ServePhotosCheck |
+  ServePhotosMine | ServePhotosView
 
 pure val retiredSettingsPaths: Set[str] = Set("/settings", "/settings/", "/settings.html")
 pure val retiredJoinPaths: Set[str] = Set("/join", "/join/", "/join.html")
@@ -131,6 +144,9 @@ pure def routeFor(app: AppKey, path: PathKind, method: RequestMethod): SiteRoute
   else if (path == PhonePath and siteHasPage(app, PhonePage)) ServePhone
   else if (path == HomeHelpPath and siteHasPage(app, HomeHelpPage)) ServeHomeHelp
   else if (path == PhotosAddPath and siteHasPage(app, PhotosAddPage)) ServePhotosAdd
+  else if (path == PhotosCheckPath and siteHasPage(app, PhotosCheckPage)) ServePhotosCheck
+  else if (path == PhotosMinePath and siteHasPage(app, PhotosMinePage)) ServePhotosMine
+  else if (path == PhotosViewPath and siteHasPage(app, PhotosViewPage)) ServePhotosView
   else ServeNotFound
 
 pure def lawSettingsAreAlwaysRefused(app: AppKey, method: RequestMethod): bool =
@@ -203,7 +219,7 @@ A path that is not a page, a skill file, robots.txt or a backend path shows the 
 pure def servesPage(route: SiteRoute): bool =
   route == ServeLanding or route == ServePrivacy or route == ServeTerms or route == ServeJoin or
     route == ServeUpdateHandoff or route == ServeNotFound or route == ServePhone or route == ServeHomeHelp or
-    route == ServePhotosAdd
+    route == ServePhotosAdd or route == ServePhotosCheck or route == ServePhotosMine or route == ServePhotosView
 
 pure def pageOfRoute(route: SiteRoute): SitePage =
   if (route == ServeLanding) LandingPage
@@ -214,6 +230,9 @@ pure def pageOfRoute(route: SiteRoute): SitePage =
   else if (route == ServePhone) PhonePage
   else if (route == ServeHomeHelp) HomeHelpPage
   else if (route == ServePhotosAdd) PhotosAddPage
+  else if (route == ServePhotosCheck) PhotosCheckPage
+  else if (route == ServePhotosMine) PhotosMinePage
+  else if (route == ServePhotosView) PhotosViewPage
   else NotFoundPage
 
 pure def lawServedPagesExist(app: AppKey, path: PathKind, method: RequestMethod): bool =
@@ -226,7 +245,10 @@ pure def lawUnknownPathsShowNotFound(app: AppKey, method: RequestMethod): bool =
 pure def lawStepPagesOnlyWhereTheStepIs(app: AppKey, method: RequestMethod): bool =
   ((routeFor(app, PhonePath, method) == ServePhone) iff siteHasPage(app, PhonePage)) and
   ((routeFor(app, HomeHelpPath, method) == ServeHomeHelp) iff siteHasPage(app, HomeHelpPage)) and
-  ((routeFor(app, PhotosAddPath, method) == ServePhotosAdd) iff siteHasPage(app, PhotosAddPage))
+  ((routeFor(app, PhotosAddPath, method) == ServePhotosAdd) iff siteHasPage(app, PhotosAddPage)) and
+  ((routeFor(app, PhotosCheckPath, method) == ServePhotosCheck) iff siteHasPage(app, PhotosCheckPage)) and
+  ((routeFor(app, PhotosMinePath, method) == ServePhotosMine) iff siteHasPage(app, PhotosMinePage)) and
+  ((routeFor(app, PhotosViewPath, method) == ServePhotosView) iff siteHasPage(app, PhotosViewPage))
 
 pure def lawStepPagesAreNeverLinked(page: SitePage): bool =
   isOneStepPage(page) implies not(footerLinks.includes(page))

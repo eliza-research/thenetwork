@@ -60,7 +60,7 @@ export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
  * signup page has consent controls).
  */
 export const SECURITY_HEADERS: Record<string, string> = {
-  "Content-Security-Policy": `default-src 'self'; script-src 'self' ${TURNSTILE_ORIGIN}; frame-src ${TURNSTILE_ORIGIN}; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`,
+  "Content-Security-Policy": `default-src 'self'; script-src 'self' ${TURNSTILE_ORIGIN}; frame-src ${TURNSTILE_ORIGIN}; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`,
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "no-referrer",
@@ -92,6 +92,9 @@ export const PAGE_FILES: Record<SitePage, string> = {
   PhonePage: "phone.html",
   HomeHelpPage: "home-help.html",
   PhotosAddPage: "photos/add.html",
+  PhotosCheckPage: "photos/check.html",
+  PhotosMinePage: "photos/mine.html",
+  PhotosViewPage: "photos/view.html",
 };
 
 /** The pages of one site, including the pages that are specific to one site. */
