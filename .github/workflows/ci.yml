@@ -7,9 +7,9 @@
 name: ci
 
 on:
-  # Pull requests cover feature commits; main pushes retain post-merge validation.
+  # Pull requests cover feature commits; pushes validate both maintained branches.
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
 
@@ -75,7 +75,7 @@ jobs:
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
       - name: Install the toolkit (tools/vibestack)
-        run: pnpm run spec:setup
+        run: pnpm --dir tools/vibestack --filter vibestack install --frozen-lockfile --ignore-scripts
         timeout-minutes: 5
       - name: Require Postgres
         run: |
@@ -84,19 +84,40 @@ jobs:
       - name: Generate design and connector CSS
         run: pnpm run connector:css
         timeout-minutes: 5
+      - name: Restore TypeScript incremental state
+        id: type-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/typecheck
+          key: typecheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json') }}-${{ github.sha }}
+          restore-keys: typecheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json') }}-
       - name: Typecheck (packages, deploy, tests, scripts/sim)
         run: pnpm exec tsc --noEmit -p .
         timeout-minutes: 5
       - name: Typecheck (sites, scripts)
         run: pnpm exec tsc --noEmit -p sites/tsconfig.json
         timeout-minutes: 5
+      - name: Save TypeScript incremental state
+        if: steps.type-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/typecheck
+          key: ${{ steps.type-cache.outputs.cache-primary-key }}
       - name: Simulations other than matching
-        # The simulations: evals corpora, the Network in the NYC world, slop, peon and friends, each
-        # with its gates on pinned seeds, and the Postgres blocks on throwaway databases. No LLM.
-        # Exits 1 on any blocking gate failure.
+        # Run the in-memory NYC world alongside the other blocks on the same runner.
+        shell: bash
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run sim --skip matching --json sim-gates.json
+          (pnpm run sim --only network | sed -u 's/^/[network] /') &
+          network_pid=$!
+          core_status=0
+          pnpm run sim --skip matching,network --json sim-gates.json || core_status=$?
+          network_status=0
+          wait "$network_pid" || network_status=$?
+          if (( core_status || network_status )); then
+            echo "Simulation failure (core=$core_status, network=$network_status)"
+            exit 1
+          fi
         timeout-minutes: 30
       - name: No Postgres gate was skipped
         # A Postgres block that cannot reach Postgres records a tracked "skipped" gate. With REQUIRE_PG=1
@@ -110,18 +131,13 @@ jobs:
         run: |
           if git grep -n -I -E 'ntwrk[.]love' -- .; then echo "use ntwrk.party / api.ntwrk.party instead"; exit 1; fi
       - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
-        run: pnpm run sites:build
+        run: node --import tsx --env-file-if-exists=.env sites/sites.ts
         env:
           DEPLOY_TARGET: production
 
   matching:
-    name: matching (${{ matrix.pack }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        pack: [ntwrk, slop, peon, friends]
     outputs:
       ntwrk: ${{ steps.gates.outputs.ntwrk }}
       slop: ${{ steps.gates.outputs.slop }}
@@ -140,12 +156,27 @@ jobs:
         timeout-minutes: 5
       - name: Pinned matching simulations
         id: gates
-        env:
-          MATCHING_PACK: ${{ matrix.pack }}
+        shell: bash
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run sim --only matching --matching-pack "$MATCHING_PACK" &&
-            printf '%s=success\n' "$MATCHING_PACK" >> "$GITHUB_OUTPUT"
+          packs=(ntwrk slop peon friends)
+          pids=()
+          for pack in "${packs[@]}"; do
+            /usr/bin/time -f 'elapsed=%e user=%U sys=%S rss_kib=%M' \
+              pnpm run sim --only matching --matching-pack "$pack" 2>&1 | sed -u "s/^/[$pack] /" &
+            pids+=("$!")
+          done
+          failed=0
+          for index in "${!pids[@]}"; do
+            pack=${packs[$index]}
+            if wait "${pids[$index]}"; then
+              printf '%s=success\n' "$pack" >> "$GITHUB_OUTPUT"
+            else
+              echo "Matching simulations failed for $pack"
+              failed=1
+            fi
+          done
+          exit "$failed"
         timeout-minutes: 30
 
   offline:
@@ -188,15 +219,11 @@ jobs:
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
       - name: Install the toolkit (tools/vibestack)
-        run: pnpm run spec:setup
+        run: pnpm --dir tools/vibestack --filter vibestack install --frozen-lockfile --ignore-scripts
         timeout-minutes: 5
       - name: Design tokens agree with design.md (design:check)
         run: pnpm run design:check
-      - name: Design-system CSS (design:build)
-        run: pnpm run design:build
-      - name: Generated stories are current (ui:gen, --check)
-        run: pnpm run ui:gen
-      - name: Component stories (ui:test)
+      - name: Generate design CSS, check generated stories and run component stories (ui:test)
         run: pnpm run ui:test
         timeout-minutes: 10
       - name: ESLint for packages/ui, apps and the console and connector pages (lint:ui)
@@ -251,14 +278,18 @@ jobs:
           pg_isready -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
           node --import tsx packages/observatory/db/dev-pg.ts up
+      - name: Generate design and connector CSS
+        run: pnpm run connector:css
+        timeout-minutes: 5
+      # Use the four hosted CPUs. Keep the package default for local runs.
       - name: Integration suite (includes the security suite)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run test:integration
+          node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration --maxWorkers=4
         timeout-minutes: 30
       - name: E2E suite (tests/e2e)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run test:e2e
+          node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project e2e --maxWorkers=4
         timeout-minutes: 10
 

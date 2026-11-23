@@ -200,7 +200,7 @@ Models: [opportunity](../models/opportunity.md), [review desk](../models/review_
 
 ### Every relay item has consent and a dispatch check
 
-Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
+Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. A withdrawal stops the pending request and any share that has yet to pass final dispatch admission. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
 
 Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_item.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
 
@@ -278,9 +278,9 @@ Models: [gathering review](../monthlyGathering.md), [invitation review](../month
 
 ### A block takes effect now and a report has an accountable owner
 
-A block stops pair contact across apps and invalidates queued work for the pair. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
+A block stops pair contact across apps and invalidates queued work for the pair. When another app reads the block, it closes an open opportunity that still includes both people before messages or settlement proceed. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
 
-Models: [safety and trust](../models/safety_trust.md), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
+Models: [safety and trust](../models/safety_trust.md), [opportunity lifecycle](../opportunityLifecycle.md#a-block-closes-an-open-opportunity-for-the-active-pair), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
 
 ## Story F24 — Export or delete my data
 

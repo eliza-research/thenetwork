@@ -135,7 +135,11 @@ from The Network root.
 | | `pnpm run typecheck`, `pnpm run test:integration`, `pnpm run test:e2e`, `pnpm run sim` | Check the application and the live-code seams. |
 
 The spec checker uses an executable projection of `spec/` and the
-conformance inputs under `test/`. The
+conformance inputs under `test/`. Normal checks, generation, and focused
+conformance reuse completed Quint, LemmaScript, and Dafny actions in
+`.spec-cache/formal`, keyed by the installed tools and their inputs. Each
+projection recomputes stage results and runs the application journeys. Acceptance and
+nightly checks start with an empty cache. The
 [shared-line consent](spec/sharedLineConsentJourney.md),
 [saved profile](spec/savedProfileJourney.md), and
 [gateway turn receipt](spec/turnReceiptJourney.md) journeys run through
@@ -241,7 +245,7 @@ This repository is a [Slop](https://slop.cash) bounty repository with a monthly 
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before you start. Star and fork this
 repository with your own GitHub account. Open every PR from your fork into
-`vibestack`, the repository's main branch.
+`develop`, the repository's main branch.
 
 - Follow the [top-level stories](spec/product/stories.md), executable
   rules, and [flow models](spec/models/README.md) exactly. Verify that the

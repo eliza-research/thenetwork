@@ -17,7 +17,7 @@ This repository is a Slop bounty repository with a monthly pool of 1,000 USDC. [
 1. Star this repository with your own GitHub account.
 2. Fork this repository to your own GitHub account.
 3. Do all work on a branch in your fork. Open every PR from your fork into
-   `vibestack`, the repository's main branch.
+   `develop`, the repository's main branch.
 
 You can use the GitHub web page, browser automation, computer use or the GitHub CLI:
 
@@ -40,9 +40,10 @@ needs approval. Link the specific story or rule when you propose a change.
   [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
   Run `pnpm run spec:sync` to publish the generated modules. Commit the
-  source spec and the published modules together. Generation and snapshot
-  comparison reuse Quint runs under `.spec-cache/snapshots/` when their
-  effective inputs match. Both commands compile the current VibeLang shells.
+  source spec and the published modules together. Ordinary generation and
+  checks reuse formal tool actions under `.spec-cache/formal/` when their
+  effective inputs match. Generation and snapshot comparison both compile
+  the current VibeLang shells.
 - Fully implement and integrate the approved behavior in the
   [top-level stories](spec/product/stories.md), executable rules, and
   [whole-flow models](spec/models/README.md). Follow them exactly.
@@ -378,7 +379,7 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 Use the [evidence policy](#evidence) for the PR body. Include each applicable
 item below.
 
-- [ ] The repository is starred and the PR comes from your fork into `vibestack`.
+- [ ] The repository is starred and the PR comes from your fork into `develop`.
 - [ ] Linked issue, approved product story or rule, or maintainer request.
 - [ ] The root cause, in plain words.
 - [ ] The fix, and two other implementations you did not use.

@@ -798,6 +798,14 @@ module outbound_queue {
   // STOP on the shared line (scope all).
   action stop: bool = consentEvent("all", "opted_out")
 
+  // A legacy transport opt-out writes consent without first calling engaged.
+  // The model abstracts the departed app's later account cleanup.
+  action legacyOptOut(scope: str): bool = all {
+    env.mode == "blooio",
+    Set("all", "app", "other").contains(scope),
+    consentEvent(scope, "opted_out"),
+  }
+
   // A trust hold or pause (staff, the Network) commits on worker w's replica: the unit loads the newest state, saves
   // a new version, and w's view is fresh; others are not.
   action holdToggle(w: str): bool = all {
@@ -1677,6 +1685,22 @@ module outbound_queue {
       .then(tick(72)).then(tick(72)).then(tick(72)).then(tick(72)).then(tick(1))
       .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
       .expect(rows.get("r2").status == "expired" and not(slots.contains("r2")) and safety)
+
+  run legacyOptOutKeepsHeldTest =
+    initWith("blooio", true, false)
+      .then(turnStart(true)).then(engaged)
+      .then(enqueue("r1", "transactional", true, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .then(decide("w1", "r1", false, false)).then(applyDecision("w1", false))
+      .then(providerCall("w1", "ok")).then(respond("w1", false))
+      .then(enqueue("r2", "proactive", true, "nyc", false))
+      .then(decide("w1", "r2", false, false)).then(applyDecision("w1", false))
+      .expect(rows.get("r2").status == "held_awaiting_reply")
+      .then(unlockLine("w1")).then(flush("w1"))
+      .then(legacyOptOut("other"))
+      .expect(rows.get("r2").status == "held_awaiting_reply" and env.engSeq == 1 and safety)
+      .then(legacyOptOut("all"))
+      .expect(rows.get("r2").status == "held_awaiting_reply" and env.engSeq == 1 and noClaimAfterStop and safety)
 
   // ------------------------------------------------------------------ witnesses (each must be violated)
   val witness_proactiveAccepted = not(ROWS.exists(r => rows.get(r).kind == "proactive" and rows.get(r).status == "accepted"))

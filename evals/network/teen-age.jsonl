@@ -250,3 +250,38 @@
 {"text":"In 9th grade. I did competitive swimming then.","teen":false}
 {"text":"12th grade teacher, here.","teen":false}
 {"text":"Hey, turned 16, hbu?","teen":true,"age":16}
+{"text":"turning 16 next month","teen":true,"age":15}
+{"text":"I'm 12.5 minutes away","teen":false}
+{"text":"I am 3 and I am undefeated.","teen":false}
+{"text":"I am five and we won the tournament.","teen":false}
+{"text":"I am 38 and my team won.","teen":false,"age":38}
+{"text":"I am 12 years old and my team won.","teen":true,"age":12}
+{"text":"I just turned 12 and I am undefeated.","teen":true,"age":12}
+{"text":"I just turned twelve and we won the tournament.","teen":true,"age":12}
+{"text":"I'm 12 and a half and I am undefeated.","teen":true,"age":12}
+{"text":"I am 12 and my team won.","teen":true,"age":12}
+{"text":"I'm 17 and a half and want a gf","teen":true,"age":17}
+{"text":"i'm 16 and a half now","teen":true,"age":16}
+{"text":"I'm 17 and a half too","teen":true,"age":17}
+{"text":"i'm 17.5 now","teen":true,"age":17}
+{"text":"I'm 16.5 and bored","teen":true,"age":16}
+{"text":"I'm 15 and 3 months","teen":true,"age":15}
+{"text":"I'm 17 and 11 months","teen":true,"age":17}
+{"text":"I'm 17 and 3/4","teen":true,"age":17}
+{"text":"I'm 5.5","teen":false}
+{"text":"I'm 5 1/2, slim","teen":false}
+{"text":"I'm 15 and a half minutes away","teen":false}
+{"text":"I'm 13.5 miles away","teen":false}
+{"text":"I'm 5.5 years old","teen":true,"age":5}
+{"text":"I'm 7 1/2 years old","teen":true,"age":7}
+{"text":"I just turned 7 1/2","teen":true,"age":7}
+{"text":"I just turned 7.5","teen":true,"age":7}
+{"text":"I'm 5 and also my team won","teen":false}
+{"text":"I'm 12 and my record collection","teen":false}
+{"text":"I'm 12.5 y.o., in two years","teen":false}
+{"text":"I'm 15 and a quarter miles away","teen":false}
+{"text":"I'm 17 and a quarter years old tomorrow","teen":false}
+{"text":"I'm 12 and a half years old","teen":true,"age":12}
+{"text":"I'm 11 1/2 years old","teen":true,"age":11}
+{"text":"I'm 12 and 3 months old","teen":true,"age":12}
+{"text":"She said \"this is true. I'm 12.5 years old.\"","teen":false}

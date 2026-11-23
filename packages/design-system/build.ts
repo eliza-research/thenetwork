@@ -1,13 +1,12 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process"
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type AccentTokens, type AppKey, accentTokens, appKeys, brandFor } from "../core/src/generated/brandIdentity.ts"
+import { buildTokenProject, checkTokenProject, writeTextIfChanged } from "../../tools/vibestack/vibestack/design/project.ts"
 import { type BrandId, brandIds } from "./src/brands.ts"
 
 const root = dirname(fileURLToPath(import.meta.url))
-const cli = join(root, "../../tools/vibestack/vibestack/design/cli.ts")
 const brandDir = (brand: BrandId) => join(root, "brands", brand)
 const read = (file: string) => readFileSync(file, "utf8")
 const base: BrandId = "network"
@@ -18,14 +17,15 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const leaves = (value: unknown, path = ""): [string, unknown][] =>
   isRecord(value) ? Object.entries(value).flatMap(([key, each]) => leaves(each, path ? `${path}.${key}` : key)) : [[path, value]]
 
-/** Runs the toolkit CLI in one brand directory. Returns the problem, or nothing. */
-function runCli(brand: BrandId, command: "build" | "check"): string[] {
+function runBrand(brand: BrandId, command: "build" | "check"): string[] {
   try {
-    execFileSync(process.execPath, [cli, command], { cwd: brandDir(brand), stdio: ["ignore", "inherit", "pipe"] })
+    if (command === "check") {
+      const issues = checkTokenProject(brandDir(brand))
+      if (issues.length) return [`${brand}: ${issues.join("\n")}`]
+    } else buildTokenProject(brandDir(brand))
     return []
   } catch (error) {
-    const stderr = (error as { stderr?: Buffer }).stderr?.toString().trim()
-    return [`${brand}: ${stderr || (error instanceof Error ? error.message : String(error))}`]
+    return [`${brand}: ${error instanceof Error ? error.message : String(error)}`]
   }
 }
 
@@ -123,18 +123,18 @@ function themeCss(): string {
 function build(): string[] {
   const issues = [...directoryIssues(), ...keySetIssues(), ...accentIssues()]
   if (issues.length) return issues
-  const failed = brandIds.flatMap((brand) => runCli(brand, "build"))
+  const failed = brandIds.flatMap((brand) => runBrand(brand, "build"))
   if (failed.length) return failed
   mkdirSync(join(root, "generated"), { recursive: true })
-  writeFileSync(join(root, "generated/brands.css"), brandsCss())
-  writeFileSync(join(root, "generated/theme.css"), themeCss())
+  writeTextIfChanged(join(root, "generated/brands.css"), brandsCss())
+  writeTextIfChanged(join(root, "generated/theme.css"), themeCss())
   return []
 }
 
 function check(): string[] {
   const issues = directoryIssues()
   if (issues.length) return issues
-  return [...keySetIssues(), ...accentIssues(), ...brandIds.flatMap((brand) => runCli(brand, "check"))]
+  return [...keySetIssues(), ...accentIssues(), ...brandIds.flatMap((brand) => runBrand(brand, "check"))]
 }
 
 const [command = "build"] = process.argv.slice(2)

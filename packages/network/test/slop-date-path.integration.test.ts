@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { slopProfiles } from "../../engine/src/packs/slop/profile.ts";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
@@ -19,7 +20,7 @@ import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { copy } from "../src/copy.ts";
-import { START } from "./mini.ts";
+import { Mini, START } from "./mini.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -73,6 +74,43 @@ const last = async (id: string) => (await inbox(id)).at(-1)?.body ?? "";
 async function run(s: NetworkService, clock: SimClock, ms: number, step = 30 * MINUTE) {
   for (let t = 0; t < ms; t += step) { clock.advance(Math.min(step, ms - t)); await s.tick(); }
 }
+
+test("Slop availability follows the booked time in the meeting's zone", async () => {
+  const cases = [
+    { meetingAt: Date.UTC(2026, 9, 13, 0), timeZone: undefined, slot: 0, lat: 40.7, lng: -74 },
+    { meetingAt: Date.UTC(2026, 9, 11, 22), timeZone: "America/Los_Angeles", slot: 7, lat: 34.05, lng: -118.25 },
+  ];
+  for (const { meetingAt, timeZone, slot, lat, lng } of cases) {
+    const ids = ["rae", "sam"];
+    const world = new Mini([
+      { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
+      { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
+    ], { app: "slop", plans: false, growth: false, hooks: {
+      timeOptions: () => [{ start: meetingAt, end: meetingAt + HOUR }],
+      venue: () => ({ id: "test-cafe", name: "Cafe", neighborhood: "Downtown", lat, lng, timeZone }),
+    } });
+    world.clock.set(Date.UTC(2026, 9, 9, 15));
+    await world.onboard(...ids);
+    const opportunityId = world.propose(ids, { category: "romance", objective: "a coffee date" });
+    await world.answerProbes(ids, () => "Yes, the first time works.");
+    expect(world.meetings).toMatchObject([{ at: meetingAt }]);
+
+    const feedbackAt = Date.UTC(2026, 9, 13, 16);
+    world.clock.set(feedbackAt);
+    await world.net.tick(feedbackAt);
+    await world.say("rae", "We both came. It was great.");
+    const state = world.net.exportState();
+    const interaction = state.interactions.find(item => item.id === `${opportunityId}:fb:rae`)!;
+    expect(interaction).toMatchObject({ at: feedbackAt, outcome: "completed" });
+    const history = () => slopProfiles(world.net.engineInput(feedbackAt)).get("rae")?.history;
+    expect(history()?.attendedSlots).toEqual([slot]);
+
+    // Older snapshots can recover the booked time from the exact opportunity after a restart.
+    delete interaction.bookedMeeting;
+    world.net.importState(state);
+    expect(history()?.attendedSlots).toEqual([slot]);
+  }
+});
 
 describe.skipIf(!pgAvailable)("slop.date: join to report after the date (NetworkService, Postgres)", () => {
   beforeAll(async () => {

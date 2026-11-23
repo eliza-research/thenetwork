@@ -24,6 +24,7 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
+import { pendingSwapWithdrawn } from "../../core/src/generated/relayDecision.ts";
 import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
@@ -40,6 +41,7 @@ const HOUR = 3_600_000, DAY = 24 * HOUR;
  * runs out, the other member's request starts a new swap and the first member is asked again.
  */
 export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
+export const SWAP_WITHDRAWN = "consent:withdrawn";
 /** Log rows kept in the state (the rate limits look back one day; staff and ban notices further). */
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
@@ -78,6 +80,7 @@ export interface RelayHost {
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
+  observeSenderAge?(memberId: MemberId, text: string): boolean;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
 }
@@ -98,21 +101,14 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 /** A member asked to swap numbers; waiting for the other member's own request. */
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
-/**
- * A negation that is not a no to the swap ("I don't mind, send them my number", "don't wait",
- * "stop asking", "never had to wait this long"). Blanked before withdrawsSwap reads the message, so
- * any other negation or cancel word in it still withdraws: the reader errs toward withdrawing, because
- * a swap left pending after a no would share the number.
- */
-const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b/g;
-/**
- * "Don't send my number", "cancel the number swap", "no, not my number": the member takes back a
- * pending swap request. A negation, a cancel word or "keep" together with their number.
- */
+const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|should|must|shall)\s+not\s+wait\b/g;
+const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
+const OWN_CONTACT = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/;
+const DECLINES_PENDING_SEND = /\b(?:don'?t|do\s+not)(?:\s+want\s+(?:you\s+)?to)?\s+(?:send|share|give|pass|forward)\s+(?:it|that)\b(?=\s*(?:$|[,.!?;])|\s+yet\b)/;
+
 export function withdrawsSwap(text: string): boolean {
-  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(NOT_A_NO, " ");
-  return /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
-    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/.test(t);
+  const normalized = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(SWAP_GO_AHEAD, " ");
+  return pendingSwapWithdrawn(OWN_CONTACT.test(normalized), SWAP_WITHHOLDING.test(normalized), DECLINES_PENDING_SEND.test(normalized));
 }
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
@@ -197,6 +193,9 @@ export class RelayDesk {
       ? { id: ask.itemId, kind: "photo", from: ask.from, to, at: now, photoIds: [...new Set(ask.photoIds ?? [])], ...(ask.text?.trim() ? { text: ask.text.trim() } : {}),
           consent: { kind: "photo", by: ask.from, itemId: ask.itemId, at: now, photoIds: [...new Set(ask.photoIds ?? [])] } }
       : { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text: (ask.text ?? "").trim() };
+    if (item.kind === "text" && item.text && this.host.observeSenderAge?.(item.from, item.text)) {
+      return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+    }
     const res = await this.decide(item, match, o);
     const out = this.apply(res, match, item, o);
     // Photos cannot be shown to a match until a photo consent exists (Legal); say so plainly.
@@ -316,11 +315,16 @@ export class RelayDesk {
     return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
   }
 
-  /** The member takes back their pending number swap ("don't send my number"). Returns how many requests were removed. */
   cancelSwaps(from: MemberId): number {
     const before = this.s.swaps.length;
     this.s.swaps = this.s.swaps.filter(x => x.from !== from);
-    return before - this.s.swaps.length;
+    let changed = before - this.s.swaps.length;
+    this.s.log = this.s.log.map(record => {
+      if (record.kind !== "contact_share" || record.decision !== "pass" || (record.from !== from && record.to !== from) || record.reasons.includes(SWAP_WITHDRAWN)) return record;
+      changed++;
+      return { ...record, reasons: [...record.reasons, SWAP_WITHDRAWN].sort() };
+    });
+    return changed;
   }
 
   private share(id: string, from: MemberId, to: MemberId, at: number, value: string, consentAt = at): RelayItem {
