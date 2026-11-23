@@ -364,8 +364,8 @@ function readsTextRefusal(clause: string): boolean {
 }
 
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
-const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|quit|cease|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
-const REPORTED_OR_INSTRUCTIONAL_STOP = /\b(?:said|says|told|asked) (?:me )?(?:to )?["']?(?:stop|quit|cease)\b|\bhow (?:do|can) i (?:stop|quit|cease|unsubscribe|opt out)\b/;
+const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|quit|cease|unsubscribe|remove|delete|lose|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
+const REPORTED_OR_INSTRUCTIONAL_STOP = /\b(?:said|says|told|asked) (?:me )?(?:to )?["']?(?:stop|quit|cease|unsubscribe|remove|delete|lose|opt out)\b|\bhow (?:do|can) i (?:stop|quit|cease|unsubscribe|remove|delete|lose|opt out)\b/;
 const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b/i;
 const OPT_OUT_COORDINATION = /\band\b/i;
 const LEAVE_COURTESY = / (?:please|pls|thanks|thank you|now|right now|for now|asap|today|immediately)$/;
@@ -496,7 +496,7 @@ export const HELP_TEXT = "The Network: an invite-only AI that connects you with 
 
 /** NFKC, no zero-width characters, no accents, straight apostrophes. */
 export const foldKeywordText = (text: string) =>
-  text.normalize("NFKC").replace(/[​-‍﻿]/g, "").normalize("NFD").replace(/\p{M}+/gu, "").replace(/[‘’ʼ]/g, "'");
+  text.normalize("NFKC").replace(/\p{Cf}/gu, "").normalize("NFD").replace(/\p{M}+/gu, "").replace(/[‘’ʼ]/g, "'");
 
 /** A whole message as a keyword key: folded, punctuation and emoji dropped, spaces collapsed, upper case ("Stop." -> "STOP"). */
 export const keywordKey = (text: string) => foldKeywordText(text).replace(/[^\p{L}\p{N} ]+/gu, " ").replace(/\s+/g, " ").trim().toUpperCase();
@@ -531,7 +531,7 @@ const ME = "(?:me|us|this number|my number)";
 const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to|emailing|calling) ${ME}\\b`),
   new RegExp(`\\bstop (?:sending (?:me |us |these |the |your |all )?|the |these |your |all |all the |all these |all of these )${MSGS}\\b`),
-  new RegExp(`\\b(?:stop|no more|enough) ${MSGS}\\b`),
+  new RegExp(`\\b(?:stop|quit|cease|no more|enough) ${MSGS}\\b`),
   /\bunsubscribe\b/,
   /\bopt (?:me )?out\b/,
   new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),

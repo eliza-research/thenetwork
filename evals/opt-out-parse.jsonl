@@ -50,3 +50,11 @@
 {"text": "Please cease messaging me", "match": "likely"}
 {"text": "She said to quit texting me", "match": "none"}
 {"text": "How can I cease messaging me?", "match": "none"}
+{"text": "Don't delete my number", "match": "none"}
+{"text": "How do I delete my number?", "match": "none"}
+{"text": "She said to delete my number", "match": "none"}
+{"text": "She said to unsubscribe", "match": "none"}
+{"text": "Quit texting", "match": "likely"}
+{"text": "Please cease messaging", "match": "likely"}
+{"text": "Don't quit texting", "match": "none"}
+{"text": "ST\u00ADOP", "match": "exact"}

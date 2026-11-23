@@ -160,3 +160,16 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "Don't delete my number", "label": "not_stop", "lang": "en"}
+{"text": "Please don't delete my info", "label": "not_stop", "lang": "en"}
+{"text": "How do I delete my number?", "label": "not_stop", "lang": "en"}
+{"text": "How can I remove my number?", "label": "not_stop", "lang": "en"}
+{"text": "She said to delete my number", "label": "not_stop", "lang": "en"}
+{"text": "He told me to remove my number", "label": "not_stop", "lang": "en"}
+{"text": "She said to unsubscribe", "label": "not_stop", "lang": "en"}
+{"text": "Quit texting", "label": "stop", "lang": "en"}
+{"text": "Please cease messaging", "label": "stop", "lang": "en"}
+{"text": "Don't quit texting", "label": "not_stop", "lang": "en"}
+{"text": "ST\u00ADOP", "label": "stop", "lang": "en"}
+{"text": "ST\u2060OP", "label": "stop", "lang": "en"}
+{"text": "S\u200ETOP", "label": "stop", "lang": "en"}
