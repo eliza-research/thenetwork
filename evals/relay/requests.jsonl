@@ -176,3 +176,15 @@
 {"text": "Scratch that. Send him my number.", "want": "contact_share"}
 {"text": "Send him my number. Ana says, scratch that.", "want": "contact_share"}
 {"text": "Send him my photo, Ana said. Please send him my number.", "want": "contact_share"}
+{"text": "give him my number if he asks", "want": "none"}
+{"text": "send them my number if they ask for it", "want": "none"}
+{"text": "share my number with him if he wants it", "want": "none"}
+{"text": "give her my number only if she asks", "want": "none"}
+{"text": "give him my number when he asks", "want": "none"}
+{"text": "send them my number when they want it", "want": "none"}
+{"text": "send them my number if he hasn't got it", "want": "none"}
+{"text": "share my number with him if he's interested", "want": "none"}
+{"text": "give him my number if he needs it", "want": "none"}
+{"text": "send them my number if they ask", "want": "none"}
+{"text": "send them my number if you can", "want": "contact_share"}
+{"text": "give him my number if it's okay", "want": "contact_share"}
