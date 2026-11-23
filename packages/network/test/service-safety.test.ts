@@ -382,6 +382,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const reports = async (app: "slop" | "peon") => (await s.runtimeFor(app)!.pg.load())?.reports;
     const pending = async (app: "slop" | "peon") => (await s.runtimeFor(app)!.pg.load())?.members
       .find(member => member.id === (app === "slop" ? slopAri : peonAri))?.pendingSafety;
+    const slopReplySlot = async () => (await s.runtimeFor("slop")!.pg.load())?.members
+      .find(member => member.id === slopAri)?.awaiting;
+    const clearSlopReplySlot = () => s.runtimeFor("slop")!.unitOfWork(net => { net.member(slopAri).awaiting = undefined; });
     const askSlop = async (id: string) => {
       const at = clock.now();
       expect(await signed(id, "Report him, he harassed me.", "slop")).toMatchObject({
@@ -414,7 +417,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       clock.advance(MINUTE);
     };
 
-    return { s, otp, ari, slopAri, slopBen, peonAri, recordMeeting, signed, reports, pending, askSlop, probeStatus, competingSlopProbe, clock };
+    return { s, otp, ari, slopAri, slopBen, peonAri, recordMeeting, signed, reports, pending, slopReplySlot, clearSlopReplySlot,
+      askSlop, probeStatus, competingSlopProbe, clock };
   };
 
   test("a shared signed safety clarification returns to its exact pending report", async ({ onTestFinished }) => {
@@ -604,10 +608,22 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
   }, T);
 
   test("an explicit pronoun can still confirm the sole offered safety target", async ({ onTestFinished }) => {
-    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+    const { askSlop, reports, signed, slopBen, slopReplySlot, clearSlopReplySlot } = await signedSafetyFixture(onTestFinished);
+    // The fixture joined the member before restoring a past meeting. Finish the setup prompt.
+    await clearSlopReplySlot();
     await askSlop("explicit-safety-pronoun");
+    expect(await slopReplySlot()).toBeUndefined();
     expect(await signed("answer-explicit-safety-pronoun", "I mean him", "slop")).toMatchObject({ app: "slop" });
     expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+  }, T);
+
+  test("an explicit pronoun cannot file a safety report while an interview waits", async ({ onTestFinished }) => {
+    const { askSlop, pending, reports, signed, slopBen, slopReplySlot } = await signedSafetyFixture(onTestFinished);
+    const at = await askSlop("safety-pronoun-during-interview");
+    expect(await slopReplySlot()).toMatchObject({ kind: "interview" });
+    expect(await signed("answer-safety-pronoun-during-interview", "I mean him", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([]);
+    expect(await pending("slop")).toMatchObject({ at, targets: [slopBen] });
   }, T);
 
   for (const name of ["Mara Sure", "Joey Pass", "Francis No"]) {
@@ -620,8 +636,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
   }
 
   test("a complete explicit pronoun with courtesy confirms the sole offered safety target", async ({ onTestFinished }) => {
-    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+    const { askSlop, reports, signed, slopBen, slopReplySlot, clearSlopReplySlot } = await signedSafetyFixture(onTestFinished);
+    await clearSlopReplySlot();
     await askSlop("courtesy-with-explicit-safety-pronoun");
+    expect(await slopReplySlot()).toBeUndefined();
     expect(await signed("answer-courtesy-with-explicit-safety-pronoun", "I mean him please", "slop")).toMatchObject({ app: "slop" });
     expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
   }, T);
