@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, directAgreementIdiom, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, readParticipationWithdrawal, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -169,8 +169,13 @@ export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind
 const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
   .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
 
+const COMPLETE_SAFETY_CONTROL = /^(?:(?:yes|yeah|sure|ok(?:ay)?)[\s,!.]+)?(?:yes|yeah|yep|yup|sure(?: thing)?|ok(?:ay)?|correct|no|nope|nah|naw|not (?:right )?now)(?:[\s,]+(?:please|pls|thanks|thank you))?$/;
+
 function safetyReplyConsent(text: string) {
-  return consentOf(text.replace(/(?![\x00-\x7F])[\p{L}\p{M}\p{N}]/gu, "_")).answer;
+  const normalized = safetyName(text);
+  const complete = COMPLETE_SAFETY_CONTROL.test(normalized) || ACK_ONLY.test(normalized)
+    || directAgreementIdiom(text) || readParticipationWithdrawal(text).reading === "DirectWithdrawal";
+  return complete ? consentOf(text).answer : "unclear";
 }
 
 function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
@@ -191,6 +196,11 @@ function isSafetyConfirmation(text: string): boolean {
   return SAFETY_PRONOUN_CONFIRMATION.test(text) || SAFETY_BARE_AFFIRMATION.test(text);
 }
 
+function safetyNameCanRoute(name: string): boolean {
+  return !ACK_ONLY.test(name) && !isSafetyConfirmation(name) && !NO_SAFETY_TARGET.test(name)
+    && !CANCEL_SAFETY_QUESTION.test(name) && safetyReplyConsent(name) === "unclear";
+}
+
 function safetyQuestionReply(text: string) {
   const normalized = text.normalize("NFKC").replace(/[‘’]/g, "'").replace(/\s+/g, " ");
   const refuses = NO_SAFETY_TARGET.test(normalized);
@@ -199,10 +209,9 @@ function safetyQuestionReply(text: string) {
   const confirmation = consent === "yes" || isSafetyConfirmation(safetyName(text));
   const refusal = consent === "no" || refuses;
   const names = safetyReplyNames(text);
-  const [literal, qualified] = names;
-  const explicitlyNamed = SAFETY_TARGET_PREFIX.test(safetyName(text)) && !SAFETY_PRONOUN_CONFIRMATION.test(literal ?? "");
-  const qualifiedName = qualified !== undefined && !ACK_ONLY.test(qualified) && !isSafetyConfirmation(qualified)
-    && !NO_SAFETY_TARGET.test(qualified) && !CANCEL_SAFETY_QUESTION.test(qualified) && safetyReplyConsent(qualified) === "unclear";
+  const [, qualified] = names;
+  const explicitlyNamed = SAFETY_TARGET_PREFIX.test(safetyName(text)) && !names.some(name => SAFETY_PRONOUN_CONFIRMATION.test(name));
+  const qualifiedName = qualified !== undefined && safetyNameCanRoute(qualified);
   const implicitConfirmation = !explicitlyNamed && confirmation && !qualifiedName;
   const implicitRefusal = !explicitlyNamed && refusal;
   const acceptsName = safetyQuestionAcceptsName(implicitConfirmation, implicitRefusal, cancels);
@@ -230,7 +239,7 @@ export function pendingReportReplyNames(text: string): PendingReportReplyName[] 
   if (!reply.acceptsName && !reply.compareAlternatives) return [];
   const acknowledgement = ACK_ONLY.test(body);
   return reply.names.flatMap(name => {
-    const routable = reply.acceptsName && !acknowledgement && !isSafetyConfirmation(name) && safetyReplyConsent(name) === "unclear";
+    const routable = reply.acceptsName && !acknowledgement && safetyNameCanRoute(name);
     // A reserved reply cannot choose the app. An alternate exact name can still make the answer ambiguous.
     return routable || reply.names.length > 1 ? [{ name, routable }] : [];
   });
