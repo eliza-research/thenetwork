@@ -334,7 +334,12 @@ async function toolchainId(stage: Stage): Promise<string> {
 }
 
 /** The remembered results of one check: whether it may read them, and every entry it read or wrote. */
-export interface Memory { root: string; fresh: boolean; used: Set<string> }
+export interface Memory {
+  root: string;
+  fresh: boolean;
+  used: Set<string>;
+  actionProjection?: { version: string; encode: (value: unknown) => unknown };
+}
 /** An entry of `.spec-cache`: JSON, compressed, since a run of the simulator says megabytes. */
 interface Entry { name: string; file: string; evaluator?: string | null }
 const localCache = (root: string) => path.join(root, ".spec-cache");
@@ -363,10 +368,24 @@ function use(memory: Memory, name: string) {
   sharedCache(name)?.used.add(name);
   try { const now = new Date(); fs.utimesSync(cacheFile(memory.root, name), now, now); } catch { /* still a hit */ }
 }
-/** What an entry holds, or undefined. An entry that cannot be read, cut short by a kill or a full disk, is deleted and is a miss. */
-export function recall<T>(memory: Memory, { name, file, evaluator }: Entry): T | undefined {
-  memory.used.add(name);
-  if (memory.fresh || evaluator === null) return undefined;
+function projectedEntry(memory: Memory, at: Entry): Entry | undefined {
+  if (!memory.actionProjection || !actionEntry.test(at.name)) return undefined;
+  const raw = at.name.slice(0, -".gz".length);
+  const name = `action-${sha("projection", raw, memory.actionProjection.version).slice(0, 24)}.json.gz`;
+  return { ...at, name, file: cacheFile(memory.root, name) };
+}
+/** Prefer the generator's compact receipt. A raw receipt remains valid for either caller. */
+export function recall<T>(memory: Memory, raw: Entry): T | undefined {
+  const projected = projectedEntry(memory, raw);
+  if (!projected) memory.used.add(raw.name);
+  if (memory.fresh || raw.evaluator === null) return undefined;
+  const compact = projected && readReceipt<T>(memory, projected);
+  if (compact !== undefined) return compact;
+  memory.used.add(raw.name);
+  return readReceipt<T>(memory, raw);
+}
+/** What an entry holds, or undefined. An unreadable entry is discarded. */
+function readReceipt<T>(memory: Memory, { name, file }: Entry): T | undefined {
   let bytes: Buffer;
   try {
     bytes = fs.readFileSync(file);
@@ -383,15 +402,20 @@ export function recall<T>(memory: Memory, { name, file, evaluator }: Entry): T |
   }
 }
 /** Remember `value` under an entry, unless this process cannot say which tools computed it: then the next check computes it again. */
-export function store(memory: Memory, { name, file, evaluator }: Entry, value: unknown) {
-  memory.used.add(name);
+export function store(memory: Memory, raw: Entry, value: unknown) {
+  const { evaluator } = raw;
+  const projected = projectedEntry(memory, raw);
+  if (!projected) memory.used.add(raw.name);
   const scope = checking.getStore();
   if (unsure || evaluator === null || (evaluator !== undefined && scope?.evaluatorChanged)) return;
   if (evaluator !== undefined && evaluatorIdentity(memory.root) !== evaluator) {
     if (scope) scope.evaluatorChanged = true;
     return;
   }
-  writeWhole(file, gzipSync(JSON.stringify(value)));
+  const compact = projected && memory.actionProjection?.encode(value);
+  const { name, file } = projected && compact !== undefined ? projected : raw;
+  memory.used.add(name);
+  writeWhole(file, gzipSync(JSON.stringify(compact === undefined ? value : compact)));
   sharedCache(name)?.used.add(name);
 }
 

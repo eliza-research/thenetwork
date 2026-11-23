@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { stripVTControlCharacters } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 import { gunzipSync } from "node:zlib";
 import { Miniflare } from "miniflare";
 import { cacheCredentials, collectGarbage } from "./cache.ts";
@@ -368,6 +368,50 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       { reset() {}, dispatch: () => "accepted", observe: () => 0 }, { walks: 1, steps: 2 });
   });
 
+  test("a stopped conformance driver cannot pass with its completed JSON verdict", { skip: process.platform === "win32" }, async () => {
+    const driver = `let state = 0;
+export const options = { keys: ["counter"], walks: 1, steps: 1 };
+export const driver = {
+  reset() { state = 0; },
+  dispatch() { state++; return "accepted"; },
+  observe() { return state; },
+};`;
+    const file = "test/drivers/counter.ts";
+    const root = scratch({
+      "spec/counter.md": ruleSpec("pure val initial: int = 0\npure def advance(n: int): int = n + 1", "Count"),
+      [file]: driver,
+    });
+    const spec = parseSpec(root, "spec/counter.md");
+    const model = await gen(root, spec);
+    const domain = await import(pathToFileURL(path.join(root, "gen/counter.ts")).href);
+    const found = conformanceFound(model, spec, [[{ state: 0 }, { event: { type: "advance" }, state: 1 }]], []);
+    const machines = new Map([["counter", { domain, model, found }]]);
+    const checkDriver = async (source: string) => {
+      fs.writeFileSync(path.join(root, file), source);
+      const kept: boolean[] = [];
+      const [result] = await checkTraces(root, machines, {}, async (_, run, keep) => {
+        const value = await run();
+        kept.push(keep(value));
+        return value;
+      }, new Map());
+      return { result, kept };
+    };
+    const passed = await checkDriver(driver);
+    assert.ok(passed.result[0] && passed.result[2].includes("1 walks of seed 1"), passed.result.join("\n"));
+    assert.deepEqual(passed.kept, [true]);
+
+    // The subprocess has already flushed the genuine JSON verdict when its exit handler runs.
+    const stopped = await checkDriver(`${driver}\nprocess.on("exit", () => process.kill(process.pid, "SIGKILL"));`);
+    assert.equal(stopped.result[0], false, stopped.result.join("\n"));
+    assert.match(stopped.result[3] ?? "", /did not finish: node was killed by SIGKILL[\s\S]*"summary":"1 walks of seed 1"/);
+    assert.deepEqual(stopped.kept, [false]);
+
+    const disagreement = await checkDriver(driver.replace("return state;", "return state + 1;"));
+    assert.equal(disagreement.result[0], false, disagreement.result.join("\n"));
+    assert.match(disagreement.result[2], /the program departs from the spec/);
+    assert.deepEqual(disagreement.kept, [false]);
+  });
+
   test("set canonicalization follows tagged variants and preserves list order", async () => {
     const root = oneRule("mixed", "Values", "type Values = A({ values: Set[int] }) | B({ values: List[int] })\npure val initial: Values = A({ values: Set(1, 2) })\npure def list(v: Values): Values = B({ values: List(1, 2) })");
     const model = await gen(root, parseSpec(root, "spec/mixed.md"));
@@ -646,6 +690,24 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(!failed.includes("sometimes"), text);
   });
 
+  test("an explicitly reached probe goal keeps the independent search that exposes a broken rule", async () => {
+    const root = oneRule("counter", "The counter stays under 22", `pure val initial: int = 0
+pure val choiceValues = Set(${Array.from({ length: 64 }, (_, i) => i).join(", ")})
+pure def advance(n: int, choice: int): int = if (n == -1 or (n == 0 and choice == 0)) -1 else n + 1
+pure def alwaysBelowTwentyTwo(n: int): bool = n < 22
+pure def sometimesExit(n: int): bool = n == -1`);
+    const result = await run(root);
+    const broken = result.said("always", /a reachable state breaks/);
+    assert.ok(broken && !broken.ok, result.text);
+    assert.match(broken.detail, /-> state = 22\b/);
+    assert.match(broken.detail, /never_sometimesExit .*--max-steps 40/);
+    assert.ok(!result.said("sometimes", /is reachable/), result.text);
+    assert.ok(result.said("skipped", /^types, proof,/), result.text);
+    const probe = fs.globSync("gen/traces/counter.inv.probe/**/*.itf.json", { cwd: root });
+    assert.ok(probe.some((file) => JSON.parse(read(file, root)).states.some((s: Record<string, unknown>) =>
+      s["mbt::actionTaken"] === "eval_sometimesExit" && isDeepStrictEqual(s.outcome, { tag: "Out_sometimesExit", value: true }))));
+  });
+
   test("a deep witness is found in the short sweep before the full search", async () => {
     const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def sometimesLate(n: int): bool = n == 38";
     const root = oneRule("t", "Counting", quint);
@@ -657,7 +719,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(result.traces[0]?.at(-1)?.state, 38);
   });
 
-  test("a goal evaluated by a retained Quint probe supplies a journey and deeper goals still search", async () => {
+  test("shallow and deep goals each supply a journey and receive their independent search", async () => {
     const root = oneRule("route", "Take one step and then continue", `pure val initial: int = 0
 pure def advance(n: int): int = n + 1
 pure def sometimesStarted(n: int): bool = n > 0
@@ -670,7 +732,7 @@ pure def sometimesLate(n: int): bool = n == 38`);
     assert.deepEqual(tested?.journeys.map(({ events }) => events.length), [1, 38]);
     const actions = fs.readdirSync(path.join(root, "gen", "traces"));
     assert.ok(actions.some((name) => name.startsWith("route.never_sometimesLate.")));
-    assert.ok(actions.every((name) => !name.startsWith("route.never_sometimesStarted.")));
+    assert.ok(actions.some((name) => name.startsWith("route.never_sometimesStarted.")));
   });
 
   test("a concrete witness uses the original guards and rules and supplies its steps to replay", async () => {

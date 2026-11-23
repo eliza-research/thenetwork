@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, AGE_MONTHS, AGE_PART_TAIL, ARTICLE_AGE_END, ageBeforeConjunction, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeFractionalAgeInitialism, quoteStillOpen, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -158,22 +158,20 @@ const ADJ_LITE = "straight|gay|bi|queer|trans|cis|single|lesbian|pan";
 
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then|"|')\s*$/;
 /** What may follow a number for it to be the sender's age ("I'm 15", "I'm 27, woman"); never "15 minutes", "5'4". */
-const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
+const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:and|in|into|sober|clean|ago|of)\\b)|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
-const FRACTION_AGE_END = `(?=\\s*(?:$|[,!?:)]|${YEARS_OLD}))`;
+const PART_CLAUSE_END = new RegExp(`^(?:(?=\\s*(?:$|[,!?:)]))|${AGE_AND_CLAUSE})`);
+const NO_AGE_PART = `(?!${AGE_PART})`;
 const LOOSE_END = `(?=\\s+(?:${AGE_LOOSE_TAIL}))`;
 // "16yrs" and "16yo" have no word boundary after the number. "thirty" is never read out of "thirty-nine".
 const SELF_AGE = `\\b(?:${ME}\\s+(?:only |just |literally |barely |like |about )?|i (?:just )?turned\\s+)(\\d{1,2}(?:\\b|(?=y(?:rs?|ears?|\\/?o)\\b))|${NUM_WORD_RX}\\b(?!-(?:one|two|three|four|five|six|seven|eight|nine)\\b))`;
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : wordNum(value);
-const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
-  { rx: new RegExp(`${SELF_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageBeforeConjunction(ageNumber(m[1] ?? ""), m), strict: true },
-  { rx: new RegExp(`${SELF_AGE}${LOOSE_END}`), age: m => {
-    const age = ageNumber(m[1] ?? "");
-    return canJoin(age) ? age : NaN;
-  }, strict: true },
-  // "I'm 17 and a half and ...", "im 16.5 lol", "I'm 15 and 3 months": a part of a year, for 13 and up.
-  { rx: new RegExp(`${SELF_AGE}(?:${AGE_HALF}|${AGE_MONTHS})(?=\\s*(?:${AGE_PART_TAIL}|${YEARS_OLD}))`), age: m => {
+const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean; reading?: "part" | "conjunction" }[] = [
+  { rx: new RegExp(`${SELF_AGE}(?!')(${AGE_PART})`), age: m => ageNumber(m[1] ?? ""), strict: true, reading: "part" },
+  { rx: new RegExp(`${SELF_AGE}${NO_AGE_PART}(?!')${AGE_AND_CLAUSE}`), age: m => ageNumber(m[1] ?? ""), strict: true, reading: "conjunction" },
+  { rx: new RegExp(`${SELF_AGE}${NO_AGE_PART}(?!'|\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => ageNumber(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`${SELF_AGE}${NO_AGE_PART}${LOOSE_END}`), age: m => {
     const age = ageNumber(m[1] ?? "");
     return canJoin(age) ? age : NaN;
   }, strict: true },
@@ -204,15 +202,24 @@ const MINOR_SIGNS: { rx: RegExp; age?: (m: RegExpExecArray) => number }[] = [
 
 function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Cand<true> } {
   const out: { age?: Cand<number>; strict?: boolean; minor?: Cand<true> } = {};
-  for (const s of sentences(t)) {
+  for (const s of sentences(normalizeFractionalAgeInitialism(t))) {
     for (const r of AGE_RULES) for (const m of all(r.rx, s.text)) {
       const lead = m[0].length - m[0].trimStart().length;
-      if (NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
-      if (KIN_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
-      const a = r.age(m);
-      if (!Number.isFinite(a) || a < 1 || a > 99) continue;
-      if (!r.strict && a < 10) continue;
-      if (!out.age || a < out.age.value) { out.age = cand(a, s, m, r.strict ? 0.95 : 0.9, { at: m.index + lead, len: m[0].length - lead }); out.strict = r.strict; }
+      if ((r.reading && quoteStillOpen(t.slice(0, s.start + m.index + lead)))
+        || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
+      const after = s.text.slice(m.index + m[0].length);
+      if (KIN_AFTER.test(after)) continue;
+      const rawAge = r.age(m);
+      const part = r.reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after),
+        { reading: m[0], birthdaySetsProfileAge: true }) : undefined;
+      if (part === "FractionalAgeUnknown") continue;
+      const a = r.reading === "conjunction" ? ageBeforeConjunction(rawAge, m) : rawAge;
+      if (!Number.isFinite(a) || a < 1 || a > 99 || (!r.strict && a < 10)) continue;
+      const strict = r.strict && (r.reading === undefined || part === "FractionalAgeExplicit" || canJoin(a));
+      if (!out.age || a < out.age.value || (a === out.age.value && strict && !out.strict)) {
+        out.age = cand(a, s, m, strict ? 0.95 : 0.9, { at: m.index + lead, len: m[0].length - lead });
+        out.strict = strict;
+      }
     }
     for (const r of MINOR_SIGNS) for (const m of all(r.rx, s.text)) {
       out.minor ??= cand(true as const, s, m, 0.9);

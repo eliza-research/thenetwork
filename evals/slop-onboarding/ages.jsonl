@@ -69,10 +69,10 @@
 {"text":"im in middle school","minor":true}
 {"text":"my mom wont let me date yet","minor":true}
 {"text":"I'm 3 and 0 this season","minor":false}
-{"text":"I just turned 12 and I am undefeated.","minor":true,"declined":true,"age":12}
-{"text":"I just turned twelve and we won the tournament.","minor":true,"declined":true,"age":12}
-{"text":"I'm 12 and a half and I am undefeated.","minor":true,"declined":true,"age":12}
-{"text":"I am 12 and my team won.","minor":true,"declined":true,"age":12}
+{"text":"I just turned 12 and I am undefeated.","minor":true,"declined":false,"age":12}
+{"text":"I just turned twelve and we won the tournament.","minor":true,"declined":false,"age":12}
+{"text":"I'm 12 and a half and I am undefeated.","minor":true,"declined":false,"age":12}
+{"text":"I am 12 and my team won.","minor":true,"declined":false,"age":12}
 {"text":"I'm a 17 year old trans girl looking for guys","minor":true,"age":17}
 {"text":"I'm 17 and a half and want a gf","minor":true,"age":17}
 {"text":"i'm 16 and a half now","minor":true,"age":16}
@@ -94,3 +94,13 @@
 {"text":"I'm 7 1/2 years old","minor":true,"age":7,"declined":true}
 {"text":"I just turned 7 1/2","minor":true,"age":7,"declined":true}
 {"text":"I just turned 7.5","minor":true,"age":7,"declined":true}
+{"text":"I'm 12.5 minutes away","minor":false,"declined":false}
+{"text":"I'm 5 and also my team won","minor":false,"declined":false}
+{"text":"I'm 12 and my record collection","minor":false,"declined":false}
+{"text":"I'm 12.5 y.o., in two years","minor":false,"declined":false}
+{"text":"I'm 15 and a quarter miles away","minor":false,"declined":false}
+{"text":"I'm 17 and a quarter years old tomorrow","minor":false,"declined":false}
+{"text":"I'm 12 and a half years old","minor":true,"declined":true,"age":12}
+{"text":"I'm 11 1/2 years old","minor":true,"declined":true,"age":11}
+{"text":"I'm 12 and 3 months old","minor":true,"declined":true,"age":12}
+{"text":"She said \"this is true. I'm 12.5 years old.\"","minor":false,"declined":false}

@@ -1,9 +1,15 @@
 // GENERATED from spec/memberAge.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+export type FractionalAgeEvidence = "FractionalAgeUnknown" | "FractionalAgeLoose" | "FractionalAgeExplicit";
 
 /** Story: Join at the eligible age / Joining requires a usable age of at least 13 (spec/memberAge.md) */
 export const minMemberAge: number = 13;
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+export const minLooseHeightAge: number = 8;
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+export const minLooseTeamAge: number = 10;
 /** Story: Join at the eligible age / Age data outside the human range is unusable (spec/memberAge.md) */
 export const maxAge: number = 120;
 /** Story: Take part in adult matching / Matching requires a usable age of at least 18 (spec/memberAge.md) */
@@ -97,6 +103,74 @@ export function textUseAllowedAtAge(age: number, complianceOrLeave: boolean): bo
 export function lawConfirmedUnderageCannotRestart(age: number): boolean {
   //@ ensures \result === true
   return !confirmedUnderage(age) || !textUseAllowedAtAge(age, false);
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function ageConjunctionAllowed(age: number, statedBirthday: boolean, sportsRecord: boolean, teamResult: boolean): boolean {
+  return statedBirthday || age >= minMemberAge || (!sportsRecord && (!teamResult || age >= minLooseTeamAge));
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawSmallSportsRecordsDoNotSupplyAge(age: number): boolean {
+  //@ ensures \result === true
+  return !(age < minMemberAge) || !ageConjunctionAllowed(age, false, true, false);
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawSmallTeamResultsDoNotSupplyAge(age: number): boolean {
+  //@ ensures \result === true
+  return !(age < minLooseTeamAge) || !ageConjunctionAllowed(age, false, false, true);
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawStatedBirthdaySurvivesSportsContext(age: number): boolean {
+  //@ ensures \result === true
+  return ageConjunctionAllowed(age, true, true, true);
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function fractionalAgeEvidence(age: number, possibleHeight: boolean, monthsOrQuarter: boolean, writtenAsAge: boolean, atClauseEnd: boolean, atAgeTail: boolean, future: boolean): FractionalAgeEvidence {
+  return future ? "FractionalAgeUnknown" : (writtenAsAge ? "FractionalAgeExplicit" : (possibleHeight && age < minLooseHeightAge ? "FractionalAgeUnknown" : ((!monthsOrQuarter && atClauseEnd) || (joinableAge(age) && atAgeTail) ? "FractionalAgeLoose" : "FractionalAgeUnknown")));
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawAnUpcomingFractionalAgeSuppliesNoCurrentAge(age: number, possibleHeight: boolean, monthsOrQuarter: boolean, writtenAsAge: boolean, atClauseEnd: boolean, atAgeTail: boolean): boolean {
+  //@ ensures \result === true
+  return fractionalAgeEvidence(age, possibleHeight, monthsOrQuarter, writtenAsAge, atClauseEnd, atAgeTail, true) === "FractionalAgeUnknown";
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawAFractionalAgeNeedsAgeWordsToBeExplicit(age: number, possibleHeight: boolean, monthsOrQuarter: boolean, atClauseEnd: boolean, atAgeTail: boolean, future: boolean): boolean {
+  //@ ensures \result === true
+  return fractionalAgeEvidence(age, possibleHeight, monthsOrQuarter, false, atClauseEnd, atAgeTail, future) !== "FractionalAgeExplicit";
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawPossibleHeightRequiresAgeWords(age: number, atClauseEnd: boolean, atAgeTail: boolean): boolean {
+  //@ ensures \result === true
+  return !(age < minLooseHeightAge) || fractionalAgeEvidence(age, true, false, false, atClauseEnd, atAgeTail, false) === "FractionalAgeUnknown";
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawExplicitCurrentFractionalAgeIsAccepted(age: number, possibleHeight: boolean, monthsOrQuarter: boolean, atClauseEnd: boolean, atAgeTail: boolean): boolean {
+  //@ ensures \result === true
+  return fractionalAgeEvidence(age, possibleHeight, monthsOrQuarter, true, atClauseEnd, atAgeTail, false) === "FractionalAgeExplicit";
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawUnderageMonthOrQuarterNeedsAgeWords(age: number, atClauseEnd: boolean, atAgeTail: boolean): boolean {
+  //@ ensures \result === true
+  return !(age < minMemberAge) || fractionalAgeEvidence(age, false, true, false, atClauseEnd, atAgeTail, false) === "FractionalAgeUnknown";
 }
 
 /** Story: Take part in adult matching / An older age cannot raise the effective age (spec/memberAge.md) */
