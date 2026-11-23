@@ -557,6 +557,14 @@ const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
   "iu",
 );
 const LATE_PRIVATE_STOP_LEAD = new RegExp(String.raw`^[,\s–—]*${RELAY_MARKED_STOP}[,;:\s–—]+`, "u");
+const PRIVATE_RENEWAL_ANCHOR = new RegExp(
+  String.raw`^\s*(?:(?:actually|sorry)[,\s]+)?(?:${RELAY_SHORT_RETRACTION}|scratch that|take that back)(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$`,
+  "iu",
+);
+const TERMINAL_PRIVATE_RETRACTION = /\b(?:never ?mind|nvm)\b/iu;
+const PRIVATE_RENEWAL_CORRECTION = /^\s*(?:(?:actually|sorry)[,\s:]+)?/iu;
+const INDEPENDENT_RENEWAL_STATUS = /^(?:(?:i am|we are) (?:running late|at (?:work|home|the office|the station)|on (?:my|our) way)|(?:i|we) have (?:arrived|left)|(?:i|we)(?:'ll| will) be there|the (?:restaurant|caf[eé]|venue|office|station) is (?:open|closed))$/u;
+const UNRESOLVED_RENEWAL_PAYLOAD = /\b(?:it|this|that|either|both|instead|ask(?:ing)?|confirm(?:ing)?|wait(?:ing)?|delay(?:ing)?|get back to you|transfer|decid(?:e|ed|ing)|(?:re)?think(?:ing)?|reconsider(?:ing)?|not ready|maybe|perhaps|doubts?|hesitant|torn|conflicted|on the fence|recipient|destination|permission|approval|consent|private)\b/u;
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const PRIVATE_CONDITION_MARKER = String.raw`if|when(?:ever)?|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
@@ -655,8 +663,7 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   return true;
 }
 
-function conditionsPrivateRequest(text: string, source: string, request: RegExpMatchArray): boolean {
-  const start = request.index! + request[0].length;
+function conditionsPrivateRequest(text: string, source: string, start: number): boolean {
   const clause = text.slice(start).split(RELAY_SENTENCE, 1)[0]!;
   if (privateClauseIsConditional(clause, source.slice(start, start + clause.length), false)) return true;
   const boundary = /^[.!?;…\n]+\s*/u.exec(text.slice(start + clause.length));
@@ -678,32 +685,84 @@ function colloquialRetractionLead(sentence: string, contact: boolean): string | 
   if (!rest || /[,;:–—]/u.test(match[1]!) || COLLOQUIAL_RETRACTION_REASON.test(rest)) return match[0];
 }
 
-function retractsPrivateSentence(sentence: string, source: string, request: RegExpMatchArray, contact: boolean): boolean {
-  if (LATE_PRIVATE_RETRACTION.test(sentence) || LATE_PRIVATE_STOP_LEAD.test(sentence)) return true;
-  const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence)?.[0] ?? colloquialRetractionLead(sentence, contact);
-  if (lead === undefined) return false;
-  // Quotation masking must not turn a partial repeat into a complete request.
-  if (sentence !== source) return true;
-  const rest = sentence.slice(lead.length);
+function privateRenewalEnd(rest: string, request: RegExpMatchArray, referenceAvailable: boolean): number | undefined {
+  const requestedItem = PRIVATE_RELAY_ITEM.exec(request[0].toLowerCase())?.[0];
+  if (!requestedItem) return;
   const repeated = [...rest.matchAll(CONTACT_REQ), ...rest.matchAll(PHOTO_REQ)]
     .find(candidate => candidate[0].toLowerCase() === request[0].toLowerCase());
-  const requestedItem = PRIVATE_RELAY_ITEM.exec(request[0].toLowerCase())?.[0];
-  const renewal = repeated ?? [...rest.matchAll(RENEW_PRIVATE_ITEM)].find(candidate => {
+  const renewal = repeated ?? (referenceAvailable ? [...rest.matchAll(RENEW_PRIVATE_ITEM)].find(candidate => {
     const item = candidate[1]!.toLowerCase();
     return item === "it" || item === requestedItem;
-  });
-  return !renewal || !DIRECT_RELAY_LEAD.test(rest.slice(0, renewal.index!))
-    || !PRIVATE_RELAY_COURTESY.test(rest.slice(renewal.index! + renewal[0].length));
+  }) : undefined);
+  if (!renewal || !DIRECT_RELAY_LEAD.test(rest.slice(0, renewal.index!))) return;
+  const end = renewal.index! + renewal[0].length;
+  if (PRIVATE_RELAY_COURTESY.test(rest.slice(end))) return end;
+}
+
+function privateCourtesy(sentence: string): boolean {
+  const words = sentence.trim();
+  const polite = POLITE_PRIVATE_CONDITION.exec(words);
+  return PRIVATE_RELAY_COURTESY.test(" " + words)
+    || (polite !== null && PRIVATE_RELAY_COURTESY.test(words.slice(polite[0].length)));
+}
+
+function independentRenewalFollowup(sentence: string): boolean {
+  const words = sentence.trim().toLowerCase();
+  if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
+  const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
+  const body = envelope?.at(-1) ?? words;
+  const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+  if (!envelope) return INDEPENDENT_RENEWAL_STATUS.test(statement);
+  return PRIVATE_CONDITION_STATEMENT.test(statement) && !PRIVATE_CONDITION_ITEM_NAME.test(statement)
+    && !PRIVATE_RELAY_ACTION.test(statement) && !PRIVATE_RELAY_UNCERTAIN.test(statement)
+    && !UNRESOLVED_RENEWAL_PAYLOAD.test(statement);
 }
 
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[], contact: boolean): boolean {
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
-  if (LATE_ORPHAN_QUESTION.test(tail) || [...tail.matchAll(RELAY_SENTENCE_TEXT)].some(part => {
+  if (LATE_ORPHAN_QUESTION.test(tail)) return true;
+  const otherItemRefusal = contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL;
+  let retracted = false;
+  let referenceAvailable = true;
+  let adjacentPause = false;
+  let renewedAfterPause = false;
+  for (const part of tail.matchAll(RELAY_SENTENCE_TEXT)) {
     const start = end + part.index!;
-    return retractsPrivateSentence(part[0], source.slice(start, start + part[0].length), request, contact);
-  })) return true;
-  return privateRequests.some(candidate => {
+    const sentence = part[0];
+    const stop = start + sentence.length;
+    const ownStatement = sentence === source.slice(start, stop) && !text.slice(stop).match(RELAY_SENTENCE)?.[0].includes("?");
+    const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence)?.[0] ?? colloquialRetractionLead(sentence, contact);
+    const prefix = lead ?? PRIVATE_RENEWAL_CORRECTION.exec(sentence)![0];
+    const renewal = ownStatement && (retracted || lead !== undefined)
+      ? privateRenewalEnd(sentence.slice(prefix.length), request, referenceAvailable && (adjacentPause || lead !== undefined))
+      : undefined;
+    if (renewal !== undefined && !conditionsPrivateRequest(text, source, start + prefix.length + renewal)) {
+      renewedAfterPause ||= retracted;
+      retracted = false;
+      referenceAvailable = true;
+      adjacentPause = false;
+    } else if (lead !== undefined || LATE_PRIVATE_RETRACTION.test(sentence) || LATE_PRIVATE_STOP_LEAD.test(sentence)) {
+      if (TERMINAL_PRIVATE_RETRACTION.test(lead ?? sentence)) return true;
+      retracted = true;
+      renewedAfterPause = false;
+      referenceAvailable &&= ownStatement && PRIVATE_RENEWAL_ANCHOR.test(sentence);
+      adjacentPause = referenceAvailable;
+    } else {
+      if (renewedAfterPause) {
+        const otherItem = ownStatement
+          && (otherItemRefusal.test(sentence.toLowerCase()) || colloquialRetractionLead(sentence, !contact) !== undefined);
+        if (otherItem && CONTINUES_PRIVATE_REFUSAL.test(text.slice(stop).split(RELAY_SENTENCE, 2)[1]?.toLowerCase() ?? "")) return true;
+        if (!(ownStatement && (otherItem || independentRenewalFollowup(sentence)))) {
+          retracted = true;
+          renewedAfterPause = false;
+        }
+      }
+      referenceAvailable &&= ownStatement && privateCourtesy(sentence);
+      adjacentPause = false;
+    }
+  }
+  return retracted || privateRequests.some(candidate => {
     if (candidate.index! < end || candidate[0].toLowerCase() === request[0].toLowerCase() || reportsPrivateRequest(text, candidate)) return false;
     const lead = text.slice(end, candidate.index!).split(RELAY_SENTENCE).at(-1)!;
     const correction = PRIVATE_RELAY_CORRECTION.exec(lead);
@@ -746,7 +805,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
     const hedged = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
-      || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest)
+      || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length)
       || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
