@@ -19,13 +19,15 @@ then refuses both apps. START later can change one app's consent.
 STOP ALL covers every app on any line. Plain STOP on a dedicated line
 follows that line's configured scope. A direct request to stop texts
 alongside a separate request to keep calls has the same effect as STOP.
-The whole-message forms "QUIT NOW" and "END PLEASE" also act as STOP.
+The whole-message forms "QUIT NOW", "END PLEASE" and "por favor basta"
+also act as STOP. "I don't want texts anymore" is a direct STOP in the
+member's own words.
 
 ```quint
 import carrierConsent as Carrier from "./carrierConsent"
 
 type AppUnderObservation = Slop | Friends
-type StopWording = StopKeyword | StopTextsKeepCalls | QuitNow | EndPlease
+type StopWording = StopKeyword | StopTextsKeepCalls | QuitNow | EndPlease | StopTextsAnymore | SpanishCourtesyStop
 type ConsentUpdate = AllOptedOut | SlopOptedIn | FriendsOptedIn
 type LineConsent = { slopMayText: bool, friendsMayText: bool }
 type Turn = { state: LineConsent, out: List[ConsentUpdate] }
@@ -48,9 +50,13 @@ pure def sometimesBothAppsStop(s: LineConsent): bool =
 A negation that covers both verbs, an app named in an unsubscribe clause,
 and "cancel please" do not count as a STOP for the shared line. The text
 reader does not treat a mention of unsubscribing as a STOP command.
+A pause until a named time and a refusal of texts about one category
+preserve the shared line. The Spanish forms "cancelar por favor" and
+"baja ya" leave consent unchanged.
 
 ```quint
-type OtherWording = CoordinatedNegation | AppNamedInClause | ReportedUnsubscribe | CancelPlease
+type OtherWording = CoordinatedNegation | AppNamedInClause | ReportedUnsubscribe | CancelPlease |
+  TextsAboutOneCategory | TextsUntilAugust | SpanishCancelPlease | SpanishBajaNow
 
 pure def textOther(s: LineConsent, other: OtherWording): Turn =
   { state: s, out: List() }

@@ -129,6 +129,19 @@ export function lawRecordedLeakStopWithholdsPreparedBody(guardResult: ConsoleDel
   return consolePreparedBodyWithheld(guardResult, true);
 }
 
+/** Story: Read details for the current subject / A booked plan shows only receipts for its current notice (spec/consoleMemberView.md) */
+//@ pure
+export function consoleBookingReceiptCurrent(exactBooking: boolean, recipientOnRoster: boolean, delivered: boolean, receivedAt: number, asOf: number): boolean {
+  return exactBooking && recipientOnRoster && delivered && receivedAt >= 0 && receivedAt <= asOf;
+}
+
+/** Story: Read details for the current subject / A booked plan shows only receipts for its current notice (spec/consoleMemberView.md) */
+//@ pure
+export function lawUnreceivedBookingHasNoClock(exactBooking: boolean, recipientOnRoster: boolean, receivedAt: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !consoleBookingReceiptCurrent(exactBooking, recipientOnRoster, false, receivedAt, asOf);
+}
+
 /** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
 export function staffPhotoAllowed(rulePermitsRead: boolean, canSafety: boolean, liveAdult: boolean): boolean {

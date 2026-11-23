@@ -16,6 +16,13 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 
 [A report keeps its own disposition](../safetyCase.md#a-hold-ban-or-dismissal-updates-the-matching-report). `pendingReportHold` in `packages/network/src/network.ts` reads the open report's subject, encounter, and urgency. [A ban refuses new ordinary text](../safetyCase.md#a-ban-allows-only-carrier-commands-and-app-leave). `NetworkService.inbound` calls `inboundAllowedAfterBan` before the report reaches the runtime.
 
+The report reader supplies an eligible subject and affirmative age evidence
+before the report enters the modeled minor path. The reported age restricts
+the subject in its source app through the report action. The person's own
+age remains an independent input.
+
+The [trust classifier](../trustLevel.md#an-explicit-attempt-to-bypass-contact-consent-triggers-watch) supplies the `abuse` action’s risk. A direct third-party messaging-handle request supplies two points. The classifier leaves a quoted request, a public venue reference, or the member’s own handle outside that action.
+
 [Danger disclosures during a check-in](../safetyCase.md#direct-current-danger-text-gets-immediate-guidance-first) use the [receipt of the exact current feedback prompt](../meetingSettlement.md#a-feedback-reply-needs-receipt-of-its-exact-prompt). The model receives the receipt check and the attributed counterpart as inputs. Unattributed disclosures and disclosures without the exact receipt receive guidance without changing attendance or creating a report. The ordinary member report uses its separate transition.
 
 The shared-line clarification action treats the offered target as the exact displayed-name match. Its live memberships represent verified current app owners. It can route the reply to the app that asked when only one current offer matches. Explicit app routing and several matching offers leave that other app's report untouched. The runtime rechecks the pending question and target while applying the report.
@@ -102,7 +109,10 @@ module safety_trust {
   }
   type ReportIdentity = (Mid, Mid, str, str, int)
   // slot: what profile.ts slotOf reads from the record; hour: the New York hour of the meeting (truth)
-  type Inter = { parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int }
+  type Inter = {
+    opportunityId: str, parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int,
+    counterpartAbsence: Set[Mid],
+  }
   // A staff lift reads the decision identifiers, then commits the durable and runtime changes together.
   type Lift = { m: Mid, scope: str, expectedLocal: int, expectedGlobal: int, stage: str }
   type Src = { msgs: int, reporters: Set[Mid], staff: bool, other: int }
@@ -114,6 +124,7 @@ module safety_trust {
     live: Mid -> bool,
     trust: Mid -> Trust,
     minorF: Mid -> bool,
+    minorReportedF: Mid -> bool,
     caseSt: Mid -> str,
     blocks: Set[Set[Mid]],
     personBlocks: Set[(str, str)],
@@ -222,8 +233,12 @@ module safety_trust {
   pure def reportHeld(st: State, m: Mid): bool =
     st.reports.exists(r => r.subject == m and r.status == "open" and r.met and URGENT.contains(r.kind))
   pure def reportIdentity(r: Report): ReportIdentity = (r.subject, r.origReporter, r.kind, r.source, r.at)
+  pure def openMinorReport(r: Report): bool = r.status == "open" and r.kind == "minor"
   pure def carriedReportHeld(st: State, m: Mid): bool = st.reports.exists(r =>
-    r.subject.p == m.p and r.subject.app == m.app and urgentOpen(r) and st.carriedReports.contains(reportIdentity(r)))
+    r.subject.p == m.p and r.subject.app == m.app and r.status == "open" and st.carriedReports.contains(reportIdentity(r)))
+  // Keep the obligation independent of whether the exact report restriction was successfully carried.
+  pure def retainUnresolvedMinorSignals(st: State): State = { ...st,
+    minorP: st.minorP.filter(h => st.reports.exists(r => r.subject.p == h._1 and r.subject.app == h._2 and openMinorReport(r))) }
   // Durable coverage for this app or every app. Production preserves global authority on the other apps after a lift.
   pure def localHoldDecision(st: State, m: Mid): int =
     if (st.personHolds.contains((m.p, m.app))) st.holdDecisions.get((m.p, m.app)) else -1
@@ -238,9 +253,14 @@ module safety_trust {
     nextHold: st.nextHold + 1,
     globalHoldReleases: if (scope == "*") st.globalHoldReleases.filter(x => x._1 != p) else st.globalHoldReleases,
   }
-  // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
-  pure def noShows(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "no_show").size()
-  pure def dates(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "completed").size()
+  // profile.ts and meetingSettlement.md: group by exact opportunity. NOBODY is missing legacy attribution.
+  pure def noShowDateIds(st: State, m: Mid): Set[str] =
+    st.inters.filter(i => i.by == m and i.parts.contains(m) and i.outcome == "no_show").map(i => i.opportunityId)
+  pure def completedDateIds(st: State, m: Mid): Set[str] =
+    st.inters.filter(i => i.parts.contains(m) and i.outcome == "completed").map(i => i.opportunityId)
+      .exclude(noShowDateIds(st, m))
+  pure def noShows(st: State, m: Mid): int = noShowDateIds(st, m).size()
+  pure def dates(st: State, m: Mid): int = completedDateIds(st, m).size()
   // profile.ts: one directed block per member with settled same-app encounter evidence at block time.
   pure def blockedBy(st: State, m: Mid): int = st.contextualBlocks.filter(b => b._2 == m).size()
   // slop rules.ts with SLOP_DEFAULT_OPTIONS trust { blockedBy: 2, noShows: 2 }
@@ -353,8 +373,10 @@ module safety_trust {
   // network.ts:1593 minorReported: a case event, then (first time) the minor flags and dropMember on THIS Network.
   pure def minorReported(st: State, t: Mid): State = {
     val s1 = caseEv(st, t, "minor_reported")
-    if (s1.minorF.get(t)) s1
-    else { ...s1, minorF: s1.minorF.set(t, true), minorP: s1.minorP.union(Set((t.p, t.app))), opps: dropOpps(s1.opps, t) }
+    val flagged = if (s1.minorF.get(t)) s1
+      else { ...s1, minorF: s1.minorF.set(t, true), minorReportedF: s1.minorReportedF.set(t, true), opps: dropOpps(s1.opps, t) }
+    if (flagged.minorReportedF.get(t)) { ...flagged, minorP: flagged.minorP.union(Set((t.p, t.app))) }
+    else flagged
   }
 
   // network.ts:1284 fileReport (the caller, blockAndReport, writes the case event and keeps the trust rules).
@@ -436,9 +458,17 @@ module safety_trust {
     }
   }
 
+  // The planned roster decides which opportunity is erased. A feedback interaction uses its actual roster.
+  pure def forgetEncounterHistory(st: State, m: Mid): State = {
+    ...st,
+    opps: OPP_IDS.mapBy(k => { val o = st.opps.get(k)
+      if (o.parts.contains(m)) { ...o, stage: "deleted" } else o }),
+    inters: st.inters.filter(i => not(i.parts.contains(m))),
+  }
+
   // network.ts:916 forget (leave one app: service.ts:821 forget -> forgetMember)
   pure def forget(st: State, m: Mid): State = {
-    ...st,
+    ...forgetEncounterHistory(st, m),
     live: st.live.set(m, false),
     trust: ALL_MIDS.mapBy(x => if (x == m) NO_TRUST else {
       val t = st.trust.get(x)
@@ -446,11 +476,9 @@ module safety_trust {
     }),
     caseSt: st.caseSt.set(m, "none"),
     minorF: st.minorF.set(m, false),
+    minorReportedF: st.minorReportedF.set(m, false),
     blocks: st.blocks.filter(b => not(b.contains(m))),
     contextualBlocks: st.contextualBlocks.filter(b => b._1 != m and b._2 != m),
-    opps: OPP_IDS.mapBy(k => { val o = st.opps.get(k)
-      if (o.parts.contains(m)) { ...o, stage: "deleted" } else o }),
-    inters: st.inters.filter(i => not(i.parts.contains(m))),
     // reports about them stay; a reporter who left is not named (reporterId = "")
     reports: st.reports.map(r => if (r.reporter == m) { ...r, reporter: NOBODY } else r),
     restricted: st.restricted.exclude(Set(m)),
@@ -473,8 +501,8 @@ module safety_trust {
       val sc = st.trust.get(m).score
       addPts(st, m, if (HOLD - sc > 0) HOLD - sc else 1, "staff_hold", NOBODY, notice)
     } else st
-    { ...s1, reports: s1.reports.map(r =>
-      if (r.subject == m and r.status == "open" and (onlyRep == "" or r.reporterP == onlyRep)) { ...r, status: "held" } else r) }
+    retainUnresolvedMinorSignals({ ...s1, reports: s1.reports.map(r =>
+      if (r.subject == m and r.status == "open" and (onlyRep == "" or r.reporterP == onlyRep)) { ...r, status: "held" } else r) })
   }
 
   // network.ts:4497-4508 syncMember -> personHold: a person hold that covers a live member who is not on
@@ -489,7 +517,8 @@ module safety_trust {
       addPts(st, m, if (HOLD - sc > 0) HOLD - sc else 1, "staff_hold", NOBODY, "none")
     } else st
     val s2 = { ...s1, opps: dropOpps(s1.opps, m), restricted: s1.restricted.union(Set(m)) }
-    { ...s2, reports: s2.reports.map(r => if (r.subject == m and (r.status == "open" or r.status == "held")) { ...r, status: "banned" } else r) }
+    retainUnresolvedMinorSignals({ ...s2, reports: s2.reports.map(r =>
+      if (r.subject == m and (r.status == "open" or r.status == "held")) { ...r, status: "banned" } else r) })
   }
 
   // ------------------------------------------------------------------ init
@@ -505,6 +534,7 @@ module safety_trust {
     live: INIT_LIVE,
     trust: ALL_MIDS.mapBy(_ => NO_TRUST),
     minorF: ALL_MIDS.mapBy(_ => false),
+    minorReportedF: ALL_MIDS.mapBy(_ => false),
     caseSt: ALL_MIDS.mapBy(_ => "none"),
     blocks: Set(),
     personBlocks: Set(),
@@ -615,12 +645,14 @@ module safety_trust {
   }
 
   // Feedback keeps its receipt day. The dating slot comes from the booked meeting's local day and hour.
-  pure def recordOf(o: Opp, m: Mid, selfNoShow: bool, feedbackAt: int): Inter =
-    { parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
-      hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour) }
+  pure def recordOf(k: str, o: Opp, m: Mid, selfNoShow: bool, directAbsence: bool, feedbackAt: int): Inter =
+    { opportunityId: k, parts: o.going, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
+      hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour),
+      counterpartAbsence: if (directAbsence and o.kind == "date" and o.going.size() == 2)
+        o.going.exclude(Set(m)) else Set() }
 
-  // The answer to the check-in after a meeting (onFeedback 2636). `intent`: what the member means ("fine",
-  // "report", "selfNoShow"); `reader`: checkInReport's output (an oracle). After SD-067 a happy answer reads
+  // onFeedback records an answer after an exact receipt. The direct counterpart absence intent is an
+  // attendance statement, and reader represents separately recognized safety reports. A happy answer reads
   // as no report: the corpus evals/network/check-in-reports.jsonl (gate in scripts/sim/evals.ts) checks the
   // reader on direct answers, so the model takes `checkInReaderSound` as a named assumption for this path. The
   // separate immediate danger disclosure path requires exact receipt and counterpart attribution.
@@ -638,7 +670,7 @@ module safety_trust {
     // postDateReports on slop and peon (SD-221); never for a plan
     val reportKind = if (o.kind == "date") reader else "none"
     val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-      inters: s0.inters.union(Set(recordOf(o, m, intent == "selfNoShow", s0.now))) }
+      inters: s0.inters.union(Set(recordOf(k, o, m, intent == "selfNoShow", intent == "counterpartAbsence", s0.now))) }
     // checkInReported -> blockAndReport for each other (SD-229); the member means the person of the date
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
@@ -677,7 +709,8 @@ module safety_trust {
     }
   }
 
-  // "block X" / "report X" (handleBlock 1412). route() (service.ts:1085): a member of several apps whose text
+  // An explicit block/report command reaches handleBlock. safetyCase.md models the polite prefix and conditional refusal.
+  // route() (service.ts:1085): a member of several apps whose text
   // names a counterpart goes to the app of the newest meeting with them (SD-250); else any app of theirs (the
   // newest item or the last writer). The target is looked up on that app. `ambiguous`: two possible people,
   // so "Who do you mean?" (pendingSafety).
@@ -718,6 +751,68 @@ module safety_trust {
     }
   }
 
+  // The language shell supplies a complete positive confirmation of the offer. The pending
+  // model stores a single proposed target, so offered abstracts the sole displayed choice.
+  pure def safetyQuestionUsesSoleOffer(soleOffer: bool, competing: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+    soleOffer and not(competing) and exactConfirmation and not(hasNamedMatch)
+
+  action answerWhoBySoleOffer(m: Mid, competing: bool, exactConfirmation: bool, explicitlyNamed: bool): bool =
+    all {
+      safetyQuestionUsesSoleOffer(s.pendingWho.get(m).offered, competing, exactConfirmation and not(explicitlyNamed), false),
+      answerWho(m),
+    }
+
+  // No allowed name or explicit cancellation. A competing prompt, or a long unrelated answer,
+  // leaves the current question available. Other actions model what the reply does after fallback.
+  action keepWhoAfterUnrelatedReply(m: Mid, competing: bool, shortReply: bool): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      competing or not(shortReply),
+      s' = { ...s, lastAction: "whoReplyPreserved" },
+    }
+  }
+
+  pure def safetyQuestionAcceptsName(confirmation: bool, refusal: bool, cancellation: bool): bool =
+    not(confirmation or refusal or cancellation)
+
+  // The reader preserves Unicode word boundaries and reads the complete reply before it strips
+  // courtesy words. An explicitly marked name does not become an implicit control.
+  pure def safetyQuestionNamedReading(confirmation: bool, refusal: bool, cancellation: bool, explicitlyNamed: bool): bool =
+    safetyQuestionAcceptsName(not(explicitlyNamed) and confirmation, not(explicitlyNamed) and refusal, cancellation)
+
+  action receiveWhoControl(m: Mid, competing: bool, refuses: bool, cancels: bool): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      competing or refuses or cancels,
+      s' = if (cancels or (refuses and not(competing)))
+        { ...s, pendingWho: s.pendingWho.set(m, NO_WHO), lastAction: "whoControlClosed" }
+      else
+        { ...s, lastAction: "whoControlForwarded" },
+    }
+  }
+
+  // The reader has identified an explicit exclusion of the sole offered counterpart. A
+  // competing prompt can still handle the message, but no report can use the expired choice.
+  action excludeWhoTarget(m: Mid): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, p.offered, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      s' = { ...s, pendingWho: s.pendingWho.set(m, NO_WHO), lastAction: "whoTargetExcluded" },
+    }
+  }
+
+  // An out-of-order signed receipt cannot answer or clear an otherwise current question.
+  action staleSignedWhoReply(m: Mid, receivedAt: int): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      receivedAt < p.at or s.now < receivedAt,
+      s' = { ...s, lastAction: "whoSignedReplyStale" },
+    }
+  }
+
   pure def currentWhoOffer(st: State, m: Mid, name: str): bool = {
     val p = st.pendingWho.get(m)
     val target = midOf(st, m.app, name)
@@ -725,15 +820,17 @@ module safety_trust {
       and st.live.get(target) and counterpart(st, m, target)
   }
 
-  // The shared route sees one exact name. The same active offer must still be usable under the app lock.
+  // The shared route matches an exact displayed name, including an affirmative or courtesy
+  // qualifier that leaves an exact name. A pronoun does not choose an app. The same active
+  // offer must still be usable under the app lock.
   // An explicit app has its own existing local answer path, modeled by answerWho.
-  action answerWhoShared(m: Mid, ordinaryApp: str, explicit: bool): bool = {
+  action answerWhoShared(m: Mid, ordinaryApp: str, explicit: bool, exactNamedChoice: bool): bool = {
     val p = s.pendingWho.get(m)
     val other = midOf(s, ordinaryApp, m.p)
     val matches = liveMidsOf(s, m.p).filter(member => currentWhoOffer(s, member, p.target))
     all {
       p.asked, s.live.get(m), inboundOk(s, m.p), ordinaryApp != m.app, s.live.get(other),
-      if (not(explicit) and matches.size() == 1)
+      if (not(explicit) and exactNamedChoice and matches.size() == 1)
         answerWho(matches.fold(NOBODY, (_, member) => member))
       else s' = { ...s, lastAction: "whoSharedPreserved" },
     }
@@ -803,7 +900,6 @@ module safety_trust {
       caseSt: st.caseSt.set(m, "lifted"),
       heldMids: st.heldMids.exclude(Set(m)),
       autoHeldP: st.autoHeldP.exclude(Set((m.p, m.app))),
-      minorP: st.minorP.exclude(Set((m.p, m.app))),
       counted: st.counted.set(m, Set()),
       src: st.src.set(m, NO_SRC),
       staffCleared: st.staffCleared.union(Set(m)),
@@ -846,8 +942,8 @@ module safety_trust {
   // Staff dismiss a report (network.ts:1409).
   action dismiss(r: Report): bool = all {
     s.reports.contains(r), r.status == "open",
-    val resolved = { ...s, reports: s.reports.exclude(Set(r)).union(Set({ ...r, status: "dismissed" })),
-      carriedReports: s.carriedReports.exclude(Set(reportIdentity(r))), lastAction: "dismiss" }
+    val resolved = retainUnresolvedMinorSignals({ ...s, reports: s.reports.exclude(Set(r)).union(Set({ ...r, status: "dismissed" })),
+      carriedReports: s.carriedReports.exclude(Set(reportIdentity(r))), lastAction: "dismiss" })
     s' = if (s.live.get(r.subject)) caseEv(resolved, r.subject, "report_dismissed") else resolved,
   }
 
@@ -855,17 +951,17 @@ module safety_trust {
   // app only, one network at a time (W3-232). Each unit: clearMinorSignal and dismiss the open minor reports.
   action clearMinorStart(m: Mid, scope: str): bool = all {
     s.live.get(m), s.clearing == Set(), scope == "*" or scope == m.app,
-    s.minorP.exists(x => x._1 == m.p), not(s.statedRelayMinors.contains(m.p)),
+    liveMidsOf(s, m.p).exists(x => s.minorReportedF.get(x)), not(s.statedRelayMinors.contains(m.p)),
     s' = { ...s, clearing: liveMidsOf(s, m.p).filter(x => scope == "*" or x.app == m.app), lastAction: "clearMinorStart" },
   }
   action clearMinorApply(x: Mid): bool = all {
     s.clearing.contains(x), s.live.get(x),
-    s' = { ...s,
+    s' = retainUnresolvedMinorSignals({ ...s,
       minorF: s.minorF.set(x, false),
-      reports: s.reports.map(r => if (r.subject == x and r.kind == "minor" and r.status == "open") { ...r, status: "dismissed" } else r),
-      minorP: s.minorP.exclude(Set((x.p, x.app))),
+      minorReportedF: s.minorReportedF.set(x, false),
+      reports: s.reports.map(r => if (r.subject == x and openMinorReport(r)) { ...r, status: "dismissed" } else r),
       clearing: s.clearing.exclude(Set(x)),
-      lastAction: "clearMinorApply" },
+      lastAction: "clearMinorApply" }),
   }
 
   // Ban by person (service.ts:2014): ban rows, suppression, restricted platform memberships, then one unit per app
@@ -909,19 +1005,19 @@ module safety_trust {
     s' = { ...s, pendingTexts: s.pendingTexts.exclude(Set(p)), shareGrants: s.shareGrants.union(Set(p)), lastAction: "shareYes" },
   }
 
-  // App leave begins with consent. Keep the historical standalone minor-signal abstraction.
-  // Committed hard holds and exact open reports use current state at the atomic forget.
+  // App leave begins with consent. Committed hard holds and exact open reports use current state
+  // at the atomic forget, including a minor report filed after leave consent was recorded.
   action leaveStart(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val recorded = if (lvl(s, m) != "hold" and s.minorF.get(m) and not(covered(s, m))) writeHold(s, p, app) else s
-    all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...recorded, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
+    all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...s, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
   }
   pure def retainHardHold(st: State, m: Mid): State =
     if (lvl(st, m) == "hold" and not(covered(st, m) or st.banned.contains(m.p)))
       writeHold(st, m.p, m.app)
     else st
   pure def retainOpenReports(st: State, m: Mid): State = { ...st,
-    carriedReports: st.carriedReports.union(st.reports.filter(r => r.subject == m and urgentOpen(r)).map(reportIdentity)) }
+    carriedReports: st.carriedReports.union(st.reports.filter(r => r.subject == m and
+      (urgentOpen(r) or (st.minorF.get(m) and st.minorReportedF.get(m) and openMinorReport(r)))).map(reportIdentity)) }
 
   action leaveFinish(m: Mid): bool = all {
     s.leaving.contains(m), s.live.get(m),
@@ -930,8 +1026,7 @@ module safety_trust {
   // The leave with nothing between the two steps (run tests only).
   action leave(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val recorded = if (lvl(s, m) != "hold" and s.minorF.get(m) and not(covered(s, m))) writeHold(s, p, app) else s
-    all { s.live.get(m), s' = { ...forget(retainOpenReports(retainHardHold(recorded, m), m), m), lastAction: "leave" } }
+    all { s.live.get(m), s' = { ...forget(retainOpenReports(retainHardHold(s, m), m), m), lastAction: "leave" } }
   }
 
   // A join by text: a banned person is refused; a hold does not refuse a join (PRD 40.3). A former member gets
@@ -945,7 +1040,8 @@ module safety_trust {
       not(s.live.get(cur)), not(p.in(s.banned)), g2 <= 1,
       s' = { ...s,
         gen: s.gen.set((app, p), g2), joined: s.joined.set((app, p), true),
-        live: s.live.set(m2, true), trust: s.trust.set(m2, NO_TRUST), minorF: s.minorF.set(m2, false), caseSt: s.caseSt.set(m2, "none"),
+        live: s.live.set(m2, true), trust: s.trust.set(m2, NO_TRUST),
+        minorF: s.minorF.set(m2, false), minorReportedF: s.minorReportedF.set(m2, false), caseSt: s.caseSt.set(m2, "none"),
         lastAction: "join" },
     }
   }
@@ -1010,7 +1106,7 @@ module safety_trust {
     nondet flag2 = Set(true, false).oneOf()
     nondet verb = Set("block", "report").oneOf()
     nondet kind = REPORT_KINDS.oneOf()
-    nondet intent = Set("fine", "report", "selfNoShow").oneOf()
+    nondet intent = Set("fine", "report", "selfNoShow", "counterpartAbsence").oneOf()
     nondet reader = Set("none", "harassment", "no_show", "minor").oneOf()
     nondet risk = Set(1, 2, 3, 6).oneOf()
     nondet d = Set(1, 6, 13, 14).oneOf()
@@ -1029,7 +1125,12 @@ module safety_trust {
       disclose(k, app, a, meant, kind, flag),
       report(a, app, b, verb, kind, flag),
       answerWho(m),
-      answerWhoShared(m, app, flag),
+      answerWhoBySoleOffer(m, flag, flag2, risk == 2),
+      keepWhoAfterUnrelatedReply(m, flag, flag2),
+      receiveWhoControl(m, flag, flag2, risk == 1),
+      excludeWhoTarget(m),
+      staleSignedWhoReply(m, if (flag) s.pendingWho.get(m).at - 1 else s.now + 1),
+      answerWhoShared(m, app, flag, flag2),
       abuse(m, risk),
       staffHoldBy(m, scope, onlyRep),
       staffHoldApply(m),
@@ -1075,8 +1176,8 @@ module safety_trust {
   }))
 
   // Founder decision 1 (AGENTS.md): "Age is a person-level fact"; minors are never matched. A minor report on
-  // an app keeps the person's member on that app out of matching across a leave and a rejoin, until staff
-  // clear it or lift the carried-over hold (SD-021, fixed).
+  // an app keeps the person's member on that app out of matching across ordinary leave and rejoin,
+  // until staff resolve the report. A trust hold has its own independent authority.
   val minorSignalFollowsPersonInApp = s.minorP.forall(h => {
     val x = midOf(s, h._2, h._1)
     s.live.get(x) implies not(matchable(s, x))
@@ -1156,10 +1257,26 @@ module safety_trust {
   // trust.ts:4-5 "Watch lasts until the score decays below 3: 14 days from 3". SD-141 (fixed in db176ce).
   val watchLasts14Days = not(s.earlyWatchExit)
 
-  // network.ts o.post "came: !f.selfNoShow": a no-show counts against the person who did not come. SD-222
-  // (fixed in 581888d).
+  // network.ts attributes a no-show to the exact self-report. An unattributed older row cannot count.
   val noShowCountsAbsentOnly = ALL_MIDS.forall(m => s.live.get(m) implies
-    noShows(s, m) <= OPP_IDS.filter(k => s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted").size())
+    noShowDateIds(s, m).subseteq(OPP_IDS.filter(k =>
+      s.opps.get(k).absent.contains(m))))
+  val attendanceCountsOncePerBooking = ALL_MIDS.forall(m =>
+    dates(s, m) + noShows(s, m) <= OPP_IDS.filter(k => {
+      val o = s.opps.get(k)
+      (o.stage == "done" or o.stage == "deleted") and o.going.contains(m)
+    }).size())
+  // A removed opportunity retains only ghost attendance facts in this model. An interaction can survive
+  // if it did not name the erased member, even when the planned roster included that member.
+  val feedbackHistoryUsesActiveRoster = s.inters.forall(i => {
+    val o = s.opps.get(i.opportunityId)
+    i.parts.forall(m => s.live.get(m)) and (o.stage != "deleted" implies i.parts == o.going)
+  })
+
+  val counterpartAbsenceStaysWithExactPair = s.inters.forall(i =>
+    i.counterpartAbsence != Set() implies
+      (i.outcome == "completed" and i.parts.size() == 2 and i.parts.contains(i.by)
+        and i.counterpartAbsence == i.parts.exclude(Set(i.by))))
 
   // The Slop profile reads completed attendance using the booked meeting time in its local zone.
   val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies
@@ -1208,6 +1325,9 @@ module safety_trust {
     reportersCounted,
     watchLasts14Days,
     noShowCountsAbsentOnly,
+    attendanceCountsOncePerBooking,
+    feedbackHistoryUsesActiveRoster,
+    counterpartAbsenceStaysWithExactPair,
     slotFromMeeting,
     everyMetReportFiled,
     relayBlockReachesSafety,
@@ -1326,6 +1446,18 @@ module safety_trust {
       .then(leave("slop", "ben"))
       .then(join("slop", "ben"))
       .expect(not(matchable(s, BEN_S1)) and minorSignalFollowsPersonInApp and urgentMetReportBlocksMatchingInApp)
+
+  run minorReportDuringLeaveFollowsRejoinTest =
+    init
+      .then(leaveStart("peon", "ana"))
+      .then(report("ben", "peon", "ana", "report", "minor", false))
+      .expect(s.minorReportedF.get(ANA_P) and not(matchable(s, ANA_P)) and s.carriedReports == Set())
+      .then(leaveFinish(ANA_P))
+      .then(join("peon", "ana"))
+      .expect(minorSignalFollowsPersonInApp and not(matchable(s, midOf(s, "peon", "ana")))
+        and not(covered(s, midOf(s, "peon", "ana"))) and matchable(s, ANA_S))
+      .then(all { nondet r = s.reports.oneOf() dismiss(r) })
+      .expect(matchable(s, midOf(s, "peon", "ana")) and s.carriedReports == Set())
 
   // SD-022 (fixed): staff hold on slop, the process stops before the peon unit: ben@peon is covered (not
   // matchable) and the next tick holds him.
@@ -1526,6 +1658,64 @@ module safety_trust {
       .then(meet("o1", Set(BEN_S)))
       .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
       .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 1)
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .expect(attendanceCountsOncePerBooking and dates(s, ANA_S) == 1 and dates(s, BEN_S) == 0)
+
+  run completedDateRepliesCountOnceTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set()))
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .then(tick(1))
+      .then(checkIn("o1", BEN_S, "fine", "none"))
+      .expect(s.inters.size() == 2 and attendanceCountsOncePerBooking and dates(s, ANA_S) == 1 and dates(s, BEN_S) == 1)
+
+  run legacyNoShowWithoutAttributionTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set(BEN_S)))
+      .then(s' = { ...s, inters: Set(recordOf("o1", s.opps.get("o1"), NOBODY, true, false, s.now)) })
+      .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
+
+  // The trace adds a fourth accepted seat to the usual three-person fixture, then drops it before feedback.
+  run groupFeedbackUsesActiveRosterTest =
+    init
+      .then(bookPlan("o1", "slop", "ana", "ben", "cy", false))
+      .then(all {
+        val other = { app: "slop", p: "fourth", g: 0 }
+        val o = s.opps.get("o1")
+        val booked = o.parts.union(Set(other))
+        val allBooked = { ...o, parts: booked, going: booked, told: booked }
+        s' = { ...s, opps: dropOpps(s.opps.set("o1", allBooked), other) }
+      })
+      .expect(s.opps.get("o1").stage == "scheduled" and s.opps.get("o1").told.size() == 4
+        and s.opps.get("o1").going.size() == 3)
+      .then(meet("o1", Set(BEN_S)))
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
+      .expect(feedbackHistoryUsesActiveRoster and s.inters.size() == 2 and s.inters.forall(i => i.parts.size() == 3)
+        and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
+      .then(s' = forgetEncounterHistory(s, { app: "slop", p: "fourth", g: 0 }))
+      .expect(s.opps.get("o1").stage == "deleted" and s.inters.size() == 2 and
+        feedbackHistoryUsesActiveRoster and attendanceCountsOncePerBooking and noShowCountsAbsentOnly
+        and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
+      .then(leave("slop", "ben"))
+      .expect(feedbackHistoryUsesActiveRoster and s.inters == Set())
+
+  run directCounterpartAbsenceStaysAttendanceEvidenceTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set(BEN_S)))
+      .then(checkIn("o1", ANA_S, "counterpartAbsence", "none"))
+      .expect(counterpartAbsenceStaysWithExactPair and s.inters.exists(i => i.counterpartAbsence == Set(BEN_S))
+        and s.reports == Set() and s.blocks == Set() and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
+
+  run groupAbsenceCannotNameOneCounterpartTest =
+    init
+      .then(bookPlan("o1", "slop", "ana", "ben", "cy", false))
+      .then(meet("o1", Set()))
+      .then(checkIn("o1", ANA_S, "counterpartAbsence", "none"))
+      .expect(s.inters.size() == 1 and s.inters.forall(i => i.counterpartAbsence == Set()) and s.reports == Set())
 
   // SD-442: the answer comes the next day. The record keeps the feedback day and the earlier booked slot.
   run sd442SlotTest =
@@ -1592,6 +1782,70 @@ module safety_trust {
       .then(answerWho(ANA_S))
       .expect(s.reports.exists(r => r.reporter == ANA_S and r.met) and everyMetReportFiled)
 
+  run soleWhoOfferNeedsCompleteConfirmationTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .expect(not(safetyQuestionUsesSoleOffer(true, false, false, false)) and
+        not(safetyQuestionUsesSoleOffer(true, true, true, false)) and
+        not(safetyQuestionUsesSoleOffer(true, false, true, true)))
+      .then(answerWhoShared(ANA_S, "peon", false, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set())
+      .then(answerWhoBySoleOffer(ANA_S, false, true, false))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.subject == BEN_S))
+
+  run unmatchedExplicitNameDoesNotUseSoleOfferTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(answerWhoBySoleOffer(ANA_S, false, true, true).fail())
+
+  run unrelatedRepliesKeepWhoTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(keepWhoAfterUnrelatedReply(ANA_S, true, true))
+      .then(keepWhoAfterUnrelatedReply(ANA_S, false, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.pendingWho.get(ANA_S).target == "ben" and s.reports == Set())
+      .then(answerWho(ANA_S))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.reporter == ANA_S and r.met))
+
+  run bareSafetyControlsDoNotNameTargetTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .expect(not(safetyQuestionNamedReading(true, false, false, false)) and
+        not(safetyQuestionNamedReading(false, true, false, false)) and
+        not(safetyQuestionNamedReading(false, false, true, true)) and
+        safetyQuestionNamedReading(false, true, false, true))
+      .then(receiveWhoControl(ANA_S, true, false, false))
+      .then(receiveWhoControl(ANA_S, true, true, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set() and s.personBlocks == Set())
+      .then(receiveWhoControl(ANA_S, false, true, false))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.personBlocks == Set())
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(receiveWhoControl(ANA_S, true, false, true))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.personBlocks == Set())
+
+  run excludedTargetCannotBeConfirmedTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(excludeWhoTarget(ANA_S))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set())
+      .then(answerWho(ANA_S).fail())
+
+  run staleSignedWhoReplyKeepsCurrentQuestionTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(tick(1))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(staleSignedWhoReply(ANA_S, 0))
+      .then(staleSignedWhoReply(ANA_S, 2))
+      .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set() and s.personBlocks == Set())
+      .then(answerWho(ANA_S))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.reporter == ANA_S and r.met))
+
   // ------------------------------------------------------------------ wave 4 run tests
   pure val CY_S1: Mid = { app: "slop", p: "cy", g: 1 }
 
@@ -1637,7 +1891,7 @@ module safety_trust {
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(everyMetReportFiled and s.reports.exists(r => r.subject == BEN_S and r.met)
               and not(s.reports.exists(r => r.subject == BEN_P)) and not(s.pendingWho.get(ANA_S).asked))
 
@@ -1647,24 +1901,24 @@ module safety_trust {
       .then(bookDate("o2", "peon", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
       .then(report("ana", "peon", "ben", "report", "harassment", true))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(s.reports == Set() and s.pendingWho.get(ANA_S).asked and s.pendingWho.get(ANA_P).asked)
 
   run sharedWhoDoesNotOverrideAnExplicitAppOrUseExpiredOffersTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
-      .then(answerWhoShared(ANA_S, "peon", true))
+      .then(answerWhoShared(ANA_S, "peon", true, true))
       .expect(s.reports == Set() and s.pendingWho.get(ANA_S).asked)
       .then(tick(2))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(s.reports == Set() and everyMetReportFiled)
 
   run sharedWhoDoesNotUseANameThatWasNeverOfferedTest =
     init
       .then(report("ana", "slop", "ben", "report", "harassment", true))
       .then(bookDate("o1", "slop", "ana", "ben"))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(s.reports == Set() and everyMetReportFiled and not(s.pendingWho.get(ANA_S).offered))
 
   // W3-221: ana’s urgent report commits after leave consent. Forget keeps the exact report restriction.

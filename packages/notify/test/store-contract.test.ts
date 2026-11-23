@@ -68,14 +68,24 @@ function contract(name: string, make: () => Promise<NotifyStore>) {
       expect(await s.getToken("T-ZZZZZZ")).toBeUndefined();
     });
 
-    test("signals", async () => {
-      await s.setActive("c5", "claude", true);
-      await s.touch("c5", "claude", T0);
-      await s.recordOutcome("c5", "claude", "ignored", T0 + 1);
-      await s.recordOutcome("c5", "claude", "ignored", T0 + 2);
-      expect((await s.signals("c5"))[0]).toMatchObject({ surface: "claude", active: true, ignored: 2, ignoredStreak: 2, lastUsedAt: T0 });
-      await s.recordOutcome("c5", "claude", "acted", T0 + 3);
-      expect((await s.signals("c5"))[0]).toMatchObject({ acted: 1, ignoredStreak: 0, lastUsedAt: T0 + 3 });
+    test("signals reflect only the first outcome of each delivery", async () => {
+      const personId = "c5";
+      await s.setActive(personId, "claude", true);
+      await s.touch(personId, "claude", T0);
+      const deliver = async (name: string, target: "claude" | "imessage", sentAt: number) => {
+        const item = (await s.addItem({ ...base, personId, subjectId: name }, T0)).item;
+        const deliveryId = `ntf_${name}`;
+        expect(await s.recordDelivery({ deliveryId, personId, itemIds: [item.id], target, countsTowardCap: false, sentAt })).toBe(true);
+        return deliveryId;
+      };
+      const ignored = [await deliver("first-unused", "claude", T0), await deliver("second-unused", "claude", T0)];
+      const action = await deliver("used", "imessage", T0 + 1);
+      expect((await s.expireDeliveries(T0 + 1, T0 + 2)).map(d => d.deliveryId).sort()).toEqual(ignored.sort());
+      expect(await s.expireDeliveries(T0 + 1, T0 + 2)).toEqual([]);
+      expect((await s.signals(personId))[0]).toMatchObject({ surface: "claude", active: true, ignored: 2, ignoredStreak: 2, lastUsedAt: T0 });
+      expect(await s.actOnDelivery(action, "claude", T0 + 3)).toBe(true);
+      expect(await s.actOnDelivery(action, "imessage", T0 + 4)).toBe(false);
+      expect(await s.signals(personId)).toMatchObject([{ surface: "claude", acted: 1, ignoredStreak: 0, lastUsedAt: T0 + 3 }]);
     });
   });
 }

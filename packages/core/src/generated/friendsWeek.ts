@@ -227,6 +227,26 @@ export function canReserveNewPlan(s: FriendsRun, invited: string[], alternates: 
   return s.phase === "NewPlans" && !invited.some((memberId: string) => !newPlanAvailable(s, memberId)) && (!reserveAlternates || !alternates.some((memberId: string) => !newPlanAvailable(s, memberId)));
 }
 
+/** Story: Find time with familiar people or meet someone nearby / A standby has no initial invitation and holds one bench place (spec/friendsWeek.md) */
+//@ pure
+export function friendStandbyCanRemain(hasInitialInvitation: boolean, hasStandbyPlace: boolean): boolean {
+  return !(hasInitialInvitation || hasStandbyPlace);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A standby has no initial invitation and holds one bench place (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendStandbyHasNoOtherSeat(hasInitialInvitation: boolean, hasStandbyPlace: boolean): boolean {
+  //@ ensures \result === true
+  return !friendStandbyCanRemain(hasInitialInvitation, hasStandbyPlace) || (!hasInitialInvitation && !hasStandbyPlace);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A standby has no initial invitation and holds one bench place (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendUnassignedStandbyCanRemain(hasInitialInvitation: boolean, hasStandbyPlace: boolean): boolean {
+  //@ ensures \result === true
+  return !(!hasInitialInvitation && !hasStandbyPlace) || friendStandbyCanRemain(hasInitialInvitation, hasStandbyPlace);
+}
+
 /** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
 //@ pure
 export function friendTableHasMinimumCandidates(compatibleCandidates: number, minimumInvitees: number): boolean {

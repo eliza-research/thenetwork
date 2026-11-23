@@ -46,7 +46,7 @@ function side(p: SlopProfile) {
 
 /** Pseudonymous judge context for a dating pair. */
 export function slopJudgeContext(w: World, c: Candidate, o: SlopPackOptions): { context: object; refs: Record<string, MemberId> } {
-  const P = slopProfiles(w.input, w.canonical);
+  const P = slopProfiles(w.input);
   const [a, b] = c.participants as [MemberId, MemberId];
   const pa = P.get(a), pb = P.get(b);
   if (c.participants.length !== 2 || !pa || !pb) return { context: { error: "not a dating pair" }, refs: {} };
@@ -71,7 +71,7 @@ export function slopJudge(o: SlopPackOptions): JudgePack {
     // After the model: still two adults who are each in the other's stated seeking set.
     hardGate: (w, c) => {
       if (c.participants.length !== 2 || c.category !== "romance") return "not_one_to_one";
-      const P = slopProfiles(w.input, w.canonical);
+      const P = slopProfiles(w.input);
       const [pa, pb] = c.participants.map(id => P.get(id));
       if (!pa?.adult || !pb?.adult) return "underage";
       return pa.is && pb.is && pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is) ? null : "orientation_mismatch";

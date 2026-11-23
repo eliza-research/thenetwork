@@ -33,9 +33,40 @@ const emptyState = (pop: PeonPopulation, week = 0): PeonNetworkState => ({
 export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> {
   const spec = o.quick ? { seeds: [13], weeks: 4 } : PEON_PINNED;
   const all: Record<"pack" | "keyword" | "oracle", PeonMetrics[]> = { pack: [], keyword: [], oracle: [] };
+  const exits = { candidates: 0, reviews: 0, interviews: 0, offers: 0, hires: 0 };
+  const budget = { reads: 0, interviews: 0, hours: 0, expected: 0, mismatchedRuns: 0 };
   for (const arm of ["pack", "keyword", "oracle"] as const) for (const seed of spec.seeds) {
-    all[arm].push(peonMetrics(await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, matcher: ARMS[arm]!.matcher, realism: REALISM_V2 })));
+    const inactiveFrom = new Map<string, number>();
+    const run = await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, realism: REALISM_V2,
+      matcher: world => {
+        const configured = ARMS[arm]!.matcher;
+        const matcher = typeof configured === "function" ? configured(world) : configured;
+        return { ...matcher, propose(ctx) {
+          for (const id of world.state.exited) if (!inactiveFrom.has(id)) inactiveFrom.set(id, ctx.week);
+          return matcher.propose(ctx);
+        } };
+      } });
+    const afterExit = (id: string, week: number | undefined) => week !== undefined && week >= (inactiveFrom.get(id) ?? Infinity);
+    exits.candidates += inactiveFrom.size;
+    exits.reviews += run.flows.filter(f => f.reviewed && afterExit(f.cand, f.reviewWeek)).length;
+    exits.interviews += run.flows.filter(f => f.interviewed && afterExit(f.cand, f.interviewWeek)).length;
+    exits.offers += run.flows.filter(f => f.offered && afterExit(f.cand, (f.interviewWeek ?? -2) + 1)).length;
+    exits.hires += run.hires.filter(h => afterExit(h.cand, h.week)).length;
+    const reads = run.flows.filter(f => f.reviewed || f.onFile).length;
+    const interviews = run.flows.filter(f => f.interviewWeek !== undefined).length;
+    const expected = reads * REALISM_V2.screening!.readHours + interviews * REALISM_V2.screening!.interviewHours;
+    budget.reads += reads;
+    budget.interviews += interviews;
+    budget.hours += run.recruiterHours;
+    budget.expected += expected;
+    if (Math.abs(run.recruiterHours - expected) > 1e-7) budget.mismatchedRuns++;
+    all[arm].push(peonMetrics(run));
   }
+  b.gate("world: candidates who exit get no later reviews, interviews, offers or hires",
+    exits.candidates > 0 && exits.reviews + exits.interviews + exits.offers + exits.hires === 0 && all.pack.every(m => m.hires > 0), JSON.stringify(exits));
+  b.gate("world: recruiter hours count each application review and interview reservation once",
+    budget.reads > 0 && budget.interviews > 0 && budget.mismatchedRuns === 0,
+    JSON.stringify({ ...budget, hours: +budget.hours.toFixed(6), expected: +budget.expected.toFixed(6) }));
   b.track("fingerprint: pack, keyword and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.keyword, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedGates(all.pack)) b.track(`gate ${g.gate}`, g.pass, g.value);

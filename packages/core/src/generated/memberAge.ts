@@ -8,10 +8,10 @@ export type FractionalAgeEvidence = "FractionalAgeUnknown" | "FractionalAgeLoose
 export const minMemberAge: number = 13;
 /** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
 export const minLooseHeightAge: number = 8;
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-export const minLooseTeamAge: number = 10;
 /** Story: Join at the eligible age / Age data outside the human range is unusable (spec/memberAge.md) */
 export const maxAge: number = 120;
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+export const minLooseTeamAge: number = 10;
 /** Story: Take part in adult matching / Matching requires a usable age of at least 18 (spec/memberAge.md) */
 export const adultAge: number = 18;
 
@@ -66,6 +66,32 @@ export function confirmedUnderage(age: number): boolean {
   return ageInRange(age) && !joinableAge(age);
 }
 
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function ownAgeEvidenceAllowed(quoted: boolean): boolean {
+  return !quoted;
+}
+
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function ownYouthCueAllowed(quoted: boolean, ownAttribution: boolean, unfinishedCasual: boolean): boolean {
+  return !quoted || ownAttribution || unfinishedCasual;
+}
+
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function lawQuotedWordsDoNotSetSenderAge(quoted: boolean): boolean {
+  //@ ensures \result === true
+  return !quoted || !ownAgeEvidenceAllowed(quoted);
+}
+
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function lawAnotherSpeakersYouthCueCannotRestrictSender(quoted: boolean): boolean {
+  //@ ensures \result === true
+  return !quoted || !ownYouthCueAllowed(quoted, false, false);
+}
+
 /** Story: Take part in adult matching / Project a committed age using its original owner (spec/memberAge.md) */
 //@ pure
 export function recordedAgeFloorApplies(recordedOwner: string, currentOwner: string): boolean {
@@ -103,6 +129,32 @@ export function textUseAllowedAtAge(age: number, complianceOrLeave: boolean): bo
 export function lawConfirmedUnderageCannotRestart(age: number): boolean {
   //@ ensures \result === true
   return !confirmedUnderage(age) || !textUseAllowedAtAge(age, false);
+}
+
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
+export function precedingBirthdayAge(nextAge: number): number {
+  return exact_memberAge(nextAge - 1);
+}
+
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
+export function ageQualifierFollows(nearBirthday: boolean, distantBirthday: boolean): boolean {
+  return nearBirthday || distantBirthday;
+}
+
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
+export function lawDistantBirthdayQualifiesTheAge(nearBirthday: boolean): boolean {
+  //@ ensures \result === true
+  return ageQualifierFollows(nearBirthday, true);
+}
+
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
+export function lawBeforeAnEighteenthBirthdayIsNotAdult(nextAge: number): boolean {
+  //@ ensures \result === true
+  return !(nextAge <= adultAge) || !matchableAge(precedingBirthdayAge(nextAge));
 }
 
 /** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
@@ -184,4 +236,10 @@ export function lowerAge(firstAge: number, secondAge: number): number {
 export function lawEffectiveAgeCannotRise(firstAge: number, secondAge: number): boolean {
   //@ ensures \result === true
   return lowerAge(firstAge, secondAge) <= firstAge && lowerAge(firstAge, secondAge) <= secondAge;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_memberAge(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

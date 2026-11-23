@@ -36,7 +36,7 @@ export const friendsGeo: GeoModel = {
     const o = cityBucketGeo.overlap(w, ids, start, end, FRIENDS_CITY);
     return o && o.city === FRIENDS_CITY ? o : null;
   },
-  sharesArea: (w, ids, market) => cityBucketGeo.sharesArea(w, ids, market),
+  sharesArea: (w, ids, market, window) => cityBucketGeo.sharesArea(w, ids, market, window),
   pairReason: (w, a, b) => {
     const info = friendsInfo(w);
     const ia = info.get(a), ib = info.get(b);

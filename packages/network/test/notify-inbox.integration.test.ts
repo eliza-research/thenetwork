@@ -1,9 +1,59 @@
 import { expect, test } from "vitest";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { NetworkService } from "../service/service.ts";
+
+// spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
+test.skipIf(!pgAvailable)("the notification planner follows each recipient's home zone in a shared New York runtime", async () => {
+  const url = await migratedDb("network_notify_home_zone");
+  const clock = new SimClock(Date.UTC(2026, 9, 19, 19));
+  const service = new NetworkService({
+    url, clock, photoStorage: null, log: () => {}, env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
+    networks: [{ id: "ntwrk:nyc", matchingEnabled: false }],
+  });
+  try {
+    await service.start();
+    const app = APPS.ntwrk;
+    const notify = service.notify!;
+    const members = [];
+    for (const [phone, firstName, homeCity] of [
+      ["+12125550171", "Ari", "nyc"], ["+12125550172", "Mira", "sf"],
+    ] as const) {
+      const invite = await service.accounts.invite(app, phone);
+      if (!invite) throw new Error("The notification fixture invitation was missing");
+      const result = await service.accounts.join(app, { e164: phone, personId: invite.personId }, {
+        firstName, age: 31, homeCity, consent: { sms: true, wording: app.consent.text },
+      });
+      if (!result.ok) throw new Error(`The notification fixture did not join: ${result.error}`);
+      const { personId, memberId } = result.membership;
+      expect(await service.runtimeOfMember(app.id, memberId)).toBe(service.runtimeFor("ntwrk", "nyc"));
+      await notify.add({
+        personId, app: app.id, eventType: "information", subjectId: "home-city",
+        urgency: "requested", summary: "Your requested update is ready.", expiresAt: clock.now() + 2 * DAY,
+      }, clock.now());
+      members.push({ personId, phone });
+    }
+    const [ny, sf] = members;
+    const planAt = async (at: number) => {
+      clock.set(at);
+      const { sends, holds } = await notify.plan(at);
+      return { sends: sends.map(row => [row.to, row.timeZone]), holds };
+    };
+    // 10:30 in New York and 07:30 in San Francisco.
+    expect(await planAt(Date.UTC(2026, 9, 20, 14, 30))).toEqual({
+      sends: [[ny!.phone, "America/New_York"]], holds: [{ personId: sf!.personId, reason: "quiet_hours" }],
+    });
+    // 22:30 in New York and 19:30 in San Francisco.
+    expect(await planAt(Date.UTC(2026, 9, 21, 2, 30))).toEqual({
+      sends: [[sf!.phone, "America/Los_Angeles"]], holds: [{ personId: ny!.personId, reason: "quiet_hours" }],
+    });
+  } finally {
+    await service.close();
+    await dropDb(url);
+  }
+}, 120_000);
 
 // spec/notificationAcknowledgement.md, "A delivered text can appear only once and its opportunity must still be current"
 test.skipIf(!pgAvailable)("the inbox repairs accepted messages once and shows only current updates in the caller's app", async () => {

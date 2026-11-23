@@ -102,6 +102,58 @@ pure def lawEmergencyCheckInNeedsReceipt(attributedReport: bool): bool =
   not(emergencyCheckInReport(false, attributedReport))
 ```
 
+## Story: Block or report a person directly
+
+> As a member, I want a clearly requested block or report to reach the right person or ask me who I mean.
+
+### Direct polite safety requests use the existing counterpart chooser
+
+A direct request beginning with “can you” or “could you” can ask to block or report. For these forms, conditional, hypothetical and delayed wording cannot start the action. “My date” and “my match” refer to a counterpart under the existing target rules. Use the existing chooser for uncertainty, including confirmation for a report by reference after a past meeting.
+
+```quint
+pure def safetyRequestMayResolveTarget(directCommand: bool, conditionalOrDelayed: bool): bool =
+  directCommand and not(conditionalOrDelayed)
+
+pure def lawConditionalSafetyRequestCannotResolveTarget(directCommand: bool): bool =
+  not(safetyRequestMayResolveTarget(directCommand, true))
+```
+
+### Report language distinguishes physical harm from casual contact
+
+A direct affirmative statement that the counterpart choked the reporter is unsafe report evidence. Treat “hit me up” as a casual contact idiom. Disregard that idiom and denied evidence when classifying the report. The established counterpart and check-in receipt rules still apply.
+
+```quint
+pure def acceptsReportEvidence(affirmative: bool, casualContact: bool): bool =
+  affirmative and not(casualContact)
+
+pure def lawCasualContactDoesNotEstablishHarm(affirmative: bool): bool =
+  not(acceptsReportEvidence(affirmative, true))
+
+pure def lawDeniedEvidenceDoesNotEstablishHarm(casualContact: bool): bool =
+  not(acceptsReportEvidence(false, casualContact))
+```
+
+### A minor report needs affirmative attributable evidence
+
+Use the same age reading for a direct report and a post-meeting check-in.
+A direct statement about a person can use digits, a spelled age, or a
+compound form such as “16-year-old.” “My date was sixteen” can open the
+same review as “he's sixteen.” Ignore times, prices, ages of relatives
+or objects, questions, and qualified or quoted statements. A statement
+that the member reports about a counterpart can place a safety hold in
+the existing app and does not overwrite that person's stated age.
+
+```quint
+pure def acceptsMinorReportEvidence(eligibleSubject: bool, minorAgeSignal: bool, affirmative: bool): bool =
+  eligibleSubject and minorAgeSignal and affirmative
+
+pure def lawMinorReportNeedsAffirmation(eligibleSubject: bool, minorAgeSignal: bool): bool =
+  not(acceptsMinorReportEvidence(eligibleSubject, minorAgeSignal, false))
+
+pure def lawMinorReportNeedsAnEligibleSubject(minorAgeSignal: bool, affirmative: bool): bool =
+  not(acceptsMinorReportEvidence(false, minorAgeSignal, affirmative))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.
@@ -133,17 +185,23 @@ pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: 
 
 ### The exact open report follows its subject through ordinary app leave
 
-An open, urgent report from a member who met the subject continues to restrict matching in the originating app after ordinary leave. When the runtime forgets the member, the shell records only the app, originating runtime, exact report ID, and verified canonical subject. Its review remains with that runtime. The shell erases the association on account erasure or phone reassignment. A generic lift and closing a case leave this report open. Exact dismissal removes only its own restriction. An authorized hold of an archived report records the durable staff hold and marks the exact report held in the same transaction. A ban still requires the existing verified person and staff authority.
+An open, urgent report from a member who met the subject continues to restrict matching in the originating app after ordinary leave. At the forget transaction, an open minor report also carries if the member has an active age signal from a report. This applies when the reporter has not met the subject and when the report arrives after leave starts. The member's own stated age uses the person-level age policy. The shell records only the app, originating runtime, exact report ID, and verified canonical subject. Its review remains with that runtime. The shell erases the association on account erasure or phone reassignment. A generic lift and closing a case leave this report open. Exact dismissal removes only its own restriction. An authorized hold of an archived report records the durable staff hold and marks the exact report held in the same transaction. A ban still requires the existing verified person and staff authority.
 
 ```quint
-pure def carryReportOnAppLeave(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
-  ordinaryLeave and reportRestrictsMatching(reportPhase, metBefore, urgent)
+pure def carryReportOnAppLeave(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool, reportedMinor: bool): bool =
+  ordinaryLeave and (reportRestrictsMatching(reportPhase, metBefore, urgent) or (reportPhase == ReportOpen and reportedMinor))
 
 pure def archivedReportHoldAllowed(exactSubject: bool, matchingRestriction: bool): bool =
   exactSubject and matchingRestriction
 
-pure def lawOnlyOpenReportsCarry(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
-  carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) implies reportPhase == ReportOpen
+pure def lawOnlyOpenReportsCarry(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool, reportedMinor: bool): bool =
+  carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent, reportedMinor) implies reportPhase == ReportOpen
+
+pure def lawReportedMinorSignalSurvivesOrdinaryLeave(urgent: bool): bool =
+  carryReportOnAppLeave(true, ReportOpen, false, urgent, true)
+
+pure def lawAccountErasureCarriesNoReport(reportPhase: ReportPhase, metBefore: bool, urgent: bool, reportedMinor: bool): bool =
+  not(carryReportOnAppLeave(false, reportPhase, metBefore, urgent, reportedMinor))
 
 pure def lawArchivedHoldRequiresExactSubject(matchingRestriction: bool): bool =
   not(archivedReportHoldAllowed(false, matchingRestriction))
@@ -169,6 +227,73 @@ pure def lawSharedReportRequiresOneChoice(signedMember: bool, choices: int): boo
 
 pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf: int, oldestPrompt: int): bool =
   reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) implies receivedAt >= askedAt
+```
+
+### An unrelated reply keeps a current safety question
+
+This rule applies when the reply reaches the app that holds the safety question. A signed reply can answer or close it only if the gateway received the reply at or after the question opened and at or before the current time. An exact allowed name answers the question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting.
+
+An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. Without a competing prompt, a direct unnamed rejection such as "not him" or "it was someone else" can end the question in the same way. An incidental mention does not count as a rejection. A competing prompt can still handle the reply after cancellation or exclusion.
+
+Read a bare confirmation, refusal, or cancellation as a control reply, even when the words match a member's name. A control reply cannot select an exact name on the current app or on another app. A member can give a full name or use "I mean" to name someone in the current app when their displayed name matches a control reply.
+
+When the reply supplies no allowed target, cancellation, or exclusion, a competing prompt keeps the safety question open. A bare yes or no can answer that prompt. Without another prompt, a short unresolved reply ends the question. A longer unrelated reply keeps it available through the one-day reply window. After that window, the stored question cannot intercept a reply or delay an invitation survey.
+
+```quint
+pure def safetyQuestionIsCurrent(askedAt: int, oldestQuestion: int): bool = askedAt >= oldestQuestion
+
+pure def lawExpiredSafetyQuestionCannotAct(askedAt: int, oldestQuestion: int): bool =
+  askedAt < oldestQuestion implies not(safetyQuestionIsCurrent(askedAt, oldestQuestion))
+
+pure def safetyQuestionAcceptsName(confirmation: bool, refusal: bool, cancellation: bool): bool =
+  not(confirmation or refusal or cancellation)
+
+pure def lawSafetyControlCannotNameTarget(confirmation: bool, refusal: bool, cancellation: bool): bool =
+  (confirmation or refusal or cancellation) implies not(safetyQuestionAcceptsName(confirmation, refusal, cancellation))
+
+pure def safetyQuestionAppliesTarget(allowedTarget: bool, excludesTarget: bool): bool =
+  allowedTarget and not(excludesTarget)
+
+pure def safetyQuestionResolves(allowedTarget: bool, competingPrompt: bool, cancels: bool, excludesTarget: bool, shortReply: bool): bool =
+  safetyQuestionAppliesTarget(allowedTarget, excludesTarget) or cancels or excludesTarget or (not(competingPrompt) and shortReply)
+
+pure def lawCompetingPromptKeepsUnresolvedSafety(shortReply: bool): bool =
+  not(safetyQuestionResolves(false, true, false, false, shortReply))
+
+pure def lawCancellationResolvesSafety(competingPrompt: bool, shortReply: bool): bool =
+  safetyQuestionResolves(false, competingPrompt, true, false, shortReply)
+
+pure def lawAllowedTargetResolvesSafety(competingPrompt: bool, cancels: bool, shortReply: bool): bool =
+  safetyQuestionResolves(true, competingPrompt, cancels, false, shortReply)
+
+pure def lawTargetExclusionClosesWithoutFiling(allowedTarget: bool, competingPrompt: bool, shortReply: bool): bool =
+  safetyQuestionResolves(allowedTarget, competingPrompt, false, true, shortReply) and
+    not(safetyQuestionAppliesTarget(allowedTarget, true))
+
+pure def lawLongUnrelatedReplyKeepsSafety(competingPrompt: bool): bool =
+  not(safetyQuestionResolves(false, competingPrompt, false, false, false))
+```
+
+### A complete name or confirmation identifies one safety target
+
+A fixed affirmative prefix or courtesy suffix can accompany the full name. If the literal and qualified readings identify different people, the answer is ambiguous.
+
+A bare affirmative or a complete positive expression such as "him" or "that's her" can use the sole person offered only when no other prompt is waiting. A pronoun followed by another suggestion, a refusal, or a question cannot select the offered person.
+
+Shared-line routing requires a unique exact displayed name across the active app questions. An unnamed confirmation cannot choose the app.
+
+```quint
+pure def safetyQuestionUsesSoleOffer(soleOffer: bool, competingPrompt: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+  soleOffer and not(competingPrompt) and exactConfirmation and not(hasNamedMatch)
+
+pure def lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, true, exactConfirmation, hasNamedMatch))
+
+pure def lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: bool, competingPrompt: bool, hasNamedMatch: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, false, hasNamedMatch))
+
+pure def lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: bool, competingPrompt: bool, exactConfirmation: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true))
 ```
 
 ### A ban allows only carrier commands and app leave

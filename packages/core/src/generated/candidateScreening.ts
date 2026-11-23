@@ -70,6 +70,19 @@ export function sometimesRefused(s: Screening): boolean {
   return s.phase === "Refused";
 }
 
+/** Story: Refuse an ineligible match before scoring it / Every retained alternate passes the same safety floor (spec/candidateScreening.md) */
+//@ pure
+export function candidateBackfillAllowed(known: boolean, held: boolean): boolean {
+  return known && !held;
+}
+
+/** Story: Refuse an ineligible match before scoring it / Every retained alternate passes the same safety floor (spec/candidateScreening.md) */
+//@ pure
+export function lawCandidateBackfillNeedsAvailableMember(known: boolean, held: boolean): boolean {
+  //@ ensures \result === true
+  return !candidateBackfillAllowed(known, held) || (known && !held);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: Screening, event: Event): boolean {

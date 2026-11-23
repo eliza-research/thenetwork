@@ -291,7 +291,11 @@ test("signed-turn replies pass the queue's leak guard (a failing one is parked f
   const before=dispatches;
   const r=await service.inbox.signed({messageId:"canary-turn",channel:"blooio",from:phone2,to:null,text:"what did you find?",transport:"imessage",receivedAt:clock.now()},"h-canary-turn",async turn=>{
     turn.app="friends";turn.memberId=memberId;
-    await rt.unitOfWork(()=>{rt.system(memberId,"canary-reply","Your code is CANARY_TEST_77_x","reply");rt.system(memberId,"clean-reply","See you Saturday.","reply");});
+    await rt.unitOfWork(()=>{
+      rt.system(memberId,"canary-reply","Your code is CANARY_TEST_77_x","reply");
+      rt.system(memberId,"handle-reply","My snap is moonlightfox","reply");
+      rt.system(memberId,"clean-reply","See you Saturday. Find me on Instagram and TikTok sometime.","reply");
+    });
     const [row]=await sql`select replies from platform.inbound where id=${turn.id}`;
     const replies=row.replies as {id:string;body:string}[];
     return {outcome:"handled",replies:replies.map(x=>x.body),replyIds:replies.map(x=>x.id),delivery:"collected",replyKind:"reply",accountEligible:true,app:"friends",memberId,reason:"handled"};
@@ -301,6 +305,7 @@ test("signed-turn replies pass the queue's leak guard (a failing one is parked f
   expect((r.body as any).replyIds).toEqual(["clean-reply"]);
   expect((await sql`select status from platform.outbound where id='clean-reply'`)[0].status).toBe("collected");
   expect((await sql`select status from platform.outbound where id='canary-reply'`)[0].status).toBe("parked_leak_review");
+  expect((await sql`select status from platform.outbound where id='handle-reply'`)[0].status).toBe("parked_leak_review");
   expect(dispatches).toBe(before);
   // Staff review through the service (the console's routes): listed, a reason is required, dropped and audited.
   const staffCall=(path:string,method="GET",b?:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method,headers:{authorization:"Bearer saf-tok",...(b?{"content-type":"application/json"}:{})},...(b?{body:JSON.stringify(b)}:{})}));

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { McpAppId } from "../src/apps.ts";
-import { CHALLENGE, origin, PHONE_B, register, setup, type Env } from "./harness.ts";
+import { CHALLENGE, origin, pendingAuthorizationCookie, PHONE_B, register, setup, type Env } from "./harness.ts";
 
 const RETURN = "https://client.example/callback";
 const SITE: Record<McpAppId, string> = { ntwrk: "ntwrk.party", slop: "slop.date", peon: "peon.biz", friends: "friends.help" };
@@ -21,7 +21,7 @@ async function signupPages(env: Env, domain: string, app: McpAppId) {
   const phoneForm = await start.text();
   expect(start.status, phoneForm.slice(0, 300)).toBe(200);
   const rid = /name="rid" value="([^"]+)"/.exec(phoneForm)?.[1];
-  const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
+  const browser = pendingAuthorizationCookie(start);
   if (!rid || !browser) throw new Error("no authorization request");
   const cookies = new Map<string, string>([[browser.slice(0, browser.indexOf("=")), browser.slice(browser.indexOf("=") + 1)]]);
   const post = async (path: string, form: Record<string, string>) => {

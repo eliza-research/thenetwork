@@ -48,6 +48,47 @@
 {"text": "I couldn't share this pic with her", "want": "none"}
 {"text": "can't wait! send them my number", "want": "contact_share"}
 {"text": "tell them I can't make it at 7", "want": "text"}
+{"text": "send them my number when we meet", "want": "none"}
+{"text": "send them my number once we meet", "want": "none"}
+{"text": "send them this photo next week", "want": "none"}
+{"text": "send them my number on Friday", "want": "none"}
+{"text": "send them my number after our first date", "want": "none"}
+{"text": "send them my number this weekend", "want": "none"}
+{"text": "send them my number in a few days", "want": "none"}
+{"text": "when we meet, send them my number", "want": "none"}
+{"text": "send them my number if she asks", "want": "none"}
+{"text": "send them this photo if they ask", "want": "none"}
+{"text": "send them my number when she's ready", "want": "none"}
+{"text": "send them my number if my match is interested", "want": "none"}
+{"text": "send them my number if they say yes", "want": "none"}
+{"text": "send them my number, she already asked", "want": "contact_share"}
+{"text": "I met my match on Friday. Send them my number now.", "want": "contact_share"}
+{"text": "Send them my number now. We meet on Friday.", "want": "contact_share"}
+{"text": "Tell them \"I will send you my number when we meet.\"", "want": "text"}
+{"text": "Tell them \"send them my number if she asks\"", "want": "text"}
+{"text": "text my number to her", "want": "contact_share"}
+{"text": "forward my number to them", "want": "contact_share"}
+{"text": "Would you send them my number?", "want": "contact_share"}
+{"text": "Would you please share my contact info with them?", "want": "contact_share"}
+{"text": "show this photo to Sam", "want": "photo"}
+{"text": "send the photo to them", "want": "photo"}
+{"text": "send this image to her", "want": "photo"}
+{"text": "pass this photo to them", "want": "photo"}
+{"text": "Would you send them this photo?", "want": "photo"}
+{"text": "Would it be okay to send my number?", "want": "none"}
+{"text": "don't tell them I'm running late", "want": "none"}
+{"text": "please don't tell them I am late", "want": "none"}
+{"text": "never tell Sam about this", "want": "none"}
+{"text": "Can you tell them I'm running late", "want": "text"}
+{"text": "Can you tell them I'm running late?", "want": "text"}
+{"text": "Could you tell Sam that I will be 5 minutes late", "want": "text"}
+{"text": "Could you please let them know that I am outside", "want": "text"}
+{"text": "Would you tell them I arrived", "want": "text"}
+{"text": "Can you ask them what table they are at?", "want": "text"}
+{"text": "tell them that I won't be long", "want": "text"}
+{"text": "let Sam know I do not eat dairy", "want": "text"}
+{"text": "tell her I've never been here before", "want": "text"}
+{"text": "tell them don't wait for me", "want": "text"}
 {"text":"I would not give Ari my number","want":"none"}
 {"text":"I could not give Ari my number","want":"none"}
 {"text":"I did not give Ari my number","want":"none"}
@@ -96,11 +137,11 @@
 {"text": "Ask Mary Jane to show him this photo. Please show Ari this photo.", "want": "photo"}
 {"text": "I want you to send them my number.", "want": "contact_share"}
 {"text": "Please go ahead and show them this photo.", "want": "photo"}
+{"text": "Tell them I asked Ana to send him my number.", "want": "text"}
 {"text": "I want Ana to, send him my number", "want": "none"}
 {"text": "I have Ana assigned to, show him this photo", "want": "none"}
 {"text": "I would not want Ana to, send him my number", "want": "none"}
 {"text": "Tell them I can send them my number", "want": "text"}
-{"text": "Tell them I asked Ana to send him my number.", "want": "text"}
 {"text":"Don't send him my photo. Send him my number.","want":"contact_share"}
 {"text":"Don't send him my number. Send him my photo.","want":"photo"}
 {"text": "I won't send my photo. Send him my number.", "want": "contact_share"}

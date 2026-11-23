@@ -8,15 +8,21 @@ A member needs a plan to book only after enough eligible people accept.
 
 Check quorum, group size, deadlines, alternatives, and contact eligibility. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
+The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. Its weekly availability input contains windows after named day exclusions have been applied. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
 
 The [Friends partner time-choice spec](../friendsPlanTimeChoice.md) covers reviewed options and exact shared consent for weekly one-to-one plans. This model covers group quorum at a single fixed time.
 
+The [Observatory roster rules](../observatoryRoster.md) consume the recorded participant and alternate lists when this flow backfills or closes a proposal.
+
 The [candidate pool model](candidate_pool.md) covers the formation of a compatible circle and its alternates. This model starts with the resulting roster and follows changes to its eligibility through review, contact and booking.
 
-The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
+The [original booking notice rule](../meetingReschedule.md#a-named-booking-notice-still-needs-every-recorded-seat) governs exact accepted seats in a staged notice and re-creation after quiet hours. `planReveal` abstracts the quiet-hours interval by disclosing the current accepted roster when it sends. The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
+
+The copy check uses the plan dispatch rule for public wording. A venue word
+that coincides with a participant's name is allowed in the public frame.
+An identifying hint or menu label still makes its frame unusable.
 
 ```quint
 // -*- mode: Bluespec; -*-

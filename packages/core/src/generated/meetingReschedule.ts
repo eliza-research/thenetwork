@@ -89,8 +89,8 @@ export function lawBookingStartEndsOriginalNotice(scheduled: boolean, confirmedS
 
 /** Story: Change the time only when everyone agrees / A named booking notice still needs every recorded seat (spec/meetingReschedule.md) */
 //@ pure
-export function bookingNoticeRosterCurrent(groupBooking: boolean, recordedRoster: boolean, includesRecipient: boolean, recordedSeatsConfirmed: boolean): boolean {
-  return recordedRoster ? includesRecipient && recordedSeatsConfirmed : !groupBooking;
+export function bookingNoticeRosterCurrent(groupBooking: boolean, recordedRoster: boolean, includesRecipient: boolean, recordedSeatsAccepted: boolean): boolean {
+  return recordedRoster ? includesRecipient && recordedSeatsAccepted : !groupBooking;
 }
 
 /** Story: Change the time only when everyone agrees / A named booking notice still needs every recorded seat (spec/meetingReschedule.md) */
@@ -102,9 +102,9 @@ export function lawWithdrawnSeatPreventsNotice(groupBooking: boolean, includesRe
 
 /** Story: Change the time only when everyone agrees / A named booking notice still needs every recorded seat (spec/meetingReschedule.md) */
 //@ pure
-export function lawUnboundGroupNoticeCannotSend(includesRecipient: boolean, recordedSeatsConfirmed: boolean): boolean {
+export function lawUnboundGroupNoticeCannotSend(includesRecipient: boolean, recordedSeatsAccepted: boolean): boolean {
   //@ ensures \result === true
-  return !bookingNoticeRosterCurrent(true, false, includesRecipient, recordedSeatsConfirmed);
+  return !bookingNoticeRosterCurrent(true, false, includesRecipient, recordedSeatsAccepted);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

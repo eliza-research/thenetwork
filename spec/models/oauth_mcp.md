@@ -84,7 +84,8 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //    on the hub's /mcp/peon is refused as on the peon site.
 //  - The consents page on host `h` (consents) reads one session for each app that `h` serves and lists, for each
 //    session, the grants of its phone and app from every client. The model keeps the list view out; consentsRevokeOn
-//    is the removal, with the host as a parameter. The browser owner and the removal proof stay abstract.
+//    is the removal, with the host as a parameter. On the hub, each other app has its own OTP session cookie.
+//    Cookie selection stays in the HTTP adapter. The same-app session, browser owner and removal-proof checks still apply.
 //  - Signup prefill (spec/authorizationPages.md, "The signup form shows the draft that the person approved in the
 //    agent"; handler.ts signupPrefillFor and authorizeSignup with decision "open", store.ts and pg-store.ts
 //    useSignupPrefill). The model merges the signup step into the consent step: openSignup reads the request at step

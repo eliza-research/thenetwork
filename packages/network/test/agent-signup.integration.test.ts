@@ -167,6 +167,33 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       expect(savedProfile.body?.result.structuredContent).toMatchObject({ app: "friends", profile: { first_name: "Ari", home_region: "nyc" } });
       expect(savedProfile.text).not.toContain(phone);
       expect(intake).toHaveBeenCalledTimes(1);
+
+      // The connector can still confirm this app's existing membership while its intake runtime is unavailable.
+      const partial = new NetworkService({
+        url, clock, instance: "agent-signup-unavailable-intake", log: () => {}, photoStorage: null, notify: false,
+        env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc", matchingEnabled: false }],
+      });
+      try {
+        await partial.start();
+        const live = await createServiceMcp(partial, { databaseUrl: url, migrate: false, log: () => {}, env: { PLATFORM_ENV: "dev" } });
+        if (!live || !(live.store instanceof PgOAuthStore)) throw new Error("Expected a shared database-backed connector");
+        try {
+          const partialEnv = { ...env, fetch: async (request: Request) => (await live.fetch(request))! };
+          const status = await call(partialEnv, `${origin}/mcp`, "check_status", {}, auth);
+          expect(status.body?.result.structuredContent).toMatchObject({ app: "friends", status: "active" });
+          expect(await partial.runtimeOfMember("friends", membership!.memberId)).toBeUndefined();
+          const refused = await call(partialEnv, `${origin}/mcp`, "submit_profile", { about: "I like photography." }, auth);
+          expect(refused.body?.result.structuredContent).toMatchObject({
+            app: "friends", submitted: false, status: "active",
+            next_step: "Profile delivery is unavailable. Check your app status before making changes.",
+          });
+          expect(await live.store.sql`select accepted from oauth.profile_submissions`).toEqual([{ accepted: true }]);
+        } finally {
+          await live.store.close();
+        }
+      } finally {
+        await partial.close();
+      }
     } finally {
       await server.stop(true);
       await connector.store.close();
