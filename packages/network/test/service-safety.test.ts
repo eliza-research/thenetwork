@@ -654,7 +654,12 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([]);
   }, T);
 
-  for (const choice of ["Friday works.", "I think Friday works."]) {
+  for (const { choice, picksFriday } of [
+    { choice: "Friday works.", picksFriday: true },
+    { choice: "I think Friday works.", picksFriday: true },
+    { choice: "Friday probably works, that was my first choice.", picksFriday: false },
+    { choice: "Maybe it was Friday 7pm that worked.", picksFriday: false },
+  ]) {
     test(`#626 a semicolon can separate the offered reply "${choice}" from a safety correction`, async ({ onTestFinished }) => {
       const { s, askSlop, clock, competingSlopProbe, pending, reports, signed, slopAri, slopBen } = await signedSafetyFixture(onTestFinished);
       const offer = "slop.626-semicolon-time-probe";
@@ -668,10 +673,14 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       await signed("626-semicolon-time-reply", `It was someone else; ${choice}`, "slop");
       const safetyPending = Boolean(await pending("slop"));
       const picked = await s.runtimeFor("slop")!.readState(net => net.exportState().opps.find(opp => opp.id === offer)?.picks?.[slopAri]);
-      clock.advance(MINUTE);
-      await signed("626-semicolon-time-later-yes", "Yes.", "slop");
+      for (const i of [0, 1]) {
+        clock.advance(MINUTE);
+        await signed(`626-semicolon-time-later-yes-${i}`, "Yes.", "slop");
+      }
       const reportOnExcludedMember = (await reports("slop"))?.some(report => report.subjectId === slopBen);
-      expect({ safetyPending, picked, reportOnExcludedMember }).toEqual({ safetyPending: false, picked: [friday], reportOnExcludedMember: false });
+      expect({ safetyPending, picked, reportOnExcludedMember }).toEqual({
+        safetyPending: false, picked: picksFriday ? [friday] : undefined, reportOnExcludedMember: false,
+      });
     }, T);
   }
 
@@ -691,6 +700,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     { scenario: "a semicolon I think qualifier", reply: "It was someone else; I think.", keepsQuestion: true, expectedProbe: "probing" },
     { scenario: "a semicolon maybe attribution", reply: "It was someone else; maybe it was Ben after all.", keepsQuestion: true, expectedProbe: "probing" },
     { scenario: "a semicolon I think attribution", reply: "It was someone else; I think it was Ben after all.", keepsQuestion: true, expectedProbe: "probing" },
+    { scenario: "a semicolon qualified by actual uncertainty", reply: "It was someone else; I'm not certain whether it was Ben.", keepsQuestion: true, expectedProbe: "probing" },
+    { scenario: "a semicolon qualified after a discourse marker", reply: "It was someone else; actually, maybe it was Ben.", keepsQuestion: true, expectedProbe: "probing" },
+    { scenario: "a semicolon with a modal attribution after a discourse marker", reply: "It was someone else; actually, it might have been Ben.", keepsQuestion: true, expectedProbe: "probing" },
+    { scenario: "a semicolon with a bare modal attribution", reply: "It was someone else; it might have been Ben.", keepsQuestion: true, expectedProbe: "probing" },
     { scenario: "a bare pronoun rejection", reply: "not him", keepsQuestion: true },
   ];
   for (const { scenario, reply, keepsQuestion, expectedProbe } of replacementReplies) {

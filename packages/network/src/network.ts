@@ -137,7 +137,7 @@ import { currentPairAllowed } from "../../core/src/generated/currentPairRestrict
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, sentencesOf, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, sentencesOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -181,10 +181,17 @@ function safetyReplyConsent(text: string) {
 function isSafetyAttributionQualifier(text: string): boolean {
   const words = safetyName(text);
   // A qualifier can finish with a guess about who it was. A hedge in a time choice stays separate.
-  const attribution = /(?:[,:]? (?:if|whether))?[,:]? (?:it|that) (?:was(?:n't)?|(?:could|may|might) have been)\b/.exec(words);
+  const attribution = /(?:^|(?:[,:]? (?:if|whether))?[,:]? )(?:it|that) (was(?:n't)?|(?:could|may|might) have been)\b/.exec(words);
   const qualifier = words.slice(0, attribution?.index ?? words.length);
-  return /^(?:maybe|perhaps|possibly|probably|i think|i guess|(?:i(?:'m| am) )?(?:not sure|unsure))$/.test(qualifier)
-    || (attribution !== null && consentOf(text).why === "hedged")
+  if (attribution) {
+    const subject = words.slice(attribution.index + attribution[0].length).trim();
+    const timeChoice = /^(.+?) (?:that|which) (?:works?|worked|(?:would|could) work)(?: for (?:me|us))?$/.exec(subject);
+    if (timeChoice && isNamedProbeTime(timeChoice[1]!)) return false;
+  }
+  const hedge = attribution === null ? qualifier : qualifier.replace(/^(?:actually|well|sorry)[,:]? /, "");
+  const modalGuess = attribution !== null && /^(?:could|may|might) /.test(attribution[1]!) && /^(?:actually|well|sorry)?$/.test(qualifier);
+  return modalGuess || /^(?:maybe|perhaps|possibly|probably|i think|i guess|(?:i(?:'m| am) )?(?:not sure|unsure))$/.test(hedge)
+    || (attribution !== null && /^(?:(?:i(?:'m| am) )?(?:not certain|uncertain)|i don't know|i (?:could|may|might) be wrong)$/.test(hedge))
     || (text.includes("?") && /^(?:right|correct|wasn't it)$/.test(words));
 }
 

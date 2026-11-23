@@ -989,6 +989,12 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
   return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
 }
 
+/** Recognize a complete time expression without treating it as acceptance. */
+export function isNamedProbeTime(text: string): boolean {
+  const normalized = normText(text).trim();
+  return timeMentions(normalized).some(mention => mention.at === 0 && mention.end === normalized.length);
+}
+
 const probeOrdinal = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
 const PROBE_ORDINALS: [RegExp, number][] = [
   [probeOrdinal("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
