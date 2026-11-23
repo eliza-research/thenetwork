@@ -493,25 +493,6 @@ function privateShareQualified(text: string, request: RegExpMatchArray): boolean
   return qualifier !== null && /^[\s,:]*$/.test(before.slice(qualifier[0].length));
 }
 
-// spec/relayDecision.md, "A condition on the recipient's assent or a later time leaves the private item unapproved"
-// A precondition stated as its own sentence before the request leaves the item unapproved too.
-// Only someone else's assent counts: the member's own "I have to ask first" is not a condition on the share.
-const PRIOR_PRECONDITION_SUBJECT = String.raw`(?:she|he|they|them|him|her|my\s+(?:match|date)|(?!(?:i|we|you|me|us|it|this|that)\b)[\p{L}][\p{L}'-]{1,30})`;
-const PRIOR_PRECONDITION_VERB = String.raw`(?:agrees?|approves?|says?\s+(?:yes|ok(?:ay)?|so)|asks?|requests?)`;
-const PRIOR_PRECONDITION = new RegExp(
-  String.raw`(?:\b${PRIOR_PRECONDITION_SUBJECT}\s+(?:(?:has|have)\s+to|needs?\s+to|must|has\s+got\s+to)\s+${PRIOR_PRECONDITION_VERB}\b` +
-  String.raw`|\b${PRIOR_PRECONDITION_SUBJECT}\s+${PRIOR_PRECONDITION_VERB}\s+(?:for\s+(?:it|my\s+number|me)\s+)?first\s*$` +
-  String.raw`|\bwait\s+for\b[^.!?;]*\bto\s+${PRIOR_PRECONDITION_VERB}\b` +
-  String.raw`|^[\s,]*only\s+after\b[^.!?;]*\b${PRIOR_PRECONDITION_VERB}\b` +
-  String.raw`|^[\s,]*unless\b[^.!?;]*\b${PRIOR_PRECONDITION_VERB}\b)`,
-  "iu",
-);
-
-function priorSentenceConditionsShare(text: string, request: RegExpMatchArray): boolean {
-  return text.slice(0, request.index!).toLowerCase().split(RELAY_SENTENCE).slice(0, -1)
-    .some(sentence => PRIOR_PRECONDITION.test(sentence.trim()));
-}
-
 const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|would|could|did|should|must|shall|'ll)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t|mustn'?t)\s+wait\b/g;
 const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
 const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
@@ -570,6 +551,49 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 const RELAY_SENTENCE_MARKS = String.raw`.!?;…\n`;
 const RELAY_SENTENCE = new RegExp(`[${RELAY_SENTENCE_MARKS}]+`);
 const RELAY_SENTENCE_TEXT = new RegExp(`[^${RELAY_SENTENCE_MARKS}]+`, "g");
+const PRIOR_ASSENT_NAME = String.raw`(?!(?:i|we|you|me|us|it|this|that|she|he|they|them|him|her)\b)[\p{L}][\p{L}'-]{1,30}`;
+const PRIOR_ASSENT_ACTOR = String.raw`(?:she|he|they|them|him|her|my\s+(?:match|date)|${PRIOR_ASSENT_NAME})`;
+const PRIOR_ASSENT_ACTION = String.raw`(?:agrees?|approves?|says?\s+(?:yes|ok(?:ay)?|so)|asks?|requests?)`;
+const PRIOR_ASSENT_ITEM = String.raw`(?:\s+for\s+(?:it|me|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM}))?`;
+const PRIOR_ASSENT_CONDITIONS = [
+  String.raw`${PRIOR_ASSENT_ACTOR}\s+(?:(?:has|have)\s+to|needs?\s+to|must|has\s+got\s+to)\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}\s+first`,
+  String.raw`wait\s+for\s+${PRIOR_ASSENT_ACTOR}\s+to\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`(?:only\s+after|unless)\s+${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+].map(condition => new RegExp(`^(?:please\\s+)?${condition}$`, "iu"));
+const PRIOR_NAMED_WAIT = new RegExp(
+  String.raw`^(?:please\s+)?wait\s+for\s+(?<actor>${PRIOR_ASSENT_NAME})\s+to\s+(?<action>agree|approve)(?:\s+first)?$`, "iu",
+);
+const PRIOR_NAMED_ASSENT_COMPLETED = new RegExp(
+  String.raw`^(?<actor>${PRIOR_ASSENT_NAME})\s+(?:has\s+)?already\s+(?<action>agree|approve)d$`, "iu",
+);
+const PRIOR_ASSENT_CONTINUATION = /,\s*(?:and|but|however|yet)\b/iu;
+
+// spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
+function priorSentenceConditionsShare(source: string, request: RegExpMatchArray): boolean {
+  const prefix = source.slice(0, request.index!).replace(/[“”]/g, '"')
+    .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length - 1) + quotedRelaySeparator(quotation));
+  const waits = new Set<string>();
+  for (const part of prefix.matchAll(RELAY_SENTENCE_TEXT)) {
+    const end = part.index! + part[0].length;
+    if (end === prefix.length) continue;
+    const continuation = part[0].search(PRIOR_ASSENT_CONTINUATION);
+    const opening = continuation < 0 ? part[0] : part[0].slice(0, continuation);
+    if (opening !== source.slice(part.index, part.index! + opening.length)) continue;
+    const sentence = opening.trim().toLowerCase().replace(/(?:,\s*|\s+)(?:please|thanks|thank you)$/, "");
+    const wait = PRIOR_NAMED_WAIT.exec(sentence)?.groups;
+    if (wait) {
+      waits.add(wait.actor + " " + wait.action);
+      continue;
+    }
+    if (PRIOR_ASSENT_CONDITIONS.some(condition => condition.test(sentence))) return true;
+    // Only a later, affirmative statement about the same named actor and action settles this wait.
+    const completed = continuation < 0 && PRIOR_NAMED_ASSENT_COMPLETED.exec(sentence)?.groups;
+    if (completed && !/^[\s.!?;…]*\?/u.test(source.slice(end))) waits.delete(completed.actor + " " + completed.action);
+  }
+  return waits.size > 0;
+}
+
 const PRIVATE_RELAY_OBJECT = String.raw`(?:(?:(?:my|the|this|that|these|a|any)\s+)?(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})|it|this|that|them|either|both|anything(?:\s+else)?)`;
 const CONTINUES_PRIVATE_REFUSAL = new RegExp(
   String.raw`^\s*(?:(?:or|nor|neither)\b|(?:and|also|not|same(?:\s+goes)?\s+(?:for|with))\s+${PRIVATE_RELAY_OBJECT}\b|` +
@@ -947,7 +971,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
       || question || privateShareQualified(spoken, privateRequest)
-      || priorSentenceConditionsShare(spoken, privateRequest);
+      || priorSentenceConditionsShare(t.slice(start), privateRequest);
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)

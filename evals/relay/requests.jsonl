@@ -390,3 +390,17 @@
 {"text": "He has to ask first. Send him this photo.", "want": "none"}
 {"text": "Ana agrees. Share my number with him.", "want": "contact_share"}
 {"text": "He asked already. Share my number with him.", "want": "contact_share"}
+{"text": "No need to wait for Ana to agree. Please send Ari my number.", "want": "contact_share"}
+{"text": "I heard Ana has to ask first about the venue. Please send Ari my number.", "want": "contact_share"}
+{"text": "He has to ask the venue about opening hours. Please send Ari my number.", "want": "contact_share"}
+{"text": "Ari said “Wait for Ana to agree.” Please send Ari my number.", "want": "contact_share"}
+{"text": "He has to ask for my photo first. Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree. Ari has already agreed. Share my number with him.", "want": "contact_share"}
+{"text": "Wait for Ari to agree. Bo has already agreed. Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to approve. Ari has already agreed. Share my number with him.", "want": "none"}
+{"text": "Wait for him to agree. He has already agreed. Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree, please. Share my number with him.", "want": "none"}
+{"text": "Ana has to agree first, but I can send you the schedule. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to agree, but Ari said “I am at work.” Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree. Ari has already agreed!? Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree. Ari has already agreed. ? Share my number with him.", "want": "none"}
