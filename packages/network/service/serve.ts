@@ -1,3 +1,4 @@
+import type { MemberId } from "@thenetwork/core";
 import { serveHttp } from "../../core/src/runtime/http.ts";
 // The service's two HTTP servers, its tick loop, and the MCP server mounted on it. Shared by main.ts,
 // the shared backend (deploy/backend/server.ts) and scripts/platform-dev.ts (local dev).
@@ -106,6 +107,11 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
       // submit_profile: the person's own profile, from their own agent, to their own member (decision 10).
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
+      // A staff or trust hold lives in the Network's state, not in platform.memberships.
+      memberHeld: async (app, memberId) => {
+        const rt = await svc.runtimeOfMember(app, memberId);
+        return rt ? rt.readState(n => n.trust.level(memberId as MemberId) === "hold") : false;
+      },
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
         updates: (personId, app, assistant, token) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token) : Promise.resolve([])),
@@ -122,6 +128,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       ? mcp.assistantUpdateSurfacesForClaim(await store.assistantGrantsForClaim(tx, personId, phoneKey, app, now()))
       : []);
   }
+  svc.onTick(() => mcp.sweep());
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     if (isMcpAppId(ctx.app.id)) await mcp.forgetPerson(ctx.personId, ctx.app.id);

@@ -263,7 +263,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const app = p.app(id);
       if (!app || app.joinMode === "waitlist") return { ok: false, error: "invalid" };
       const view = signupAccountView(id, p.accounts.phoneHash(who.e164), who.personId);
-      return p.accounts.join(app, who, input, undefined, invitation, view);
+      return p.accounts.join(app, { e164: who.e164, personId: who.personId, ...(who.browserBinding ? { session: who.browserBinding } : {}) }, input, undefined, invitation, view);
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);

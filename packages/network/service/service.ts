@@ -406,6 +406,7 @@ export class NetworkService implements RuntimeHost {
   private readonly copies = new Map<AppId, Copy>();
   private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
   private readonly accountEraseListeners: Array<(personId: string) => Promise<unknown> | unknown> = [];
+  private readonly tickListeners: Array<() => Promise<unknown>> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   readonly photoRelay: PhotoRelayService;
@@ -859,7 +860,10 @@ export class NetworkService implements RuntimeHost {
     const relayHeld = rt.net.relayHeld().map(h => ({ oppId: `relay:${h.itemId}`, queuedAt: h.at }));
     for (const line of slaAlerts(rt.id, [...rt.net.reviewQueue(), ...relayHeld], this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
     if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
+    for (const f of this.tickListeners) await f().catch(e => this.log(`[tick] after-tick listener failed: ${(e as Error).message}`));
   }
+
+  onTick(fn: () => Promise<unknown>) { this.tickListeners.push(fn); }
 
   private async projectHomeHelpConsent(rt: NetworkRuntime) {
     const consent = this.homeHelpConsent();
@@ -928,6 +932,7 @@ export class NetworkService implements RuntimeHost {
     // The inbox keeps handled ids a week (dedupe); the line keeps no counters for an address that is nobody's phone.
     await this.inbox.purge(this.clock.now() - inboxKeepMs).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
+    await this.photos.sweep().catch(e => this.log(`[purge] photos failed: ${(e as Error).message}`));
     await this.reconcileAges().catch(e => this.log(`[purge] age reconcile failed: ${(e as Error).message}`));
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
