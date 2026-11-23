@@ -164,3 +164,12 @@
 {"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"Sat and Sun please.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Sat or Sun are fine.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Saturday works. Ana said, Sunday.","answer":"yes","keys":["b"]}
+{"text":"Saturday works. Ana said, sat sun.","answer":"yes","keys":["b"]}
+{"text":"Ana said Sunday works.","answer":"unclear","keys":[]}
+{"text":"Ana said Sunday works, but Saturday works for me.","answer":"yes","keys":["b"]}
+{"text":"Saturday works. Ana said Sunday and Thursday work.","answer":"yes","keys":["b"]}
+{"text":"Ana said the second works.","answer":"unclear","keys":[]}
+{"text":"Ana said any of them works.","answer":"unclear","keys":[]}
+{"text":"Saturday works. Ana said, Sat Sun both.","answer":"yes","keys":["b"]}
+{"text":"\"Sunday works,\" Ana said. Saturday works.","answer":"yes","keys":["b"]}

@@ -967,7 +967,18 @@ function partOf(minute: number): TimeMention["part"] {
 }
 
 function probeChoiceAuthored(prefix: string): boolean {
-  return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]/).at(-1)!);
+  return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]|\b(?:but|though|however)\b/).at(-1)!);
+}
+
+function authoredYes(text: string): boolean {
+  const segments = text.split(/([.!?\n]|\b(?:but|though|however)\b)/g);
+  let own = "";
+  for (let i = 0; i < segments.length; i += 2) {
+    const segment = segments[i]!;
+    own += describesAnotherPerson(segment) ? " ".repeat(segment.length) : segment;
+    if (i + 1 < segments.length) own += segments[i + 1]!;
+  }
+  return consentScan(own).answer === "yes";
 }
 
 const RECURRING_PROBE_TIME = new RegExp(
@@ -1300,8 +1311,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const qualifiedTimeRefusals = new Map<number, number>();
   let conditionalTimeRefusal = false;
   const memberChoiceAt = (at: number) => {
-    if (!clarifiedTimes) return true;
     const prefix = t.slice(0, at);
+    if (!clarifiedTimes) return probeChoiceAuthored(prefix);
     const subject = [...prefix.split(/[.!?\n]/).at(-1)!.matchAll(PROBE_AVAILABILITY_SUBJECT)].at(-1)?.[1];
     return probeChoiceAuthored(prefix) && (subject === undefined || /^(?:i|we|it|this|that)$/.test(subject));
   };
@@ -1517,7 +1528,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = strongAll ?? weakAt;
-  if (allAt && !probeTimeIsRefused(t, allAt.index, allAt.index + allAt[0].length)
+  if (allAt && probeChoiceAuthored(t.slice(0, allAt.index)) && !probeTimeIsRefused(t, allAt.index, allAt.index + allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
     if (clarifiedTimes && !clarifiedBroadTimeChoiceAllowed(strongAll !== null,
       /\b(?:both|either)\b/.test(strongAll?.[0] ?? ""), open.length)) {
@@ -1532,7 +1543,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   if (past || refusedGroup && !/^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/.test(t)) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
-  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
+  if (c.answer === "yes" && authoredYes(t)) return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;
 }
