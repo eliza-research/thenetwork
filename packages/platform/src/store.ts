@@ -121,7 +121,7 @@ export interface PeopleStore {
   /** The lowest age ever stated for a keyed phone hash (no app, no person; kept after a delete of everything). */
   ageFloor(phoneHash: string): Promise<number | undefined>;
   signupAgeAt(personId: string, now: number): Promise<number | undefined>;
-  saveSignupAge(personId: string, age: SignupAge): Promise<void>;
+  saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge): Promise<boolean>;
   noteAgeFloor(phoneHash: string, age: number, at: number): Promise<number>;
   clearAgeFloor(phoneHash: string): Promise<void>;
   /** Independent keyed-phone guard for age recording and temporary facts. Its callback must not acquire withLock. */
@@ -137,7 +137,7 @@ export interface PeopleStore {
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
   putMembership(m: Membership): Promise<void>;
   /** Commit the exact member, opt-in and session binding if current ownership and bans allow enrollment. */
-  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, signupAge?: SignupAge): Promise<boolean>;
+  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean>;
   restrictBannedMemberships(personId: string): Promise<void>;
 
   /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
@@ -269,12 +269,18 @@ export class MemoryPeopleStore implements PeopleStore {
     const saved = this.signupAges.get(personId);
     return saved && signupAgeAt(saved.initialMinorAge, saved.eligibleAt, now);
   }
-  async saveSignupAge(personId: string, age: SignupAge) {
-    const previous = this.signupAges.get(personId);
-    this.signupAges.set(personId, previous ? {
-      initialMinorAge: lowerAge(previous.initialMinorAge, age.initialMinorAge),
-      eligibleAt: keepLaterEligibilityDate(previous.eligibleAt, age.eligibleAt),
-    } : age);
+  async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge) {
+    return this.withLock(`person-phone-binding:${member.personId}`, async () => {
+      const current = this.members.get(`${member.app}:${member.personId}`);
+      if (current?.memberId !== member.memberId || current.state !== member.state
+        || !await this.enrollmentOwnerAllowed(member.personId, e164, phoneHash)) return false;
+      const previous = this.signupAges.get(member.personId);
+      this.signupAges.set(member.personId, previous ? {
+        initialMinorAge: lowerAge(previous.initialMinorAge, age.initialMinorAge),
+        eligibleAt: keepLaterEligibilityDate(previous.eligibleAt, age.eligibleAt),
+      } : { ...age });
+      return true;
+    });
   }
   private readonly ageLocks = new Map<string, Promise<unknown>>();
   private ageCleanup?: (phoneHash: string, age: number) => Promise<void>;
@@ -311,19 +317,21 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const x of this.members.values()) if (x.memberId === m.memberId && (x.app !== m.app || x.personId !== m.personId)) throw new Error("member id in use");
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });
   }
-  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, signupAge?: SignupAge): Promise<boolean> {
+  private async enrollmentOwnerAllowed(personId: string, e164: string, phoneHash: string): Promise<boolean> {
+    const owner = this.people.get(personId);
+    const phone = this.phones.get(e164);
+    const owned = phone?.personId === personId && phone.hold === null;
+    const age = Math.min(owner?.lowestAge ?? Infinity, this.ageFloors.get(phoneHash)?.age ?? Infinity);
+    return !confirmedUnderage(age)
+      && staffBanEnrollmentAllowed(!!owner && owner.deletedAt === null, owned, await this.isBanned(phoneHash, personId));
+  }
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {
     return this.withLock(`person-phone-binding:${m.personId}`, async () => {
-      const owner = this.people.get(m.personId);
-      const phone = this.phones.get(consent.e164);
-      const owned = phone?.personId === m.personId && phone.hold === null;
-      const age = Math.min(owner?.lowestAge ?? Infinity, this.ageFloors.get(phoneHash)?.age ?? Infinity);
-      if (confirmedUnderage(age)) return false;
-      if (!staffBanEnrollmentAllowed(!!owner && owner.deletedAt === null, owned, await this.isBanned(phoneHash, m.personId))) return false;
+      if (!await this.enrollmentOwnerAllowed(m.personId, consent.e164, phoneHash)) return false;
       await this.unsuppress(phoneHash);
       await this.putMembership(m);
       await this.addConsent(consent);
       await this.attachPerson(consent.e164, m.personId);
-      if (signupAge) await this.saveSignupAge(m.personId, signupAge);
       return true;
     });
   }

@@ -9,6 +9,7 @@ import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
 import { call, CHALLENGE, register, setup, tokenRequest, VERIFIER } from "../../mcp/test/harness.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
+import type { PhotoStorage } from "../../platform/src/photos.ts";
 import { createServiceMcp } from "../service/serve.ts";
 import { NetworkService } from "../service/service.ts";
 
@@ -217,12 +218,12 @@ type SignupWorld = {
   harness: ReturnType<typeof setup>;
 };
 
-async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Promise<void>) {
+async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Promise<void>, photoStorage: PhotoStorage | null = null) {
   const url = await testDb();
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
   const harness = setup();
   const service = new NetworkService({
-    url, clock, instance: "agent-signup-paths-test", log: () => {}, photoStorage: null, notify: false,
+    url, clock, instance: "agent-signup-paths-test", log: () => {}, photoStorage, notify: false,
     env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: signupTurnSecret },
     networks: networks.map(id => ({ id, matchingEnabled: false })),
     publicApi: { minStartMs: 0, minVerifyMs: 0, otp: harness.provider },
@@ -490,6 +491,65 @@ test.skipIf(!pgAvailable)("ntwrk.party: the signup page requires an invitation a
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
     expect(await w.connector.store.sql`select id from oauth.grants where client_id=${opened.clientId}`).toEqual([]);
   });
+}, 60_000);
+
+// spec/memberAge.md, "A private signup date can end a birthday-only minor restriction"
+test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private age of earlier accepted signups", async () => {
+  let blockedPhoto: string | undefined = "02-first-photo";
+  const remove = vi.fn(async (key: string) => { if (key === blockedPhoto) throw new Error("fixture object removal failed"); });
+  const storage: PhotoStorage = { kind: "local", put: async () => {}, get: async () => undefined, delete: remove };
+  await withSignupWorld(["friends:nyc", "slop:nyc"], async w => {
+    const number = "+12125550184";
+    const person = await w.service.accounts.createPerson(number, "otp_sms", null);
+    const sql = w.connector.store.sql;
+    const addPriorPhoto = async (id: string) => sql`insert into platform.photos
+      (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+      values (${id}, ${person.id}, 'slop', ${id}, 'image/jpeg', 1, 'fixture-sha', 'fixture-consent', ${new Date(w.clock.now())})`;
+    const openVerified = async (site: string, state: string) => {
+      w.clock.advance(31_000);
+      const browser = browserOn(w, site);
+      const opened = await openConnection(w, site, browser, state);
+      const rid = hiddenField(opened.html, "rid");
+      return { browser, rid, verified: await confirmPhone(w, browser, rid, number) };
+    };
+    const signup = async (site: string, state: string, birthdate: string) => {
+      const { browser, rid } = await openVerified(site, state);
+      return submitSignup(browser, rid, { firstName: "Jo", birthdate });
+    };
+    const privateRow = () => sql`select initial_minor_age, eligible_at from platform.signup_eligibility where person_id = ${person.id}`;
+    const membership = (app: "friends" | "slop") => w.service.people.getMembership(person.id, app);
+    const firstDate = Date.UTC(2026, 9, 10, 12), laterDate = Date.UTC(2027, 9, 10, 12);
+
+    await addPriorPhoto("01-first-photo");
+    await addPriorPhoto("02-first-photo");
+    expect((await signup("friends.help", "failed-first", "2008-10-10")).status).toBe(503);
+    expect(await privateRow()).toEqual([]);
+    expect(await membership("friends")).toBeUndefined();
+    expect(await sql`select id from network.members where person_id = ${person.id}`).toEqual([]);
+    expect(await sql`select id from platform.photos where person_id = ${person.id}`).toEqual([{ id: "02-first-photo" }]);
+
+    blockedPhoto = undefined;
+    expect((await signup("friends.help", "confirmed-first", "2008-10-10")).html).toContain("Signup confirmed.");
+    expect(await privateRow()).toEqual([{ initial_minor_age: 17, eligible_at: new Date(firstDate) }]);
+    expect((await openVerified("friends.help", "existing-member")).verified).not.toContain("Finish signup");
+
+    blockedPhoto = "prior-photo";
+    await addPriorPhoto("prior-photo");
+    expect((await signup("slop.date", "failed-later", "2009-10-10")).status).toBe(503);
+    expect(await privateRow()).toEqual([{ initial_minor_age: 17, eligible_at: new Date(firstDate) }]);
+    expect(await membership("friends")).toMatchObject({ state: "active" });
+    expect(await membership("slop")).toBeUndefined();
+
+    blockedPhoto = undefined;
+    expect((await signup("slop.date", "confirmed-later", "2009-10-10")).html).toContain("Signup confirmed.");
+    expect(await privateRow()).toEqual([{ initial_minor_age: 16, eligible_at: new Date(laterDate) }]);
+    const current = (await membership("slop"))!;
+    expect(await w.service.people.saveSignupAge(current, number, w.service.accounts.phoneHash(number), {
+      initialMinorAge: 17, eligibleAt: firstDate,
+    })).toBe(true);
+    expect(await privateRow()).toEqual([{ initial_minor_age: 16, eligible_at: new Date(laterDate) }]);
+    expect(remove).toHaveBeenCalledTimes(5);
+  }, storage);
 }, 60_000);
 
 test.skipIf(!pgAvailable)("cross-app signup does not freeze a temporary browser birthday age in a network member", async () => {
