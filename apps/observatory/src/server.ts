@@ -296,7 +296,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   await stored?.start();
   const auth = { tokens, trustCfAccess, roles, access, stored };
   const audit: AuditSink = opts.audit && "write" in opts.audit ? opts.audit : createAudit(opts.audit as { url?: string; dir?: string } | undefined);
-  const lab = new Lab(opts.lab);
+  const lab = new Lab({ ...opts.lab, disabled: realOnly });
   const pUrl = opts.peopleUrl === false ? undefined : opts.peopleUrl ?? opts.real?.url ?? peopleUrl();
   let people: PeopleView | undefined;
   const costs = new CostView();

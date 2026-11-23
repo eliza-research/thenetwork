@@ -36,6 +36,8 @@ export function consoleSettings(env: ConsoleDeployEnv): Record<string, string> {
   }
   if (!settings.OBSERVATORY_ALLOWED_ORIGINS) throw new Error("OBSERVATORY_ALLOWED_ORIGINS must name the console's Access-protected origin");
   if (!settings.NETWORK_DATABASE_URL) throw new Error("NETWORK_DATABASE_URL is required");
+  // The image has no writable directory: the staff audit log must go to its own database login.
+  if (!settings.OBSERVATORY_AUDIT_DATABASE_URL) throw new Error("OBSERVATORY_AUDIT_DATABASE_URL is required (the staff audit log)");
   for (const name of DATABASES) {
     if (!settings[name]) continue;
     let database: URL;

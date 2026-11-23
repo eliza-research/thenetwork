@@ -314,7 +314,11 @@ importers:
         specifier: 8.23.0
         version: 8.23.0
 
-  packages/design-system: {}
+  packages/design-system:
+    dependencies:
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.5
 
   packages/engine:
     dependencies:

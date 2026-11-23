@@ -41,6 +41,8 @@ export interface LabOptions {
   /** The child script (default packages/network/harness/experiment.ts). It gets --only, --days and --seed and prints { results: [...] } JSON. */
   script?: string;
   concurrency?: number;
+  /** A real-only console has no lab: nothing is read from or written to disk (the image has no writable directory). */
+  disabled?: boolean;
 }
 
 /** Check a request; returns the normalized request or why it is refused. */
@@ -107,7 +109,7 @@ export class Lab {
     this.dir = o.dir ?? join(REPO, "runs", "lab");
     this.script = o.script ?? join(REPO, "packages", "network", "harness", "experiment.ts");
     this.concurrency = o.concurrency ?? LAB_LIMITS.concurrency;
-    this.loaded = this.load();
+    this.loaded = o.disabled ? Promise.resolve() : this.load();
   }
 
   /** Earlier runs from disk. One that was running when the server stopped is marked failed. */

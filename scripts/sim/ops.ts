@@ -308,7 +308,7 @@ export async function opsBlock(b: Block): Promise<void> {
     const { deployGuard } = await import("../../apps/observatory/src/server.ts");
     const db = "postgres://console_shared:x@db.example.com:5432/network";
     const good = {
-      PLATFORM_ENV: "production", NETWORK_DATABASE_URL: db, OBSERVATORY_ALLOWED_ORIGINS: "https://console.ntwrk.party",
+      PLATFORM_ENV: "production", NETWORK_DATABASE_URL: db, OBSERVATORY_AUDIT_DATABASE_URL: db, OBSERVATORY_ALLOWED_ORIGINS: "https://console.ntwrk.party",
       OBSERVATORY_TRUST_CF_ACCESS: "1", OBSERVATORY_CF_ACCESS_TEAM: "team", OBSERVATORY_CF_ACCESS_AUD: "aud",
     };
     const deploy = (config: Record<string, unknown>, platformEnv = "production") =>
@@ -325,6 +325,7 @@ export async function opsBlock(b: Block): Promise<void> {
     expect(refused(good, "staging")).toMatch(/environment does not match/);
     expect(refused({ ...good, NETWORK_DATABASE_URL: "postgres://u:p@postgres.railway.internal:5432/n" })).toMatch(/externally reachable/);
     expect(refused({ ...good, OBSERVATORY_ALLOWED_ORIGINS: "" })).toMatch(/OBSERVATORY_ALLOWED_ORIGINS/);
+    expect(refused({ ...good, OBSERVATORY_AUDIT_DATABASE_URL: "" })).toMatch(/OBSERVATORY_AUDIT_DATABASE_URL is required/);
   });
 
   await b.run("image: the backend and the real-only console import nothing from the simulator; the Dockerfile prunes exactly those packages", async () => {
