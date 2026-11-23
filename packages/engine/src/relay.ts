@@ -468,7 +468,7 @@ const SWAP_MODAL_REFUSAL = new RegExp(SHARE_NEG.source + "\\s+(?:ever\\s+)?(?:" 
 const REFUSES_MATCH_ACCESS = new RegExp("\\b(?:they|he|she)\\s+" + SHARE_NEG.source + "\\s+(?:have|get)\\b");
 const DECLINES_PENDING_SEND = new RegExp(
   "^\\s*(?:(?:actually|please|pls|i|no|never mind|nvm)\\s+)*(?:i(?='ll\\b))?(?:(?:don'?t|do\\s+not)(?:\\s+want\\s+(?:you\\s+)?to)?|" +
-  SHARE_NEG.source + ")\\s+(?:" + TRANSFER + ")(?:\\s+out)?\\s+(?:it|that)(?:\\s+(?:to|with)\\s+(?:them|him|her|my (?:match|date)))?(?:\\s+(?:yet|please|pls))*\\s*$",
+  SHARE_NEG.source + ")\\s+(?:" + TRANSFER + ")(?:\\s+out)?\\s+(?:it|that)(?:\\s+(?:to|with)\\s+(?:them|him|her|my (?:match|date)))?(?:\\s+(?:yet|please|pls|any\\s?more|now|after all))*\\s*$",
 );
 const PRIVATE_RELAY_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?|email)|(?:this|that|the|my|these) (?:photos?|pics?|pictures?|selfies?|images?))\b/;
 const PRIVATE_RELAY_ACTION = /\b(?:send(?:ing)?|sent|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\b/;
