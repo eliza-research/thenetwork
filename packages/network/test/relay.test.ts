@@ -382,6 +382,7 @@ test.each([
   { text: "Send him my photo, Ana said. Please send him my number.", shares: true },
   { text: "Send him my number. Don't send my photo. Or my number.", shares: false },
   { text: "Don't send my photo. My number neither. Send him my number.", shares: false },
+  { text: "Send him my number. Don't send my photo. Same goes for my cell.", shares: false },
   { text: "Send him my number. Scratch that.", shares: false },
   { text: "Send him my number. Wait.", shares: false },
   { text: "Send him my number. Let me think.", shares: false },

@@ -517,11 +517,12 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 const RELAY_SENTENCE = /[.!?;…\n]+/;
 const PRIVATE_RELAY_OBJECT = String.raw`(?:(?:(?:my|the|this|that|these|a|any)\s+)?(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})|it|this|that|them|either|both|anything(?:\s+else)?)`;
 const CONTINUES_PRIVATE_REFUSAL = new RegExp(
-  String.raw`^\s*(?:(?:or|nor|neither)\b|(?:and|also|not|same\s+(?:for|with))\s+${PRIVATE_RELAY_OBJECT}\b|${PRIVATE_RELAY_OBJECT}\s+(?:either|neither|too|as well)\s*$)`,
+  String.raw`^\s*(?:(?:or|nor|neither)\b|(?:and|also|not|same(?:\s+goes)?\s+(?:for|with))\s+${PRIVATE_RELAY_OBJECT}\b|` +
+  String.raw`(?:nothing else|likewise|${PRIVATE_RELAY_OBJECT}\s+(?:either|neither|too|as well))\s*$)`,
   "u",
 );
-const RELAY_RETRACTION = "no|wait|scratch that|cancel that|take that back|hold on|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
-const RELAY_LATE_DOUBT = "maybe|hmm|idk|(?:i(?:'m| am) )?(?:not ready|reconsidering)|on second thought|let me think";
+const RELAY_RETRACTION = "no|wait|scratch that|cancel(?: that)?|take that back|(?:hold|hang) on|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
+const RELAY_LATE_DOUBT = "maybe|hmm|idk|(?:i(?:'m| am) )?(?:not ready|reconsidering)|on second thought|let me think|ugh actually";
 const RELAY_STOP_SYMBOL = String.raw`[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*`;
 const RELAY_ITEM_SYMBOL = String.raw`[📞📸][\p{M}]*`;
 const LATE_PRIVATE_RETRACTION = new RegExp(

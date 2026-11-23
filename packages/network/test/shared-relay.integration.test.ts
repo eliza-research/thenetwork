@@ -565,6 +565,7 @@ test("a signed photo request respects the intended item and separately preserves
     "Send him my photo. Don't send my number. Or this photo.",
     "Send him my photo. Actually, no.",
     "Send him my photo, hold on.",
+    "Send him my photo. Hang on.",
     "Send him my photo. 🚫",
     "Send him my photo. Don't send my number. 🚫📸",
     "Send him my photo. On second thought.",
