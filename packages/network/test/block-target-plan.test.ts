@@ -288,6 +288,7 @@ describe("block and report targets in a group plan", () => {
     },
   );
 
+  // spec/safetyCase.md, "A complete name or confirmation identifies one safety target"
   test("an ambiguous qualified name cannot confirm a different offered person", async () => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Yeah Yes"), climber("c", "Yes Moss"), climber("d", "Dana Shaw")], { review: "auto" });
     await w.onboard("a", "b", "c", "d");

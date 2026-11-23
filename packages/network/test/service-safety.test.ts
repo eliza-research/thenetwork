@@ -498,6 +498,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     }, T);
   }
 
+  // spec/safetyCase.md, "A complete name or confirmation identifies one safety target"
   test("a qualified name answers a signed safety question without taking a competing probe", async ({ onTestFinished }) => {
     const { s, askSlop, competingSlopProbe, pending, probeStatus, reports, signed, clock, slopBen } = await signedSafetyFixture(onTestFinished);
     const cy = newPhone();
