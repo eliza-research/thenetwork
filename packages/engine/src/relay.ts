@@ -851,7 +851,7 @@ function privateRequestAddress(text: string, request: RegExpMatchArray): { targe
   if (targetName === undefined) return {};
   if (destination !== undefined) {
     const remaining = phrase.slice(transfer!.index + transfer![0].length);
-    if (!PRIVATE_RELAY_COURTESY.test(remaining) && !/^\s*[,–—]/u.test(remaining)) return null;
+    if (!privateCourtesy(remaining) && !/^\s*[,–—]/u.test(remaining)) return null;
   }
   return { targetName };
 }
