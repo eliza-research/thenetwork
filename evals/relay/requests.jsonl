@@ -240,6 +240,7 @@
 {"text": "send him my number. every time he asks, he can have my photo and my number", "want": "none"}
 {"text": "send Sam my number. each time he asks, give Alex my number and give Sam my number", "want": "none"}
 {"text": "send him my number. each time he asks about parking, he can have that parking pass", "want": "contact_share"}
+{"text": "send him my number, and each time he asks about parking, he can have this parking pass", "want": "contact_share"}
 {"text": "send him my number anytime, thanks", "want": "contact_share"}
 {"text": "send them my number if they ask for it", "want": "none"}
 {"text": "share my number with him if he wants it", "want": "none"}

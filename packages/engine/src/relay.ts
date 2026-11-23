@@ -597,8 +597,10 @@ const LINKED_PRIVATE_OBJECT = String.raw`(?:(?<contact>${CONTACT_RELAY_ITEM})|(?
 const LINKED_PRIVATE_SEND = new RegExp(
   String.raw`\b(?:${TRANSFER}|show)\s+(?:(?<recipient>${OTHER})\s+)?${LINKED_PRIVATE_OBJECT}(?:\s+(?:to|with)\s+(?<destination>${OTHER}))?`, "iu",
 );
-const LINKED_PRIVATE_ACCESS = new RegExp(
-  String.raw`\b(?!(?:you|u|we|i)\b)(?<recipient>${OTHER})\s+(?:can|could|may|will)\s+(?:have|get|receive)\s+${LINKED_PRIVATE_OBJECT}`, "iu",
+const LINKED_PRIVATE_ACCESS_LEAD = String.raw`\b(?!(?:you|u|we|i)\b)(?<recipient>${OTHER})\s+(?:can|could|may|will)\s+(?:have|get|receive)\s+`;
+const LINKED_PRIVATE_ACCESS = new RegExp(String.raw`${LINKED_PRIVATE_ACCESS_LEAD}${LINKED_PRIVATE_OBJECT}`, "iu");
+const NAMED_CONDITION_ACCESS = new RegExp(
+  String.raw`^${LINKED_PRIVATE_ACCESS_LEAD}(?:the|this|that)\s+(?<object>(?:(?!(?:and|or|but|then|to|with)\b)[\p{L}'-]+(?:\s+|$))+)\s*$`, "iu",
 );
 const LINKED_PRIVATE_LEAD = /^[\s,:–—]*(?:(?:and|but|then|only)[,\s:–—]+)*/iu;
 const PRIVATE_RECIPIENT_REFERENCE = /^(?:he|she|they|him|her|them|my\s+(?:match|date))$/i;
@@ -681,6 +683,8 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
           && (linkedTransferMatchesRequest(transfer, request, contact) || !PRIVATE_RELAY_COURTESY.test(tail));
       }
       const words = main.toLowerCase();
+      const object = NAMED_CONDITION_ACCESS.exec(words)?.groups?.object;
+      if (object && !PRIVATE_CONDITION_ITEM_NAME.test(object) && !UNRESOLVED_RENEWAL_PAYLOAD.test(object)) return false;
       const independentStatement = detached ? PRIVATE_CONDITION_STATEMENT.test(main)
         : PRIVATE_CONDITION_FACT.test(main) && !PRIVATE_CONDITION_ITEM_NAME.test(words) && !UNRESOLVED_RENEWAL_PAYLOAD.test(words);
       if (TEXT_REQ.test(main) || (detached && PRIVATE_CONDITION_FOLLOWUP.test(main)) || independentStatement) {
