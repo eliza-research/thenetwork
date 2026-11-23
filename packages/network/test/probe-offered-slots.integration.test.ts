@@ -154,7 +154,7 @@ const scenarios: Scenario[] = [
     slots: three, text: "If Saturday for me won't work, Thursday works.", picked: [] },
   { scene: "an incomplete condition does not decline the opportunity",
     slots: three, text: "If Saturday for me won't work.", picked: [],
-    followUp: { text: "Thursday works.", picked: [thursday.start] } },
+    followUp: { text: "Thursday works.", picked: [thursday.start], general: true } },
   { scene: "a separate refusal declines the opportunity after a qualified time constraint",
     slots: three, text: "Monday works.", picked: [],
     followUp: { text: "Saturday for me won't work. No thanks.", picked: [] } },
