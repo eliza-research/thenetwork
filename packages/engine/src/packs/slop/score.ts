@@ -54,6 +54,16 @@ function likelyDealbreakers(a: SlopProfile, b: SlopProfile): number {
   return n;
 }
 
+function lifestyleFactor<T>(left: T | undefined, right: T | undefined, clash: (x: T, y: T) => boolean, penalty: number, unknown: number): number {
+  if (left === undefined || right === undefined) return unknown;
+  return clash(left, right) ? penalty : 1;
+}
+
+const regularVsNever = (x: string, y: string) => (x === "never" && y === "regular") || (x === "regular" && y === "never");
+const religionGap = (x: number, y: number) => Math.abs(x - y) >= 2;
+const oppositePolitics = (x: string, y: string) => (x === "left" && y === "right") || (x === "right" && y === "left");
+const oppositeKids = (x: string, y: string) => (x === "yes" && y === "no") || (x === "no" && y === "yes");
+
 /** a's expected compatibility with b (0..1]: goals, lifestyle, likely unstated dealbreakers, interests. */
 export function compatEstimate(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
   const K = o.compat;
@@ -64,15 +74,11 @@ export function compatEstimate(a: SlopProfile, b: SlopProfile, o: SlopPackOption
   else if (a.goal !== b.goal) c *= K.goalUnsure;
   // Lifestyle: a mismatch where both are known; an expected factor where either is unknown.
   const va = a.values, vb = b.values;
-  const pair = <T>(x: T | undefined, y: T | undefined, clash: (x: T, y: T) => boolean, f: number) => {
-    if (x === undefined || y === undefined) c *= K.unknownField;
-    else if (clash(x, y)) c *= f;
-  };
-  pair(va.smoking, vb.smoking, (x, y) => (x === "never" && y === "regular") || (x === "regular" && y === "never"), K.lifestyleMismatch);
-  pair(va.drinking, vb.drinking, (x, y) => (x === "never" && y === "regular") || (x === "regular" && y === "never"), K.lifestyleMismatch + 0.05);
-  pair(va.religionImportance, vb.religionImportance, (x, y) => Math.abs(x - y) >= 2, K.religionGap);
-  pair(va.politics, vb.politics, (x, y) => (x === "left" && y === "right") || (x === "right" && y === "left"), K.politicsClash);
-  if (a.goal !== "casual") pair(va.wantsKids, vb.wantsKids, (x, y) => (x === "yes" && y === "no") || (x === "no" && y === "yes"), K.kidsClash);
+  c *= lifestyleFactor(va.smoking, vb.smoking, regularVsNever, K.lifestyleMismatch, K.unknownField);
+  c *= lifestyleFactor(va.drinking, vb.drinking, regularVsNever, K.lifestyleMismatch + 0.05, K.unknownField);
+  c *= lifestyleFactor(va.religionImportance, vb.religionImportance, religionGap, K.religionGap, K.unknownField);
+  c *= lifestyleFactor(va.politics, vb.politics, oppositePolitics, K.politicsClash, K.unknownField);
+  if (a.goal !== "casual") c *= lifestyleFactor(va.wantsKids, vb.wantsKids, oppositeKids, K.kidsClash, K.unknownField);
   // Dealbreakers a has not stated (tier without them): b's values that commonly are one.
   if (!a.dealbreakers.length) c *= Math.pow(1 - K.hiddenDealbreaker * 0.8, likelyDealbreakers(a, b));
   // Shared interests (known ones; a lower bound on the true overlap).
@@ -117,13 +123,23 @@ export function revealedTaste(a: SlopProfile, b: SlopProfile): number {
   return s / (rs.length + 1);
 }
 
+const activityOrder = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
+function preferredActivity(current: string | undefined, activity: string): string {
+  if (current === undefined) return activity;
+  const rank = activityOrder.indexOf(activity) - activityOrder.indexOf(current);
+  return rank < 0 || (rank === 0 && activity < current) ? activity : current;
+}
+
 /** The activity for a first date: one both stated, else one of either's, else coffee (public, short). */
 export function dateActivity(a: SlopProfile, b: SlopProfile): string {
-  const both = a.activities.filter(x => b.activities.includes(x));
-  // Short, public, easy first dates first.
-  const order = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
-  const pick = (xs: string[]) => [...xs].sort((x, y) => (order.indexOf(x) - order.indexOf(y)) || (x < y ? -1 : 1))[0];
-  return pick(both) ?? pick([...a.activities, ...b.activities].filter(x => order.indexOf(x) <= 3)) ?? pick([...a.activities, ...b.activities]) ?? "coffee";
+  let shared: string | undefined, first: string | undefined;
+  for (const activity of a.activities) {
+    first = preferredActivity(first, activity);
+    if (b.activities.includes(activity)) shared = preferredActivity(shared, activity);
+  }
+  if (shared !== undefined) return shared;
+  for (const activity of b.activities) first = preferredActivity(first, activity);
+  return first ?? "coffee";
 }
 
 /** a's estimated enjoyment of a first date with b (0..1]: the directional value. */
