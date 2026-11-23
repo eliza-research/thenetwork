@@ -20,7 +20,7 @@ pure def lawFutureConsentIsStale(consentAt: int, itemAt: int, lifetime: int): bo
 
 ### A refusal or uncertainty cannot authorize a private item
 
-An explicit request for a contact share or photo is valid only when the member does not refuse it or qualify it as uncertain. A contact or photo refusal does not stop an ordinary message that the member explicitly asks the agent to relay. The shell reads the member's text, including refusal phrases such as "will not send" and instructions to proceed such as "will not wait, send it".
+An explicit request for a contact share or photo is valid only when the member does not refuse it or qualify it as uncertain. A contact or photo refusal does not stop an ordinary message that the member explicitly asks the agent to relay. The shell reads the member's text, including refusal phrases such as "will not send" and instructions to proceed such as "will not wait, send it". A refusal of the other private item, such as "don't send my photo" before "send him my number", does not block the request only when the rest of the message is the request itself, polite filler such as "please" or "just", or a go-ahead such as "no rush". Any other words, such as "my number neither", "scratch that" or "I'm not sure what time it is", keep the request blocked.
 
 ```quint
 pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =

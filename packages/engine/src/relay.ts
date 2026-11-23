@@ -546,8 +546,14 @@ function refusesNumberSwap(clauses: readonly string[]): boolean {
 
 const relayClauses = (text: string): string[] => text.replace(SWAP_GO_AHEAD, " ").split(RELAY_CLAUSE);
 
-function refusesPrivateItem(text: string, otherItemRefusal: RegExp): boolean {
-  return text.split(RELAY_SENTENCE).some(sentence => !otherItemRefusal.test(sentence)
+const RELAY_FILLER = /\b(?:please|pls|thanks|thank you|ok|okay|just|and|then|instead|though|tho|now|yes|yeah|sure|go ahead(?: and)?|(?:can|could) you|you can)\b/g;
+
+function refusesPrivateItem(text: string, otherItemRefusal: RegExp, asked: readonly string[]): boolean {
+  const sentences = text.split(RELAY_SENTENCE);
+  const rest = asked.reduce((r, request) => r.replace(request, " "), sentences.filter(sentence => !otherItemRefusal.test(sentence)).join(" "))
+    .replace(SWAP_GO_AHEAD, " ").replace(RELAY_FILLER, " ");
+  const exempt = !/[\p{L}\p{N}#]/u.test(rest);
+  return sentences.some(sentence => !(exempt && otherItemRefusal.test(sentence))
     && relayClauses(sentence).some(clause => NEG.test(clause) || INCOMPLETE_SHARE_REFUSAL.test(clause)
       || (SHARE_NEG.test(clause) && (PRIVATE_RELAY_REFERENCE.test(clause)
         || (PRIVATE_RELAY_ACTION.test(clause) && PRIVATE_RELAY_ITEM.test(clause))))));
@@ -588,7 +594,8 @@ export function parseRelayRequest(text: string): RelayRequest {
     const clauses = relayClauses(low);
     const hedged = HEDGE.test(low) || uncertainPrivateTransfer(clauses) || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
-    const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
+    const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL,
+      (contact ? contacts : photos).map(m => m[0].toLowerCase()))
       || (!!contact && refusesNumberSwap(clauses));
     return privateRelayRequestAllowed(refused, hedged)
       ? { kind: contact ? "contact_share" : "photo" } : { kind: "none" };
