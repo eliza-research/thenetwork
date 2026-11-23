@@ -179,6 +179,8 @@ export class RealSource implements DataSource {
   readonly mode = "real" as const;
   readonly store: Store;
   private sql?: SQL;
+  /** The connection until its login check answers (checkLogin): nothing is read through it. */
+  private unchecked?: SQL;
   private listeners = new Listeners<ObsDelta>();
   private timers: ReturnType<typeof setInterval>[] = [];
   private reveal: boolean;
@@ -237,40 +239,66 @@ export class RealSource implements DataSource {
 
   async init() {
     if (!this.url) { this.store.setEnv(this.env("No database configured. Set NETWORK_DATABASE_URL to the Network's Postgres (network schema).")); return; }
-    this.sql = new SQL({ url: this.url, max: 4, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: `network-observatory-${this.app}`, statement_timeout: "20000" } });
-    // The login is checked, not assumed: read-only, the app's role for an app login, and never a superuser outside this machine.
-    try {
-      const [who] = await this.sql`select r.rolsuper as su, r.rolbypassrls as bypass, current_setting('transaction_read_only') as ro,
-          (select pg_has_role(current_user, oid, 'member') from pg_roles where rolname = ${`network_observatory_${this.app}`}) as in_app_role
-        from pg_roles r where r.rolname = current_user` as any[];
-      const why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url), isolation: this.isolation, app: this.app });
-      if (why) { this.refused = `Refused: ${why}.`; await this.sql.close(); this.sql = undefined; this.store.setEnv(this.env()); return; }
-    } catch (e) { this.store.setEnv(this.env(`Could not check the database login: ${(e as Error).message}`)); }
-    if (this.reveal) {
-      // The global reveal needs a development database as well as a local one (a tunnel to production also looks local).
-      const env = await this.sql!`select value from platform.settings where key = 'environment'`.then((r: any[]) => r[0]?.value as string | undefined, () => undefined);
-      if (env !== "dev") { this.reveal = false; this.revealRefused = true; }
-    }
-    try {
-      await this.load();
-      this.store.setEnv(this.env());
-    } catch (e) {
-      this.store.setEnv(this.env(`Could not read the network schema: ${(e as Error).message}`));
+    this.unchecked = new SQL({ url: this.url, max: 4, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: `network-observatory-${this.app}`, statement_timeout: "20000" } });
+    await this.checkLogin();
+    if (this.refused) return;
+    if (this.sql) {
+      try {
+        await this.load();
+        this.store.setEnv(this.env());
+      } catch (e) {
+        this.store.setEnv(this.env(`Could not read the network schema: ${(e as Error).message}`));
+      }
     }
     this.timers.push(setInterval(() => { this.reload(); }, this.opts.pollMs ?? 10_000));
     this.timers.push(setInterval(() => this.push(), this.opts.pushMs ?? 500));
+  }
+
+  /**
+   * The login is checked, not assumed: read-only, the app's role for an app login, and never a superuser
+   * outside this machine. Nothing is read through the connection until the check answers: an error leaves
+   * it unchecked, and the next poll checks again (audit observatory D02).
+   */
+  private async checkLogin() {
+    const sql = this.unchecked!;
+    let why: string | undefined;
+    try {
+      const [who] = await sql`select r.rolsuper as su, r.rolbypassrls as bypass, current_setting('transaction_read_only') as ro,
+          (select pg_has_role(current_user, oid, 'member') from pg_roles where rolname = ${`network_observatory_${this.app}`}) as in_app_role
+        from pg_roles r where r.rolname = current_user` as any[];
+      why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url!), isolation: this.isolation, app: this.app });
+    } catch (e) {
+      this.store.setEnv(this.env(`Refused: could not check the database login: ${(e as Error).message}. Could not check the database login, so the console reads nothing until the next poll checks it again.`));
+      return;
+    }
+    this.unchecked = undefined;
+    if (why) {
+      this.refused = `Refused: ${why}.`;
+      for (const t of this.timers) clearInterval(t);
+      this.timers = [];
+      await sql.close();
+      this.store.setEnv(this.env());
+      return;
+    }
+    if (this.reveal) {
+      // The global reveal needs a development database as well as a local one (a tunnel to production also looks local).
+      const env = await sql`select value from platform.settings where key = 'environment'`.then((r: any[]) => r[0]?.value as string | undefined, () => undefined);
+      if (env !== "dev") { this.reveal = false; this.revealRefused = true; }
+    }
+    this.sql = sql;
   }
 
   async dispose() {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
     await this.sql?.close();
+    await this.unchecked?.close();
   }
 
   private reload() {
-    if (this.loading || !this.sql) return this.loading ?? Promise.resolve();
-    this.loading = this.load()
-      .then(() => { if (this.store.env.error) this.store.setEnv(this.env()); })
+    if (this.loading || !(this.sql || this.unchecked)) return this.loading ?? Promise.resolve();
+    this.loading = (this.sql ? Promise.resolve() : this.checkLogin())
+      .then(() => this.sql && this.load().then(() => { if (this.store.env.error) this.store.setEnv(this.env()); }))
       .catch(e => { this.store.setEnv(this.env(`Read failed: ${(e as Error).message}`)); })
       .finally(() => { this.loading = null; });
     return this.loading;
@@ -302,12 +330,14 @@ export class RealSource implements DataSource {
    * with no ':' is ntwrk). Columns come from a fixed list in this file, never from a caller. A
    * database without either gives none.
    */
-  private async stateRow(cols: string): Promise<any[]> {
+  private async stateRow(cols: string, strict = false): Promise<any[]> {
     const sql = this.sql;
     if (!sql) return [];
     const view = `network.network_state_console_${this.app}`;
-    const rows = await sql.unsafe(`select ${cols} from ${view} order by saved_at desc`).catch(() =>
-      sql.unsafe(`select ${cols} from network.network_state_console where split_part(id, ':', 1) = $1 or ($1 = 'ntwrk' and position(':' in id) = 0) order by saved_at desc`, [this.app]).catch(() => []));
+    const rows = await sql.unsafe(`select ${cols} from ${view} order by saved_at desc`).catch(e => {
+      if (strict && (e as { errno?: string; code?: string }).errno !== "42P01" && (e as { code?: string }).code !== "42P01") throw e;
+      return sql.unsafe(`select ${cols} from network.network_state_console where split_part(id, ':', 1) = $1 or ($1 = 'ntwrk' and position(':' in id) = 0) order by saved_at desc`, [this.app]).catch(() => []);
+    });
     const one = mergeStateRows(rows as Record<string, unknown>[]);
     return one ? [one] : [];
   }
@@ -475,6 +505,8 @@ export class RealSource implements DataSource {
       }
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
     }
+    const dbOpps = new Set((opps as any[]).map(r => r.id as string));
+    for (const o of [...s.opps.values()]) if (o.source !== "shadow" && !dbOpps.has(o.id)) s.removeOpp(o.id);
     const dbRuns = (runs as any[]).map(r => r.summary as EngineRunSummary).reverse();
     const allRuns = [...dbRuns, ...this.shadowRuns];
     if (JSON.stringify(allRuns.map(r => r.id)) !== JSON.stringify(s.runs.map(r => r.id))) { s.runs.length = 0; for (const r of allRuns) s.addRun(r); }
@@ -511,8 +543,8 @@ export class RealSource implements DataSource {
   private async ageInfo(sql: SQL): Promise<AgeInfo> {
     const info: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map() };
     const [st, ev] = await Promise.all([
-      this.stateRow("members"),
-      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`.catch(() => []),
+      this.stateRow("members", true),
+      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`,
     ]);
     for (const e of ev as any[]) {
       const id = e.payload?.memberId as string | undefined;
@@ -634,7 +666,7 @@ export class RealSource implements DataSource {
       now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
       sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app),
       reviewExpired: (expired as any[])[0]?.n ?? 0, deferred: this.netState?.deferred ?? null, refusals, guardBlocked,
-      lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app),
+      lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? false,
       invariants: s.counts.invariantViolations, canaryLeaks: leaks, minorContacts,
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
@@ -923,7 +955,7 @@ export class RealSource implements DataSource {
 
   /** A staff action the service applied: read the database again so every viewer sees it. */
   private async afterAction(r: ControlResult): Promise<ControlResult> {
-    if (r.ok || r.code === "not_in_review") { await this.loading; await this.reload(); this.push(); }
+    await this.loading; await this.reload(); this.push();
     return r;
   }
 
@@ -940,7 +972,7 @@ export class RealSource implements DataSource {
       last[key] = to;
     }
     return {
-      matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app), reviewMode: this.netState ? "human" : null, network: {},
+      matchingEnabled: this.netState?.matchingEnabled ?? false, reviewMode: this.netState ? "human" : null, network: {},
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history, canChange: !!this.service,
     };
   }

@@ -42,20 +42,21 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   state = step(state, { type: "checkVersion", versionOne: manifest.version === 1 });
   if (state.phase !== "CheckingSource") throw new Error(`unknown manifest version ${manifest.version}`);
   const target = pgEnv(withDatabase(o.serverUrl, o.db));
-  // spec/databaseRestore.md, "Manifest admission refuses source writes and unavailable dump files"
-  state = step(state, { type: "checkManifest", manifest: {
-    sourceKnown: Boolean(manifest.source),
-    sameServer: Boolean(manifest.source && sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! })),
-    ownDatabase: o.db === manifest.database, rolesRequested: Boolean(o.roles), keepPrivileges: Boolean(o.keepPrivileges),
-    encrypted: Boolean(manifest.encryption), dumpPresent: Boolean(manifest.encryption && manifest.files?.dump && existsSync(join(o.dir, manifest.files.dump))),
-  } });
-  switch (state.reason) {
-    case "OwnDatabase": throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
-    case "RolesOnSource": throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
-    case "NeedsDecryption": throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
-  }
   const admin = new SQL({ url: o.serverUrl, max: 1 });
   try {
+    const [{ id }] = await admin`select system_identifier::text as id from pg_control_system()` as { id: string }[];
+    // spec/databaseRestore.md, "Manifest admission refuses source writes and unavailable dump files"
+    state = step(state, { type: "checkManifest", manifest: {
+      sourceKnown: Boolean(manifest.source),
+      sameServer: Boolean(manifest.source && (sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! }) || manifest.source.systemId === id)),
+      ownDatabase: o.db === manifest.database, rolesRequested: Boolean(o.roles), keepPrivileges: Boolean(o.keepPrivileges),
+      encrypted: Boolean(manifest.encryption), dumpPresent: Boolean(manifest.encryption && manifest.files?.dump && existsSync(join(o.dir, manifest.files.dump))),
+    } });
+    switch (state.reason) {
+      case "OwnDatabase": throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
+      case "RolesOnSource": throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
+      case "NeedsDecryption": throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
+    }
     const [exists] = await admin`select 1 as x from pg_database where datname = ${o.db}`;
     state = step(state, { type: "checkTarget", targetExists: Boolean(exists) });
     if (state.phase !== "CreatingTarget") throw new Error(`database ${o.db} already exists: a restore only creates a new one`);
@@ -64,17 +65,26 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   } finally { await admin.close(); }
   const url = withDatabase(o.serverUrl, o.db);
   const env = pgEnv(url);
-  // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
-  const rolesFile = manifest.files.roles && join(o.dir, manifest.files.roles);
-  if (rolesFile && shouldApplyRoles(state, existsSync(rolesFile))) {
-    await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", rolesFile], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
-  }
-  const privileges = state.keepPrivileges ? [] : ["--no-owner", "--no-privileges"];
-  await run([pgBin("pg_restore"), "--no-password", "--exit-on-error", ...privileges, `--dbname=${env.PGDATABASE}`, join(o.dir, manifest.files.dump)], { env });
-  state = step(state, { type: "recordDump" });
-  const sql = new SQL({ url, max: 1 });
   let got: Record<string, number>;
-  try { got = await rowCounts(sql); } finally { await sql.close(); }
+  try {
+    // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
+    const rolesFile = manifest.files.roles && join(o.dir, manifest.files.roles);
+    if (rolesFile && shouldApplyRoles(state, existsSync(rolesFile))) {
+      await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", rolesFile], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
+    }
+    const privileges = state.keepPrivileges ? [] : ["--no-owner", "--no-privileges"];
+    await run([pgBin("pg_restore"), "--no-password", "--exit-on-error", ...privileges, `--dbname=${env.PGDATABASE}`, join(o.dir, manifest.files.dump)], { env });
+    state = step(state, { type: "recordDump" });
+    const sql = new SQL({ url, max: 1 });
+    try { got = await rowCounts(sql); } finally { await sql.close(); }
+  } catch (e) {
+    // A failed restore drops the scratch database it made: it can hold part of the member data (SD-363).
+    const drop = new SQL({ url: o.serverUrl, max: 1 });
+    try { await drop.unsafe(`drop database if exists "${o.db}" with (force)`); }
+    catch (d) { o.log?.(`the scratch database ${o.db} was not dropped: drop it by hand`, { error: redactUrls((d as Error).message) }); }
+    finally { await drop.close(); }
+    throw e;
+  }
   const mismatches = compareCounts(manifest.rowCounts, got);
   state = step(state, { type: "recordCounts", countsAgree: mismatches.length === 0 });
   if (state.phase !== "Finished") throw new Error("restore did not complete the row-count check");

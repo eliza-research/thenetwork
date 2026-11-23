@@ -29,7 +29,7 @@ import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // request loses every proxy and forwarding header, so a client can never pick either one.
 import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
-import { isProxyHeader, PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
+import { isProxyHeader, PROXY_HEADERS, signedPath, signProxyHeaders, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
 import { networkRoutePolicy } from "../../packages/network/service/route-authority.ts";
@@ -75,6 +75,8 @@ export interface BackendConfig {
   /** The staff API listener; undefined when BACKEND_STAFF=off. */
   staff?: { host: string; port: number };
   proxySecret?: string;
+  /** PLATFORM_PROXY_SECRET_PREVIOUS: during a rotation, the old value that sites not yet deployed still sign with (docs/deploy.md 3.4). */
+  proxySecretPrevious?: string;
   /** Extra site hosts for previews and staging: BACKEND_EXTRA_HOSTS="pr-1-slop.example.workers.dev=slop,...". */
   hostMap: Record<string, AppId>;
   build: string;
@@ -102,6 +104,8 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const isolatedRoute = networkRoutePolicy(e);
   const databaseUrl = e.NETWORK_DATABASE_URL || e.DATABASE_URL;
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
+  const proxySecretPrevious = (proxySecret && e.PLATFORM_PROXY_SECRET_PREVIOUS) || undefined;
+  const sessionSecret = e.PLATFORM_SESSION_SECRET;
   const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
   const policy = backendBoot({
     environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), database: Boolean(databaseUrl),
@@ -115,6 +119,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (policy.databaseMissing) missing.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
   if (deployed) {
     if (policy.hashMissing) missing.push("PLATFORM_HASH_KEY");
+    if (!sessionSecret) missing.push("PLATFORM_SESSION_SECRET");
     if (policy.turnstileMissing) missing.push("TURNSTILE_SECRET_KEY");
     missing.push(...otpConfigProblems(e));
     if (policy.proxyMissing) missing.push("PLATFORM_PROXY_SECRET");
@@ -126,7 +131,10 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (policy.sharedLogin) throw new Error("MIGRATION_DATABASE_URL must be a different login from the service's NETWORK_DATABASE_URL");
   if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
   if (policy.proxyShort) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
+  if (proxySecretPrevious && proxySecretPrevious.length < SECRET_MIN) throw new Error(`PLATFORM_PROXY_SECRET_PREVIOUS must be at least ${SECRET_MIN} characters`);
   if (policy.hashShort) throw new Error(`PLATFORM_HASH_KEY must be at least ${SECRET_MIN} characters`);
+  // The session token hashes have a key of their own (packages/platform/src/env.ts bootConfigProblems), never the hash key (SD-164).
+  if (deployed && sessionSecret!.length < SECRET_MIN) throw new Error(`PLATFORM_SESSION_SECRET must be at least ${SECRET_MIN} characters`);
   // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
   const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
   if (policy.leakKeyShort) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
@@ -176,20 +184,27 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
   if (!deployed && !proxySecret) warnings.push("PLATFORM_PROXY_SECRET is not set: /api answers only for a Host the platform knows (local site ports)");
   const build = (e.BUILD_ID || e.RAILWAY_GIT_COMMIT_SHA || "dev").slice(0, 40);
-  const tickMs = Number(e.TICK_MS ?? 60_000);
+  const ms = (name: string, dflt: number, min: number) => {
+    const v = e[name];
+    if (v === undefined || v.trim() === "") return dflt;
+    const x = Number(v);
+    if (!Number.isInteger(x) || x < min) throw new Error(`${name} must be a whole number of milliseconds of ${min} or more (got ${JSON.stringify(v)})`);
+    return x;
+  };
+  const tickMs = ms("TICK_MS", 60_000, 1);
   const ops = opsConfigFromEnv(e, { env, build, deployed });
   if (deployed && !ops.webhookUrl) warnings.push("ALERT_WEBHOOK_URL is not set: alerts are log lines only (docs/deploy.md 7.2)");
 
   return {
     env, deployed, databaseUrl: databaseUrl!, migrationUrl: migrationUrl ?? databaseUrl!, host, port,
     staff: staffOff ? undefined : { host: staffHost, port: staffPort },
-    proxySecret, hostMap,
+    proxySecret, ...(proxySecretPrevious ? { proxySecretPrevious } : {}), hostMap,
     build,
     migrateOnBoot,
     channel,
-    shutdownGraceMs: Number(e.SHUTDOWN_GRACE_MS ?? 25_000),
+    shutdownGraceMs: ms("SHUTDOWN_GRACE_MS", 25_000, 0),
     tickMs,
-    tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
+    tickLateMs: ms("TICK_LATE_MS", Math.max(15 * 60_000, 3 * tickMs), 1),
     ops,
     ...(leakLabelKey ? { leakLabelKey } : {}),
     warnings,
@@ -203,9 +218,12 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
  */
 export async function serviceLoginProblem(query: (q: string) => Promise<Record<string, unknown>[]>): Promise<string | undefined> {
   const [r] = await query(`select r.rolsuper, r.rolbypassrls,
-      exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner
+      exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner,
+      pg_has_role(current_user, 'network_service', 'MEMBER') as member
     from pg_roles r where r.rolname = current_user`);
-  switch (databaseLogin(Boolean(r), Boolean(r?.rolsuper), Boolean(r?.rolbypassrls), Boolean(r?.owner))) {
+  if (!r) return "the service login is not a role";
+  if (!r.member) return "the service login is not a member of network_service";
+  switch (databaseLogin(Boolean(r), Boolean(r.rolsuper), Boolean(r.rolbypassrls), Boolean(r.owner))) {
     case "MissingRole": return "the service login is not a role";
     case "Superuser": return "the service login is a superuser";
     case "BypassRls": return "the service login has BYPASSRLS";
@@ -260,14 +278,21 @@ export function captureConsole(log: Logger) {
  * stay, so the same check further in still passes. Otherwise every proxy and forwarding header is
  * removed and the app comes from the request's own Host (which, on the deployed origin, names no app).
  */
-export async function normalizeEdge(req: Request, secret: string | undefined, hostMap: Record<string, AppId>, nowMs: number = Date.now()): Promise<{ req: Request; app?: AppId; edge: boolean }> {
+export async function normalizeEdge(req: Request, secret: string | undefined, hostMap: Record<string, AppId>, nowMs: number = Date.now(), previous?: string): Promise<{ req: Request; app?: AppId; edge: boolean }> {
   const headers = new Headers(req.headers);
   const url = new URL(req.url);
-  const v = await verifyProxyHeaders(req, secret, Math.floor(nowMs / 1000));
+  const nowS = Math.floor(nowMs / 1000);
+  let v = await verifyProxyHeaders(req, secret, nowS);
+  let resign = false;
+  if (!v && secret && previous) { v = await verifyProxyHeaders(req, previous, nowS); resign = !!v; }
   const signedApp = v ? appForHost(v.host, hostMap) : undefined;
   let app = signedApp;
   for (const h of STRIP) headers.delete(h);
   if (v && app) {
+    if (resign) {
+      const signed = await signProxyHeaders(secret!, { method: req.method, path: signedPath(url), host: v.host, ip: v.ip, ts: Number(req.headers.get(PROXY_HEADERS.ts)) });
+      for (const [k, val] of Object.entries(signed)) headers.set(k, val);
+    }
     headers.set("host", v.host);
     url.host = v.host;
     url.protocol = "https:";
@@ -379,7 +404,7 @@ export function createBackend(d: BackendDeps) {
       } else if (!backendAcceptsWork(lifecycle)) {
         res = json(503, { ok: false, error: "shutting_down" });
       } else if (path === "/api" || path.startsWith("/api/")) {
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
+        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
         app = n.app;
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
@@ -389,7 +414,7 @@ export function createBackend(d: BackendDeps) {
         res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
+        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
         app = n.app;
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : (d.mcp && (await track(d.mcp(n.req)))) || json(404, { ok: false, error: "mcp_not_enabled" });
       } else {
@@ -503,8 +528,15 @@ export async function ensureServiceLogin(query: (q: string) => Promise<Record<st
   if (exists) return { role, created: false };
   if (password.length < 24) throw new Error("the service login password must be at least 24 characters");
   const lit = `'${password.replace(/'/g, "''")}'`;
-  await query(`create role ${role} login password ${lit} nosuperuser nobypassrls nocreaterole nocreatedb`);
-  await query(`grant network_service to ${role}`);
-  await query(`do $$ begin execute format('grant connect on database %I to ${role}', current_database()); end $$`);
+  await query("begin");
+  try {
+    await query(`create role ${role} login password ${lit} nosuperuser nobypassrls nocreaterole nocreatedb`);
+    await query(`grant network_service to ${role}`);
+    await query(`do $$ begin execute format('grant connect on database %I to ${role}', current_database()); end $$`);
+    await query("commit");
+  } catch (e) {
+    await query("rollback").catch(() => {});
+    throw e;
+  }
   return { role, created: true };
 }
