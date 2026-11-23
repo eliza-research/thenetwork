@@ -2,15 +2,15 @@
 //@ backend dafny
 
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
-export type Reply = "ReplyPhone" | "ReplyCode" | "ReplyConsent" | "ReplyConsentRetry" | "ReplyCloud" | "ReplyApproved" | "ReplyDeclined" | "ReplyCheckFailed" | "ReplyPhoneInvalid" | "ReplyTooManyCodes" | "ReplySendUnavailable" | "ReplyCodeRejected" | "ReplyLinkInvalid" | "ReplyTooManyTries" | "ReplyNotAvailable" | "ReplyExpired" | "ReplyAlreadySignedIn" | "ReplyCheckNumber" | "ReplyConnectAgain" | "ReplyRetryLater" | "ReplySignInUnavailable" | "ReplyNotAllowed";
+export type Reply = "ReplyPhone" | "ReplyCode" | "ReplyConsent" | "ReplyConsentRetry" | "ReplyCloud" | "ReplyApproved" | "ReplyDeclined" | "ReplyCheckFailed" | "ReplyPhoneInvalid" | "ReplyTooManyCodes" | "ReplySendUnavailable" | "ReplyCodeRejected" | "ReplyLinkInvalid" | "ReplyTooManyTries" | "ReplyNotAvailable" | "ReplyExpired" | "ReplyAlreadySignedIn" | "ReplyCheckNumber" | "ReplyConnectAgain" | "ReplyRetryLater" | "ReplySignInUnavailable" | "ReplyNotAllowed" | "ReplySignupForm" | "ReplySignupRefused";
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
-export type AuthView = "Opening" | "PhoneView" | "CodeView" | "ConsentView" | "ConsentRetryView" | "CloudView" | "ApprovedView" | "DeclinedView" | "LinkInvalidView" | "TooManyTriesView" | "NotAvailableView" | "PageExpiredView" | "AlreadySignedInView" | "CheckNumberView" | "ConnectAgainView" | "PleaseRetryView" | "SignInUnavailableView" | "NotAllowedView";
+export type AuthView = "Opening" | "PhoneView" | "CodeView" | "ConsentView" | "ConsentRetryView" | "CloudView" | "ApprovedView" | "DeclinedView" | "LinkInvalidView" | "TooManyTriesView" | "NotAvailableView" | "PageExpiredView" | "AlreadySignedInView" | "CheckNumberView" | "ConnectAgainView" | "PleaseRetryView" | "SignInUnavailableView" | "NotAllowedView" | "SignupView";
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export type FieldError = "NoFieldError" | "CheckNotPassed" | "PhoneNotValid" | "CodesRateLimited" | "CodeSendFailed" | "CodeNotAccepted";
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export type SecurityCheck = "CheckOff" | "CheckWaiting" | "CheckSolved" | "CheckExpired";
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
-export interface Offers { sendCode: boolean; continueCode: boolean; allow: boolean; retryAllow: boolean; dontAllow: boolean; cancel: boolean; retryLink: boolean }
+export interface Offers { sendCode: boolean; continueCode: boolean; allow: boolean; retryAllow: boolean; dontAllow: boolean; cancel: boolean; retryLink: boolean; finishSignup: boolean; backToConsent: boolean }
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export interface AuthPage { view: AuthView; fieldError: FieldError; securityCheck: SecurityCheck; turnstileOn: boolean; codeSent: boolean; consentSeen: boolean; approved: boolean }
 /** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
@@ -39,11 +39,14 @@ export type Event =
   | { type: "expireCheck" }
   | { type: "submitPhone"; reply: Reply }
   | { type: "submitCode"; reply: Reply }
+  | { type: "openSignup"; reply: Reply }
+  | { type: "submitSignup"; reply: Reply }
+  | { type: "leaveSignup"; reply: Reply }
   | { type: "approve"; reply: Reply }
   | { type: "cancelRequest"; reply: Reply };
 
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
-export const noOffers: Offers = { sendCode: false, continueCode: false, allow: false, retryAllow: false, dontAllow: false, cancel: false, retryLink: false };
+export const noOffers: Offers = { sendCode: false, continueCode: false, allow: false, retryAllow: false, dontAllow: false, cancel: false, retryLink: false, finishSignup: false, backToConsent: false };
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 export const defaultScopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite"];
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
@@ -54,13 +57,13 @@ export const initial: AuthPage = { view: "Opening", fieldError: "NoFieldError", 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: AuthPage): boolean {
-  return alwaysSecurityCheckOnlyOnPhonePage(current) && alwaysFieldErrorStaysOnItsPage(current) && alwaysCodePageFollowsSentCode(current) && alwaysApprovalFollowsConsent(current) && alwaysConsentPageIsRecorded(current);
+  return alwaysSecurityCheckOnlyOnPhonePage(current) && alwaysFieldErrorStaysOnItsPage(current) && alwaysCodePageFollowsSentCode(current) && alwaysSignupFollowsConsent(current) && alwaysApprovalFollowsConsent(current) && alwaysConsentPageIsRecorded(current);
 }
 
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function viewFor(reply: Reply): AuthView {
-  return reply === "ReplyPhone" || reply === "ReplyCheckFailed" || reply === "ReplyPhoneInvalid" || reply === "ReplyTooManyCodes" || reply === "ReplySendUnavailable" ? "PhoneView" : (reply === "ReplyCode" || reply === "ReplyCodeRejected" ? "CodeView" : (reply === "ReplyConsent" ? "ConsentView" : (reply === "ReplyConsentRetry" ? "ConsentRetryView" : (reply === "ReplyCloud" ? "CloudView" : (reply === "ReplyApproved" ? "ApprovedView" : (reply === "ReplyDeclined" ? "DeclinedView" : (reply === "ReplyLinkInvalid" ? "LinkInvalidView" : (reply === "ReplyTooManyTries" ? "TooManyTriesView" : (reply === "ReplyNotAvailable" ? "NotAvailableView" : (reply === "ReplyExpired" ? "PageExpiredView" : (reply === "ReplyAlreadySignedIn" ? "AlreadySignedInView" : (reply === "ReplyCheckNumber" ? "CheckNumberView" : (reply === "ReplyConnectAgain" ? "ConnectAgainView" : (reply === "ReplyRetryLater" ? "PleaseRetryView" : (reply === "ReplySignInUnavailable" ? "SignInUnavailableView" : "NotAllowedView")))))))))))))));
+  return reply === "ReplyPhone" || reply === "ReplyCheckFailed" || reply === "ReplyPhoneInvalid" || reply === "ReplyTooManyCodes" || reply === "ReplySendUnavailable" ? "PhoneView" : (reply === "ReplyCode" || reply === "ReplyCodeRejected" ? "CodeView" : (reply === "ReplyConsent" ? "ConsentView" : (reply === "ReplyConsentRetry" ? "ConsentRetryView" : (reply === "ReplyCloud" ? "CloudView" : (reply === "ReplyApproved" ? "ApprovedView" : (reply === "ReplyDeclined" ? "DeclinedView" : (reply === "ReplyLinkInvalid" ? "LinkInvalidView" : (reply === "ReplyTooManyTries" ? "TooManyTriesView" : (reply === "ReplyNotAvailable" ? "NotAvailableView" : (reply === "ReplyExpired" ? "PageExpiredView" : (reply === "ReplyAlreadySignedIn" ? "AlreadySignedInView" : (reply === "ReplyCheckNumber" ? "CheckNumberView" : (reply === "ReplyConnectAgain" ? "ConnectAgainView" : (reply === "ReplyRetryLater" ? "PleaseRetryView" : (reply === "ReplySignInUnavailable" ? "SignInUnavailableView" : (reply === "ReplySignupForm" || reply === "ReplySignupRefused" ? "SignupView" : "NotAllowedView"))))))))))))))));
 }
 
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
@@ -114,7 +117,7 @@ export function isFinal(view: AuthView): boolean {
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function offersFor(view: AuthView): Offers {
-  return { sendCode: view === "PhoneView", continueCode: view === "CodeView", allow: view === "ConsentView", retryAllow: view === "ConsentRetryView", dontAllow: isConsentView(view), cancel: view === "PhoneView" || view === "CodeView", retryLink: view === "PleaseRetryView" };
+  return { sendCode: view === "PhoneView", continueCode: view === "CodeView", allow: view === "ConsentView", retryAllow: view === "ConsentRetryView", dontAllow: isConsentView(view), cancel: view === "PhoneView" || view === "CodeView", retryLink: view === "PleaseRetryView", finishSignup: view === "SignupView", backToConsent: view === "SignupView" };
 }
 
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
@@ -142,10 +145,12 @@ export function openPage(page: AuthPage, reply: Reply, turnstileOn: boolean): Au
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canOpenPage(page, reply)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "openPage", \result)
+  //@ ensures (inv(page) && canOpenPage(page, reply)) ==> stepSignupNeverApproves(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> stepApprovalOnlyByAllow(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> stepConsentNeedsKnownPerson(page, "openPage", \result)
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> stepFinalViewsStay(page, \result)
@@ -176,10 +181,12 @@ export function returnFromCloud(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "returnFromCloud", \result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "returnFromCloud", \result)
+  //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> stepSignupNeverApproves(page, "returnFromCloud", \result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> stepApprovalOnlyByAllow(page, "returnFromCloud", \result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> stepConsentNeedsKnownPerson(page, "returnFromCloud", \result)
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> stepFinalViewsStay(page, \result)
@@ -192,14 +199,43 @@ export function retryConnection(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "retryConnection", \result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "retryConnection", \result)
+  //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> stepSignupNeverApproves(page, "retryConnection", \result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> stepApprovalOnlyByAllow(page, "retryConnection", \result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> stepConsentNeedsKnownPerson(page, "retryConnection", \result)
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> stepFinalViewsStay(page, \result)
   return showReply(reply, page);
+}
+
+/** Story: See one clear page at each step of connecting my assistant / A posted form names the page that sent it (spec/authorizationPages.md) */
+//@ pure
+export function storedStepView(stepWord: string): AuthView {
+  return stepWord === "phone" ? "PhoneView" : (stepWord === "code" ? "CodeView" : (stepWord === "consent" || stepWord === "enrolling" || stepWord === "enrolled" ? "ConsentView" : "PageExpiredView"));
+}
+
+/** Story: See one clear page at each step of connecting my assistant / A posted form names the page that sent it (spec/authorizationPages.md) */
+//@ pure
+export function lawStoredStepShowsAFormPageOrExpires(stepWord: string): boolean {
+  //@ ensures \result === true
+  const local_1: AuthView = storedStepView(stepWord);
+  return local_1 === "PhoneView" || local_1 === "CodeView" || local_1 === "ConsentView" || local_1 === "PageExpiredView";
+}
+
+/** Story: See one clear page at each step of connecting my assistant / A posted form names the page that sent it (spec/authorizationPages.md) */
+//@ pure
+export function lawUnknownStepShowsNoForm(stepWord: string): boolean {
+  //@ ensures \result === true
+  return !(stepWord !== "phone" && stepWord !== "code" && stepWord !== "consent" && stepWord !== "enrolling" && stepWord !== "enrolled") || equal_authorizationPages(offersFor(storedStepView(stepWord)), noOffers);
+}
+
+/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
+//@ pure
+export function alwaysSecurityCheckOnlyOnPhonePage(page: AuthPage): boolean {
+  return (page.securityCheck !== "CheckOff") === (page.view === "PhoneView" && page.turnstileOn);
 }
 
 /** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
@@ -214,10 +250,12 @@ export function solveCheck(page: AuthPage): AuthPage {
   //@ ensures (inv(page) && canSolveCheck(page)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canSolveCheck(page)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "solveCheck", \result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "solveCheck", \result)
+  //@ ensures (inv(page) && canSolveCheck(page)) ==> stepSignupNeverApproves(page, "solveCheck", \result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> stepApprovalOnlyByAllow(page, "solveCheck", \result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> stepConsentNeedsKnownPerson(page, "solveCheck", \result)
   //@ ensures (inv(page) && canSolveCheck(page)) ==> stepFinalViewsStay(page, \result)
@@ -236,26 +274,28 @@ export function expireCheck(page: AuthPage): AuthPage {
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "expireCheck", \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "expireCheck", \result)
+  //@ ensures (inv(page) && canExpireCheck(page)) ==> stepSignupNeverApproves(page, "expireCheck", \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepApprovalOnlyByAllow(page, "expireCheck", \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepConsentNeedsKnownPerson(page, "expireCheck", \result)
   //@ ensures (inv(page) && canExpireCheck(page)) ==> stepFinalViewsStay(page, \result)
   return { ...page, securityCheck: "CheckExpired" };
 }
 
-/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
-export function alwaysSecurityCheckOnlyOnPhonePage(page: AuthPage): boolean {
-  return (page.securityCheck !== "CheckOff") === (page.view === "PhoneView" && page.turnstileOn);
+export function codeSendFailureReply(rateLimited: boolean): Reply {
+  return rateLimited ? "ReplyTooManyCodes" : "ReplySendUnavailable";
 }
 
 /** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
-export function alwaysFieldErrorStaysOnItsPage(page: AuthPage): boolean {
-  return (!(page.fieldError === "CodeNotAccepted") || page.view === "CodeView") && (!(page.fieldError === "CheckNotPassed" || page.fieldError === "PhoneNotValid" || page.fieldError === "CodesRateLimited" || page.fieldError === "CodeSendFailed") || page.view === "PhoneView") && (!(page.fieldError === "CheckNotPassed") || page.turnstileOn);
+export function isPhoneFieldReply(reply: Reply): boolean {
+  return reply === "ReplyCheckFailed" || reply === "ReplyPhoneInvalid" || reply === "ReplyTooManyCodes" || reply === "ReplySendUnavailable";
 }
 
 /** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
@@ -272,8 +312,29 @@ export function stepPhoneSubmitNeedsSolvedCheck(before: AuthPage, via: string, a
 
 /** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
+export function alwaysFieldErrorStaysOnItsPage(page: AuthPage): boolean {
+  return (!(page.fieldError === "CodeNotAccepted") || page.view === "CodeView") && (!(page.fieldError === "CheckNotPassed" || page.fieldError === "PhoneNotValid" || page.fieldError === "CodesRateLimited" || page.fieldError === "CodeSendFailed") || page.view === "PhoneView") && (!(page.fieldError === "CheckNotPassed") || page.turnstileOn);
+}
+
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
+//@ pure
+export function lawPhoneFieldReplyShowsThePhonePage(reply: Reply): boolean {
+  //@ ensures \result === true
+  return !isPhoneFieldReply(reply) || (viewFor(reply) === "PhoneView" && errorFor(reply) !== "NoFieldError");
+}
+
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
+//@ pure
 export function canSubmitPhone(page: AuthPage, reply: Reply): boolean {
   return page.view === "PhoneView" && (page.securityCheck === "CheckOff" || page.securityCheck === "CheckSolved") && isPhoneReply(reply) && (!(reply === "ReplyCheckFailed") || page.turnstileOn);
+}
+
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
+//@ pure
+export function lawCodeSendFailureStaysOnThePhonePage(rateLimited: boolean): boolean {
+  //@ ensures \result === true
+  const local_2: Reply = codeSendFailureReply(rateLimited);
+  return isPhoneFieldReply(local_2) && viewFor(local_2) === "PhoneView" && errorFor(local_2) !== "NoFieldError";
 }
 
 /** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
@@ -282,10 +343,12 @@ export function submitPhone(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "submitPhone", \result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "submitPhone", \result)
+  //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> stepSignupNeverApproves(page, "submitPhone", \result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> stepApprovalOnlyByAllow(page, "submitPhone", \result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> stepConsentNeedsKnownPerson(page, "submitPhone", \result)
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> stepFinalViewsStay(page, \result)
@@ -322,10 +385,12 @@ export function submitCode(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "submitCode", \result)
+  //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> stepSignupNeverApproves(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> stepApprovalOnlyByAllow(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> stepConsentNeedsKnownPerson(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> stepFinalViewsStay(page, \result)
@@ -349,8 +414,8 @@ export function lawOnlyConsentPagesNameAClient(view: AuthView, clientNamed: bool
 //@ pure
 export function lawConsentNamesClientAndScopes(view: AuthView, clientNamed: boolean): boolean {
   //@ ensures \result === true
-  const local_1: ConsentParts = consentParts(view, clientNamed);
-  return !isConsentView(view) || (local_1.client !== "NoClientShown" && local_1.claimNote && local_1.returnHost && local_1.scopeList);
+  const local_3: ConsentParts = consentParts(view, clientNamed);
+  return !isConsentView(view) || (local_3.client !== "NoClientShown" && local_3.claimNote && local_3.returnHost && local_3.scopeList);
 }
 
 /** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
@@ -377,6 +442,121 @@ export function lawConsentRetryHasNoSignup(signupAvailable: boolean): boolean {
 export function lawSignupNoticeRequiresSave(view: AuthView): boolean {
   //@ ensures \result === true
   return !showsSignupConfirmation(view, false);
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function isSignupOpenReply(reply: Reply): boolean {
+  return reply === "ReplySignupForm" || reply === "ReplyExpired" || reply === "ReplyNotAllowed" || reply === "ReplyNotAvailable";
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function isSignupReply(reply: Reply): boolean {
+  return reply === "ReplyConsent" || reply === "ReplySignupRefused" || reply === "ReplyExpired" || reply === "ReplyNotAllowed" || reply === "ReplyNotAvailable";
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function isLeaveSignupReply(reply: Reply): boolean {
+  return reply === "ReplyConsent" || reply === "ReplyExpired" || reply === "ReplyNotAllowed" || reply === "ReplyNotAvailable";
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function alwaysSignupFollowsConsent(page: AuthPage): boolean {
+  return !(page.view === "SignupView") || page.consentSeen;
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function stepSignupNeverApproves(before: AuthPage, via: string, after: AuthPage): boolean {
+  return !(via === "openSignup" || via === "submitSignup" || via === "leaveSignup") || after.approved === before.approved;
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function sometimesSignupShown(page: AuthPage): boolean {
+  return page.view === "SignupView";
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function canOpenSignup(page: AuthPage, reply: Reply): boolean {
+  return page.view === "ConsentView" && isSignupOpenReply(reply);
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function canSubmitSignup(page: AuthPage, reply: Reply): boolean {
+  return page.view === "SignupView" && isSignupReply(reply);
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function canLeaveSignup(page: AuthPage, reply: Reply): boolean {
+  return page.view === "SignupView" && isLeaveSignupReply(reply);
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function lawSignupPageShowsNoCredentialField(view: AuthView): boolean {
+  //@ ensures \result === true
+  return !(view === "SignupView") || (!showsPhoneField(view) && !showsCodeField(view) && equal_authorizationPages(offersFor(view), ({ ...noOffers, finishSignup: true, backToConsent: true } as Offers)));
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function openSignup(page: AuthPage, reply: Reply): AuthPage {
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> alwaysSignupFollowsConsent(\result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "openSignup", \result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "openSignup", \result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> stepSignupNeverApproves(page, "openSignup", \result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> stepApprovalOnlyByAllow(page, "openSignup", \result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> stepConsentNeedsKnownPerson(page, "openSignup", \result)
+  //@ ensures (inv(page) && canOpenSignup(page, reply)) ==> stepFinalViewsStay(page, \result)
+  return showReply(reply, page);
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function submitSignup(page: AuthPage, reply: Reply): AuthPage {
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> alwaysSignupFollowsConsent(\result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "submitSignup", \result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "submitSignup", \result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> stepSignupNeverApproves(page, "submitSignup", \result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> stepApprovalOnlyByAllow(page, "submitSignup", \result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> stepConsentNeedsKnownPerson(page, "submitSignup", \result)
+  //@ ensures (inv(page) && canSubmitSignup(page, reply)) ==> stepFinalViewsStay(page, \result)
+  return showReply(reply, page);
+}
+
+/** Story: Decide what my assistant can do / The signup page is a step of the same request (spec/authorizationPages.md) */
+//@ pure
+export function leaveSignup(page: AuthPage, reply: Reply): AuthPage {
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> alwaysSignupFollowsConsent(\result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "leaveSignup", \result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "leaveSignup", \result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> stepSignupNeverApproves(page, "leaveSignup", \result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> stepApprovalOnlyByAllow(page, "leaveSignup", \result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> stepConsentNeedsKnownPerson(page, "leaveSignup", \result)
+  //@ ensures (inv(page) && canLeaveSignup(page, reply)) ==> stepFinalViewsStay(page, \result)
+  return showReply(reply, page);
 }
 
 /** Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page (spec/authorizationPages.md) */
@@ -427,6 +607,12 @@ export function signupPrefillAllowed(d: SignupDraftBinding, r: SignupPrefillRequ
 
 /** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
 //@ pure
+export function signupDraftNoteShown(prefilled: boolean, refused: boolean): boolean {
+  return prefilled && !refused;
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
 export function lawConsentNeverPreTicked(prefilled: boolean): boolean {
   //@ ensures \result === true
   return !signupConsentStartsTicked(prefilled);
@@ -457,6 +643,13 @@ export function lawExpiredPrefillIsEmpty(d: SignupDraftBinding, r: SignupPrefill
 export function lawAgeGuardRefusesPrefill(d: SignupDraftBinding, r: SignupPrefillRequest): boolean {
   //@ ensures \result === true
   return !(!r.ageAllowed) || !signupPrefillAllowed(d, r);
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function lawRefusedSignupShowsNoDraftNote(prefilled: boolean): boolean {
+  //@ ensures \result === true
+  return !signupDraftNoteShown(prefilled, true);
 }
 
 /** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
@@ -505,8 +698,8 @@ export function ageOnDate(birth: CalendarDate, today: CalendarDate): number {
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
 //@ pure
 export function signupAdultDate(birth: CalendarDate): CalendarDate {
-  const local_2 = exact_authorizationPages(birth.year + 18);
-  return birth.month === 2 && birth.day === 29 && !isLeapYear(local_2) ? ({ year: local_2, month: 3, day: 1 } as CalendarDate) : ({ year: local_2, month: birth.month, day: birth.day } as CalendarDate);
+  const local_4 = exact_authorizationPages(birth.year + 18);
+  return birth.month === 2 && birth.day === 29 && !isLeapYear(local_4) ? ({ year: local_4, month: 3, day: 1 } as CalendarDate) : ({ year: local_4, month: birth.month, day: birth.day } as CalendarDate);
 }
 
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
@@ -580,14 +773,14 @@ export function lawAcceptedAgeIsBetweenZeroAnd120(birth: CalendarDate, today: Ca
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
 //@ pure
 export function calendarDateOfDay(epochDay: number): CalendarDate {
-  const local_3 = exact_authorizationPages((epochDay >= 0 ? epochDay : 0) + 719468);
-  const local_4 = quotient_authorizationPages(local_3, 146097);
-  const local_5 = exact_authorizationPages(local_3 - exact_authorizationPages(local_4 * 146097));
-  const local_6 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(local_5 - quotient_authorizationPages(local_5, 1460)) + quotient_authorizationPages(local_5, 36524)) - quotient_authorizationPages(local_5, 146096)), 365);
-  const local_7 = exact_authorizationPages(local_5 - exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(365 * local_6) + quotient_authorizationPages(local_6, 4)) - quotient_authorizationPages(local_6, 100)));
-  const local_8 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(5 * local_7) + 2), 153);
-  const local_9 = local_8 < 10 ? exact_authorizationPages(local_8 + 3) : exact_authorizationPages(local_8 - 9);
-  return { year: exact_authorizationPages(exact_authorizationPages(local_6 + exact_authorizationPages(local_4 * 400)) + (local_9 <= 2 ? 1 : 0)), month: local_9, day: exact_authorizationPages(exact_authorizationPages(local_7 - quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(153 * local_8) + 2), 5)) + 1) };
+  const local_5 = exact_authorizationPages((epochDay >= 0 ? epochDay : 0) + 719468);
+  const local_6 = quotient_authorizationPages(local_5, 146097);
+  const local_7 = exact_authorizationPages(local_5 - exact_authorizationPages(local_6 * 146097));
+  const local_8 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(local_7 - quotient_authorizationPages(local_7, 1460)) + quotient_authorizationPages(local_7, 36524)) - quotient_authorizationPages(local_7, 146096)), 365);
+  const local_9 = exact_authorizationPages(local_7 - exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(365 * local_8) + quotient_authorizationPages(local_8, 4)) - quotient_authorizationPages(local_8, 100)));
+  const local_10 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(5 * local_9) + 2), 153);
+  const local_11 = local_10 < 10 ? exact_authorizationPages(local_10 + 3) : exact_authorizationPages(local_10 - 9);
+  return { year: exact_authorizationPages(exact_authorizationPages(local_8 + exact_authorizationPages(local_6 * 400)) + (local_11 <= 2 ? 1 : 0)), month: local_11, day: exact_authorizationPages(exact_authorizationPages(local_9 - quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(153 * local_10) + 2), 5)) + 1) };
 }
 
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
@@ -642,7 +835,7 @@ export function stepApprovalOnlyByAllow(before: AuthPage, via: string, after: Au
 /** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function stepConsentNeedsKnownPerson(before: AuthPage, via: string, after: AuthPage): boolean {
-  return !(isConsentView(after.view) && !isConsentView(before.view)) || ((via === "openPage" && before.view === "Opening") || (via === "returnFromCloud" && before.view === "CloudView") || (via === "retryConnection" && before.view === "PleaseRetryView") || (via === "submitCode" && before.view === "CodeView"));
+  return !(isConsentView(after.view) && !isConsentView(before.view)) || ((via === "openPage" && before.view === "Opening") || (via === "returnFromCloud" && before.view === "CloudView") || (via === "retryConnection" && before.view === "PleaseRetryView") || (via === "submitCode" && before.view === "CodeView") || ((via === "submitSignup" || via === "leaveSignup") && before.view === "SignupView" && before.consentSeen));
 }
 
 /** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
@@ -651,10 +844,12 @@ export function approve(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canApprove(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canApprove(page, reply)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "approve", \result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "approve", \result)
+  //@ ensures (inv(page) && canApprove(page, reply)) ==> stepSignupNeverApproves(page, "approve", \result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> stepApprovalOnlyByAllow(page, "approve", \result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> stepConsentNeedsKnownPerson(page, "approve", \result)
   //@ ensures (inv(page) && canApprove(page, reply)) ==> stepFinalViewsStay(page, \result)
@@ -679,10 +874,12 @@ export function cancelRequest(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> alwaysFieldErrorStaysOnItsPage(\result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> alwaysCodePageFollowsSentCode(\result)
+  //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> alwaysSignupFollowsConsent(\result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> alwaysApprovalFollowsConsent(\result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> alwaysConsentPageIsRecorded(\result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> stepPhoneSubmitNeedsSolvedCheck(page, "cancelRequest", \result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> stepCodePageOnlyAfterPhoneSubmit(page, "cancelRequest", \result)
+  //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> stepSignupNeverApproves(page, "cancelRequest", \result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> stepApprovalOnlyByAllow(page, "cancelRequest", \result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> stepConsentNeedsKnownPerson(page, "cancelRequest", \result)
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> stepFinalViewsStay(page, \result)
@@ -851,6 +1048,9 @@ export function enabled(current: AuthPage, event: Event): boolean {
   if (event.type === "expireCheck") return canExpireCheck(current);
   if (event.type === "submitPhone") return canSubmitPhone(current, event.reply);
   if (event.type === "submitCode") return canSubmitCode(current, event.reply);
+  if (event.type === "openSignup") return canOpenSignup(current, event.reply);
+  if (event.type === "submitSignup") return canSubmitSignup(current, event.reply);
+  if (event.type === "leaveSignup") return canLeaveSignup(current, event.reply);
   if (event.type === "approve") return canApprove(current, event.reply);
   if (event.type === "cancelRequest") return canCancelRequest(current, event.reply);
   return false;
@@ -868,6 +1068,9 @@ export function step(current: AuthPage, event: Event): AuthPage {
   if (event.type === "expireCheck") return canExpireCheck(current) ? expireCheck(current) : current;
   if (event.type === "submitPhone") return canSubmitPhone(current, event.reply) ? submitPhone(current, event.reply) : current;
   if (event.type === "submitCode") return canSubmitCode(current, event.reply) ? submitCode(current, event.reply) : current;
+  if (event.type === "openSignup") return canOpenSignup(current, event.reply) ? openSignup(current, event.reply) : current;
+  if (event.type === "submitSignup") return canSubmitSignup(current, event.reply) ? submitSignup(current, event.reply) : current;
+  if (event.type === "leaveSignup") return canLeaveSignup(current, event.reply) ? leaveSignup(current, event.reply) : current;
   if (event.type === "approve") return canApprove(current, event.reply) ? approve(current, event.reply) : current;
   if (event.type === "cancelRequest") return canCancelRequest(current, event.reply) ? cancelRequest(current, event.reply) : current;
   return current;
@@ -887,15 +1090,18 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "openPage" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed") && typeof raw.turnstileOn === "boolean") return { type: "openPage", reply: raw.reply, turnstileOn: raw.turnstileOn };
-  if (raw.type === "returnFromCloud" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed")) return { type: "returnFromCloud", reply: raw.reply };
-  if (raw.type === "retryConnection" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed")) return { type: "retryConnection", reply: raw.reply };
+  if (raw.type === "openPage" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused") && typeof raw.turnstileOn === "boolean") return { type: "openPage", reply: raw.reply, turnstileOn: raw.turnstileOn };
+  if (raw.type === "returnFromCloud" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "returnFromCloud", reply: raw.reply };
+  if (raw.type === "retryConnection" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "retryConnection", reply: raw.reply };
   if (raw.type === "solveCheck") return { type: "solveCheck" };
   if (raw.type === "expireCheck") return { type: "expireCheck" };
-  if (raw.type === "submitPhone" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed")) return { type: "submitPhone", reply: raw.reply };
-  if (raw.type === "submitCode" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed")) return { type: "submitCode", reply: raw.reply };
-  if (raw.type === "approve" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed")) return { type: "approve", reply: raw.reply };
-  if (raw.type === "cancelRequest" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed")) return { type: "cancelRequest", reply: raw.reply };
+  if (raw.type === "submitPhone" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "submitPhone", reply: raw.reply };
+  if (raw.type === "submitCode" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "submitCode", reply: raw.reply };
+  if (raw.type === "openSignup" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "openSignup", reply: raw.reply };
+  if (raw.type === "submitSignup" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "submitSignup", reply: raw.reply };
+  if (raw.type === "leaveSignup" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "leaveSignup", reply: raw.reply };
+  if (raw.type === "approve" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "approve", reply: raw.reply };
+  if (raw.type === "cancelRequest" && (raw.reply === "ReplyPhone" || raw.reply === "ReplyCode" || raw.reply === "ReplyConsent" || raw.reply === "ReplyConsentRetry" || raw.reply === "ReplyCloud" || raw.reply === "ReplyApproved" || raw.reply === "ReplyDeclined" || raw.reply === "ReplyCheckFailed" || raw.reply === "ReplyPhoneInvalid" || raw.reply === "ReplyTooManyCodes" || raw.reply === "ReplySendUnavailable" || raw.reply === "ReplyCodeRejected" || raw.reply === "ReplyLinkInvalid" || raw.reply === "ReplyTooManyTries" || raw.reply === "ReplyNotAvailable" || raw.reply === "ReplyExpired" || raw.reply === "ReplyAlreadySignedIn" || raw.reply === "ReplyCheckNumber" || raw.reply === "ReplyConnectAgain" || raw.reply === "ReplyRetryLater" || raw.reply === "ReplySignInUnavailable" || raw.reply === "ReplyNotAllowed" || raw.reply === "ReplySignupForm" || raw.reply === "ReplySignupRefused")) return { type: "cancelRequest", reply: raw.reply };
   return undefined;
 }
 
@@ -913,7 +1119,7 @@ export function parseState(x: unknown): AuthPage | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.view === "Opening" || raw.view === "PhoneView" || raw.view === "CodeView" || raw.view === "ConsentView" || raw.view === "ConsentRetryView" || raw.view === "CloudView" || raw.view === "ApprovedView" || raw.view === "DeclinedView" || raw.view === "LinkInvalidView" || raw.view === "TooManyTriesView" || raw.view === "NotAvailableView" || raw.view === "PageExpiredView" || raw.view === "AlreadySignedInView" || raw.view === "CheckNumberView" || raw.view === "ConnectAgainView" || raw.view === "PleaseRetryView" || raw.view === "SignInUnavailableView" || raw.view === "NotAllowedView") && (raw.fieldError === "NoFieldError" || raw.fieldError === "CheckNotPassed" || raw.fieldError === "PhoneNotValid" || raw.fieldError === "CodesRateLimited" || raw.fieldError === "CodeSendFailed" || raw.fieldError === "CodeNotAccepted") && (raw.securityCheck === "CheckOff" || raw.securityCheck === "CheckWaiting" || raw.securityCheck === "CheckSolved" || raw.securityCheck === "CheckExpired") && typeof raw.turnstileOn === "boolean" && typeof raw.codeSent === "boolean" && typeof raw.consentSeen === "boolean" && typeof raw.approved === "boolean" && Object.keys(raw).length === 7)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.view === "Opening" || raw.view === "PhoneView" || raw.view === "CodeView" || raw.view === "ConsentView" || raw.view === "ConsentRetryView" || raw.view === "CloudView" || raw.view === "ApprovedView" || raw.view === "DeclinedView" || raw.view === "LinkInvalidView" || raw.view === "TooManyTriesView" || raw.view === "NotAvailableView" || raw.view === "PageExpiredView" || raw.view === "AlreadySignedInView" || raw.view === "CheckNumberView" || raw.view === "ConnectAgainView" || raw.view === "PleaseRetryView" || raw.view === "SignInUnavailableView" || raw.view === "NotAllowedView" || raw.view === "SignupView") && (raw.fieldError === "NoFieldError" || raw.fieldError === "CheckNotPassed" || raw.fieldError === "PhoneNotValid" || raw.fieldError === "CodesRateLimited" || raw.fieldError === "CodeSendFailed" || raw.fieldError === "CodeNotAccepted") && (raw.securityCheck === "CheckOff" || raw.securityCheck === "CheckWaiting" || raw.securityCheck === "CheckSolved" || raw.securityCheck === "CheckExpired") && typeof raw.turnstileOn === "boolean" && typeof raw.codeSent === "boolean" && typeof raw.consentSeen === "boolean" && typeof raw.approved === "boolean" && Object.keys(raw).length === 7)) return undefined;
   const parsed: AuthPage = ({ view: raw.view, fieldError: raw.fieldError, securityCheck: raw.securityCheck, turnstileOn: raw.turnstileOn, codeSent: raw.codeSent, consentSeen: raw.consentSeen, approved: raw.approved });
   return inv(parsed) ? parsed : undefined;
 }

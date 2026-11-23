@@ -26,8 +26,8 @@ export interface UpdateRead { shown: number; tokenLeft: boolean; otherLeft: bool
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "callWithoutAccess"; tool: ToolName }
   | { type: "authorize"; withWrite: boolean; withProfileRead: boolean }
+  | { type: "callWithoutAccess"; tool: ToolName }
   | { type: "callPublicTool"; tool: ToolName; app: AppId; appRegistered: boolean }
   | { type: "connect"; host: AppId; surface: Surface; openAiEnabled: boolean }
   | { type: "callAfterOwnerChange" }
@@ -165,6 +165,33 @@ export function lawNoSiteOffersSlopOnTheOpenAiSurface(site: AppId): boolean {
   return !siteOffersOpenAi(site, "Slop") && !appListed("OpenAiSurface", site, "Slop");
 }
 
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function signInSite(site: AppId, app: AppId): AppId {
+  return site === hubHost ? hubHost : app;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawHubPathsSignInOnTheHub(app: AppId): boolean {
+  //@ ensures \result === true
+  return signInSite(hubHost, app) === hubHost;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawAppSiteSignsInOnItself(app: AppId): boolean {
+  //@ ensures \result === true
+  return signInSite(app, app) === app;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawSignInSiteServesTheApp(site: AppId, app: AppId): boolean {
+  //@ ensures \result === true
+  return !hostBindsApp(site, app) || (signInSite(site, app) === site && hostBindsApp(signInSite(site, app), app));
+}
+
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
 //@ pure
 export function scopeFor(tool: ToolName): Scope {
@@ -252,6 +279,24 @@ export function lawReadToolsServeEveryStatus(status: MemberStatus): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
+export function authorize(c: Connection, withWrite: boolean, withProfileRead: boolean): Connection {
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysWriteNeedsConnection(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysUnboundHasNoDraft(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysBoundHostIsServed(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysMemberResultsNeedConnection(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysSentProfileWasApproved(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysDailyProfileCap(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysShownCountIsSmall(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> stepSavedProfileNeedsReadAuthority(c, "authorize", \result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> stepNothingSentAtTheLimit(c, "authorize", \result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> stepSubmitOnlyForLiveMember(c, "authorize", \result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> stepReadingNeverAddsUnseen(c, "authorize", \result)
+  return { ...c, phase: "Connected", hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, draftPrepared: false, lastResult: "NoResult" };
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
 export function callWithoutAccess(c: Connection, tool: ToolName): Connection {
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
@@ -296,24 +341,6 @@ export function canConnect(c: Connection): boolean {
 //@ pure
 export function canAuthorize(c: Connection): boolean {
   return c.phase === "Anonymous" || c.phase === "Revoked";
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
-export function authorize(c: Connection, withWrite: boolean, withProfileRead: boolean): Connection {
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysUnboundHasNoDraft(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysBoundHostIsServed(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysMemberResultsNeedConnection(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysSentProfileWasApproved(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysShownCountIsSmall(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> stepSavedProfileNeedsReadAuthority(c, "authorize", \result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> stepNothingSentAtTheLimit(c, "authorize", \result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> stepSubmitOnlyForLiveMember(c, "authorize", \result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> stepReadingNeverAddsUnseen(c, "authorize", \result)
-  return { ...c, phase: "Connected", hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, draftPrepared: false, lastResult: "NoResult" };
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
@@ -808,8 +835,8 @@ export function sometimesRevoked(c: Connection): boolean {
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: Connection, event: Event): boolean {
-  if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool);
   if (event.type === "authorize") return canAuthorize(current);
+  if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool);
   if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool);
   if (event.type === "connect") return canConnect(current);
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current);
@@ -830,8 +857,8 @@ export function enabled(current: Connection, event: Event): boolean {
 export function step(current: Connection, event: Event): Connection {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool) ? callWithoutAccess(current, event.tool) : current;
   if (event.type === "authorize") return canAuthorize(current) ? authorize(current, event.withWrite, event.withProfileRead) : current;
+  if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool) ? callWithoutAccess(current, event.tool) : current;
   if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool) ? callPublicTool(current, event.tool, event.app, event.appRegistered) : current;
   if (event.type === "connect") return canConnect(current) ? connect(current, event.host, event.surface, event.openAiEnabled) : current;
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current) ? callAfterOwnerChange(current) : current;
@@ -861,8 +888,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool")) return { type: "callWithoutAccess", tool: raw.tool };
   if (raw.type === "authorize" && typeof raw.withWrite === "boolean" && typeof raw.withProfileRead === "boolean") return { type: "authorize", withWrite: raw.withWrite, withProfileRead: raw.withProfileRead };
+  if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool")) return { type: "callWithoutAccess", tool: raw.tool };
   if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends") && typeof raw.appRegistered === "boolean") return { type: "callPublicTool", tool: raw.tool, app: raw.app, appRegistered: raw.appRegistered };
   if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };

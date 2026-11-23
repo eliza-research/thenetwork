@@ -80,6 +80,11 @@ describe("one ntwrk.party connector endpoint for every app", () => {
       expect(status.body!.result.structuredContent, app).toMatchObject({ app, status: "active" });
       const tools = (await rpc(env, endpoint(app), "tools/list", {}, { token: token.access_token })).body!.result.tools;
       expect(tools.find((t: any) => t.name === "check_status").inputSchema.properties.app.enum, app).toEqual([app]);
+      for (const name of ["check_status", "get_updates"]) {
+        const description = tools.find((t: any) => t.name === name).description as string;
+        expect(description, `${app} ${name}`).toContain("allows access on ntwrk.party");
+        if (app !== "ntwrk") expect(description, `${app} ${name}`).not.toContain(`on ${names[app].domain}`);
+      }
     }
   });
 

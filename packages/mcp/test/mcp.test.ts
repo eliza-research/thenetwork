@@ -14,10 +14,18 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(d.res.headers.get("mcp-session-id")).toBeNull();
     expect(d.body!.result).toMatchObject({ resultType: "complete", supportedVersions: expect.arrayContaining([MODERN, "2025-11-25"]), capabilities: { tools: {} } });
     expect(d.body!.result.instructions.slice(0, 512)).toContain("Never ask for, accept or relay a phone number or a verification code");
+    for (const tool of ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"]) expect(d.body!.result.instructions).toContain(tool);
+    expect(d.body!.result.instructions).toContain("ticks the text consent in the browser");
     expect(d.body!.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("the-network");
 
     const l = await rpc(env, NTWRK, "tools/list");
     expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "read_profile", "submit_profile", "get_updates"]);
+    const described = (name: string) => l.body!.result.tools.find((t: any) => t.name === name).description as string;
+    expect(described("prepare_signup")).toContain("tick the text consent");
+    expect(described("prepare_signup")).not.toMatch(/approves? their details and text consent there/i);
+    for (const name of ["check_status", "get_updates", "prepare_signup"]) expect(described(name)).toContain("allows access on ntwrk.party");
+    const site = await rpc(env, `${origin("peon.biz")}/mcp`, "tools/list");
+    expect(site.body!.result.tools.find((t: any) => t.name === "check_status").description).toContain("allows access on peon.biz");
     for (const t of l.body!.result.tools) {
       // Profile submission and reading updates modify the person's own state.
       const ro = !["submit_profile", "get_updates", "prepare_signup"].includes(t.name);
