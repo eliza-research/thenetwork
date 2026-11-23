@@ -276,3 +276,11 @@
 {"text":"I'm 7 1/2 years old","teen":true,"age":7}
 {"text":"I just turned 7 1/2","teen":true,"age":7}
 {"text":"I just turned 7.5","teen":true,"age":7}
+{"text":"I'm 5 and also my team won","teen":false}
+{"text":"I'm 12 and my record collection","teen":false}
+{"text":"I'm 12.5 y.o., in two years","teen":false}
+{"text":"I'm 15 and a quarter miles away","teen":false}
+{"text":"I'm 12 and a half years old","teen":true,"age":12}
+{"text":"I'm 11 1/2 years old","teen":true,"age":11}
+{"text":"I'm 12 and 3 months old","teen":true,"age":12}
+{"text":"She said \"this is true. I'm 12.5 years old.\"","teen":false}
