@@ -581,15 +581,15 @@ test.each([
 }, 60_000);
 
 test("a signed photo request respects the intended item and separately preserves approval", async () => {
-  const sender = "+12125550229", recipient = "+12125550230";
-  for (const [phone, name] of [[sender, "Nia"], [recipient, "Pat"]] as const) {
+  const sender = "+12125550229", recipient = "+12125550230", otherRecipient = "+12125550231";
+  for (const [phone, name] of [[sender, "Nia"], [recipient, "Pat"], [otherRecipient, "Pat"]] as const) {
     for (const [index, text] of [
       "slop.date", name + ", 29", "I'm a woman into women. I live in Greenpoint and love climbing and live music",
       "I'm a woman looking for women, 25 to 35, within 5 miles of 11222", "A long-term relationship, no smokers",
       "Coffee or a walk for a first date. Weekend evenings work best.", "Yes, that's right.",
     ].entries()) {
       clock.advance(MINUTE);
-      expect((await post(TURN_PATH, { ...turn(phone, `scoped-photo:${name}:${index}`, text), app: "slop" })).status).toBe(200);
+      expect((await post(TURN_PATH, { ...turn(phone, `scoped-photo:${phone}:${index}`, text), app: "slop" })).status).toBe(200);
     }
   }
   if (!photoPolicyEnabled) {
@@ -601,6 +601,11 @@ test("a signed photo request respects the intended item and separately preserves
   const from = (await service.people.getMembership(person.id, "slop"))!.memberId;
   const to = (await service.people.getMembership(other.id, "slop"))!.memberId;
   const match = "slop.scoped-relay-photo-pair";
+  const otherMatch = "slop.scoped-relay-photo-older-pair";
+  const secondPat = (await service.accounts.personFor(otherRecipient))!;
+  const otherTo = (await service.people.getMembership(secondPat.id, "slop"))!.memberId;
+  await fixturePair(false, "slop", [from, otherTo], otherMatch);
+  clock.advance(MINUTE);
   await fixturePair(false, "slop", [from, to], match);
   const jpeg = Uint8Array.from([255, 216, 255, 218, 0, 2, 1, 255, 217]);
   const upload = await service.photos.upload(person.id, "slop", jpeg, PHOTO_CONSENT.version);
@@ -620,6 +625,13 @@ test("a signed photo request respects the intended item and separately preserves
     expect(response.status).toBe(200);
     return response.json();
   };
+  expect(await send("scoped-photo-name-collision", "Send Pat my photo.")).toMatchObject({
+    decision: "block", delivered: false, senderNotice: expect.stringContaining("more than one person"),
+  });
+  expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: null });
+  expect(await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).toHaveLength(0);
+  expect(posts).toBe(before);
+  await fixturePair(true, "slop", [from, otherTo], otherMatch);
   for (const [index, text] of [
     "Send him my photo. Let me think it over first.",
     "Send him my photo. Lol nevermind the photo.",

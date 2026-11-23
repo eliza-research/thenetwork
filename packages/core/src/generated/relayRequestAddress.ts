@@ -16,6 +16,19 @@ export function lawNamedRelayRequiresTheSelectedCounterpart(named: boolean): boo
   return !named || !relayTextRecipientAllowed(named, false);
 }
 
+/** Story: Ask the agent to relay my own words / A name identifies one recipient on an unselected relay (spec/relayRequestAddress.md) */
+//@ pure
+export function relayNameCollisionRefuses(selectedItem: boolean, otherCounterpartMatches: boolean): boolean {
+  return !selectedItem && otherCounterpartMatches;
+}
+
+/** Story: Ask the agent to relay my own words / A name identifies one recipient on an unselected relay (spec/relayRequestAddress.md) */
+//@ pure
+export function lawNameCollisionRefusesOnlyAnUnselectedRelay(selectedItem: boolean, otherCounterpartMatches: boolean): boolean {
+  //@ ensures \result === true
+  return relayNameCollisionRefuses(selectedItem, otherCounterpartMatches) === (!selectedItem && otherCounterpartMatches);
+}
+
 /** Story: Ask the agent to relay my own words / Polite wording still needs a direct request to send a private item (spec/relayRequestAddress.md) */
 //@ pure
 export function relayIsIndirectQuestion(question: boolean, modalRequest: boolean, directAction: boolean, adviceQuestion: boolean): boolean {
