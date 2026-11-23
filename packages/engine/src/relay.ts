@@ -722,6 +722,7 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
   if (LATE_ORPHAN_QUESTION.test(tail)) return true;
+  const otherItemRefusal = contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL;
   let retracted = false;
   let referenceAvailable = true;
   let adjacentPause = false;
@@ -730,11 +731,10 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
     const start = end + part.index!;
     const sentence = part[0];
     const stop = start + sentence.length;
-    const authored = sentence === source.slice(start, stop);
-    const question = text.slice(stop).match(RELAY_SENTENCE)?.[0].includes("?") ?? false;
+    const ownStatement = sentence === source.slice(start, stop) && !text.slice(stop).match(RELAY_SENTENCE)?.[0].includes("?");
     const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence)?.[0] ?? colloquialRetractionLead(sentence, contact);
     const prefix = lead ?? PRIVATE_RENEWAL_CORRECTION.exec(sentence)![0];
-    const renewal = authored && !question && (retracted || lead !== undefined)
+    const renewal = ownStatement && (retracted || lead !== undefined)
       ? privateRenewalEnd(sentence.slice(prefix.length), request, referenceAvailable && (adjacentPause || lead !== undefined))
       : undefined;
     if (renewal !== undefined && !conditionsPrivateRequest(text, source, start + prefix.length + renewal)) {
@@ -746,14 +746,19 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
       if (TERMINAL_PRIVATE_RETRACTION.test(lead ?? sentence)) return true;
       retracted = true;
       renewedAfterPause = false;
-      referenceAvailable &&= authored && !question && PRIVATE_RENEWAL_ANCHOR.test(sentence);
+      referenceAvailable &&= ownStatement && PRIVATE_RENEWAL_ANCHOR.test(sentence);
       adjacentPause = referenceAvailable;
     } else {
-      if (renewedAfterPause && !(authored && !question && independentRenewalFollowup(sentence))) {
-        retracted = true;
-        renewedAfterPause = false;
+      if (renewedAfterPause) {
+        const otherItem = ownStatement
+          && (otherItemRefusal.test(sentence.toLowerCase()) || colloquialRetractionLead(sentence, !contact) !== undefined);
+        if (otherItem && CONTINUES_PRIVATE_REFUSAL.test(text.slice(stop).split(RELAY_SENTENCE, 2)[1]?.toLowerCase() ?? "")) return true;
+        if (!(ownStatement && (otherItem || independentRenewalFollowup(sentence)))) {
+          retracted = true;
+          renewedAfterPause = false;
+        }
       }
-      referenceAvailable &&= authored && privateCourtesy(sentence);
+      referenceAvailable &&= ownStatement && privateCourtesy(sentence);
       adjacentPause = false;
     }
   }
