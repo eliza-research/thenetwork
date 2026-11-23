@@ -791,6 +791,7 @@ const EXPLICIT_NO_OFFERED_TIMES = /^\s*none of (?:(?:those|these)(?: times| opti
 // A day and clock label cannot establish consent to a relative or separately named date.
 const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
 const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
+const UNBOUND_CLARIFIED_DATE = /\b(?:next|last|following)\s+(?:week(?:end)?|month|year)\b|\bafter next\b|\b(?:in|within)\s+(?:an?|\d+|one|two|three|four|few|several)\s+(?:days?|weeks?|months?|years?)\b/;
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
  * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
@@ -836,6 +837,19 @@ function partOf(minute: number): TimeMention["part"] {
 function probeChoiceAuthored(prefix: string): boolean {
   return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]/).at(-1)!);
 }
+
+const RECURRING_PROBE_TIME = new RegExp(
+  String.raw`\b(?:${DAY_NAMES.map(([day]) => `${day.toLowerCase()}s`).join("|")}|weekends|weekdays|weeknights|mornings|afternoons|evenings|nights)\b`,
+);
+
+const PROBE_AVAILABILITY_SUBJECT = /\b([a-z][a-z'-]*)\s+(?:can|could|would|(?:is|are)\s+(?:free|available)|prefers?)\b/g;
+
+function probeTimeIsRecurring(text: string, at: number, end: number): boolean {
+  return RECURRING_PROBE_TIME.test(text.slice(at, end))
+    || /\b(?:usually|normally|generally|typically|weekly|every (?:other )?week)\b/.test(clauseAt(text, at, end - at))
+    || /\b(?:every|each|most)\s+$/.test(text.slice(0, at));
+}
+
 
 function timeMentions(text: string, recoverTrailingPair: boolean): TimeMention[] {
   const days = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
@@ -902,7 +916,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
-  const memberChoiceAt = (at: number) => !clarifiedTimes || probeChoiceAuthored(t.slice(0, at));
+  const memberChoiceAt = (at: number) => {
+    if (!clarifiedTimes) return true;
+    const prefix = t.slice(0, at);
+    const subject = [...prefix.split(/[.!?\n]/).at(-1)!.matchAll(PROBE_AVAILABILITY_SUBJECT)].at(-1)?.[1];
+    return probeChoiceAuthored(prefix) && (subject === undefined || /^(?:i|we|it|this|that)$/.test(subject));
+  };
   const refuse = (keys: readonly string[], clause?: string) => {
     for (const key of keys) neg.add(key);
     if (clause !== undefined) refusedClauses.add(clause);
@@ -952,6 +971,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return { key: o.key, day: o.label.split(" ")[0], minute: clock ? clockMinute(clock) : undefined };
   });
   for (const m of timeMentions(t, !explicitTimesOnly || clarifiedTimes)) {
+    if (clarifiedTimes && probeTimeIsRecurring(t, m.at, m.end)) continue;
     if (!memberChoiceAt(m.at)) continue;
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (!m.part || o.minute !== undefined && partOf(o.minute) === m.part)).map(o => o.key);
@@ -970,6 +990,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Weekends work best" names the weekend: it picks the offered Saturday and Sunday options, and with
   // none offered it names a time the probe did not offer (asked again, never booked).
   for (const m of t.matchAll(/\bweekends?\b/g)) {
+    if (clarifiedTimes && probeTimeIsRecurring(t, m.index!, m.index! + m[0].length)) continue;
     if (!memberChoiceAt(m.index!)) continue;
     const weekend = offered.filter(o => o.day === "Saturday" || o.day === "Sunday").map(o => o.key);
     if (negatedAt(t, m.index!, m[0].length)) refuse(weekend, clauseAt(t, m.index!, m[0].length));
@@ -992,7 +1013,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
   if (explicitTimesOnly) {
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
-    if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
+    if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t)
+      || UNBOUND_OFFER_CLOCK.test(t) || clarifiedTimes && UNBOUND_CLARIFIED_DATE.test(t)) return { ...unclear, why: "slot" };
   }
   const strongAll = explicitTimesOnly ? EXPLICIT_ALL.exec(t) ?? (clarifiedTimes ? EXPLICIT_PAIR_ALL.exec(t) : null) : ALL.exec(t);
   const weakCues = (explicitTimesOnly && !clarifiedTimes) || strongAll ? [] : [...t.matchAll(ALL_WEAK)].filter(cue => memberChoiceAt(cue.index!));
