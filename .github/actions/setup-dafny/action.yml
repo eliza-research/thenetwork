@@ -44,10 +44,15 @@ runs:
             https://api.github.com/repos/dafny-lang/dafny/releases/assets/286103254
           source=asset-api
         fi
-        directory=$(mktemp -d "$RUNNER_TEMP/dafny-release.XXXXXX")
-        unzip -q "$archive" -d "$directory"
-        "$directory/dafny/dafny" --version
-        echo "$directory/dafny" >> "$GITHUB_PATH"
+        directory="${RUNNER_TOOL_CACHE:?}/dafny/4.11.0"
+        mkdir -p -- "$directory"
+        staging=$(mktemp -d "$directory/install.XXXXXX")
+        trap 'rm -rf -- "$staging"' EXIT
+        unzip -q "$archive" -d "$staging"
+        "$staging/dafny/dafny" --version
+        rm -rf -- "$directory/x64"
+        mv -T -- "$staging/dafny" "$directory/x64"
+        echo "$directory/x64" >> "$GITHUB_PATH"
         echo "source=$source" >> "$GITHUB_OUTPUT"
         echo "Verified Dafny release from $source"
     - name: Save the verified Dafny release archive
