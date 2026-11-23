@@ -961,7 +961,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const weakCues = explicitTimesOnly || strongAll ? [] : [...t.matchAll(ALL_WEAK)];
   const weakAt = weakCues[0];
   const weakRefusal = weakCues.some(cue => refusedClauses.has(clauseAt(t, cue.index!, cue[0].length)));
-  const weakNegated = weakCues.some(cue => negatedAt(t, cue.index!, cue[0].length));
+  const oneSlot = /(?:\bbut\s+|,\s*)not\s+both[.!\s]*$/.exec(t);
+  const weakLimit = oneSlot && weakAt?.[0].startsWith("either") && !quoteStillOpen(t.slice(0, weakAt.index))
+    && !describesAnotherPerson(t.slice(0, oneSlot.index)) ? oneSlot.index : t.length;
+  const weakNegated = weakCues.some(cue => cue.index! < weakLimit && negatedAt(t, cue.index!, cue[0].length));
   if (weakAt && (pos.size || unresolved.length || ordinalMissing || weakRefusal || weakNegated)) {
     if (NEITHER.test(t.replace(NO_OTHER_TIMES, ""))) return explicitYes([]);
     if (unresolved.length || ordinalMissing || [...pos].some(key => !all.includes(key))

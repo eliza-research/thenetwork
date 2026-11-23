@@ -29,6 +29,8 @@ test.skipIf(!pgAvailable).each([
     slots: three, text: "Either works.", picked: three.map(slot => slot.start) },
   { scene: "the named pair is the only availability",
     slots: three, text: "Either Saturday or Sunday only, no other times.", picked: weekend },
+  { scene: "either named slot can be the single booking",
+    slots: three, text: "Either Saturday or Sunday but not both.", picked: weekend },
   { scene: "both of the offered times are refused",
     slots: [saturday, sunday], text: "Yes, both of them don't work.", picked: [] },
   { scene: "a refusal alone does not book",
