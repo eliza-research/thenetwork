@@ -18,6 +18,8 @@ The executable [rescheduling rules](../meetingReschedule.md) cover independent c
 
 The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a qualified use of the same words. A direct withdrawal declines the offer. A quoted or negated use and an unbound time keep its current probe open. The first member's accepted slots can narrow and renumber the next member's offer. A valid ordinal or day group acts only on that member's current offer. The reviewed Slop test checks the selected start. This standalone model abstracts the precise slots to all, none, or unresolved.
 
+A complete direct list can name offered days with consecutive abbreviations. An abbreviation that is a verb in an ordinary sentence does not add a day. The signed booking test checks the exact selected times before and after a clarification.
+
 The same declined action covers a standalone “afraid not,” “not a chance,” or
 “no chance.” A qualified use of those words stays in the unresolved action.
 The probe reader also removes explicitly excluded options. A trailing

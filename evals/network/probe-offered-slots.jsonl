@@ -122,3 +122,5 @@
 {"text":"sat sun and thu","answer":"yes","keys":["a","b","c"]}
 {"text":"sun sat","answer":"yes","keys":["b","c"]}
 {"text":"sat sun work for me","answer":"yes","keys":["b","c"]}
+{"text":"I can do Sat Sun","answer":"yes","keys":["b","c"]}
+{"text":"Sunday works. I sat Sunday.","answer":"yes","keys":["c"]}

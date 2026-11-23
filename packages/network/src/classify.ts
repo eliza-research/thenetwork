@@ -846,18 +846,18 @@ export const parseYesNo = (body: string): YesNo => consentOf(body).answer;
 export type { TimeOption };
 
 // Day names. A full name always counts; a short form ("sun", "sat", "wed", "mon") counts only in a
-// day context (before a time, a daypart, another day, "or", "and", a comma or the end), so "if the sun's out",
+// day context (before a time, a daypart, "or", "and", a comma or the end), so "if the sun's out",
 // "sat down" or "c'mon" never pick a day.
 const DAY_NAMES = [
   ["Sunday", "sun"], ["Monday", "mon"], ["Tuesday", "tues?"], ["Wednesday", "weds?"],
   ["Thursday", "thu|thur|thurs"], ["Friday", "fri"], ["Saturday", "sat"],
 ] as const;
-const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
 const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|works?\b|`
-  + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b|(?:${DAY_TOKEN})\b)|\s*[,;!?.]|\s*$))`;
+  + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
 const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
 ]);
+const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
 const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times)\b/;
 const OTHER_TIMES = /\bother times?\b/;
 const NO_OTHER_TIMES = /\b(?:no|not) other times?\b/g;
@@ -866,11 +866,19 @@ const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|wh
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
 const ALL_WEAK = /\b(?:either|both)\b(?:\s+of\s+(?:them|(?:those|these)(?:\s+(?:times|options|slots))?)\b)?/g;
 const BOTH_TIME_LEAD = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?both\b/;
-const BOTH_TIME_TAIL = /^\s*(?:(?:work(?:s)?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please)?\s*$/;
+const OFFERED_PAIR_AFFIRMATIVE = String.raw`(?:works?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please`;
+const BOTH_TIME_TAIL = new RegExp(String.raw`^\s*(?:${OFFERED_PAIR_AFFIRMATIVE})?\s*$`);
 const BOTH_TIME_QUALIFIER = /^\s+(?:(?:at|around|by|after|before)\s+\d{1,2}(?::[0-5]\d)?(?:\s*[ap]m)?|\d{1,2}(?::[0-5]\d)?\s*[ap]m|(?:(?:at|in the)\s+)?(?:noon|midnight|mornings?|afternoons?|evenings?|nights?|lunch|after work))\b/;
 const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
 const NAMED_TIME_EXCLUSION = `except|${NAMED_EXCLUSION_PHRASES}`;
 const BOTH_TIME_BOUNDARY = new RegExp(String.raw`[.,;!?\n]|\b(?:but|${NAMED_TIME_EXCLUSION})\b`);
+const DIRECT_PROBE_DAY_LIST = new RegExp(
+  String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
+    + String.raw`(?<days>\b(?:${DAY_TOKEN})\b(?:\s+(?:(?:and|or)\s+)?\b(?:${DAY_TOKEN})\b)+)`
+    + String.raw`(?=(?:\s+(?:both|either)\b)?(?:\s+(?:${OFFERED_PAIR_AFFIRMATIVE}))?\s*(?:$|${BOTH_TIME_BOUNDARY.source}))`,
+  "dgu",
+);
+const PROBE_DAY_LIST_TOKEN = new RegExp(String.raw`\b(?:${DAY_TOKEN})\b`, "gu");
 const TRAILING_BOTH_DAY_PAIR = new RegExp(
   String.raw`(?:^|[.;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
     + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+both\b`,
@@ -934,6 +942,14 @@ type TimeMention = ProbeSpan & {
   day?: string; minute?: number; part?: "morning" | "afternoon" | "evening";
   group?: "weekday" | "weekend"; nightsOnly?: boolean;
 };
+
+function directProbeDayLists(text: string): ProbeSpan[] {
+  return [...text.matchAll(DIRECT_PROBE_DAY_LIST)].flatMap(match => {
+    const [at, end] = match.indices!.groups!.days!;
+    // A short form in a complete choice can be a weekday. The verb in “I sat Sunday” cannot.
+    return probeChoiceAuthored(text.slice(0, at)) ? [{ at, end }] : [];
+  });
+}
 
 function clockMinute(m: RegExpMatchArray): number {
   if (m[4]) return m[4] === "noon" ? 12 * 60 : 0;
@@ -1012,8 +1028,14 @@ const OFFERED_TIME_REFUSAL =
 const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
 const RESTATED_CLOCK_PART = new RegExp(String.raw`^(?:morning|afternoon|evening|night)(?:\s+(?:on\s+)?(?:${DAY_TOKEN}))?$`);
 
-function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean): TimeMention[] {
+function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean, dayLists: readonly ProbeSpan[]): TimeMention[] {
   const mentions = timeMentions(text, recoverTrailingPair);
+  for (const list of dayLists) for (const token of text.slice(list.at, list.end).matchAll(PROBE_DAY_LIST_TOKEN)) {
+    const at = list.at + token.index, end = at + token[0].length;
+    if (mentions.some(mention => mention.at <= at && end <= mention.end)) continue;
+    const day = DAY_WORDS.find(([word]) => token[0].search(word) === 0)?.[1];
+    if (day) mentions.push({ at, end, day });
+  }
   // A matching restatement keeps the exact clock and can supply its trailing day.
   for (const clock of mentions.filter(mention => mention.minute !== undefined)) {
     const alias = mentions.find(part => !part.group && part.minute === undefined && part.part === partOf(clock.minute!)
@@ -1272,7 +1294,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const alone = (explicitTimesOnly ? EXPLICIT_KEY : /^\s*([abc])[\s.!,)]*$/).exec(t);
   if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); individual.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
-  const mentions = completeProbeTimeMentions(t, !explicitTimesOnly || clarifiedTimes, memberChoiceAt);
+  const dayLists = directProbeDayLists(t);
+  const mentions = completeProbeTimeMentions(t, !explicitTimesOnly || clarifiedTimes, memberChoiceAt, dayLists);
   const directOrdinals = readDirectProbeOrdinals(t, memberChoiceAt);
   const ordinals = completeProbeOrdinals(t, directOrdinals.refusals);
   const joinedRefusals = joinedProbeRefusals(t, [...mentions, ...ordinals], memberChoiceAt);
@@ -1338,6 +1361,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
+  for (const list of dayLists) residue = residue.slice(0, list.at) + " ".repeat(list.end - list.at) + residue.slice(list.end);
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(PROBE_DAY_GROUP, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
