@@ -154,3 +154,9 @@
 {"text":"I said stop by at 7","label":"not_stop","lang":"en"}
 {"text":"I said cancel","label":"not_stop","lang":"en"}
 {"text":"stop slop stop slop","label":"not_stop","lang":"en"}
+{"text": "Do not quit texting me", "label": "not_stop", "lang": "en"}
+{"text": "Don't cease messaging me", "label": "not_stop", "lang": "en"}
+{"text": "Quit texting me and do not cease calling me", "label": "stop", "lang": "en"}
+{"text": "Please cease messaging me", "label": "stop", "lang": "en"}
+{"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
+{"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}

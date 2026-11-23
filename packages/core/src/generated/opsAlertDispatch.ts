@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
-export interface FiringEvidence { episodeOpen: boolean; postedBefore: boolean; latestLevel: string; sentLevel: string; bumpOnCount: boolean; latestCount: number; sentCount: number; elapsedMs: number; repeatMs: number }
-/** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
 export type FiringPlan = "StartAlert" | "SendAgain" | "UpdateOnly";
+/** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
+export interface FiringEvidence { episodeOpen: boolean; postedBefore: boolean; latestLevel: string; sentLevel: string; bumpOnCount: boolean; latestCount: number; sentCount: number; elapsedMs: number; repeatMs: number }
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
 export type MissingPlan = "KeepEpisode" | "CloseQuietly" | "SendResolution";
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
@@ -32,6 +32,32 @@ export function inv(current: AlertDispatch): boolean {
   return true;
 }
 
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function reportedSmsTotal(exactTotalAvailable: boolean, exactTotal: number, legacyTotal: number): number {
+  return exactTotalAvailable ? exactTotal : legacyTotal;
+}
+
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function countSendOutcome(waiting: boolean): boolean {
+  return !waiting;
+}
+
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawPendingDeliveryHasNoOutcome(waiting: boolean): boolean {
+  //@ ensures \result === true
+  return !waiting || !countSendOutcome(waiting);
+}
+
+/** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawAnExactSmsZeroReplacesTheLegacyTotal(legacyTotal: number): boolean {
+  //@ ensures \result === true
+  return reportedSmsTotal(true, 0, legacyTotal) === 0;
+}
+
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
 //@ pure
 export function chooseFiringPlan(e: FiringEvidence): FiringPlan {
@@ -40,8 +66,15 @@ export function chooseFiringPlan(e: FiringEvidence): FiringPlan {
 
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
 //@ pure
-export function chooseMissingPlan(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean): MissingPlan {
-  return !episodeOpen || seenThisRound ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+export function chooseMissingPlan(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean, sourceReadable: boolean): MissingPlan {
+  return !episodeOpen || seenThisRound || !sourceReadable ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+}
+
+/** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawUnreadSourceKeepsEpisode(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean): boolean {
+  //@ ensures \result === true
+  return chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, false) === "KeepEpisode";
 }
 
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */

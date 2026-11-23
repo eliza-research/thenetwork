@@ -8,13 +8,13 @@ The service parses the sender's text, reads the app and pending records and appl
 
 ### Dedicated lines and explicit app choices take priority
 
-An explicit routing override or registered receiving line selects its own app. On the shared line an explicit saved-profile read takes priority over an invitation feedback reply, which takes priority over an app keyword. Otherwise inspect any pending join and current memberships.
+An explicit routing override or registered receiving line selects its own app. On the shared line a saved-profile read takes priority over an invitation feedback reply. If the sender has an active Network membership and a pending enrollment question, a bare app name that names an offered choice goes to The Network as an answer. The app must be running. Other app keywords, including explicit join commands and domains, keep their own routes. Otherwise inspect any pending join and current memberships.
 
 ```quint
-type RoutePhase = AwaitingExplicitRoute | AwaitingFallbackRoute | DedicatedRoute | ProfileRoute | SurveyRoute | KeywordRoute |
+type RoutePhase = AwaitingExplicitRoute | AwaitingFallbackRoute | DedicatedRoute | ProfileRoute | SurveyRoute | LookingForRoute | KeywordRoute |
   PendingJoinRoute | OpenItemRoute | RecentAppRoute | DefaultNetworkRoute
 type TextRoute = { phase: RoutePhase }
-type ExplicitFacts = { dedicated: bool, profileApp: bool, surveyApp: bool, appKeyword: bool }
+type ExplicitFacts = { dedicated: bool, profileApp: bool, surveyApp: bool, pendingEnrollmentAnswer: bool, appKeyword: bool }
 pure val initialRoute: TextRoute = { phase: AwaitingExplicitRoute }
 
 pure def checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute =
@@ -22,17 +22,21 @@ pure def checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): T
   else if (explicitFacts.dedicated) { phase: DedicatedRoute }
   else if (explicitFacts.profileApp) { phase: ProfileRoute }
   else if (explicitFacts.surveyApp) { phase: SurveyRoute }
+  else if (explicitFacts.pendingEnrollmentAnswer) { phase: LookingForRoute }
   else if (explicitFacts.appKeyword) { phase: KeywordRoute }
   else { phase: AwaitingFallbackRoute }
 
-pure def lawDedicatedLineTakesPrecedence(profileApp: bool, surveyApp: bool, appKeyword: bool): bool =
-  checkExplicitRoute(initialRoute, { dedicated: true, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword }).phase == DedicatedRoute
+pure def lawDedicatedLineTakesPrecedence(profileApp: bool, surveyApp: bool, pendingEnrollmentAnswer: bool, appKeyword: bool): bool =
+  checkExplicitRoute(initialRoute, { dedicated: true, profileApp: profileApp, surveyApp: surveyApp, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword }).phase == DedicatedRoute
 
-pure def lawProfileReadTakesPrecedence(surveyApp: bool, appKeyword: bool): bool =
-  checkExplicitRoute(initialRoute, { dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword }).phase == ProfileRoute
+pure def lawProfileReadTakesPrecedence(surveyApp: bool, pendingEnrollmentAnswer: bool, appKeyword: bool): bool =
+  checkExplicitRoute(initialRoute, { dedicated: false, profileApp: true, surveyApp: surveyApp, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword }).phase == ProfileRoute
 
-pure def lawSurveyReplyTakesPrecedence(appKeyword: bool): bool =
-  checkExplicitRoute(initialRoute, { dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword }).phase == SurveyRoute
+pure def lawSurveyReplyTakesPrecedence(pendingEnrollmentAnswer: bool, appKeyword: bool): bool =
+  checkExplicitRoute(initialRoute, { dedicated: false, profileApp: false, surveyApp: true, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword }).phase == SurveyRoute
+
+pure def lawPendingEnrollmentAnswerTakesPrecedence(appKeyword: bool): bool =
+  checkExplicitRoute(initialRoute, { dedicated: false, profileApp: false, surveyApp: false, pendingEnrollmentAnswer: true, appKeyword: appKeyword }).phase == LookingForRoute
 ```
 
 ### A prepared Peon signup names its app on a separate first line
@@ -52,10 +56,15 @@ pure def lawPreparedPeonTextRequiresExplicitHeader(header: str, profilePresent: 
 
 ### A pending join routes only a possible join answer
 
-Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. The shell parses the answer for an age only when the sender has a pending join for an app they have yet to join and already belongs to an app. Use only pending fields from the routed app.
+Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest opportunity item since the sender last wrote to that app, then the last app to contact the sender, then The Network. An item can supply this routing hint while its opportunity is proposed, scheduled or completed. An item with a closed or missing opportunity cannot supply the hint. Routing does not accept a probe or feedback answer. The receiving app applies its exact reply timing and receipt rules. The shell parses the answer for an age only when the sender has a pending join for an app they have yet to join and already belongs to an app. Use only pending fields from the routed app.
 
 ```quint
 type FallbackFacts = { hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool, answerHasAge: bool, hasOpenItem: bool }
+pure val openRouteOpportunityStates = Set("PROPOSED", "SCHEDULED", "COMPLETED")
+
+pure def lawClosedOpportunityCannotSupplyRoute(opportunityState: str): bool =
+  (opportunityState == "CANCELLED" or opportunityState == "SKIPPED") implies not(openRouteOpportunityStates.contains(opportunityState))
+
 pure def shouldReadPendingAnswer(hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool): bool =
   hasPendingJoin and not(alreadyInPendingApp) and hasMembership
 pure def checkFallbackRoute(routing: TextRoute, fallbackFacts: FallbackFacts): TextRoute =
@@ -144,7 +153,7 @@ pure def sometimesAsksWhatTheyWant(joining: TextJoin): bool = joining.phase == J
 
 ### A current Network member's answer controls other-app enrollment
 
-Handle an eligible answer to the pending question only if it names a running app other than The Network. Recheck the person, Network membership and ban before acting. Process each named app separately. Slop requires adult eligibility in this path even if an underage member could join it directly. An existing membership can be acknowledged. Otherwise enforce that app's join age before writing the app membership and its own consent.
+Handle an eligible answer to the pending question only if it names a running app other than The Network. Recheck the person, Network membership and ban before acting. Process each named app separately. Slop requires adult eligibility in this path even if an underage member could join it directly. An existing membership can be acknowledged. Otherwise enforce that app's join age before writing the app membership and its own consent. A created member binds the signed turn only for the routed app and verified sender. Creating a member of another app leaves the original reply bound to The Network.
 
 ```quint
 type OtherAppOutcome = SkipOtherApp | KeepOtherApp | CreateOtherApp
@@ -156,6 +165,9 @@ pure def networkEnrollmentAllowed(hasPerson: bool, hasNetworkMembership: bool, b
 pure def otherAppAllowed(appName: str, adult: bool): bool = appName != "slop" or adult
 pure def otherAppEnrollment(existingMember: bool, ageEligible: bool): OtherAppOutcome =
   if (existingMember) KeepOtherApp else if (ageEligible) CreateOtherApp else SkipOtherApp
+pure def bindTextJoinMember(sameRoutedApp: bool, samePerson: bool): bool = sameRoutedApp and samePerson
+pure def lawAnotherAppCannotRebindTextJoin(samePerson: bool): bool =
+  not(bindTextJoinMember(false, samePerson))
 pure def lawSlopEnrollmentRequiresAdult(adult: bool): bool =
   otherAppAllowed("slop", adult) implies adult
 ```

@@ -6,7 +6,8 @@ import { isDeepStrictEqual } from "node:util";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
+import { bookedCancellationPrefix } from "../../packages/core/src/generated/outboundAdmission.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -16,9 +17,11 @@ import { baseMember, emptyInput, randomWorld } from "../../packages/engine/src/t
 import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, evaluateExpectations, loadScenario, runScenario as runSimScenario, runScenarioPassK, runWorld, scenarioWorldOptions, type Scenario } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
+import { Projector } from "../../packages/observatory/src/projector.ts";
+import { Store } from "../../packages/observatory/src/store.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
@@ -30,6 +33,11 @@ type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
 const logs = (records: RunRecord[], kind: string) => records.filter((r): r is Log => r.type === "network_log" && r.kind === kind);
 const outbound = (records: RunRecord[]) => records.filter((r): r is Msg => r.type === "message" && r.msg.direction === "outbound" && !r.msg.system);
+
+class MessageFixtureNetwork extends StubNetwork {
+  channelContext!: NetworkContext;
+  override init(ctx: NetworkContext) { super.init(ctx); this.channelContext = ctx; }
+}
 
 /** Regression floors (audit P2-20), not targets: pooled over seeds 1-3 at the CI lower bound (docs/results/2026-10-08-network-hardening.md). */
 const ALL_YES_MIN = 0.73;
@@ -109,6 +117,236 @@ export async function scenarioRepetitionGate(b: Block): Promise<void> {
   });
 }
 
+export async function scenarioAttendanceEvidenceGates(b: Block): Promise<void> {
+  const template = await loadScenario(`${import.meta.dirname}/../../packages/sim/scenarios/group-flake-morning-of.json`);
+  const network = () => new StubNetwork({ randomIntros: false });
+  await b.run("scenario held evidence needs a second attendee even when one is named", async () => {
+    for (const seed of [2, 9, 15]) for (const flake of [false, true]) {
+      const s = structuredClone(template);
+      s.personas = s.personas.slice(0, 2);
+      for (const p of s.personas) p.preferredGroupSize = 2;
+      s.actions = s.actions.filter(a => a.do !== "force_flake" || flake);
+      for (const a of s.actions) {
+        if (a.do === "force_flake") { a.persona = "dinner-1"; a.how = "no_show"; }
+        if (a.do === "propose") {
+          a.participants = s.personas.map(p => p.ref);
+          a.kind = "intro";
+          a.objective = "dinner for two";
+        }
+      }
+      s.expectations = [{ check: "meeting_held", personas: ["dinner-2"], min: 1 }];
+      const result = await runSimScenario(s, { seed, network });
+      expect(result.world.metrics.meetings.held).toBe(flake ? 0 : 1);
+      expect(result.results[0]?.status).toBe(flake ? "fail" : "pass");
+    }
+  });
+
+  await b.run("scenario cancellation evidence needs delivery to each remaining participant", async () => {
+    for (const seed of [2, 7, 29]) for (const noShow of [false, true]) for (const failureRate of [0, 0.1]) {
+      const scenario = structuredClone(template);
+      if (noShow) scenario.actions.unshift({ at: { day: 0, hour: 20 }, do: "force_flake", persona: "dinner-5", how: "no_show" });
+      const w = await runWorld({ ...scenarioWorldOptions(scenario, { seed, network }), failureRate });
+      const outcome = w.records.find(r => r.type === "outcome");
+      const booking = w.records.findLast(r => r.type === "meeting_scheduled");
+      expect(outcome?.attendance["dinner-4"]?.cancelledWithNotice).toBe(true);
+      expect(w.metrics.meetings.held).toBe(1);
+      const recipients = booking!.participants.filter(id => id !== "dinner-4" && !outcome!.attendance[id]?.cancelledWithNotice);
+      const grade = evaluateExpectations(scenario, w, "stub").find(r => r.expectation.check === "others_notified_of_drop");
+      expect(grade?.status).toBe(failureRate ? "fail" : "pass");
+      expect(grade?.detail).toBe(`${recipients.length - (failureRate ? 1 : 0)}/${recipients.length} notified`);
+    }
+  });
+
+  await b.run("participant cancellation counts only when the notice reaches the channel before the meeting", async () => {
+    for (const mode of ["early", "late", "stopped"] as const) {
+      const scenario = structuredClone(template);
+      scenario.days = 9;
+      scenario.actions = scenario.actions.filter(a => a.do !== "force_flake");
+      const persona = scenario.personas.find(p => p.ref === "dinner-4")!;
+      persona.flakiness = 1;
+      persona.responsiveness = { latencyMedianMin: mode === "early" ? 20 : 600, latencySigma: 0, ignoreProb: 0 };
+      if (mode === "stopped") scenario.actions.push({ at: { day: 3, hour: 16 }, do: "opt_out", persona: persona.ref });
+      scenario.expectations = [{ check: "flake_notice", persona: persona.ref }];
+      const run = await runSimScenario(scenario, { seed: 2, network });
+      const outcome = run.world.records.find(r => r.type === "outcome")!;
+      const decision = run.world.records.find(r => r.type === "decision" && r.memberId === persona.ref && r.intent === "flake_notice");
+      const notice = run.world.channel.all().find(m => m.direction === "inbound" && m.memberId === persona.ref && /can't make it/.test(m.body));
+      expect(decision?.t).toBeLessThan(outcome.at);
+      expect(notice?.status ?? null).toBe(mode === "stopped" ? null : "delivered");
+      expect(notice ? notice.ts < outcome.at : null).toBe(mode === "stopped" ? null : mode === "early");
+      expect(outcome.attendance[persona.ref]).toMatchObject({ showed: false, cancelledWithNotice: mode === "early" });
+      expect(run.world.metrics.meetings.noShowRate).toBe(mode === "early" ? 0 : 0.167);
+      expect(run.results[0]?.status).toBe(mode === "early" ? "pass" : "fail");
+    }
+  });
+
+  await b.run("only timely delivery of an exact booking cancellation changes a recipient's attendance", async () => {
+    const cases = [
+      { size: 2, seed: 21, how: "notice", failureRate: 0, present: 0, ownNotice: true, terminal: true, noShowRate: 0, notified: "pass" },
+      { size: 6, seed: 21, how: "notice", failureRate: 0, present: 5, ownNotice: true, terminal: false, noShowRate: 0, notified: "pass" },
+      { size: 2, seed: 21, how: "no_show", failureRate: 0, present: 1, ownNotice: false, terminal: false, noShowRate: 0.5, notified: "fail" },
+      { size: 2, seed: 35, how: "notice", failureRate: 0.1, present: 1, ownNotice: true, terminal: false, noShowRate: 0, notified: "fail" },
+      { size: 2, seed: 21, how: "none", failureRate: 0, present: 2, ownNotice: false, terminal: false, noShowRate: 0, notified: "fail" },
+    ] as const;
+    for (const check of cases) {
+      const scenario = structuredClone(template);
+      scenario.days = 8;
+      scenario.personas = scenario.personas.slice(0, check.size);
+      if (check.size === 2) for (const person of scenario.personas) person.preferredGroupSize = 2;
+      scenario.actions = scenario.actions.filter(a => a.do !== "force_flake" || check.how !== "none");
+      for (const action of scenario.actions) {
+        if (action.do === "force_flake" && check.how !== "none") { action.persona = "dinner-1"; action.how = check.how; }
+        if (action.do === "propose") {
+          action.participants = scenario.personas.map(p => p.ref);
+          if (check.size === 2) action.kind = "intro";
+        }
+      }
+      scenario.expectations = [{ check: "others_notified_of_drop", persona: "dinner-1" }];
+      const network = new MessageFixtureNetwork({ randomIntros: false });
+      const options = scenarioWorldOptions(scenario, { seed: check.seed, network: () => network });
+      const store = new Store({ mode: "game", label: "Synthetic", dataset: "Synthetic",
+        capabilities: { canStep: true, canIntervene: false, hiddenTruth: true, readOnly: false },
+      }, { now: options.start!, start: options.start!, day: 1, playing: false, speed: 0, waitingForPlayer: false });
+      const projector = new Projector(store);
+      let stateAtOutcome: string | undefined;
+      const sim = new World({ ...options, failureRate: check.failureRate, onRecord: r => {
+        projector.apply(r);
+        if (r.type === "outcome") stateAtOutcome = store.opps.get(r.proposalId)?.state;
+      } });
+      await sim.begin();
+      if (check.how === "none") {
+        await sim.advanceTo(sim.clock.now() + 2 * DAY + 10 * HOUR);
+        const booking = sim.channel.all().find(m => m.meta?.type === "scheduling" && m.memberId === "dinner-2")!;
+        expect(booking.meta?.meetingAt).toBeGreaterThan(sim.clock.now());
+        const textOnly = network.channelContext.send("dinner-2", "I'm calling this one off.", {
+          meta: { type: "cancellation", proposalId: booking.meta?.proposalId },
+        });
+        expect(textOnly.status).toBe("delivered");
+        expect(store.opps.get(booking.meta!.proposalId!)?.state).toBe("SCHEDULED");
+      }
+      await sim.advanceTo(sim.end - HOUR);
+      if (check.failureRate) {
+        const failed = sim.channel.all().find(m => m.meta?.type === "cancellation")!;
+        expect(failed.status).toBe("failed");
+        const late = network.channelContext.send(failed.memberId, failed.body, { meta: failed.meta });
+        expect(late.status).toBe("delivered");
+      }
+      if (check.how === "none") {
+        const booking = sim.channel.all().find(m => m.meta?.type === "scheduling" && m.memberId === "dinner-2")!;
+        const late = network.channelContext.send("dinner-2", "I'm calling this one off.", {
+          meta: { type: "cancellation", proposalId: booking.meta!.proposalId, meetingAt: booking.meta!.meetingAt },
+          idempotencyKey: `${bookedCancellationPrefix}${booking.meta!.proposalId}:dinner-2`,
+        });
+        expect(late.status).toBe("delivered");
+        expect(late.ts).toBeGreaterThan(booking.meta!.meetingAt!);
+      }
+      await sim.advanceTo(sim.end);
+      const world = await sim.complete();
+      const outcome = world.records.find(r => r.type === "outcome")!;
+      const present = Object.values(outcome.attendance).filter(a => a.showed).length;
+      expect(present).toBe(check.present);
+      expect(outcome.attendance["dinner-1"]?.cancelledWithNotice).toBe(check.ownNotice);
+      expect(outcome.attendance["dinner-2"]).toMatchObject({ cancelledWithNotice: false });
+      expect(outcome.attendance["dinner-2"]?.cancelledByNetwork === true).toBe(check.terminal);
+      const acceptedCancellation = world.records.filter(r => r.type === "message" && r.msg.direction === "outbound" && r.bookingNoticeMeetingId === outcome.meetingId);
+      expect(acceptedCancellation.length).toBe(check.terminal ? 1 : 0);
+      const projected = store.opps.get(outcome.proposalId)!;
+      expect(stateAtOutcome).toBe(check.terminal ? "CANCELLED" : check.present >= 2 ? "COMPLETED" : "ABANDONED");
+      expect(projected.status["dinner-1"]).toBe(check.ownNotice ? "cancelled_with_notice" : check.how === "no_show" ? "no_show" : "attended");
+      expect(projected.status["dinner-2"]).toBe(check.terminal ? "confirmed" : "attended");
+      expect(store.counts.attended).toBe(check.present);
+      expect(store.counts.noShows).toBe(check.how === "no_show" ? 1 : 0);
+      expect(store.counts.cancelledWithNotice).toBe(check.ownNotice ? 1 : 0);
+      expect(world.metrics.meetings.noShowRate).toBe(check.noShowRate);
+      expect(evaluateExpectations(scenario, world, network.name)[0]?.status).toBe(check.notified);
+    }
+  });
+}
+
+export async function scenarioContactEvidenceGates(b: Block): Promise<void> {
+  const seed = 3;
+  const scenario: Scenario = {
+    name: "contact-evidence", description: "Grade received messages and inferred simulated counterparts.",
+    seed, days: 3,
+    personas: [
+      { ref: "recipient", name: "Maya Rivera", age: 29 },
+      { ref: "minor", name: "Noé Reyes", age: 15 },
+      { ref: "blocked", name: "Al Brennan", age: 30 },
+      { ref: "other", name: "Alex Parker", age: 30 },
+      { ref: "shared-one", name: "Rae Vega", age: 29 },
+      { ref: "shared-two", name: "Rae Vance", age: 29 },
+      { ref: "distinct", name: "Rae Young", age: 29 },
+      { ref: "prefixed", name: "Noéline Reyes", age: 29 },
+    ].map(p => ({ ...p, city: "sf", join: { day: 0, hour: 10 }, responsiveness: { ignoreProb: 0, latencyMedianMin: 1, latencySigma: 0 } })),
+    actions: [{ at: { day: 1, hour: 10 }, do: "say", persona: "recipient", text: "block Al Brennan" }],
+    expectations: [{ check: "no_contact", persona: "minor" }, { check: "blocked_pair_kept_apart", personas: ["recipient", "blocked"] }],
+  };
+  const startFixture = async () => {
+    const network = new MessageFixtureNetwork({ seed, randomIntros: false });
+    const sim = new World({ ...scenarioWorldOptions(scenario, { network: () => network }), failureRate: 0 });
+    await sim.begin();
+    await sim.advanceTo(sim.clock.now() + DAY + 22 * HOUR);
+    return { network, sim };
+  };
+  const { network, sim } = await startFixture();
+  const send = (body: string, meta: SimMeta = {}) => network.channelContext.send("recipient", body, { meta: { type: "proposal", ...meta } });
+  const firstName = send("Would you like to meet Noe\u0301 for coffee?");
+  const longerName = send("Would you like to meet Alex for coffee?");
+  const longerMinorName = send("Would you like to meet Noéline for coffee?");
+  const blockedName = send("Would you like to meet Al for coffee?");
+  const metadata = send("Would you like to meet for coffee?", { probe: { key: "exact-minor", category: "social", participants: ["recipient", "minor"] } });
+  const recordedRelay = send("Thanks for checking.", { type: "relay", relayFrom: "blocked" });
+  const neutralCancel = send("That plan is off.", { type: "cancellation", participants: ["recipient", "blocked"] });
+  network.channelContext.recordProposal({
+    id: "scenario-alternates", kind: "intro", participants: ["recipient", "other"], alternates: ["minor", "blocked"],
+    city: "sf", objective: "coffee", category: "social", score: 1, exploration: false,
+    components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 1 },
+    explanations: {}, generator: "scenario", createdAt: sim.clock.now(),
+    window: { start: sim.clock.now(), end: sim.end },
+  }, "scenario");
+  const linkedProposal = send("Would you like to meet for coffee tomorrow?", { proposalId: "scenario-alternates" });
+  const explicitRoster = send("Would you like to meet for coffee on Tuesday?", {
+    proposalId: "scenario-alternates", participants: ["recipient", "other"],
+  });
+  await sim.advanceTo(sim.end);
+  const world = await sim.complete();
+  const grade = (id: string) => evaluateExpectations(scenario, { ...world,
+    records: world.records.filter(r => r.type !== "message" || r.msg.direction !== "outbound" || r.msg.id === id),
+  }, network.name).map(x => x.status);
+
+  await b.run("scenario contact evidence catches a unique first name or exact metadata", () => {
+    expect(world.records.some(r => r.type === "block" && r.from === "recipient" && r.to === "blocked")).toBe(true);
+    expect([grade(firstName.id), grade(longerMinorName.id), grade(metadata.id)]).toEqual([
+      ["fail", "pass"], ["pass", "pass"], ["fail", "pass"],
+    ]);
+  });
+  await b.run("scenario block evidence distinguishes a longer name from the blocked member", () => {
+    expect([grade(longerName.id), grade(blockedName.id), grade(recordedRelay.id), grade(neutralCancel.id)]).toEqual([
+      ["pass", "pass"], ["pass", "fail"], ["pass", "fail"], ["pass", "pass"],
+    ]);
+  });
+  await b.run("scenario grading preserves minor alternates in a referenced proposal", () => {
+    expect([grade(linkedProposal.id), grade(explicitRoster.id)]).toEqual([["fail", "pass"], ["pass", "pass"]]);
+  });
+  await b.run("simulator personas use unique display initials and preserve a recorded roster", async () => {
+    const observed = [];
+    for (const { body, participants } of [
+      { body: "For coffee, would you like to meet Rae Y." },
+      { body: "Would you like to meet Rae V. for coffee?" },
+      { body: "Would you like to meet Rae for coffee?" },
+      { body: "Would you like to meet Rae V.", participants: ["recipient", "shared-two"] },
+    ]) {
+      const { network, sim } = await startFixture();
+      const message = network.channelContext.send("recipient", body, { meta: { type: "proposal", participants } });
+      expect(message.status).toBe("delivered");
+      await sim.advanceTo(sim.end);
+      const result = await sim.complete();
+      observed.push(result.memories.get("recipient")?.proposals[`inferred:${message.id}`]?.others);
+    }
+    expect(observed).toEqual([["distinct"], [], [], ["shared-two"]]);
+  });
+}
+
 export async function humanReviewGate(b: Block): Promise<void> {
   await b.run("human review (PRD 32.8): nothing probed until approved; reject and SLA expiry send nothing", async () => {
     const { w, net, records, start } = await world(3, 3, { review: "human" });
@@ -152,6 +390,8 @@ export async function humanReviewGate(b: Block): Promise<void> {
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
+  await scenarioAttendanceEvidenceGates(b);
+  await scenarioContactEvidenceGates(b);
   await inviteRootGate(b);
   await vouchPeriodGate(b);
   await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
@@ -356,7 +596,11 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   });
 
   await b.run("trust: no honest member is flagged; bad actors who acted are restricted", () => {
-    for (const r of logs(R, "abuse")) expect([r.detail.memberId, !!run.personas.get(String(r.detail.memberId))?.hidden.adversarial]).toEqual([r.detail.memberId, true]);
+    const currentPersonas = new Map(run.w.personaList().map(persona => [persona.id, persona]));
+    for (const r of logs(R, "abuse")) {
+      const member = currentPersonas.get(String(r.detail.memberId));
+      expect([r.detail.memberId, !!member?.hidden.adversarial]).toEqual([r.detail.memberId, true]);
+    }
     const acted = new Set(R.filter(r => r.type === "adversarial_attempt" && ["spammer", "scammer", "harasser", "prompt_injector"].includes(r.kind)).map(r => (r as { memberId: string }).memberId));
     for (const id of acted) expect([id, run.net.trust.level(id)]).not.toEqual([id, "ok"]);
   });

@@ -40,3 +40,48 @@ pure def hireAnswerAllowed(direct: bool, delivered: bool, receivedAt: int, deliv
 pure def lawHireAnswerRequiresDelivery(direct: bool, receivedAt: int, deliveredAt: int, at: int, deadline: int): bool =
   not(hireAnswerAllowed(direct, false, receivedAt, deliveredAt, at, deadline))
 ```
+
+### A closed application keeps its recorded answers
+
+Keep the candidate's and employer's own answers after the exact reply checks above. If a reviewed application closes before booking, attribute each recorded answer to its participant. An explicit no records a decline for the participant who answered. A timeout or an administrative closure supplies no answer on its own. Review rejection and expiry supply no application history.
+
+```quint
+type HireProbeHistory = HireProbeUnrecorded | HireProbeAccepted | HireProbeDeclined
+
+pure def hireClosedProbeReply(answer: str): HireProbeHistory =
+  if (answer == "yes") HireProbeAccepted
+  else if (answer == "no") HireProbeDeclined
+  else HireProbeUnrecorded
+
+pure def hireProbeWasDeclined(existingDecline: bool, recordedDecline: bool): bool =
+  existingDecline or recordedDecline
+
+pure def lawUnrecordedHireReplyAddsNoAttribution(answer: str): bool =
+  not(answer == "yes" or answer == "no") implies hireClosedProbeReply(answer) == HireProbeUnrecorded
+```
+
+### A manager answers one hiring question at a time
+
+A posting draft or an open probe owns the manager's next answer. When an applicant consents while such a question is open, keep the reviewed introduction waiting. Offer the longest-waiting manager question first when there is room. If the manager starts a posting draft, the current manager question can return afterward while the same reviewed introduction and its original deadline still allow it. Send a new copy and require its receipt before accepting an answer. Both copies count as one question in the manager's response history. A displaced copy cannot leave the outbound queue or return as a stored reply.
+
+```quint
+pure def managerQuestionMayOpen(postingOwnsSlot: bool, otherProbeOwnsSlot: bool, olderManagerProbeWaiting: bool): bool =
+  not(postingOwnsSlot or otherProbeOwnsSlot or olderManagerProbeWaiting)
+
+pure def managerQuestionDeliveryCurrent(managerProbe: bool, sameOpportunity: bool, sameDelivery: bool): bool =
+  not(managerProbe) or (sameOpportunity and sameDelivery)
+
+pure def managerQuestionDeadline(opportunityDeadline: int, originalStaged: bool, originalStageAt: int, responseMs: int): int =
+  val originalDeadline = originalStageAt + responseMs
+  if (originalStaged and originalDeadline < opportunityDeadline) originalDeadline else opportunityDeadline
+
+pure def lawPostingOwnsManagerAnswer(otherProbeOwnsSlot: bool, olderManagerProbeWaiting: bool): bool =
+  not(managerQuestionMayOpen(true, otherProbeOwnsSlot, olderManagerProbeWaiting))
+
+pure def lawDisplacedManagerProbeCannotLeave(sameOpportunity: bool): bool =
+  not(managerQuestionDeliveryCurrent(true, sameOpportunity, false))
+
+pure def lawManagerQuestionKeepsDeadline(opportunityDeadline: int, originalStageAt: int, responseMs: int): bool =
+  managerQuestionDeadline(opportunityDeadline, true, originalStageAt, responseMs) <= opportunityDeadline
+    and managerQuestionDeadline(opportunityDeadline, true, originalStageAt, responseMs) <= originalStageAt + responseMs
+```

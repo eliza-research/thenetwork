@@ -104,3 +104,98 @@ test("a current busy conflict discovered after the probes cannot book the picked
   expect(world.meetings).toHaveLength(0);
   expect(world.net.exportState().opps.find(opp => opp.id === oppId)?.stage).toBe("closed");
 });
+
+test("a dated probe stays open for relative times and duration-only answers", async () => {
+  // spec/probeReply.md, "A relative time or duration alone cannot choose an offered slot"
+  const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
+    plans: false, growth: false, review: "human",
+  });
+  await world.onboard("a", "b");
+  const oppId = world.propose(["a", "b"]);
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === oppId))).toBe(true);
+  expect(world.net.decide(oppId, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  expect(await world.runUntil(() => world.probed("a"), DAY)).toBe(true);
+  const probe = world.to("a").find(message => message.meta.probe?.key === oppId);
+  expect(probe?.meta.timeOptions?.length ?? 0).toBeGreaterThan(1);
+
+  for (const text of ["Tomorrow works", "Tmr 7pm works", "Yes, this afternoon works", "Next Saturday, 11am works", "2 hours works"]) {
+    await world.say("a", text);
+    expect(world.probed("a")).toBe(true);
+    expect(world.log("probe_answer")).toEqual([]);
+    expect(world.meetings).toEqual([]);
+  }
+
+  await world.say("a", "Yes, the first time works");
+  expect(await world.runUntil(() => world.probed("b"), DAY)).toBe(true);
+  await world.say("b", "Yes, the first time works");
+  expect(world.meetings.map(meeting => meeting.proposalId)).toEqual([oppId]);
+});
+
+test.each([-1, 0, 1])("the default meeting slot includes the exact search boundary (%d ms)", async offset => {
+  // spec/opportunityLifecycle.md, "Only an approved proposal with enough consent can book"
+  // spec/calendarFreeBusy.md, "A known busy interval excludes the slot and incomplete coverage cannot make it free"
+  const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
+    plans: false, growth: false, calendarFreeBusy: scope => {
+      const { grant, observation } = authorized(scope);
+      // The supported template times are busy. The weekend default at 11:00 stays open.
+      const busy = attention.candidateSlots("America/New_York", scope.now)
+        .map(slot => ({ start: slot.start, end: slot.start + 30 * MINUTE }));
+      return { grant, observation: { ...observation, busy } };
+    },
+  });
+  await world.onboard("a", "b");
+  await world.say("a", "CALENDAR");
+  world.clock.set(Date.UTC(2026, 9, 8, 16)); // Thursday 12:00 local.
+  const oppId = world.propose(["a", "b"]);
+  expect(await world.runUntil(() => world.probed("a"), DAY)).toBe(true);
+  await world.say("a", "yes");
+  expect(await world.runUntil(() => world.probed("b"), DAY)).toBe(true);
+  const probes = world.sent.filter(message => message.meta.probe?.key === oppId);
+  expect(probes.map(message => message.meta.timeOptions ?? [])).toEqual([[], []]);
+
+  const saturday = Date.UTC(2026, 9, 10, 15); // Saturday 11:00 local.
+  world.clock.set(saturday - 20 * HOUR + offset);
+  await world.say("b", "yes");
+  expect(world.log("venue").find(entry => entry.detail.oppId === oppId)?.detail.time).toBe("default");
+  expect(world.meetings.map(meeting => meeting.at)).toEqual([saturday + (offset > 0 ? DAY : 0)]);
+});
+
+// spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
+test.each(["neither works this week sorry", "Neither.", "Thursday 7pm works.", "Second works.", "A weeknight works."])("an untimed probe keeps %j open for a clear answer", async text => {
+  const ids = ["a", "b"];
+  let modelReads = 0;
+  const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
+    plans: false, growth: false, review: "human",
+    calendarFreeBusy: scope => {
+      const { grant, observation } = authorized(scope);
+      const busy = attention.candidateSlots("America/New_York", scope.now)
+        .map(slot => ({ start: slot.start, end: slot.start + 30 * MINUTE }));
+      return { grant, observation: { ...observation, busy } };
+    },
+    understand: async body => {
+      if (body !== text) return;
+      modelReads++;
+      return { consent: "yes", wants: [], notWanted: [], interests: [], skills: [] };
+    },
+  });
+  await world.onboard(...ids);
+  await world.say("a", "CALENDAR");
+  world.clock.set(Date.UTC(2026, 9, 8, 16));
+  const oppId = world.propose(ids);
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === oppId))).toBe(true);
+  expect(world.net.decide(oppId, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  expect(await world.runUntil(() => world.probed("a"), DAY)).toBe(true);
+  expect(world.to("a").find(message => message.meta.probe?.key === oppId)?.meta.timeOptions).toBeUndefined();
+
+  await world.say("a", text);
+  expect(modelReads).toBe(1);
+  expect(world.probed("a")).toBe(true);
+  expect(world.log("probe_answer")).toEqual([]);
+  expect(world.meetings).toEqual([]);
+
+  await world.say("a", "Yes.");
+  expect(await world.runUntil(() => world.probed("b"), DAY)).toBe(true);
+  expect(world.to("b").find(message => message.meta.probe?.key === oppId)?.meta.timeOptions).toBeUndefined();
+  await world.say("b", "Yes.");
+  expect(world.meetings).toMatchObject([{ proposalId: oppId, participants: ids, at: Date.UTC(2026, 9, 10, 15) }]);
+});

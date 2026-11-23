@@ -13,11 +13,12 @@ The [signed inbox spec](../signedInbox.md) generates claim, replay, completion, 
 The [shared-line consent journey](../sharedLineConsentJourney.md)
 exercises STOP and START through the signed HTTP entry point, checks the
 gateway's returned consent update, and reads the effective consent on
-both apps from their stored ledgers. The [carrier consent
-rules](../carrierConsent.md) define when the parser maps courtesy
-keywords and independent opt-out clauses to Stop. The journey supplies
-both accepted and rejected text to that parser. The whole-flow model
-starts with the reader's result and keeps its existing transitions.
+both apps from their stored ledgers. The [profile leave
+journey](../savedProfileJourney.md) exercises spoken app domains
+and checks the app-scoped consent update. The [carrier consent
+rules](../carrierConsent.md) define when the reader maps a whole
+command or a direct refusal to Stop and a spoken app name to Leave.
+The whole-flow model starts with that reader's result.
 
 Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -49,8 +50,8 @@ Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md
 //     (SD-001 fix) starts a new run of the same message; the old run can still be alive (staff resolved its claim
 //     while it ran). Run ids: message m, run k -> m + 10 * k. The gateway waits for the answer of its latest request.
 //   - Readers are oracles. The message kind is chosen when the person sends it: "Stop" is a text that
-//     detectKeyword reads as STOP; "StopLikely" is a text the person means as STOP that the reader does
-//     not read as STOP (SD-032: "STOP!! I said stop"). The routing decision (service.ts:964-1010) is an oracle,
+//     detectKeyword reads as STOP, including a direct repeat or a permanent refusal. "StopLikely" is a
+//     remaining unmatched request. The routing decision (service.ts:964-1010) is an oracle,
 //     except START after a global STOP, which goes to the app the STOP named (SD-318 fix).
 //   - Gateway assumptions (upstream code, not in this repository): the gateway retries a retryable answer
 //     and a timed-out request with the same messageId; it stops at a final answer; it copies a handled
@@ -822,9 +823,8 @@ module turn_consent {
   /**
    * stopPhraseHonored. Rule: AGENTS.md decision 11 (parseOptOut on the inbound path), PRD 40.3. A text the person
    * means as STOP that is final has a STOP event. The reader is an oracle; this shows what a misread reaches.
-   * NOT in `safety`: SD-031 is fixed in the reader (evals/opt-out.jsonl), but the oracle `StopLikely` still stands for
-   * the texts no reader reads as STOP ("STOP!! I said stop"). Which reader the inbound path uses is SD-032, skipped:
-   * it needs a founder decision (parseOptOut reads "stop slop" as STOP of every app, which breaks the per-app leave).
+   * NOT in `safety`: the oracle `StopLikely` still stands for an unmatched request. The shared direct reader
+   * maps "STOP!! I said stop" to `Stop`. The platform still resolves an explicit app name through `Leave`.
    */
   val stopPhraseHonored: bool = sent.keys().forall(m =>
     (sent.get(m).kind == "StopLikely" and isFinal(m) and not(msgAlive(m)))

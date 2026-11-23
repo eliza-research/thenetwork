@@ -21,6 +21,7 @@ import { LocalDiskPhotoStorage, PHOTO_CONSENT, type PhotoRater } from "../../pla
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { ServiceClient } from "../../observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
+import { PHOTO_TEXT } from "../service/photoIntake.ts";
 import { Mini, START } from "./mini.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { presentInNyc } from "../src/network.ts";
@@ -69,10 +70,11 @@ function service(clock: SimClock, more: Partial<ServiceOptions> = {}) {
 }
 
 let evt = 0;
-async function text(s: NetworkService, clock: SimClock, from: string, body: string) {
+async function text(s: NetworkService, clock: SimClock, from: string, body: string, options: {app?: AppId; attachments?: string[]} = {}) {
   const n = ++evt;
-  const raw = JSON.stringify({ id: `evt_${n}`, type: "message.received", api_version: "2026-10-01", created_at: clock.now(), organization_id: "org_test", data: { message_id: `msg_${n}`, sender: from, chat_id: from, text: body, protocol: "imessage" } });
-  const res = await s.fetch(new Request(`http://127.0.0.1${WEBHOOK_PATH}`, { method: "POST", headers: { "content-type": "application/json", "x-blooio-signature": signBlooioPayload(SECRET, raw, Math.floor(clock.now() / 1000)) }, body: raw }));
+  const raw = JSON.stringify({ id: `evt_${n}`, type: "message.received", api_version: "2026-10-01", created_at: clock.now(), organization_id: "org_test", data: { message_id: `msg_${n}`, sender: from, chat_id: from, text: body, protocol: "imessage", attachments: options.attachments } });
+  const path = options.app ? `${WEBHOOK_PATH}/${options.app}` : WEBHOOK_PATH;
+  const res = await s.fetch(new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json", "x-blooio-signature": signBlooioPayload(SECRET, raw, Math.floor(clock.now() / 1000)) }, body: raw }));
   expect(res.status).toBe(200);
   clock.advance(MINUTE);
   return (await res.json()).result as string;
@@ -373,6 +375,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     let probeNo = 0;
     const competingPeonItem = async () => {
       clock.advance(MINUTE);
+      await sql`insert into network.opportunities (app_id, id, kind, state, city, objective, created_at, updated_at)
+        values ('peon', 'peon.competing-opportunity', 'intro', 'PROPOSED', 'nyc', 'A meeting',
+          ${new Date(clock.now())}, ${new Date(clock.now())}) on conflict (app_id, id) do nothing`;
       await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts)
         values ('peon', ${"competing-peon-probe-" + ++probeNo}, ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.',
           'dry_run', 'peon.competing-opportunity', true, false, ${new Date(clock.now())})`;
@@ -625,6 +630,40 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       // Photos: no photo storage here, so the console hears that photos are off (never a link).
       expect(await client.photos("safety.lead@example.org", r.subjectId, "report review")).toMatchObject({ ok: false });
     } finally { await srv.stop(true); }
+  }, T);
+
+  test("text photos on a dedicated Friends line never enter Slop photo intake", async () => {
+    await fresh();
+    const dir = mkdtempSync(join(tmpdir(), "dedicated-photo-line-")); dirs.push(dir);
+    const clock = new SimClock(START);
+    const fetched: string[] = [];
+    const { s, directs } = service(clock, {
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, photoStorage: new LocalDiskPhotoStorage(dir),
+      webhookSecrets: { slop: SECRET, friends: SECRET },
+      fetchMedia: async url => { fetched.push(url); return jpeg(); },
+    });
+    const ana = newPhone();
+    const attachments = ["https://media.blooio.com/fixture.jpg"];
+    expect(await text(s, clock, ana, "slop", {app: "slop"})).toBe("join_asked");
+    expect(await text(s, clock, ana, "Ana, 31", {app: "slop"})).toBe("joined");
+    directs.length = 0;
+
+    await text(s, clock, ana, "", {app: "friends", attachments});
+    expect(directs.map(reply => reply.body)).not.toContain(PHOTO_TEXT.ask);
+    expect(await sql`select 1 from platform.pending_texts where kind = 'photo_consent'`).toHaveLength(0);
+    expect(fetched).toEqual([]);
+
+    expect(await text(s, clock, ana, "", {app: "slop", attachments})).toBe("handled");
+    expect(directs.map(reply => reply.body)).toContain(PHOTO_TEXT.ask);
+    expect(await text(s, clock, ana, "YES PHOTOS", {app: "slop"})).toBe("handled");
+    await text(s, clock, ana, "", {app: "friends", attachments});
+    expect(fetched).toEqual([]);
+    expect(readdirSync(dir)).toHaveLength(0);
+
+    expect(await text(s, clock, ana, "", {app: "slop", attachments})).toBe("handled");
+    expect(await text(s, clock, ana, "", {attachments})).toBe("handled");
+    expect(fetched).toEqual([...attachments, ...attachments]);
+    expect(readdirSync(dir)).toHaveLength(2);
   }, T);
 
   test("photos: adults by stated age (no ID check), a failed staff check refuses, the staff read audited before the link, signed links through the backend, deleted on leave", async () => {

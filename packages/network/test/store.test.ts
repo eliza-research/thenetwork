@@ -100,6 +100,7 @@ test.each([
   ["a positive rating alone", "It was great, we clicked.", false, false],
   ["explicit requests for different meetings", "I would love to meet again.", false, true],
   ["two explicit requests", "It was great. I would love to meet again.", true, false],
+  ["an explicit request after a courtesy opener", "No worries, I would meet again.", true, false],
 ] as const)("repeat review follows delivered feedback across restart: %s", async (_label, secondFeedback, expected, separateMeetings) => {
   const pair = ["a", "b"];
   const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
@@ -162,8 +163,10 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   w.restart();
   await w.say("requester", "I still need help moving a couch from my apartment.");
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
-  await w.say("requester", "Find someone to help move a couch and babysit my child.");
-  expect(w.sent.at(-1)?.body).toContain("won't look for it");
+  for (const task of ["babysit my child", "watch my 6 y.o. Saturday", "pick my two kids up"]) {
+    await w.say("requester", "Find someone to help move a couch and " + task + ".");
+    expect(w.sent.at(-1)?.body).toContain("won't look for it");
+  }
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
   expect(w.net.reviewQueue()).toEqual([]);
   expect(w.net.exportState().requests).toEqual([]);
@@ -224,6 +227,34 @@ test("bounded help re-ranks the small-group pool when a home task needs a second
   expect(proposals.find(p => p.generator === "help_request")).toMatchObject({
     participants: ["requester", "helper-a", "helper-b"], safetyClass: "medium",
   });
+}, T);
+
+test("an unavailable acquaintance cannot displace a valid two-helper home plan", async () => {
+  const objective = "Help move a couch from my apartment";
+  const interests = ["volunteering"];
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint", interests, wants: [{ objective, category: "help" }] },
+    { id: "known", name: "Ben Ito", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "helper-a", name: "Cy Moss", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "helper-b", name: "Dee Yu", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+  ]);
+  for (const m of w.members) {
+    if (m.id.startsWith("helper-")) m.prefs.formats = ["small_group"];
+  }
+  for (const f of w.facets.filter(f => f.kind === "skill")) {
+    f.kind = "offer";
+    f.value = f.memberId === "known" ? objective : "Available to carry furniture and boxes";
+  }
+  w.edges.push({ from: "requester", to: "known", type: "knows", explicit: true, strength: 1, createdAt: w.clock.now() });
+  const plan = async () => (await runEngine(w.ctx().snapshot(), {
+    cities: ["nyc"], retrieval: { minSim: 0 }, floors: { fit: 0, mutualBenefit: 0, confidence: 0 },
+    generators: { group_composer: false },
+    thresholds: { byGenerator: { help_request: 0 } },
+  })).proposals.find(p => p.generator === "help_request");
+  expect(await plan()).toMatchObject({ participants: ["requester", "known"], safetyClass: "medium" });
+  w.presence.push({ memberId: "known", city: "sf", type: "temporary", areas: ["Mission"],
+    from: w.clock.now(), to: w.clock.now() + 24 * DAY });
+  expect(await plan()).toMatchObject({ participants: ["requester", "helper-a", "helper-b"], safetyClass: "medium" });
 }, T);
 
 /** A NetworkUnderTest whose ConsentNetwork can be replaced mid-run (a process restart inside a world run). */
@@ -437,5 +468,42 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     await store.save(w.net.exportState());
     expect(await have()).toEqual(want());
     expect((await store.sql`select 1 from network.participations where member_id = ${alt}`).length).toBe(0);
+  }, T);
+
+  test("participations: only settled attendance evidence changes the stored status", async () => {
+    // spec/meetingSettlement.md, "Classify each attendee from the available reports"
+    const store = new PgStore(TEST_URL);
+    stores.push(store);
+    const people = [climber("attendance-a", "Ana Diaz"), climber("attendance-b", "Ben Ito"), climber("attendance-c", "Cy Moss")];
+    const ids = people.map(person => person.id);
+    for (const p of people) await store.sql`insert into network.members (id, name, home_city) values (${p.id}, ${p.name}, 'nyc')`;
+    const w = new Mini(people, { plans: false, growth: false });
+    await w.onboard(...ids);
+    const oppId = w.propose(ids);
+    await w.answerProbes(ids);
+    const start = w.meetings.find(meeting => meeting.proposalId === oppId)!.at;
+    expect(await w.runUntil(() => ids.every(id => w.to(id).some(message =>
+      message.meta.type === "reminder" && message.meta.proposalId === oppId)), 7 * DAY)).toBe(true);
+    for (const id of ids) await w.say(id, "Yes, I'll be there.");
+    expect(await w.runUntil(() => ids.every(id => w.to(id).some(message =>
+      message.meta.type === "feedback_request" && message.meta.proposalId === oppId)), 7 * DAY)).toBe(true);
+    const statuses = async () => (await store.sql`select status from network.participations
+      where opportunity_id = ${oppId} order by member_id`).map(row => row.status);
+    await store.save(w.net.exportState());
+    const waiting = await statuses();
+    await runStored(w.net, store, () => w.say(ids[0]!, "It was great, but Ben did not come."));
+    await runStored(w.net, store, () => w.say(ids[1]!, "I couldn't make it."));
+    w.restart();
+    w.clock.set(start + 4 * DAY);
+    expect(await runTick(w.net, store, w.clock.now())).toBe(true);
+    const settled = (await store.load())!.opps.find(opp => opp.id === oppId)!;
+    expect(settled.finalized).toBe(true);
+    expect(settled.post?.[ids[0]!]?.came).toBe(true);
+    expect(settled.post?.[ids[1]!]?.came).toBe(false);
+    expect(settled.post?.[ids[2]!]).toBeUndefined();
+    expect([waiting, await statuses()]).toEqual([
+      ["accepted", "accepted", "accepted"],
+      ["attended", "no_show", "accepted"],
+    ]);
   }, T);
 });
