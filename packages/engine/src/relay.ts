@@ -587,6 +587,13 @@ const INCOMPLETE_CONDITION_ACTION = new RegExp(
   String.raw`\b(?:(?:do|handle|take care of)(?:\s+(?:it|that|this))?|(?:${TRANSFER}|show|tell)|tell\s+${OTHER}\s+(?:it|that|this))(?:\s+(?:now|then|myself))?\s*$`,
   "u",
 );
+const PRIVATE_CONDITION_TAIL = /\b(?:asks?|wants?|needs?|(?:is|'s)\s+interested|objects?|agrees?|says?\s+no|hasn'?t\s+got\s+it)\b/iu;
+const PRIVATE_CONDITION_TRANSFER_REF = new RegExp(
+  String.raw`(?:${PRIVATE_RELAY_ITEM.source}|${PRIVATE_RELAY_REFERENCE.source}|\b(?:can|could|may)\s+have\s+(?:it|that|this)\b)`,
+  "iu",
+);
+const PRIVATE_CONDITION_MARKER_ANYWHERE = new RegExp(String.raw`\b(?:${PRIVATE_CONDITION_MARKER})\b`, "iu");
+const PRIVATE_CONDITION_INFORM = /\b(?:tell|let)\s+(?:me|us|him|her|them)\b/iu;
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -663,6 +670,16 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   return true;
 }
 
+function adjacentSentenceConditionsTransfer(sentence: string): boolean {
+  const marker = PRIVATE_CONDITION_MARKER_ANYWHERE.exec(sentence);
+  if (!marker || marker.index === 0) return false;
+  const before = sentence.slice(0, marker.index);
+  const ref = PRIVATE_CONDITION_TRANSFER_REF.exec(before);
+  if (!ref) return false;
+  if (PRIVATE_CONDITION_INFORM.test(before.slice(ref.index! + ref[0].length))) return false;
+  return PRIVATE_CONDITION_TAIL.test(sentence.slice(marker.index + marker[0].length));
+}
+
 function conditionsPrivateRequest(text: string, source: string, start: number): boolean {
   const clause = text.slice(start).split(RELAY_SENTENCE, 1)[0]!;
   if (privateClauseIsConditional(clause, source.slice(start, start + clause.length), false)) return true;
@@ -672,7 +689,8 @@ function conditionsPrivateRequest(text: string, source: string, start: number): 
   const remaining = text.slice(adjacentStart);
   const adjacent = remaining.split(RELAY_SENTENCE, 1)[0]!;
   if (remaining[adjacent.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(adjacent)) return false;
-  return privateClauseIsConditional(adjacent, source.slice(adjacentStart, adjacentStart + adjacent.length), true);
+  return privateClauseIsConditional(adjacent, source.slice(adjacentStart, adjacentStart + adjacent.length), true)
+    || adjacentSentenceConditionsTransfer(adjacent);
 }
 
 function colloquialRetractionLead(sentence: string, contact: boolean): string | undefined {
