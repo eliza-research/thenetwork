@@ -21,9 +21,7 @@ export const ISO_TIMESTAMP = /\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/i;
 export function outputLeaks(text: string, o: { forbidden?: string[]; facts?: string[]; contacts?: boolean } = {}): string[] {
   const v = new LeakGuard({ exact: (o.forbidden ?? []).filter(Boolean), facts: (o.facts ?? []).filter(Boolean), contacts: o.contacts ?? false }).check(text);
   if (v[0] === "too_long") return v;
-  const contacts = o.contacts
-    ? v.filter(r => r.startsWith("contact:")).map(r => r.slice(8))
-    : findContactKinds(text, { kinds: PHONE_OR_EMAIL });
+  const contacts = findContactKinds(text, { kinds: PHONE_OR_EMAIL, phoneExemptions: false });
   if (contacts.includes("phone")) v.push("phone_pattern");
   if (contacts.includes("email") || contacts.includes("email_spelled")) v.push("email_pattern");
   const variants = plainVariants(text);

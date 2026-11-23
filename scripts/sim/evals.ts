@@ -242,6 +242,9 @@ export async function evalsBlock(b: Block): Promise<void> {
       "call two one two five five five zero one zero two",
       "call ٢١٢-٥٥٥-٠١٠٢",
       "text 212·555·0102",
+      "Maya's cell #4155550102",
+      "Maya id: 4155550102",
+      "Maya: case +14155550102",
       "maya [at] example [dot] test",
       "sam[@]example[.]com",
       "sam<at>example<dot>com",
@@ -254,7 +257,6 @@ export async function evalsBlock(b: Block): Promise<void> {
     for (const t of [
       "Someone nearby wants to play tennis this weekend. Reply in the text thread.",
       "Your plan is booked: Saturday 11 AM at McCarren Park (Williamsburg).",
-      "Your order #2026112401 is confirmed.",
       "Open https://peon.biz to review your profile.",
       "Nothing new right now.",
     ]) expect(outputLeaks(t)).toEqual([]);

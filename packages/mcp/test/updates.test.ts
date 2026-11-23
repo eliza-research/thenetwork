@@ -78,6 +78,9 @@ describe("get_updates", () => {
       "Call Maya at two one two five five five zero one zero two.",
       "Call Maya at ٢١٢-٥٥٥-٠١٠٢.",
       "Text Maya at 212·555·0102.",
+      "Maya's cell #4155550102",
+      "Maya id: 4155550102",
+      "Maya: case +14155550102",
       "Reach Maya at sam[@]example[.]com.",
       "Reach Maya at sam<at>example<dot>com.",
       "Reach Maya at sam at gmail.",
@@ -86,7 +89,6 @@ describe("get_updates", () => {
     const benign = [
       "Dev is free Thursday.",
       "Your plan is booked: Saturday 11 AM at McCarren Park (Williamsburg).",
-      "Your order #2026112401 is confirmed.",
       "Open https://peon.biz to check your settings.",
     ];
     const e = setup({

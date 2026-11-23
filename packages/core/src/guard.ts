@@ -230,10 +230,11 @@ export function contactVariants(s: string): string[] {
 
 export function findContactKinds(
   text: string,
-  o: { kinds?: ReadonlySet<string>; allow?: readonly string[] } = {},
+  o: { kinds?: ReadonlySet<string>; allow?: readonly string[]; phoneExemptions?: boolean } = {},
 ): string[] {
   const found = new Set<string>();
   const allow = o.allow ?? [];
+  const exempt = o.phoneExemptions ?? true;
   for (const p of contactVariants(text)) {
     let c = p;
     for (const a of allow) c = c.split(a).join(" ");
@@ -243,7 +244,7 @@ export function findContactKinds(
         re.lastIndex = 0;
         let m: RegExpExecArray | null;
         while ((m = re.exec(c))) {
-          if (isPhone(c, m)) {
+          if (!exempt || isPhone(c, m)) {
             found.add(name);
             break;
           }
