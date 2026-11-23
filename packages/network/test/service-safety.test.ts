@@ -324,7 +324,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await other.people.isBanned(other.accounts.phoneHash(proposed))).toBe(false);
   });
 
-  const signedSafetyFixture = async (onTestFinished: (stop: () => Promise<void>) => void) => {
+  const signedSafetyFixture = async (onTestFinished: (stop: () => Promise<void>) => void, otherNames?: readonly [string, string]) => {
     await fresh();
     const clock = new SimClock(START);
     const secret = "synthetic-safety-clarification-turn-secret";
@@ -333,14 +333,19 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: request => s.fetch(request) });
     onTestFinished(() => server.stop(true));
     const ari = newPhone(), ben = newPhone(), peonContact = newPhone();
-    for (const [phone, name] of [[ari, "Ari, 30"], [ben, "Ben, 32"]] as const) {
-      expect(await text(s, clock, phone, "slop")).toBe("join_asked");
-      expect(await text(s, clock, phone, name)).toBe("joined");
+    const contacts = [["slop", ben, 32, otherNames?.[0]], ["peon", peonContact, 31, otherNames?.[1]]] as const;
+    for (const [app, contact, age, name] of contacts) {
+      expect(await text(s, clock, ari, app)).toBe("join_asked");
+      expect(await text(s, clock, ari, "Ari, 30")).toBe("joined");
+      if (name) {
+        const web = site(s, clock, otp);
+        await web.login(app, contact);
+        expect((await web.join(app, age, name)).status).toBe(200);
+      } else {
+        expect(await text(s, clock, contact, app)).toBe("join_asked");
+        expect(await text(s, clock, contact, `Ben, ${age}`)).toBe("joined");
+      }
     }
-    expect(await text(s, clock, ari, "peon")).toBe("join_asked");
-    expect(await text(s, clock, ari, "Ari, 30")).toBe("joined");
-    expect(await text(s, clock, peonContact, "peon")).toBe("join_asked");
-    expect(await text(s, clock, peonContact, "Ben, 31")).toBe("joined");
     const slopAri = (await memberOf("slop", ari))!.id;
     const slopBen = (await memberOf("slop", ben))!.id;
     const peonAri = (await memberOf("peon", ari))!.id;
@@ -541,6 +546,33 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
     expect(await reports("peon")).toEqual([]);
   });
+
+  test("an affirmative-looking alternate name still makes a signed shared reply ambiguous", async ({ onTestFinished }) => {
+    const { competingSlopProbe, pending, reports, signed, clock } = await signedSafetyFixture(onTestFinished, ["Yeah\tYes", "Yes"]);
+    expect(await signed("ask-literal-app", "Report him, he harassed me.", "slop")).toMatchObject({
+      app: "slop", replies: [expect.stringMatching(/^Who do you mean: Yeah\s+Yes\?/)],
+    });
+    clock.advance(MINUTE);
+    expect(await signed("ask-qualified-app", "Report him, he harassed me.", "peon")).toMatchObject({
+      app: "peon", replies: [expect.stringMatching(/^Who do you mean: Yes\?/)],
+    });
+    clock.advance(MINUTE);
+    const slopQuestion = await pending("slop");
+    const peonQuestion = await pending("peon");
+
+    expect(await signed("ambiguous-literal-and-qualified", "Yeah Yes")).toMatchObject({ outcome: "handled", replies: [] });
+    expect(await reports("slop")).toEqual([]);
+    expect(await reports("peon")).toEqual([]);
+    expect(await pending("slop")).toEqual(slopQuestion);
+    expect(await pending("peon")).toEqual(peonQuestion);
+
+    await competingSlopProbe("slop.competing-bare-safety-affirmative");
+    expect(await signed("bare-affirmative", "Yes")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([]);
+    expect(await reports("peon")).toEqual([]);
+    expect(await pending("slop")).toEqual(slopQuestion);
+    expect(await pending("peon")).toEqual(peonQuestion);
+  }, T);
 
   test("a signed cancellation received before a dedicated app question cannot clear it", async ({ onTestFinished }) => {
     const { askSlop, pending, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);

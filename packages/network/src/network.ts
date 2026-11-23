@@ -187,11 +187,18 @@ function safetyReplyNames(text: string): string[] {
   return qualified && qualified !== literal ? [literal, qualified] : [literal];
 }
 
-export function pendingReportReplyNames(text: string): string[] {
+interface PendingReportReplyName { name: string; routable: boolean }
+
+export function pendingReportReplyNames(text: string): PendingReportReplyName[] {
   const body = text.trim();
-  if (ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body)) return [];
-  return safetyReplyNames(body).filter(name => !SAFETY_CLARIFICATION_CONFIRMATION.test(name)
-    && consentOf(name).answer === "unclear");
+  if (/^(?:block|report)\s/i.test(body)) return [];
+  const names = safetyReplyNames(body);
+  const acknowledgement = ACK_ONLY.test(body);
+  return names.flatMap(name => {
+    const routable = !acknowledgement && !SAFETY_CLARIFICATION_CONFIRMATION.test(name) && consentOf(name).answer === "unclear";
+    // A reserved reply cannot choose the app. An alternate exact name can still make the answer ambiguous.
+    return routable || names.length > 1 ? [{ name, routable }] : [];
+  });
 }
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -1178,7 +1185,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const matches = this.memberReply && !msg.reaction && names.length && msg.signedReceivedAt !== undefined
         ? this.pendingReportChoices(m.id, names, msg.signedReceivedAt) : [];
       const current = matches[0];
-      if (matches.length === 1 && current?.askedAt === reportChoice.askedAt
+      if (matches.length === 1 && current?.routable && current.askedAt === reportChoice.askedAt
         && current.targetId === reportChoice.targetId && current.kind === reportChoice.kind) {
         m.pendingSafety = undefined;
         this.applyBlock(m, "report", current.kind, this.members.get(current.targetId));
@@ -2428,7 +2435,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Exact displayed choices in the saved question that still name a current counterpart. */
-  pendingReportChoices(memberId: MemberId, replyNames: readonly string[], receivedAt: number): PendingReportChoice[] {
+  pendingReportChoices(memberId: MemberId, replyNames: readonly PendingReportReplyName[], receivedAt: number):
+    (PendingReportChoice & { routable: boolean })[] {
     const pending = this.members.get(memberId)?.pendingSafety;
     const now = this.now();
     if (pending?.verb !== "report" || !reportClarificationTimeCurrent(pending.at, receivedAt, now, now - DAY)) return [];
@@ -2439,9 +2447,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (offered.length !== pending.targets?.length) return [];
     const counterparts = new Set(this.counterparts(memberId).map(candidate => candidate.m.id));
     const names = this.namesFor(offered);
-    return offered.flatMap((target, index) => counterparts.has(target.id) && replyNames.includes(safetyName(names[index]!))
-      ? [{ askedAt: pending.at, targetId: target.id, kind: pending.kind }]
-      : []);
+    return offered.flatMap((target, index) => {
+      const displayedName = safetyName(names[index]!);
+      const reply = replyNames.find(({ name }) => name === displayedName);
+      return reply && counterparts.has(target.id)
+        ? [{ askedAt: pending.at, targetId: target.id, kind: pending.kind, routable: reply.routable }]
+        : [];
+    });
   }
 
   /**

@@ -1754,7 +1754,7 @@ export class NetworkService implements RuntimeHost {
       return choices.map(choice => ({ app, personId: person.id, memberId, choice }));
     }))).flat();
     switch (sharedReportRoute(true, matches.length)) {
-      case "UniqueReportRoute": return matches[0];
+      case "UniqueReportRoute": return matches[0]?.choice.routable ? matches[0] : undefined;
       case "AmbiguousReportRoute": return "ambiguous";
       case "NoReportRoute": return;
     }
