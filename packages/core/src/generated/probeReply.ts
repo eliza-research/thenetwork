@@ -49,6 +49,19 @@ export function lawDirectWithdrawalKeepsTheRefusal(modelConsent: string): boolea
   return participationWithdrawalReading(true, true) === "DirectWithdrawal" && probeReplyReading(false, false, modelConsent) === "KeepOffline";
 }
 
+/** Story: Make a choice about a proposed opportunity / A qualifier or adverb after neither still refuses the named time (spec/probeReply.md) */
+//@ pure
+export function neitherQualifierRefusal(neitherAfterTime: boolean, qualifierAfterNeither: boolean, directStatement: boolean): boolean {
+  return (neitherAfterTime || qualifierAfterNeither) && directStatement;
+}
+
+/** Story: Make a choice about a proposed opportunity / A qualifier or adverb after neither still refuses the named time (spec/probeReply.md) */
+//@ pure
+export function lawNeitherQualifierRefusesNamedTime(neitherAfterTime: boolean): boolean {
+  //@ ensures \result === true
+  return neitherQualifierRefusal(neitherAfterTime, true, true);
+}
+
 /** Story: Make a choice about a proposed opportunity / A clear yes uses the chosen times when the member names them (spec/probeReply.md) */
 //@ pure
 export function pickedTimes(chosen: string[], offered: string[]): string[] {
