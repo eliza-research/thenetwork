@@ -8,6 +8,7 @@ on:
       - 'packages/core/src/generated/**'
       - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
+      - 'scripts/*formal-shard*'
       - 'tools/vibestack/**'
       - 'scripts/vibestack.ts'
       - 'apps/site/**'
@@ -30,6 +31,7 @@ on:
       - 'packages/core/src/generated/**'
       - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
+      - 'scripts/*formal-shard*'
       - 'tools/vibestack/**'
       - 'scripts/vibestack.ts'
       - 'apps/site/**'
@@ -61,60 +63,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
-  generation:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
-      - run: corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
-        working-directory: tools/vibestack
-      - name: Reuse content-keyed formal tool actions
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: .spec-cache/formal
-          key: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ hashFiles('spec/**', 'scripts/spec-snapshots.ts', 'scripts/vibestack.ts', 'tools/vibestack/vibestack/**') }}
-          restore-keys: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
-      - if: hashFiles('spec/**/*.md', 'packages/core/src/generated/*.ts') != ''
-        run: pnpm run spec:check-generated
-
-  browser:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Install only browser runtime dependencies
-        run: pnpm --dir tools/vibestack --filter vibestack --prod install --frozen-lockfile --ignore-scripts
-      - name: Install pinned Chromium for Bombadil
-        working-directory: tools/vibestack
-        shell: bash
-        run: |
-          pnpm exec playwright install --no-shell chromium
-          launch() {
-            node --input-type=module -e '
-              import { chromium } from "playwright";
-              const browser = await chromium.launch({ executablePath: chromium.executablePath(), timeout: 10000 });
-              await browser.close();
-            '
-          }
-          if ! launch; then
-            pnpm exec playwright install-deps chromium
-            launch
-          fi
-      - run: pnpm run spec:explore
-
   full-check:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main'))
     runs-on: ubuntu-24.04
@@ -122,6 +70,9 @@ jobs:
     concurrency:
       group: vibestack-full-check-${{ github.ref }}
       cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
     env:
       REQUIRE_PG: "1"
     services:
@@ -155,7 +106,7 @@ jobs:
         # Use the published asset directly so GitHub API rate limits cannot block setup.
         working-directory: tools/vibestack
         shell: bash
-        run: |
+        run: &install-quint |
           version="$(node -p 'require("@informalsystems/quint/dist/src/rust/binaryManager.js").QUINT_EVALUATOR_VERSION')"
           test "$version" = v0.7.1
           directory="$(node -p 'require("@informalsystems/quint/dist/src/config.js").rustEvaluatorDir("v0.7.1")')"
@@ -175,39 +126,46 @@ jobs:
           echo "$bin" >> "$GITHUB_PATH"
           "$bin/pg_isready" -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
-      - name: Identify formal action archives
+      - &formal-keys
+        name: Identify formal action archives
         id: formal-keys
         shell: bash
         env:
           TOOLS: ${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}
-          RESTORE: ${{ github.event_name != 'workflow_dispatch' || !inputs.cold_formal_cache }}
+          RESTORE: ${{ (github.event_name == 'workflow_dispatch' && !inputs.cold_formal_cache) || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
         run: |
           printf '%s\n' "restore=$RESTORE" "complete=formal-full-complete-v2-$TOOLS-" \
             "checkpoint=formal-full-checkpoint-v2-$TOOLS-" "legacy=formal-full-actions-v1-$TOOLS-" >> "$GITHUB_OUTPUT"
-      - name: Restore a previous attempt of this full check
+      - &formal-retry
+        name: Restore a previous attempt of this full check
         id: formal-retry
         if: steps.formal-keys.outputs.restore == 'true' && github.run_attempt != '1'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .spec-cache/formal
+          lookup-only: ${{ github.job == 'generation' }}
           key: ${{ steps.formal-keys.outputs.complete }}${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ steps.formal-keys.outputs.complete }}${{ github.run_id }}-
             ${{ steps.formal-keys.outputs.checkpoint }}${{ github.run_id }}-
-      - name: Restore actions from a successful full check
+      - &formal-complete
+        name: Restore actions from a successful full check
         id: formal-complete
         if: steps.formal-keys.outputs.restore == 'true' && !steps.formal-retry.outputs.cache-matched-key
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .spec-cache/formal
+          lookup-only: ${{ github.job == 'generation' }}
           key: ${{ steps.formal-keys.outputs.complete }}${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ${{ steps.formal-keys.outputs.complete }}
-      - name: Restore checkpoint or legacy formal actions
+      - &formal-checkpoint
+        name: Restore checkpoint or legacy formal actions
         id: formal-checkpoint
         if: steps.formal-keys.outputs.restore == 'true' && !steps.formal-retry.outputs.cache-matched-key && !steps.formal-complete.outputs.cache-matched-key
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .spec-cache/formal
+          lookup-only: ${{ github.job == 'generation' }}
           key: ${{ steps.formal-keys.outputs.checkpoint }}${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ steps.formal-keys.outputs.checkpoint }}
@@ -219,15 +177,78 @@ jobs:
           path: .spec-cache/formal
           key: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ hashFiles('spec/**', 'scripts/spec-snapshots.ts', 'scripts/vibestack.ts', 'tools/vibestack/vibestack/**') }}
           restore-keys: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
+      - &select-formal-shards
+        name: Determine whether to precompute formal actions
+        id: shards
+        shell: bash
+        env:
+          ENABLED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
+          COLD: ${{ github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache }}
+          MATCHED: ${{ steps.formal-retry.outputs.cache-matched-key || steps.formal-complete.outputs.cache-matched-key || steps.formal-checkpoint.outputs.cache-matched-key }}
+        run: |
+          if [[ "$ENABLED" == true && ( "$COLD" == true || -z "$MATCHED" ) ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Start the full verification deadline
+        env:
+          COLD: ${{ github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache }}
+        shell: bash
+        run: |
+          mkdir -p .spec-cache/formal
+          if [[ "$COLD" == true ]]; then
+            test -z "$(find .spec-cache/formal -mindepth 1 -maxdepth 1 -print -quit)"
+          fi
+          find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' |
+            sort > "$RUNNER_TEMP/formal-actions-before"
+          echo "FORMAL_DEADLINE=$(( $(date +%s) + 1620 ))" >> "$GITHUB_ENV"
+      - name: Precompute the heavier formal shard on this runner
+        if: steps.shards.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          if ! timeout --kill-after=15s 12m node scripts/precompute-formal-shard.ts 1 2; then
+            echo '::warning::Local precompute did not complete. The full check will decide the verdict.'
+          fi
+      - name: Wait briefly for the generation runner's matching formal receipts
+        if: steps.shards.outputs.enabled == 'true'
+        id: peer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: cold-formal-actions-${{ github.run_attempt }}
+        shell: bash
+        run: |
+          # The lighter generation shard normally finishes during local precompute.
+          api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          until=$(( $(date +%s) + 45 ))
+          while (( $(date +%s) < until )); do
+            if [[ -n "$(timeout 5s gh api --method GET "$api/artifacts" -f name="$ARTIFACT" --jq '.artifacts[] | select(.expired == false) | .id' || true)" ]]; then
+              echo 'ready=true' >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [[ -n "$(timeout 5s gh api "$api/attempts/$GITHUB_RUN_ATTEMPT/jobs" --jq '.jobs[] | select(.name == "generation" and .status == "completed") | .conclusion' || true)" ]]; then
+              break
+            fi
+            sleep 5
+          done
+      - name: Download the matching generation formal receipts
+        if: steps.peer.outputs.ready == 'true'
+        id: download-shard
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cold-formal-actions-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/formal-artifact
+      - name: Verify and restore the generation formal receipts
+        if: steps.download-shard.outcome == 'success'
+        continue-on-error: true
+        run: python3 scripts/formal-shard-artifacts.py restore "$RUNNER_TEMP/formal-artifact"
       - name: Run the full Vibestack check
         id: check
         shell: bash
         run: |
-          mkdir -p .spec-cache/formal
-          find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' |
-            sort > "$RUNNER_TEMP/formal-actions-before"
-          # End the check before the job deadline so completed actions can be uploaded.
-          timeout --kill-after=15s 27m pnpm run check
+          # Leave time to upload completed receipts before the job deadline.
+          remaining=$(( FORMAL_DEADLINE - $(date +%s) ))
+          (( remaining > 0 ))
+          timeout --kill-after=15s "${remaining}s" pnpm run check
       - name: Prepare completed actions for upload
         if: ${{ !cancelled() && (steps.check.outcome == 'success' || steps.check.outcome == 'failure') }}
         id: ready
@@ -258,3 +279,89 @@ jobs:
         with:
           path: .spec-cache/formal
           key: ${{ steps.formal-keys.outputs.checkpoint }}${{ github.run_id }}-${{ github.run_attempt }}
+
+  generation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache && 25 || 10 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
+        working-directory: tools/vibestack
+      - *formal-keys
+      - *formal-retry
+      - *formal-complete
+      - *formal-checkpoint
+      - *select-formal-shards
+      - name: Reuse content-keyed formal tool actions
+        if: github.event_name != 'workflow_dispatch' || !inputs.cold_formal_cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .spec-cache/formal
+          key: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ hashFiles('spec/**', 'scripts/spec-snapshots.ts', 'scripts/vibestack.ts', 'tools/vibestack/vibestack/**') }}
+          restore-keys: formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
+      - name: Require an empty formal action cache for a cold dispatch
+        if: github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache
+        shell: bash
+        run: |
+          mkdir -p .spec-cache/formal
+          test -z "$(find .spec-cache/formal -mindepth 1 -maxdepth 1 -print -quit)"
+      - if: hashFiles('spec/**/*.md', 'packages/core/src/generated/*.ts') != ''
+        run: pnpm run spec:check-generated
+      - name: Install the pinned Quint Rust evaluator for cold precompute
+        if: steps.shards.outputs.enabled == 'true'
+        working-directory: tools/vibestack
+        shell: bash
+        run: *install-quint
+      - name: Precompute the lighter formal shard after checking generated files
+        if: steps.shards.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          node scripts/precompute-formal-shard.ts 2 2
+          python3 scripts/formal-shard-artifacts.py stage "$RUNNER_TEMP/formal-shard"
+      - name: Upload formal actions for this attempt
+        if: steps.shards.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cold-formal-actions-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/formal-shard/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install only browser runtime dependencies
+        run: pnpm --dir tools/vibestack --filter vibestack --prod install --frozen-lockfile --ignore-scripts
+      - name: Install pinned Chromium for Bombadil
+        working-directory: tools/vibestack
+        shell: bash
+        run: |
+          pnpm exec playwright install --no-shell chromium
+          launch() {
+            node --input-type=module -e '
+              import { chromium } from "playwright";
+              const browser = await chromium.launch({ executablePath: chromium.executablePath(), timeout: 10000 });
+              await browser.close();
+            '
+          }
+          if ! launch; then
+            pnpm exec playwright install-deps chromium
+            launch
+          fi
+      - run: pnpm run spec:explore
