@@ -321,18 +321,28 @@ jobs:
           path: .spec-cache/formal
           key: ${{ steps.generation-cache.outputs.cache-primary-key }}
       - name: Install the pinned Quint Rust evaluator for cold precompute
+        id: peer-evaluator
         if: steps.shards.outputs.enabled == 'true'
+        continue-on-error: true
+        timeout-minutes: 2
         working-directory: tools/vibestack
         shell: bash
         run: *install-quint
+      # Generation still requires the snapshot check. Peer work only helps the full check finish.
       - name: Precompute the lighter formal shard after checking generated files
-        if: steps.shards.outputs.enabled == 'true'
+        id: peer-bundle
+        if: steps.peer-evaluator.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 16
         shell: bash
         run: |
           node scripts/precompute-formal-shard.ts 2 2
           python3 scripts/formal-shard-artifacts.py stage "$RUNNER_TEMP/formal-shard"
       - name: Upload formal actions for this attempt
-        if: steps.shards.outputs.enabled == 'true'
+        id: peer-upload
+        if: steps.peer-bundle.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cold-formal-actions-${{ github.run_attempt }}
