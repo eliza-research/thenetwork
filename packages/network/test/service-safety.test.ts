@@ -654,7 +654,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([]);
   }, T);
 
-  test("#626 a semicolon can separate an offered time choice from a safety correction", async ({ onTestFinished }) => {
+  test.for(["Friday works.", "I think Friday works."])("#626 a semicolon can separate this offered time choice from a safety correction: %s", async (choice, { onTestFinished }) => {
     const { s, askSlop, clock, competingSlopProbe, pending, reports, signed, slopAri, slopBen } = await signedSafetyFixture(onTestFinished);
     const offer = "slop.626-semicolon-time-probe";
     const friday = Date.UTC(2026, 9, 16, 23);
@@ -664,7 +664,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       { key: "a", label: "Friday 7pm", start: friday, end: friday + HOUR },
       { key: "b", label: "Saturday 11am", start: saturday, end: saturday + HOUR },
     ]);
-    await signed("626-semicolon-time-reply", "It was someone else; Friday works.", "slop");
+    await signed("626-semicolon-time-reply", `It was someone else; ${choice}`, "slop");
     const safetyPending = Boolean(await pending("slop"));
     const picked = await s.runtimeFor("slop")!.readState(net => net.exportState().opps.find(opp => opp.id === offer)?.picks?.[slopAri]);
     clock.advance(MINUTE);
@@ -687,6 +687,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     { scenario: "an independent semicolon yes", reply: "It was someone else; yes.", keepsQuestion: false, expectedProbe: "available" },
     { scenario: "an independent semicolon yes after leading no", reply: "No, it was someone else; yes.", keepsQuestion: false, expectedProbe: "available" },
     { scenario: "a semicolon I think qualifier", reply: "It was someone else; I think.", keepsQuestion: true, expectedProbe: "probing" },
+    { scenario: "a semicolon maybe attribution", reply: "It was someone else; maybe it was Ben after all.", keepsQuestion: true, expectedProbe: "probing" },
+    { scenario: "a semicolon I think attribution", reply: "It was someone else; I think it was Ben after all.", keepsQuestion: true, expectedProbe: "probing" },
     { scenario: "a bare pronoun rejection", reply: "not him", keepsQuestion: true },
   ];
   for (const { scenario, reply, keepsQuestion, expectedProbe } of replacementReplies) {

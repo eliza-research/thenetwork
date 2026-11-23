@@ -180,7 +180,11 @@ function safetyReplyConsent(text: string) {
 
 function isSafetyAttributionQualifier(text: string): boolean {
   const words = safetyName(text);
-  return /^(?:maybe|perhaps|possibly|probably|i think|i guess|(?:i(?:'m| am) )?(?:not sure|unsure))$/.test(words)
+  // A qualifier can finish with a guess about who it was. A hedge in a time choice stays separate.
+  const attribution = /(?:[,:]? (?:if|whether))?[,:]? (?:it|that) (?:was(?:n't)?|(?:could|may|might) have been)\b/.exec(words);
+  const qualifier = words.slice(0, attribution?.index ?? words.length);
+  return /^(?:maybe|perhaps|possibly|probably|i think|i guess|(?:i(?:'m| am) )?(?:not sure|unsure))$/.test(qualifier)
+    || (attribution !== null && consentOf(text).why === "hedged")
     || (text.includes("?") && /^(?:right|correct|wasn't it)$/.test(words));
 }
 
