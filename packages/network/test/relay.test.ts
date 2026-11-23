@@ -256,6 +256,8 @@ test.each([
   "Don't send them it",
   "Don't send them anything",
   "Don't you dare send it",
+  "Don't send my photo or number",
+  "Please don't send Ari my photos or cell yet",
   "Ana says, send it now. Don't send it anymore.",
   "Ana says, send it now, but I don't want you to send it anymore.",
   "I say, don't send it now",
@@ -372,6 +374,12 @@ test.each([
   "Well, Ana says, don't send it yet",
   "Ana says, if it's not urgent, don't send it now",
   "Ana says, don't send my number",
+  "Ana says, don't send my photo or number",
+  "Don't send my photo or number, Ana said.",
+  "Don't send my photo or my coworker's number",
+  "Don't send my photo or email",
+  "Don't send my photo. My number is in the confirmation.",
+  "Wait.",
 ])("the signed turn keeps a pending swap after a go-ahead or unrelated wording: %s", async text => {
   const id = "unrelated-withdrawal-" + randomUUID();
   const before = await sharesQueued();
@@ -379,7 +387,9 @@ test.each([
   const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
   expect(original).toBeDefined();
 
-  await open(phones.bo, id + "-followup", text);
+  clock.advance(MINUTE);
+  const messageId = id + "-followup";
+  expect((await signed(TURN_PATH, messageId, JSON.stringify(turn(phones.bo, messageId, text)))).status).toBe(200);
   expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
   expect(await (await post(await ask("ari", id + "-second", "send Bo my number"))).json())
     .toMatchObject({ decision: "pass", delivered: false });
@@ -389,6 +399,24 @@ test.each([
 test.each([
   { text: "Don't send him my photo. Send him my number.", shares: true },
   { text: "I won't send my photo. Send him my number.", shares: true },
+  { text: "Don't send my photo. Could you kindly send him my number?", shares: true },
+  { text: "Scratch that. Send him my number.", shares: true },
+  { text: "Send him my number. Ana says, scratch that.", shares: true },
+  { text: "Send him my photo, Ana said. Please send him my number.", shares: true },
+  { text: "Send them my number, she already asked.", shares: true },
+  { text: "Send him my number. Don't send my photo. Or my number.", shares: false },
+  { text: "Don't send my photo. My number neither. Send him my number.", shares: false },
+  { text: "Send him my number. Don't send my photo. Same goes for my cell.", shares: false },
+  { text: "Send him my number. Scratch that.", shares: false },
+  { text: "Send him my number. Wait.", shares: false },
+  { text: "Send him my number. Let me think.", shares: false },
+  { text: "Send him my number. Keep it private.", shares: false },
+  { text: "Send him my number. ??", shares: false },
+  { text: "Send him my number. Don't send my photo. ❌", shares: false },
+  { text: "Send him my number. ❌", shares: false },
+  { text: "Send him my number. Don't send my photo. 🚫📞", shares: false },
+  { text: "Send him my number. Don't send my photo. Instead, send her my email.", shares: false },
+  { text: "Send him my number, Ana said.", shares: false },
   { text: "Don't send him my photo. I'm not sure what time it is. Send him my number.", shares: true },
   { text: "Don't send him my photo. I'm not sure whether to send it. Send him my number.", shares: false },
   { text: "Don't send my photo. I'm not sure about sending it while Dad is here. Send him my number.", shares: false },

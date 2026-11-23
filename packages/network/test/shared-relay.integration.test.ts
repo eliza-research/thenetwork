@@ -611,6 +611,14 @@ test("a signed photo request respects the intended item and separately preserves
     return response.json();
   };
   for (const [index, text] of [
+    "Send him my photo. Don't send my number. Or this photo.",
+    "Send him my photo. Actually, no.",
+    "Send him my photo, hold on.",
+    "Send him my photo. Hang on.",
+    "Send him my photo. 🚫",
+    "Send him my photo. Don't send my number. 🚫📸",
+    "Send him my photo. On second thought.",
+    "Send him my photo, Ana said.",
     "Don't send it while my number is wrong. Send him my photo.",
     "Never send anything except my number. Send him my photo.",
     "Don't send any picture with my number in it. Send him my photo.",
