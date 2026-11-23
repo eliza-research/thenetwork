@@ -1,10 +1,14 @@
 import { expect, test, vi } from "vitest";
 import { SimClock } from "@thenetwork/core";
+import { canBeMatched } from "../../core/src/policy.ts";
 import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
 import { serveHttp } from "../../core/src/runtime/http.ts";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
 import { call, CHALLENGE, register, setup, tokenRequest, VERIFIER } from "../../mcp/test/harness.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { APPS } from "../../platform/src/apps.ts";
 import { createServiceMcp } from "../service/serve.ts";
 import { NetworkService } from "../service/service.ts";
 
@@ -12,6 +16,7 @@ const domain = "friends.help";
 const origin = `https://${domain}`;
 const phone = "+12125550163";
 const clientReturn = "https://client.example/callback";
+const signupTurnSecret = "synthetic-signup-age-lifecycle-turn-secret";
 
 function hiddenField(html: string, name: string): string {
   const value = new RegExp(`name="${name}" value="([^"]+)"`).exec(html)?.[1];
@@ -81,7 +86,8 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       if (!phoneCode) throw new Error("No phone code sent to the fixture provider");
       const verified = await browser("/oauth/authorize/code", { rid, code: phoneCode });
       expect(verified.status).toBe(200);
-      expect(await verified.text()).toContain('action="/oauth/authorize/signup"');
+      const verifiedPage = await verified.text();
+      expect(verifiedPage).toContain('action="/oauth/authorize/signup"');
       expect(await service.accounts.personFor(phone)).toBeUndefined();
 
       const signup = await browser("/oauth/authorize/signup", { rid, decision: "open" });
@@ -90,11 +96,13 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       const joined = await browser("/oauth/authorize/signup", {
         rid, decision: "join", signupView: hiddenField(form, "signupView"),
         consentVersion: hiddenField(form, "consentVersion"),
-        firstName: "Ari", age: "29", homeCity: "nyc", smsConsent: "yes",
+        firstName: "Ari", birthdate: "1997-01-15", homeCity: "nyc", smsConsent: "yes",
       });
       expect(joined.status).toBe(200);
       const approvalForm = await joined.text();
       expect(approvalForm).toContain('action="/oauth/authorize/consent"');
+      expect(approvalForm).toContain("Signup confirmed.");
+      expect(approvalForm).not.toContain('action="/oauth/authorize/signup"');
       const person = await service.accounts.personFor(phone);
       if (!person) throw new Error("No owner recorded after verified signup");
       const membership = await service.people.getMembership(person.id, "friends");
@@ -190,4 +198,329 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
     await service.close();
     await dropTestDb();
   }
+}, 60_000);
+
+
+type SignupWorld = {
+  service: NetworkService;
+  clock: SimClock;
+  connector: NonNullable<Awaited<ReturnType<typeof createServiceMcp>>> & { store: PgOAuthStore };
+  env: ReturnType<typeof setup>;
+  harness: ReturnType<typeof setup>;
+};
+
+async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Promise<void>) {
+  const url = await testDb();
+  const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+  const harness = setup();
+  const service = new NetworkService({
+    url, clock, instance: "agent-signup-paths-test", log: () => {}, photoStorage: null, notify: false,
+    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: signupTurnSecret },
+    networks: networks.map(id => ({ id, matchingEnabled: false })),
+    publicApi: { minStartMs: 0, minVerifyMs: 0, otp: harness.provider },
+  });
+  try {
+    await service.start();
+    const connector = await createServiceMcp(service, { databaseUrl: url, migrate: false, log: () => {}, env: { PLATFORM_ENV: "dev" } });
+    if (!connector || !(connector.store instanceof PgOAuthStore)) throw new Error("Expected the database-backed connector");
+    const server = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req, socket) {
+      return await connector.fetch(req, socket) ?? service.publicFetch(req, socket);
+    } });
+    try {
+      const env = { ...harness, fetch: async (req: Request) => {
+        const target = new URL(req.url);
+        const headers = new Headers(req.headers);
+        headers.set("host", target.host);
+        return fetchWithHost(new URL(target.pathname + target.search, server.url), {
+          headers, method: req.method, redirect: "manual", ...(req.body ? { body: await req.arrayBuffer() } : {}),
+        });
+      } };
+      await run({ service, clock, connector: connector as SignupWorld["connector"], env, harness });
+    } finally {
+      await server.stop(true);
+      await connector.store.close();
+    }
+  } finally {
+    await service.close();
+    await dropTestDb();
+  }
+}
+
+function browserOn(w: SignupWorld, site: string) {
+  const cookies = new Map<string, string>();
+  return async (path: string, fields?: Record<string, string>) => {
+    const header = [...cookies].map(([key, value]) => `${key}=${value}`).join("; ");
+    const response = await w.env.fetch(new Request(`https://${site}${path}`, {
+      headers: { cookie: header, ...(fields ? { origin: `https://${site}`, "content-type": "application/x-www-form-urlencoded" } : {}) },
+      ...(fields ? { method: "POST", body: new URLSearchParams(fields) } : {}),
+    }));
+    for (const value of response.headers.getSetCookie()) {
+      const pair = value.split(";")[0]!;
+      const at = pair.indexOf("=");
+      const name = pair.slice(0, at), token = pair.slice(at + 1);
+      if (token) cookies.set(name, token);
+      else cookies.delete(name);
+    }
+    return response;
+  };
+}
+
+type Browser = ReturnType<typeof browserOn>;
+
+async function openConnection(w: SignupWorld, site: string, browser: Browser, state: string) {
+  const registration = await register(w.env, site);
+  expect(registration.res.status).toBe(201);
+  const clientId = registration.body.client_id as string;
+  const params = new URLSearchParams({
+    response_type: "code", client_id: clientId, redirect_uri: clientReturn, state,
+    code_challenge: CHALLENGE, code_challenge_method: "S256", scope: "membership:read profile:write",
+  });
+  const page = await browser(`/oauth/authorize?${params}`);
+  expect(page.status).toBe(200);
+  return { clientId, html: await page.text() };
+}
+
+async function confirmPhone(w: SignupWorld, browser: Browser, rid: string, number: string) {
+  expect((await browser("/oauth/authorize/phone", { rid, phone: number })).status).toBe(200);
+  const code = w.harness.provider.last(number);
+  if (!code) throw new Error("No phone code sent to the fixture provider");
+  const verified = await browser("/oauth/authorize/code", { rid, code });
+  expect(verified.status).toBe(200);
+  return verified.text();
+}
+
+async function submitSignup(browser: Browser, rid: string, fields: Record<string, string>) {
+  const opened = await browser("/oauth/authorize/signup", { rid, decision: "open" });
+  expect(opened.status).toBe(200);
+  const form = await opened.text();
+  const sent = await browser("/oauth/authorize/signup", {
+    rid, decision: "join", signupView: hiddenField(form, "signupView"), consentVersion: hiddenField(form, "consentVersion"),
+    smsConsent: "yes", homeCity: "nyc", ...fields,
+  });
+  return { form, status: sent.status, html: await sent.text() };
+}
+
+test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup page is refused and a higher age later does not undo it", async () => {
+  await withSignupWorld(["slop:nyc"], async w => {
+    const site = "slop.date", number = "+12125550165";
+    const browser = browserOn(w, site);
+    const opened = await openConnection(w, site, browser, "under-13");
+    const rid = hiddenField(opened.html, "rid");
+    await confirmPhone(w, browser, rid, number);
+
+    const refused = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "2014-01-15" });
+    expect(refused.status).toBe(400);
+    expect(refused.html).toContain("You can’t join this app with the birthday entered.");
+    expect(refused.html).not.toContain('name="code"');
+    expect(refused.html).not.toContain("2014-01-15");
+    expect(await w.service.accounts.personFor(number)).toBeUndefined();
+    expect(await w.service.people.ageFloor(w.service.accounts.phoneHash(number))).toBe(12);
+    expect(await w.connector.store.sql`select first_name from platform.memberships where first_name = 'Kit'`).toEqual([]);
+    expect(await w.connector.store.sql`select person_id from platform.signup_eligibility`).toEqual([]);
+
+    const retried = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "1996-01-15" });
+    expect(retried.status).toBe(400);
+    expect(retried.html).toContain("You can’t join this app with the birthday entered.");
+    expect(await w.service.accounts.personFor(number)).toBeUndefined();
+    expect(await w.connector.store.sql`select id from oauth.grants where client_id=${opened.clientId}`).toEqual([]);
+  });
+}, 60_000);
+
+test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup page joins but stays out of matching as a minor", async () => {
+  await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
+    const site = "friends.help", number = "+12125550166";
+    const browser = browserOn(w, site);
+    const opened = await openConnection(w, site, browser, "teen");
+    const rid = hiddenField(opened.html, "rid");
+    await confirmPhone(w, browser, rid, number);
+    const invalidBirthdays = ["", "2011-1-15", "2011-02-29", "2026-10-10", "1905-10-08"];
+    for (const birthdate of invalidBirthdays) {
+      const refused = await submitSignup(browser, rid, { firstName: "Jo", birthdate });
+      expect(refused.status).toBe(400);
+      expect(refused.html).toContain('id="signup-birthdate-error"');
+      if (birthdate) expect(refused.html).not.toContain(birthdate);
+      expect(await w.service.accounts.personFor(number)).toBeUndefined();
+    }
+    const joined = await submitSignup(browser, rid, { firstName: "Jo", birthdate: "2011-01-15" });
+    expect(joined.status).toBe(200);
+    expect(joined.form).toMatch(/<input\b(?=[^>]*\bname="birthdate")(?=[^>]*\btype="date")[^>]*>/);
+    expect(joined.form).not.toContain('name="age"');
+    expect(joined.html).toContain("Signup confirmed.");
+    const person = await w.service.accounts.personFor(number);
+    if (!person) throw new Error("No person after a teen signup");
+    expect(await w.service.people.getMembership(person.id, "friends")).toMatchObject({ firstName: "Jo" });
+    const lowest = await w.service.accounts.lowestAge(number, person);
+    expect(lowest).toBe(15);
+    expect(canBeMatched(lowest)).toBe(false);
+  });
+}, 60_000);
+
+test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages while a lower recorded age stays binding", async () => {
+  await withSignupWorld(["friends:nyc"], async w => {
+    const site = "friends.help";
+    const firstNumber = "+12125550178", secondNumber = "+12125550179", previousAdultNumber = "+12125550180";
+    await w.service.accounts.recordAge(secondNumber, undefined, 16);
+
+    const previousAdult = await w.service.accounts.createPerson(previousAdultNumber, "otp_sms", 30);
+    await w.connector.store.sql`insert into platform.photos(id,person_id,app_id,storage_key,content_type,bytes,sha256,consent_version,created_at)
+      values ('fixture-private-photo',${previousAdult.id},'slop','fixture-private-storage','image/jpeg',1,'fixture-sha','fixture-consent',${new Date(w.clock.now())})`;
+
+    for (const number of [firstNumber, secondNumber, previousAdultNumber]) {
+      const browser = browserOn(w, site);
+      const opened = await openConnection(w, site, browser, `birthday-${number}`);
+      const rid = hiddenField(opened.html, "rid");
+      await confirmPhone(w, browser, rid, number);
+      const joined = await submitSignup(browser, rid, { firstName: "Jo", birthdate: "2008-10-10" });
+      expect(joined.status).toBe(200);
+      expect(joined.html).toContain("Signup confirmed.");
+    }
+
+    expect(await w.connector.store.sql`select id from platform.photos where person_id=${previousAdult.id} and deleted_at is null`).toEqual([]);
+
+    const runtime = w.service.runtimeFor("friends");
+    if (!runtime) throw new Error("No Friends runtime after signup");
+    const agesFor = async (number: string) => {
+      const person = await w.service.accounts.personFor(number);
+      if (!person) throw new Error("No person after signup");
+      const membership = await w.service.people.getMembership(person.id, "friends");
+      if (!membership) throw new Error("No Friends membership after signup");
+      return {
+        account: await w.service.accounts.lowestAge(number, person),
+        matching: await runtime.scoped(async tx => (await tx`select age from platform.matching_ages
+          where app_id = 'friends' and member_id = ${membership.memberId}`)[0]?.age),
+      };
+    };
+
+    const firstPerson = (await w.service.accounts.personFor(firstNumber))!;
+    const firstMembership = (await w.service.people.getMembership(firstPerson.id, "friends"))!;
+    const cachedMinor = () => runtime.readState(n => n.memberList().find(member => member.id === firstMembership.memberId)?.minor);
+
+    w.clock.set(Date.UTC(2026, 9, 10, 11, 59, 59));
+    expect(await agesFor(firstNumber)).toEqual({ account: 17, matching: 17 });
+    expect(await cachedMinor()).toBe(true);
+    expect(await agesFor(previousAdultNumber)).toEqual({ account: 17, matching: 17 });
+    w.clock.advance(1_000);
+    expect.soft(await agesFor(firstNumber)).toEqual({ account: 18, matching: 18 });
+    expect(await agesFor(secondNumber)).toEqual({ account: 16, matching: 16 });
+
+    await runtime.tick();
+    expect(await cachedMinor()).toBe(false);
+    expect(firstMembership.profile).toEqual({ homeCity: "nyc" });
+    const staffAge = await runtime.scoped(async tx => {
+      await tx`set local role network_observatory_friends`;
+      const [rights] = await tx`select has_table_privilege(current_user, 'platform.signup_eligibility', 'select') as reads_private_date`;
+      expect(rights?.reads_private_date).toBe(false);
+      const row = await tx`select * from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`;
+      await tx`select set_config('app.age_as_of', '2000-01-01T00:00:00Z', true)`;
+      expect(await tx`select * from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`).toEqual(row);
+      return row;
+    });
+    expect(staffAge).toEqual([{ app_id: "friends", member_id: firstMembership.memberId, age: expect.any(Number),
+      banned: false, staff_held: false, report_held: false }]);
+
+    const crossAppAge = await runtime.scoped(async tx => {
+      await tx`set local role network_observatory_cross_app`;
+      const [rights] = await tx`select has_table_privilege(current_user, 'platform.signup_eligibility', 'select') as reads_private_date`;
+      expect(rights?.reads_private_date).toBe(false);
+      return tx`select * from platform.observatory_person_ages where person_id = ${firstPerson.id}`;
+    });
+    expect(crossAppAge).toEqual([{ person_id: firstPerson.id, age: staffAge[0]?.age }]);
+
+    await w.service.accounts.deleteAll({ e164: firstNumber, personId: firstPerson.id });
+    expect(await w.service.people.signupAgeAt(firstPerson.id, w.clock.now())).toBeUndefined();
+
+  });
+}, 60_000);
+
+test.skipIf(!pgAvailable)("ntwrk.party: the signup page requires an invitation and refuses a missing or unknown one", async () => {
+  await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
+    const site = "ntwrk.party", number = "+12125550167";
+    const browser = browserOn(w, site);
+    const opened = await openConnection(w, site, browser, "invite-only");
+    const rid = hiddenField(opened.html, "rid");
+    await confirmPhone(w, browser, rid, number);
+
+    const missing = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "" });
+    expect(missing.form).toMatch(/<input\b(?=[^>]*\sname="invitation")(?=[^>]*\srequired)[^>]*>/);
+    expect(missing.status).toBe(400);
+    expect(missing.html).toContain("Enter a valid invitation for this app.");
+
+    const unknown = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "A".repeat(43) });
+    expect(unknown.status).toBe(400);
+    expect(unknown.html).toContain("Enter a current invitation for this app.");
+    expect(await w.service.accounts.personFor(number)).toBeUndefined();
+    expect(await w.connector.store.sql`select id from oauth.grants where client_id=${opened.clientId}`).toEqual([]);
+  });
+}, 60_000);
+
+test.skipIf(!pgAvailable)("cross-app signup does not freeze a temporary browser birthday age in a network member", async () => {
+  await withSignupWorld(["friends:nyc", "peon:nyc"], async w => {
+    const site = "friends.help";
+    const signedJoin = async (number: string, age: number) => {
+      const input: TurnRequest = { channel: "blooio", from: number, to: null, transport: "imessage", app: "peon",
+        messageId: `signup-age-partner-${age}`, text: `Peon, Jo, ${age}, New York`, receivedAt: w.clock.now() };
+      const body = JSON.stringify(input);
+      const signature = await svcSign(signupTurnSecret, { method: "POST", path: TURN_PATH, id: input.messageId, body,
+        nowS: Math.floor(w.clock.now() / 1000) });
+      const reply = await w.service.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, {
+        method: "POST", body, headers: { "content-type": "application/json", ...signature },
+      }));
+      expect(reply.status).toBe(200);
+      expect(await reply.json()).toMatchObject({ outcome: "handled", app: "peon", reason: "joined" });
+    };
+    const typedJoin = async (number: string, age: number) => {
+      w.clock.advance(31_000);
+      const post = (path: string, body: unknown, cookie?: string) => w.env.fetch(new Request(`https://peon.biz${path}`, {
+        method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+      }));
+      expect((await post("/api/auth/otp/start", { phone: number })).status).toBe(200);
+      const verified = await post("/api/auth/otp/verify", { phone: number, code: w.harness.provider.last(number) });
+      expect(verified.status).toBe(200);
+      const cookie = verified.headers.getSetCookie()[0]?.split(";")[0];
+      expect(cookie).toBeDefined();
+      const reply = await post("/api/join", { firstName: "Jo", age, homeCity: "nyc", consent: { sms: true, version: APPS.peon.consent.version } }, cookie);
+      expect(reply.status).toBe(200);
+      expect(await reply.json()).toMatchObject({ ok: true });
+    };
+    const scenarios = [
+      { number: "+12125550181", age: 25, before: 17, after: 18, join: signedJoin },
+      { number: "+12125550182", age: 16, before: 16, after: 16, join: signedJoin },
+      { number: "+12125550183", age: 27, before: 17, after: 18, join: typedJoin },
+    ];
+    for (const { number, age, join } of scenarios) {
+      const browser = browserOn(w, site);
+      const opened = await openConnection(w, site, browser, `signup-age-lifecycle-${age}`);
+      const rid = hiddenField(opened.html, "rid");
+      await confirmPhone(w, browser, rid, number);
+      const joined = await submitSignup(browser, rid, { firstName: "Jo", birthdate: "2008-10-10" });
+      expect(joined).toMatchObject({ status: 200, html: expect.stringContaining("Signup confirmed.") });
+      await join(number, age);
+    }
+    const friends = w.service.runtimeFor("friends")!;
+    const peon = w.service.runtimeFor("peon")!;
+    const ages = async (number: string) => {
+      const person = (await w.service.accounts.personFor(number))!;
+      const member = async (runtime: typeof friends) => {
+        const membership = await w.service.people.getMembership(person.id, runtime.app.id);
+        if (!membership) throw new Error(`Missing ${runtime.app.id} fixture membership`);
+        const ages = await runtime.scoped(async tx => (await tx`select a.age as effective, m.age as recorded
+          from network.members m join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
+          where m.app_id=${runtime.app.id} and m.id=${membership.memberId}`)[0]);
+        const minor = await runtime.readState(n => n.memberList().find(member => member.id === membership.memberId)?.minor);
+        return { ...ages, minor };
+      };
+      return { account: await w.service.accounts.lowestAge(number, person), friends: await member(friends), peon: await member(peon) };
+    };
+    w.clock.set(Date.UTC(2026, 9, 10, 11, 59, 59));
+    for (const { number, before } of scenarios) {
+      expect(await ages(number)).toMatchObject({ account: before, friends: { effective: before, minor: true }, peon: { effective: before, minor: true } });
+    }
+    w.clock.advance(1_000);
+    await friends.tick();
+    await peon.tick();
+    for (const { number, age, after } of scenarios) {
+      const minor = !canBeMatched(after);
+      expect(await ages(number)).toMatchObject({ account: after, friends: { effective: after, minor }, peon: { effective: after, recorded: age, minor } });
+    }
+  });
 }, 60_000);
