@@ -3,7 +3,7 @@ import { initial as initialRelay, step as stepRelay, type DeliveryResult, type R
 import { relayAgeStatementRead, relayAgeStatementRefuses, relaySevereBlockCaseEvent, relayStartsMinorPolicy, relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
 import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import {
-  relayGuard, relayItemAsync, relaySenderNotice, RELAY_LIMITS, threadMessage,
+  relayGuard, relayItemAsync, relaySenderMinorSign, relaySenderNotice, RELAY_LIMITS, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
 } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
@@ -146,7 +146,7 @@ export class RelayDesk {
     const observed = relayAgeStatementRead(text !== "", pair, younger) && this.host.observeSenderAge?.(item.from, text) === true;
     const ageStated = relayAgeStatementRefuses(observed, pair, this.host.member(item.from)?.markedMinor !== false);
     const teen: RelayTeen = { pair, younger, ageStated };
-    return this.apply(await this.decide(item, match, o, teen), match, item, undefined, younger);
+    return this.apply(await this.decide(item, match, o, teen), match, item, undefined, younger || ageStated, younger);
   }
 
   private async decide(item: RelayItem, match: RelayMatch, o: RelayCallOptions, teen: RelayTeen = NOT_TEEN): Promise<RelayResult> {
@@ -186,10 +186,10 @@ export class RelayDesk {
     };
   }
 
-  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string, saysYounger = false): RelayOutcome {
-    const ageSignal = res.record.ageSignal;
+  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string, statedAge = false, saysYounger = false): RelayOutcome {
+    const senderSign = res.record.ageSignal && !!item.text && relaySenderMinorSign(item.text);
     this.log(res.record);
-    if (relayStartsMinorPolicy(ageSignal || saysYounger, this.host.member(item.from)?.markedMinor ?? false)) this.host.minorSignal(item.from, saysYounger);
+    if (relayStartsMinorPolicy(statedAge, senderSign, res.classifierAgeSignal === true, this.host.member(item.from)?.markedMinor ?? false)) this.host.minorSignal(item.from, saysYounger);
     if (relaySevereBlockCaseEvent(VERDICT[res.decision], res.reasons.some(r => SEVERE_REASON_FAMILIES.has(r.split(":")[0]!)))) this.host.severeBlock(item.from);
     const decision = stepRelay(initialRelay, { type: "recordVerdict", verdict: VERDICT[res.decision] });
     if (decision.phase !== "ReadyToSend") return { itemId: item.id, decision: "refused", reason: res.senderNotice };

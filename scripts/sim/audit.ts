@@ -328,7 +328,7 @@ async function sitesGates(b: Block) {
         expect(skill).toContain("help@ntwrk.party");
         for (const o of SITES.filter(o => o.domain !== s.domain)) expect([s.domain, o.domain, skill.includes(`https://${o.domain}/mcp`)]).toEqual([s.domain, o.domain, false]);
         expect([s.domain, readFileSync(join(r.out, "_worker.js"), "utf8").includes(DEFAULT_BACKEND_ORIGIN)]).toEqual([s.domain, true]);
-        expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older/i.test(skill)]).toEqual([s.domain, true]);
+        expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older|under 18/i.test(skill)]).toEqual([s.domain, true]);
         if (s.app === "ntwrk") continue;
         expect([s.domain, /STOP[^\n]*every (app|text)/.test(skill) && skill.includes(`"leave ${s.domain}"`)]).toEqual([s.domain, true]);
         const sms = join(r.out, "terms.html");

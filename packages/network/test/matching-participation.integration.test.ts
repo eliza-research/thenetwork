@@ -21,6 +21,7 @@ test.each(["a", "b"])("a request cannot select a member who opted out of its cat
   record.prefs.categoriesOptIn = record.prefs.categoriesOptIn.filter(category => category !== "hobby");
   w.restart();
   await w.say("a", "Find me a climbing partner.");
+  expect(await w.runUntil(() => w.net.reviewQueue().length > 0, 60 * 60 * 1000)).toBe(false);
   expect(w.net.reviewQueue()).toHaveLength(0);
   expect(w.sent.some(message => message.meta.type === "probe")).toBe(false);
 });
@@ -28,6 +29,7 @@ test.each(["a", "b"])("a request cannot select a member who opted out of its cat
 test.each(["paused", "category"] as const)("staff approval rechecks participation after intake (%s)", async change => {
   const w = await setup();
   await w.say("a", "Find me a climbing partner.");
+  expect(await w.runUntil(() => w.net.reviewQueue().length > 0)).toBe(true);
   const [queued] = w.net.reviewQueue();
   expect(queued?.proposal.participants).toEqual(["a", "b"]);
   const record = w.members.find(member => member.id === "b")!;
@@ -62,6 +64,7 @@ test("a public venue request skips earlier members who opted out of event matche
   for (const id of ["a", "b", "c"]) await w.say(id, "Anything fun near Williamsburg this weekend?");
   expect(w.sent.find(message => message.to === "a" && message.body.startsWith("A few ideas nearby"))?.body)
     .toContain("Happy to suggest more anytime.");
+  expect(await w.runUntil(() => w.net.reviewQueue().length > 0)).toBe(true);
   const [queued] = w.net.reviewQueue();
   expect(queued?.proposal.participants).toEqual(["c", "b"]);
   expect(w.net.requests.find(request => request.memberId === "a")?.oppId).toBeUndefined();

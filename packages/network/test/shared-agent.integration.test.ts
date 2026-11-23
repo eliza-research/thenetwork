@@ -90,7 +90,7 @@ test("signed answers to the enrollment question require a positive app choice", 
     { text: "I'm not interested at all", apps: [] },
     { text: "Friends, that's all", apps: ["friends"] },
     { text: "Not everything", apps: [] },
-    { text: "All apps except dating", apps: [] },
+    { text: "All apps except dating", apps: ["friends"] },
     { text: "All three, please", apps: ["friends", "slop"] }, // The fixture runs both child apps.
   ];
   const actual = [];
@@ -744,7 +744,7 @@ test("a member whose context is withheld gets the fixed handled reply, never sil
 }, 60_000);
 
 test("a replayed open turn whose context became unavailable answers the fixed reply and keeps that answer", async () => {
-  const phone = "+12125550179", before = escaped;
+  const phone = "+12125550182", before = escaped;
   const {joined} = await joinFriendsByText(phone, "replay-withheld");
   const member = joined.memberId as string;
   const chat = turn("replay-withheld-open", phone, "Tell me something about the weather", "friends");
@@ -782,7 +782,7 @@ test("an admitted number whose membership no longer binds gets the fixed reply, 
 }, 60_000);
 
 test("UNSHARE takes a SHARE back, so a later grant read copies nothing", async () => {
-  const phone = "+12125550193", before = escaped;
+  const phone = "+12125550183", before = escaped;
   const slopCopy = copyFor(brandOf(APPS.slop));
   const {joined} = await joinFriendsByText(phone, "unshare");
   const friendsMember = joined.memberId as string;
@@ -818,7 +818,7 @@ test("UNSHARE takes a SHARE back, so a later grant read copies nothing", async (
 }, 60_000);
 
 test("a no-keyword join answers with the welcome and the looking-for question in the same handled turn", async () => {
-  const phone = "+12125550176", before = escaped;
+  const phone = "+12125550184", before = escaped;
   expect((await post(turn("network-join-start", phone, "hey there"))).status).toBe(200);
   const joined = await (await post(turn("network-join-profile", phone, "Mo, 30"))).json() as any;
   expect(joined).toMatchObject({outcome: "handled", app: "ntwrk", reason: "joined", replyKind: "reply"});
@@ -841,7 +841,7 @@ test("a bare Friends answer to the pending shared-line question enrolls the curr
   const pending = () => service.people.getPending(service.accounts.phoneHash(phone), "looking_for");
   expect(await pending()).toMatchObject({ app: "ntwrk" });
   expect(await sql`select status, body like 'What are you looking for:%' as disclosed
-    from network.messages where id='ask:in:blooio:enrollment-route-profile'`).toEqual([{ status: "dry_run", disclosed: true }]);
+    from network.messages where id='ask:in:blooio:enrollment-route-profile'`).toEqual([{ status: "collected", disclosed: true }]);
   expect(await say("enrollment-route-explicit", "join friends")).toMatchObject({ app: "friends", reason: "join_asked" });
   expect(await pending()).toMatchObject({ app: "ntwrk" });
   const person = (await service.accounts.personFor(phone))!;
@@ -1566,7 +1566,7 @@ test("retention keeps a stuck signed turn until staff resolve it, then removes i
 }, 60_000);
 
 test("account erasure clears the sender key of a signed turn that staff never resolved", async () => {
-  const phone = "+12125550197";
+  const phone = "+12125550185";
   await joinFriendsByText(phone, "erase-stuck");
   const person = (await service.accounts.personFor(phone))!;
   const at = new Date(clock.now() - DAY);

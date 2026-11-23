@@ -68,11 +68,11 @@ test("response metrics count replies that reached the channel, retaining legacy 
     if (w.metrics.invariants.total || w.metrics.errors) failures.push(`${kind}/${seed}/${days}: invariant or runtime error`);
     return observed;
   }
-  const initial = await run(1, 10, "stub");
+  const initial = await run(4, 10, "stub");
   const delayed = initial.find(x => x.reply.messageType === "proposal" && x.reply.decision === "accept" && x.at + x.reply.delayMs > DEFAULT_START + 10 * DAY)!;
   if (!delayed) throw new Error("The generated world must contain the late acceptance");
-  await run(1, 11, "stub");
-  await run(1, 12, "stub", [{ at: delayed.at + delayed.reply.delayMs / 2, action: { do: "opt_out", persona: delayed.memberId } }]);
+  await run(4, 11, "stub");
+  await run(4, 12, "stub", [{ at: delayed.at + delayed.reply.delayMs / 2, action: { do: "opt_out", persona: delayed.memberId } }]);
   await run(1, 10, "reactions");
   for (const seed of [1, 2, 3]) await run(seed, 10, "consent");
   expect({ pending: pending > 0, suppressed: suppressed > 0, probeReplies: probeReplies > 0, reactions: reactions > 0, failures })

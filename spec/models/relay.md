@@ -18,7 +18,7 @@ A member's own estimate makes the message unsafe to relay. The estimate does not
 
 The rules and the relay classifier decide alone: every decided item is a pass or a block (`noRelayHold`), and the sender is told at once. The text outcome `flag` is a rule or classifier flag, and `unavailable` is a classifier that could not run (an error, a timeout, an answer that does not parse or a Clef cache miss gives `classifier:unavailable`); both block, and a text that the classifier could not read never gets an outbound row (`uncheckedNeverSent`). A rate limit or a safety hold on a member blocks the item as well; the sender asks again later. The model has a classifier in every run, as the service has in every environment: Clef with the Workers AI credentials, else a classifier that cannot run, or the simulated one that `platform:dev`, the simulator and the tests inject (`relayClassifierFromEnv`). Changed (owner decision 2026-11-22, D18, "Automate relay holds too"): a text that the rules or the classifier do not clear is blocked, because no relayed text waits for staff. A passed item can still wait in `Network.deferred` while the recipient is in quiet hours (a relay send has the timing `logistics` in `Network.timingOf`); that is a delay of a decided pass, not a hold, and the tick runs every send-time check again before it queues the item (`deferredFlushTest`, `witness_deferredFlushed`).
 
-The text outcome `minorClef` is a block for a classifier `minor_signal` flag. `relayItemAsync` records a classifier `minor_signal` flag, as a flag or a severe flag, and the rules' `minor:signal` as the age signal of the item record. `RelayDesk.apply` reads only that record and asks the generated `relayStartsMinorPolicy`; the host's `minorSignal` marks the sender, writes the person minor signal (`onMinorSignal`) and closes the sender's open opportunities. The blocked item keeps no text. The person minor signal on the member's other apps is outside this model, which has one app ([safety_trust](safety_trust.md) checks it). A severe block also writes the 0-point `relay_block` case event (`relaySevereBlockCaseEvent`); it changes no relay state, so it stays outside this model.
+The text outcome `minorClef` is a block for a classifier `minor_signal` flag. `relayItemAsync` records a classifier `minor_signal` flag, as a flag or a severe flag, and the rules' `minor:signal` as the age signal of the item record. `RelayDesk.apply` asks the generated `relayStartsMinorPolicy` with the sender's stated age, the rules' sign about the sender (`relaySenderMinorSign`) and the classifier flag; the host's `minorSignal` marks the sender, writes the person minor signal (`onMinorSignal`) and closes the sender's open opportunities. The outcome `minorOther` is a rules `minor:signal` for an age that a possessive word gives to another person ("my 15 year old will be with me"): the item is blocked with the age signal on its record, keeps no text, and the sender is not marked (`ageSignalStartsMinorsPolicy`, `ageSignalBlocks`, the upstream control of commit 9de643b5). The blocked item keeps no text. The person minor signal on the member's other apps is outside this model, which has one app ([safety_trust](safety_trust.md) checks it). A severe block also writes the 0-point `relay_block` case event (`relaySevereBlockCaseEvent`); it changes no relay state, so it stays outside this model.
 
 A relay thread of a teen friendship pair, on friends.help or in the ntwrk `Friend` lane, carries moderated text only ([friend introductions with a minor](../friendIntroAge.md), `relayKindAllowed`). The world has the stored stop `teenStopped` (false at the start) and `teenPair` (the network's `teenFriendPair` context: the pair passes `teenFriendAgeRule` now while teen introductions are not stopped). A number swap, a swap question and a selected photo never go from or to a minor. A teen-pair text that the rules or the classifier do not pass cleanly (`passFlagged`, a `teen:*` code, an off-platform move after a meeting) is blocked (`relayVerdict` of [relay decision](../relayDecision.md), `teenUncleanNeverPasses`); a text that no classifier could read is blocked for every pair (`classifier:unavailable`). A teen's own words about age are blocked: the outcome `teenAgeTalk` is an age that agrees with the record, and `minorRules` from a known minor in a teen pair is an age younger than the record; only the younger age opens a minor signal (`minorSignalOpens`, Q20), which ends the teen pair. When staff stop teen introductions or the rule stops holding, the thread closes. `teenFriendAgeRule` and `teenSwitchOffNoMinor` state the pair rule and the stopped case. Changed (owner decision 2026-11-22, answers A2 to A5): a teen friendship pair may relay moderated text, because the owner allowed teen friendship introductions.
 
@@ -144,6 +144,7 @@ module relay {
     staleRead: Set[str],     // items that an endpoint decision read as delivered (thread, contactShared) though they were lost
     teenUnclean: Set[str],   // teen-pair texts that the rules or the classifier did not pass cleanly
     unchecked: Set[str],     // texts that the classifier could not read (classifier:unavailable)
+    otherAge: Set[str],      // texts whose only age signal is the age of another person (minorOther)
   }
 
   // ------------------------------------------------------------------------------------------ state
@@ -251,9 +252,11 @@ module relay {
   // pass for two adults and a block for a teen pair (relayVerdict of spec/relayDecision.md).
   // `flag`: a rule or classifier flag. `unavailable`: the classifier could not run (classifier:unavailable).
   // `teenAgeTalk`: the rules read the sender's own age, and it agrees with the record (Q20); `minorRules` from a
-  // known minor in a teen pair is an age younger than the record.
-  pure val TEXT_OUTCOMES = Set("pass", "passFlagged", "flag", "block", "rate", "minorRules", "minorClef", "teenAgeTalk", "unavailable")
-  type Decision = { decision: str, ageSignal: bool }
+  // known minor in a teen pair is an age younger than the record. `minorOther`: the rules' minor:signal for an age
+  // that a possessive word gives to another person ("my 15 year old"); relaySenderMinorSign is false for it.
+  pure val TEXT_OUTCOMES = Set("pass", "passFlagged", "flag", "block", "rate", "minorRules", "minorClef", "minorOther", "teenAgeTalk", "unavailable")
+  // `startsMinor`: relayStartsMinorPolicy has a stated age, a sign about the sender or a classifier minor_signal flag.
+  type Decision = { decision: str, ageSignal: bool, startsMinor: bool }
 
   // spec/relayDecision.md relayClassifierReads: the classifier reads a text with no final reason, and with no other
   // reason unless the pair is a teen pair. A safety hold on a member is a reason that is not final.
@@ -264,18 +267,18 @@ module relay {
   // relay checks blocks the item"). The rules read the sender's own age on every path; the classifier's age
   // signal counts only when it reads the text.
   pure def textDecision(x: World, src: str, dst: str, tc: str): Decision = {
-    val ageSignal = tc == "minorRules" or (tc == "minorClef" and classifierReads(x, src, dst))
+    val startsMinor = tc == "minorRules" or (tc == "minorClef" and classifierReads(x, src, dst))
     val clean = tc == "pass" or (tc == "passFlagged" and bothAdults(x, src, dst))
-    if (clean and not(partiesBlockKind(x, src, dst, true)) and not(partiesHold(x, src, dst))) { decision: "pass", ageSignal: false }
-    else { decision: "block", ageSignal: ageSignal }
+    if (clean and not(partiesBlockKind(x, src, dst, true)) and not(partiesHold(x, src, dst))) { decision: "pass", ageSignal: false, startsMinor: false }
+    else { decision: "block", ageSignal: startsMinor or tc == "minorOther", startsMinor: startsMinor }
   }
 
   // relayItem for a contact share (engine relay.ts): parties, fresh consent, one share per sender, holds and rates.
   pure def shareDecision(x: World, d: Desk, src: str, dst: str, consentAt: int, rate: bool): Decision =
     if (partiesBlock(x, src, dst) or consentAt > x.now or x.now - consentAt > TTL or alreadyShared(d, src)
         or partiesHold(x, src, dst) or rate)
-      { decision: "block", ageSignal: false }
-    else { decision: "pass", ageSignal: false }
+      { decision: "block", ageSignal: false, startsMinor: false }
+    else { decision: "pass", ageSignal: false, startsMinor: false }
 
   // The record RelayDesk.undelivered writes for a share that did not go.
   pure def shareBlock(src: str, dst: str): LogRec =
@@ -309,7 +312,7 @@ module relay {
     ep' = { receipt: REQS.mapBy(_ => "absent"), phase: REQS.mapBy(_ => "idle"), kind: REQS.mapBy(_ => ""),
             commits: REQS.mapBy(_ => 0), response: REQS.mapBy(_ => "") },
     g' = { consent: MEMBERS.mapBy(_ => { asked: false, live: false, at: 0 }), events: Set(), lost: Set(), askRefused: Set(),
-           flushed: Set(), staleRead: Set(), teenUnclean: Set(), unchecked: Set() },
+           flushed: Set(), staleRead: Set(), teenUnclean: Set(), unchecked: Set(), otherAge: Set() },
   }
 
   // ------------------------------------------------------------------------------------------ endpoint (action receipt)
@@ -376,15 +379,17 @@ module relay {
         val dec = textDecision(w, src, dst, tc)
         val a = apply(w, d0, queue, readGhost(w, d0, g, src, dst, true), k, "text", src, dst, dec, false, refuse)
         val unclean = not(bothAdults(w, src, dst)) and tc != "pass"
-        val g1 = if (unclean) a.gh.with("teenUnclean", a.gh.teenUnclean.union(Set(k))) else a.gh
+        val g0 = if (unclean) a.gh.with("teenUnclean", a.gh.teenUnclean.union(Set(k))) else a.gh
+        val g1 = if (dec.ageSignal and not(dec.startsMinor)) g0.with("otherAge", g0.otherAge.union(Set(k))) else g0
         all {
           desk' = a.d, queue' = persist(a.d, a.q),
           g' = if (tc == "unavailable" and classifierReads(w, src, dst)) g1.with("unchecked", g1.unchecked.union(Set(k))) else g1,
           // spec/relayDecision.md, "A relay text that says the sender is under 18 starts the minors policy": RelayDesk.apply
           // calls the host's minorSignal, which marks the sender and closes the sender's open opportunities (dropMember).
-          // `minor` stands for the code's minor signal here; a sender already marked gets no second step.
-          w' = if (dec.ageSignal and not(w.minor.get(src))) w.with("minor", w.minor.set(src, true)).with("matchOpen", false).with("teenPair", false)
-               else if (dec.ageSignal and w.teenPair) w.with("matchOpen", false).with("teenPair", false)
+          // `minor` stands for the code's minor signal here; a sender already marked gets no second step. An age of
+          // another person (minorOther) blocks the text and starts nothing.
+          w' = if (dec.startsMinor and not(w.minor.get(src))) w.with("minor", w.minor.set(src, true)).with("matchOpen", false).with("teenPair", false)
+               else if (dec.startsMinor and w.teenPair) w.with("matchOpen", false).with("teenPair", false)
                else w,
         }
       },
@@ -806,8 +811,11 @@ module relay {
   val failureMeansNoEffect = REQS.forall(k => ep.response.get(k) == "409" implies ep.commits.get(k) == 0)
 
   // spec/relayDecision.md, "A relay text that says the sender is under 18 starts the minors policy": every item
-  // that carried an age signal left its sender marked as a minor (audit ST-D2).
-  val ageSignalStartsMinorsPolicy = desk.verdict.keys().forall(i => desk.verdict.get(i).ageSignal implies w.minor.get(desk.verdict.get(i).src))
+  // that carried an age signal about its sender left its sender marked as a minor (audit ST-D2); an age of another
+  // person only blocks the item.
+  val ageSignalStartsMinorsPolicy = desk.verdict.keys().forall(i =>
+    (desk.verdict.get(i).ageSignal and not(g.otherAge.contains(i))) implies w.minor.get(desk.verdict.get(i).src))
+  val ageSignalBlocks = desk.verdict.keys().forall(i => desk.verdict.get(i).ageSignal implies desk.verdict.get(i).decision == "block")
 
   // Owner decision 2026-11-22 (spec/friendIntroAge.md teenFriendAgeRule, relayKindAllowed): a row sent with a minor
   // on either side is a text of a teen pair that passed the rule at that moment; never a number or a swap question.
@@ -833,6 +841,7 @@ module relay {
     completedIffCommitted,
     failureMeansNoEffect,
     ageSignalStartsMinorsPolicy,
+    ageSignalBlocks,
     teenFriendAgeRule,
     teenSwitchOffNoMinor,
     teenUncleanNeverPasses,
@@ -972,6 +981,17 @@ module relay {
       .then(claim("a1", "text")).then(commitText("a1", "minorRules", false)).then(answer("a1"))
       .expect(desk.log.get("a1").decision == "block" and desk.log.get("a1").ageSignal
         and not(queue.rows.keys().contains("a1")) and w.minor.get("A") and not(w.matchOpen) and ageSignalStartsMinorsPolicy and safety)
+
+  // Upstream control (9de643b5): an adult's text about another person's age ("my 15 year old will be with me") is
+  // blocked, the sender stays unmarked and the match stays open; a clean text then passes.
+  run otherPersonAgeBlocksOnlyTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "minorOther", false)).then(answer("a1"))
+      .expect(desk.log.get("a1").decision == "block" and desk.log.get("a1").ageSignal and queue.rows.keys().size() == 0
+        and not(w.minor.get("A")) and w.matchOpen and ageSignalStartsMinorsPolicy and ageSignalBlocks)
+      .then(claim("a2", "text")).then(commitText("a2", "pass", false)).then(answer("a2"))
+      .then(queueSend("a2"))
+      .expect(g.events.exists(e => e.key == "a2") and not(w.minor.get("A")) and safety)
 
   // SD-064 (fixed, flag half): Clef reads a minor's words; the item is blocked and the minors policy starts.
   run clefMinorNotKeptTest =

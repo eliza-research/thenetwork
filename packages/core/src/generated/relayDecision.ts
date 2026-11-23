@@ -174,29 +174,43 @@ export function lawRetryOnlyWhenTheClassifierAloneStoppedIt(unsafe: boolean, con
 
 /** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
 //@ pure
-export function relayStartsMinorPolicy(ageSignal: boolean, senderMarkedMinor: boolean): boolean {
-  return ageSignal && !senderMarkedMinor;
+export function relayStartsMinorPolicy(statedAge: boolean, senderSign: boolean, classifierSign: boolean, senderMarkedMinor: boolean): boolean {
+  return (statedAge || senderSign || classifierSign) && !senderMarkedMinor;
 }
 
 /** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
 //@ pure
-export function lawAnUnmarkedSenderStartsTheMinorsPolicyExactlyOnAnAgeSignal(ageSignal: boolean): boolean {
+export function lawAStatedMinorAgeStartsTheMinorsPolicy(senderSign: boolean, classifierSign: boolean): boolean {
   //@ ensures \result === true
-  return relayStartsMinorPolicy(ageSignal, false) === ageSignal;
+  return relayStartsMinorPolicy(true, senderSign, classifierSign, false);
 }
 
 /** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
 //@ pure
-export function lawAMarkedSenderGetsNoSecondMinorsPolicy(ageSignal: boolean): boolean {
+export function lawASignAboutTheSenderStartsTheMinorsPolicy(statedAge: boolean, classifierSign: boolean): boolean {
   //@ ensures \result === true
-  return !relayStartsMinorPolicy(ageSignal, true);
+  return relayStartsMinorPolicy(statedAge, true, classifierSign, false);
 }
 
 /** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
 //@ pure
-export function lawNoAgeSignalStartsNoMinorsPolicy(senderMarkedMinor: boolean): boolean {
+export function lawAClassifierMinorFlagStartsTheMinorsPolicy(statedAge: boolean, senderSign: boolean): boolean {
   //@ ensures \result === true
-  return !relayStartsMinorPolicy(false, senderMarkedMinor);
+  return relayStartsMinorPolicy(statedAge, senderSign, true, false);
+}
+
+/** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
+//@ pure
+export function lawNoFactAboutTheSenderStartsNoMinorsPolicy(senderMarkedMinor: boolean): boolean {
+  //@ ensures \result === true
+  return !relayStartsMinorPolicy(false, false, false, senderMarkedMinor);
+}
+
+/** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
+//@ pure
+export function lawAMarkedSenderGetsNoSecondMinorsPolicy(statedAge: boolean, senderSign: boolean, classifierSign: boolean): boolean {
+  //@ ensures \result === true
+  return !relayStartsMinorPolicy(statedAge, senderSign, classifierSign, true);
 }
 
 /** Story: Keep unsafe items from reaching a match / The desk reads the sender's stated age before the engine reads the text (spec/relayDecision.md) */

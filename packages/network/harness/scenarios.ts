@@ -436,11 +436,12 @@ export const SCENARIOS: NetScenario[] = [
   },
   ((liveAtOff: Set<string>): NetScenario => ({
     id: "teen_switch_off_midrun", title: "Teen introductions stopped", days: 6, app: "friends",
-    description: "Four friends.help members aged 16 and 17, born within 2 years of each other, give exact birth dates. Teen introductions are on from the start; the review judge approves their introductions with the strict rubric (owner decision 2026-11-22, D16). On day 4 one admin stops teen introductions: every item with a teen closes, nobody is named in a closing notice, and no teen gets another contact.",
+    description: "Four friends.help members aged 16 and 17, born within 2 years of each other, give exact birth dates. Teen introductions are on from the start; the review judge approves their introductions with the strict rubric (owner decision 2026-11-22, D16). On the morning of day 4 one teen asks for a hiking friend, so a teen introduction is open when one admin stops teen introductions at noon: every item with a teen closes, nobody is named in a closing notice, and no teen gets another contact.",
     setup(ps, s) {
       const cast = castTeens(ps, s, [31, 37, 43, 49], [16, 16, 17, 17]);
       const ids = Object.fromEntries(cast.map((p, i) => [`teen${i}`, p.id]));
       const teens = cast.map(p => p.id);
+      const actions = [{ at: at(s, 4, 9), action: say(cast[1]!.id, "Anyone around who'd want to go hiking this weekend? I'm near East Village.") }];
       liveAtOff.clear();
       const steps = [
         { at: at(s, 4, 12), run: (net: ConsentNetwork) => {
@@ -448,7 +449,7 @@ export const SCENARIOS: NetScenario[] = [
           net.stopTeenIntros("staff-admin-1");
         } },
       ];
-      return { ids, actions: [], steps };
+      return { ids, actions, steps };
     },
     check(ctx) {
       const teens = Object.values(ctx.ids);

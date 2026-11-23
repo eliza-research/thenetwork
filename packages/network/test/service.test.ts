@@ -223,8 +223,12 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(audit.map((r: any) => `${r.action}:${r.phase}:${r.ok}`)).toEqual(["config:requested:true", "config:result:true", "review:requested:true", "review:result:true"]); // malformed input: 400 and no audit row (SVC-21)
     expect((await sql`select count(*)::int as n from network.events where type = 'review_decision' and actor_type = 'reviewer' and actor_id like 'token:reviewer#%'`)[0].n).toBe(1);
     expect((await sql`select count(*)::int as n from network.events where type = 'matching_switch' and actor_id like 'token:admin#%'`)[0].n).toBe(1);
+    const held = (await (await staff(b, "rev-tok", "GET", "/review")).json()).items;
+    expect(held).toEqual([expect.objectContaining({ origin: "engine", exception: expect.objectContaining({ verdict: "flag" }) })]);
+    expect(held[0].oppId).not.toBe(oppId);
+    expect((await sql`select count(*)::int as n from network.messages where opportunity_id = ${held[0].oppId}`)[0].n).toBe(0);
     const h = await (await staff(b, "ana-tok", "GET", "/health")).json();
-    expect(h).toMatchObject({ ok: true, channel: "dry_run", reviewJudge: { awaiting: 0, exceptions: 0, exceptionsOverdue: 0 }, matchingEnabled: true, lockHolder: null });
+    expect(h).toMatchObject({ ok: true, channel: "dry_run", reviewJudge: { awaiting: 0, exceptions: 1, exceptionsOverdue: 0 }, matchingEnabled: true, lockHolder: null });
     expect(h.lastTick.thisInstance).toEqual({ at: clock.now(), ran: true });
   }, T);
 

@@ -679,7 +679,7 @@ test.each([
   { text: "Send him my number. Hold on, maybe send it.", shares: false },
   { text: "Send him my number. Hold on, send it if he asks.", shares: false },
   { text: "Send him my number. Hold on, send it 'to me instead'.", shares: false },
-  { text: "Send him my number. Hold on, send him my photo.", shares: false },
+  { text: "Send him my number. Hold on, send him my photo.", shares: false, photoRefused: true },
   { text: "Send him my number. Hold on, send her my number.", shares: false },
   { text: "Send him my number. Scratch that. Send it.", shares: true },
   { text: "Send him my number. Scratch that. Send it. I'm running late.", shares: true },
@@ -742,7 +742,7 @@ test.each([
   { text: "Don't send him my photo. Send him my number tomorrow.", shares: false },
   { text: "Don't send him my photo. If you want to, send him my number.", shares: false },
   { text: "Don't send him my photo. Envíale mi número.", shares: false },
-])("a signed number request respects the intended item: $text", async ({ text, shares }) => {
+])("a signed number request respects the intended item: $text", async ({ text, shares, photoRefused }) => {
   const id = "scoped-number-" + randomUUID();
   const before = await sharesQueued();
   await startNumberSwap(id, "ari");
@@ -753,7 +753,7 @@ test.each([
   expect(response.status).toBe(200);
   expect({ decision: (await response.json()).decision, newShares: await sharesQueued() - before,
     pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
-    .toEqual({ decision: shares ? "pass" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
+    .toEqual({ decision: shares ? "pass" : photoRefused ? "block" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
 }, 60_000);
 
 let ageEstimatePair = 0;
@@ -841,9 +841,12 @@ test.each([
   expect(!!after.members.find(member => member.id === sender)?.minorSignal).toBe(minor);
   if (label === "short turning age") {
     const messageId = id + "-followup", text = "tell Bo the coffee shop is open.";
-    expect(await open(senderPhone, messageId, text)).toBe(sender);
-    const followup = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
-    expect(await followup.json()).toMatchObject({ decision: "block", delivered: false });
+    clock.advance(MINUTE);
+    const turned = await signed(TURN_PATH, messageId, JSON.stringify(turn(senderPhone, messageId, text)));
+    expect(await turned.json()).toMatchObject({ outcome: "handled", memberId: sender });
+    expect((await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text })).status).toBe(403);
+    expect(await sql`select id from network.messages
+      where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`).toHaveLength(0);
   }
 }, 60_000);
 test("a relayed text that says the sender is under 18 is blocked and starts the minors policy: the minor signal on the person, a safety case, and the match closed (audit ST-D2)",async()=>{

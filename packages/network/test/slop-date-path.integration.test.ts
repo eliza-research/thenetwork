@@ -642,8 +642,16 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await signedText(service, clock, secret, RAE, "absence-next-cancellation", "I can't make it anymore.");
     expect((await state()).opps.find(opp => opp.id === future.id)?.stage).toBe("closed");
 
-    await signedText(service, clock, secret, SAM, "absence-other-participant", answer);
-    const afterOther = await state();
+    const otherReplies = await signedText(service, clock, secret, SAM, "absence-other-participant", answer);
+    let afterOther = await state();
+    if (report === "no_show") {
+      expect(otherReplies).toEqual([copy.checkInSafetyAsk("Rae")]);
+      expect(afterOther.reports).toEqual([]);
+      expect(afterOther.blocks).toEqual([]);
+      expect(afterOther.members.find(member => member.id === sam)?.pendingSafety).toMatchObject({ verb: "check_in", kind: report, targets: [rae], oppId: id });
+      await signedText(service, clock, secret, SAM, "absence-other-report", "REPORT");
+      afterOther = await state();
+    }
     expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: missing });
     expect(afterOther.reports).toMatchObject(report
       ? [{ reporterId: sam, subjectId: rae, kind: report, opportunityId: id, source: "check_in" }]

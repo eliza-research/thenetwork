@@ -617,7 +617,7 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: st
   // other private word of the others (canaries, agent_private values, matchable facets) still blocks.
   // The fixed copy (PLAN_COPY_PUBLIC) and the time phrase are the Network's own words, also allowed.
   const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${area ?? ""} ${menu ?? when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
-  const names = new Set(others.flatMap(id => tokenize(w.get(id)!.m.name).map(t => t.toLowerCase())).filter(t => !own.has(t)));
+  const names = new Set(others.flatMap(id => tokenize(w.get(id)!.m.name).map(t => t.toLowerCase())));
   const vocab = new Set([...privateVocabulary(w, others)].filter(t => !own.has(t.toLowerCase())));
   const publicNameWords = new Set([
     ...tokenize(`${a.label} ${plan.place.name} ${plan.place.area ?? ""} ${when}`).map(t => t.toLowerCase()),

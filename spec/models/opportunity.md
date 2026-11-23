@@ -1733,7 +1733,7 @@ module opportunity {
       .expect(not(witness_explicitTimeChoice))
 
   run joinedTimeRefusalKeepsProbeOpenTest =
-    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled)
+    init.then(submit("o2")).then(settled).then(judgeRecord("o2", "approve", true, ALL_OPEN)).then(settled)
       .then(probeSend("o2", "a", ALL_OPEN)).then(settled)
       .then(answer("a", "timed_slot_ambiguity", ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw.timeChoice and stat(s, "o2", "a") == "probing"

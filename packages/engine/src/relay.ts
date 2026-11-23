@@ -96,6 +96,7 @@ export interface RelayResult {
   record: RelayRecord;
   senderNotice: string;
   classifierError?: string;
+  classifierAgeSignal?: boolean;
 }
 
 const FINAL_FAMILIES = new Set(["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "clef_severe"]);
@@ -204,16 +205,30 @@ export function spelledPhone(text: string): boolean {
   return run >= 7;
 }
 
+const OTHER_PERSON_AGE = /\b(?:my|our|his|her|their)\s+\d{1,2}\s*-?\s*(?:yo|y\/o|years?[- ]old)(?=\s+(?:son|sons|daughter|daughters|kid|kids|child|children|baby|twins|boy|girl|brother|brothers|sister|sisters|bro|sis|niece|nieces|nephew|nephews|cousin|cousins|friend|friends|stepson|stepdaughter|grandson|granddaughter|student|students)\b|\s+(?:will|is|was|has|had|can|could|would|wants|needs|says|said|might|gets|got|goes|went|comes|came|loves|likes|thinks|does|did|isnt|isn't|wasnt|wasn't|doesnt|doesn't|wont|won't|cant|can't)\b|\s*[.,!?;:]|\s*$)/gi;
+
+function relayAgeVariants(normalized: string, vs: string[]): string[] {
+  const lower = normalized.toLowerCase();
+  const ageText = normalizeAgeInitialism(lower);
+  return ageText === lower ? vs : textVariants(ageText);
+}
+
+function relayMinorSigns(text: string, variants: string[]): boolean {
+  return relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || variants.some(v => MINOR_SIGNAL.test(v));
+}
+
 export function classifyRelayText(text: string): { codes: string[]; minorSignal: boolean } {
   const normalized = text.replace(/[’‘`´]/g, "'");
   const vs = textVariants(normalized);
   const codes = new Set<string>();
   for (const { code, re, matches } of RELAY_RULES) if (!codes.has(code) && vs.some(matches ?? (v => re.test(v)))) codes.add(code);
   if (spelledPhone(text)) codes.add("contact:spelled_phone");
-  const lower = normalized.toLowerCase();
-  const ageText = normalizeAgeInitialism(lower);
-  const ageVariants = ageText === lower ? vs : textVariants(ageText);
-  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
+  return { codes: [...codes], minorSignal: relayMinorSigns(text, relayAgeVariants(normalized, vs)) };
+}
+
+export function relaySenderMinorSign(text: string): boolean {
+  const normalized = text.replace(/[’‘`´]/g, "'");
+  return relayMinorSigns(text, relayAgeVariants(normalized, textVariants(normalized)).map(v => v.replace(OTHER_PERSON_AGE, " ")));
 }
 
 export function isOpaquePhotoId(id: unknown): id is string {
@@ -413,7 +428,8 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
     }
   }
   if (!extra.length) return first;
-  const result = finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || classifierAgeSignal });
+  const finished = finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || classifierAgeSignal });
+  const result = classifierAgeSignal ? { ...finished, classifierAgeSignal } : finished;
   return classifierError ? { ...result, classifierError } : result;
 }
 
@@ -435,10 +451,17 @@ const RELAY_DESTINATION_WORDS = String.raw`(?:over\s+to|to|with)\b`;
 const RELAY_DESTINATION = String.raw`[\s,:–—-]+${RELAY_DESTINATION_WORDS}`;
 const UNPARSED_RELAY_DESTINATION = new RegExp(String.raw`^[\s,:;.!?–—()[\]/"'“”-]*(?:directly\s+to\b|${RELAY_DESTINATION_WORDS})`, "iu");
 const RELAY_WITH_THANKS = /^\s*,?\s*with\s+thanks\s*[.!]*\s*$/iu;
+const RELAY_AFFIRMED_SEND = String.raw`^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+`;
+const RELAY_AFFIRMED_IT = new RegExp(String.raw`${RELAY_AFFIRMED_SEND}it\b`, "iu");
+
+export function relayAffirmsIt(text: string): boolean {
+  return RELAY_AFFIRMED_IT.test(text.replace(/[’‘`´]/g, "'"));
+}
+
 const CONTACT_REQ = new RegExp(
   String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
   + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
-  + String.raw`|^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
+  + String.raw`|${RELAY_AFFIRMED_SEND}(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
   + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
   "giu",
 );

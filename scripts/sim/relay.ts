@@ -639,6 +639,20 @@ async function deskGates(b: Block): Promise<void> {
     expect(h.minorSignals).toEqual(["a"]);
   });
 
+  await b.run("relay desk: a minor age in the sender's own words starts the minors policy; the age of the sender's child or relative blocks the text only", async () => {
+    const rows: [string, boolean][] = [
+      ["my 15yo ass is tired lol", true], ["my 16 y/o heart cant take this", true], ["my 16 year old self is nervous", true],
+      ["ur 16 yo bf says hi", true], ["your 15 y/o date is on the way", true], ["my 16 year old body is sore", true],
+      ["tell them I heard her say, \"I'm 16\"", true], ["homeroom starts soon", true],
+      ["my 15 year old will be with me", false], ["my 15yo son is coming too", false], ["her 16 yo brother will drive", false], ["bringing my 16 year old.", false],
+    ];
+    for (const [i, [t, starts]] of rows.entries()) {
+      const h = fakeHost(), d = new RelayDesk(h);
+      const r = await d.request({ itemId: `s${i}`, from: "a", kind: "text", text: t }, { hook: simulatedRelayClassifier });
+      expect([t, r.decision, h.minorSignals, h.sent]).toEqual([t, "refused", starts ? ["a"] : [], []]);
+    }
+  });
+
   await b.run("relay desk: a block for the sender's severe words reaches the sender's safety case at once; a block for other reasons does not", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
     expect((await d.request({ itemId: "v1", from: "a", kind: "text", text: "can you venmo me 200 for the tickets? my card got frozen" }, { hook: simulatedRelayClassifier })).decision).toBe("refused");

@@ -347,7 +347,7 @@ test("with two live matches the open context offers both; an unnamed relay asks 
 },60_000);
 
 test("two live matches with the same first name get distinct summaries, or none when the day is shared too, so the agent never guesses",async()=>{
-  const d="+12125550214";
+  const d="+12125550215";
   for(const [i,text] of ["friends.help","Sam, 31","I enjoy climbing and films","Sunday mornings work for me","Small groups are good"].entries()){
     clock.advance(MINUTE);expect((await post(TURN_PATH,turn(d,`setup:Sam2:${i}`,text))).status).toBe(200);
   }

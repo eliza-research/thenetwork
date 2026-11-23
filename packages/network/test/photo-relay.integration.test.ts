@@ -43,6 +43,11 @@ const join=async(who:Who,name:string,age:number)=>{
   const person=(await service.accounts.personFor(phones[who]))!;
   people[who]={personId:person.id,memberId:(await service.people.getMembership(person.id,"slop"))!.memberId};
 };
+const onboard=async(who:Who,lines:string[])=>{
+  let q="";
+  for(const text of lines) q=(await say(who,text)).reply;
+  for(let i=0;i<8&&/\?/.test(q);i++) q=(await say(who,/right\?/.test(q)?"Yes, that's right.":/shown to people/.test(q)?"Anyone, please":/trans people/.test(q)?"Yes":"Coffee or a walk.")).reply;
+};
 const pair=async(threadId:string,x:Who,y:Who)=>service.runtimeFor("slop")!.unitOfWork(n=>{
   const st=n.exportState(),now=clock.now(),ids=[people[x].memberId,people[y].memberId];st.opps=st.opps.filter(op=>op.id!==threadId);
   st.opps.push({id:threadId,origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:ids,alternates:[],primed:[],status:ids.map(id=>[id,"yes"]),explanations:{},stage:"scheduled",deadline:now+60*DAY,createdAt:now,score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:now,deadline:now+60*DAY,decision:"approve",approver:"staff",reviewer:"fixture"},sameDay:false,contacted:ids,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number]);
@@ -152,8 +157,9 @@ test.skipIf(!pgAvailable)("a photo named in the member's own words is not propos
 },120_000);
 
 test.skipIf(!pgAvailable)("a YES that also asks to share the number does not confirm a pending photo, and a photo take-back next to a number share takes the photo back and starts the swap",async()=>{
-  midday();
   await join("vic","Vic",30);await join("wes","Wes",31);
+  await onboard("vic",["I'm a man into women. Williamsburg, I climb and go to shows","I'm a man looking for women, 25 to 35, within 5 miles of 11211","A relationship, no smokers","Weekend evenings work best"]);
+  await onboard("wes",["I'm a woman into men. Fort Greene, I run and go to jazz bars","I'm a woman looking for men, 27 to 38, within 5 miles of 11205","Something serious","Weekday evenings work best"]);
   await pair("photo-vic-wes","vic","wes");
   await upload("vic",1);
   expect((await say("vic","send Wes photo 1")).reply).toContain("Send Wes photo 1");
@@ -253,7 +259,7 @@ test.skipIf(!pgAvailable)("a minor receiver is never offered a photo, and a STOP
   await say("nia","STOP");
   clock.advance(MINUTE);await service.tick();
   expect((await offers("ari","nia"))[0]).toEqual({id:offer!.id,phase:"ended"});
-  clock.advance(DAY);await service.tick();
+  clock.advance(DAY+2*HOUR);await service.tick();
   expect(await messages("nia","photo-ask:")).toHaveLength(1);
   expect(await messages("ari",`photo-notice:${offer!.id}`)).toEqual([{id:`photo-notice:${offer!.id}`,body:"Nia didn't take your photo, so it stays with you. Reply STOP anytime to opt out."}]);
 },180_000);
@@ -492,3 +498,18 @@ test.skipIf(!pgAvailable)("a ready photo does not hold the next offer to the sam
   expect((await offers("ari","una")).map(o=>o.phase)).toEqual(["ended","ended"]);
   expect((await open(browser)).status).toBe(410);
 },180_000);
+
+test.skipIf(!pgAvailable)("a YES SEND IT to a pending photo proposal is the yes to the photo and starts no number swap",async()=>{
+  expect((await say("ari","send Jordan photo 2")).reply).toContain("Send Jordan photo 2");
+  const said=await say("ari","yes send it");
+  expect(said.outcome).toBe("handled");
+  expect(said.reply).toBe("Okay. I'll ask Jordan if they want it. An automatic check screens it first. I'll tell you if it doesn't go.");
+  expect((await offers("ari","jordan")).map(o=>o.phase)).toEqual(["asking"]);
+  const relay:RelaySendRequest={channel:"blooio",messageId:said.messageId,app:"slop",memberId:people.ari.memberId,itemId:null,text:"yes send it"};
+  const r=await post(RELAY_PATH,relay,`${said.messageId}:relay`);
+  expect(r.status).toBe(403);
+  expect(await r.json()).toEqual({error:"turn_scope_invalid",retryable:false});
+  const st=await service.runtimeFor("slop")!.readState(n=>n.exportState());
+  expect(st.relay!.swaps.filter(x=>x.from===people.ari.memberId)).toEqual([]);
+  expect(st.relay!.log.filter(x=>x.kind==="contact_share"&&x.from===people.ari.memberId)).toEqual([]);
+},120_000);

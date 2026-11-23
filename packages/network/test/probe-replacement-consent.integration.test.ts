@@ -105,7 +105,7 @@ test("a member asked again who stops before the new probe still counts as told w
   expect(probesTo(w, first!, mark)).toEqual([]);
   await w.net.onInbound({ id: "stop-after-reask", memberId: first!, body: "STOP", keyword: "STOP", ts: w.clock.now(), channel: "sms" });
   expect(w.log("probe_replaced").at(-1)?.detail).toMatchObject({ out: second, in: "c" });
-  expect(w.log("probe_closed").at(-1)?.detail).toEqual({ proposalId: id, reason: "not sent: replacement_not_judged" });
+  expect(w.log("probe_closed").at(-1)?.detail).toEqual({ proposalId: id, reason: "not sent: replacement_not_judged", alternates: [] });
   expect(w.net.exportState().opps.find(o => o.id === id)).toMatchObject({ stage: "closed", closedReason: "replacement_not_judged", participants: [first, "c"] });
   expect(probesTo(w, "d", mark)).toEqual([]);
   await w.say(first!, "I'm 16, is that ok?");

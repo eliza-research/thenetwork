@@ -98,6 +98,10 @@ test("a declined invitee's join notice waits past the replacement's booking repl
   expect(await w.runUntil(() => w.probed("theo"))).toBe(true);
   await w.say("theo", "I'll pass for now.");
   expect(w.log("probe_answer").map(entry => entry.detail)).toContainEqual(expect.objectContaining({ oppId, memberId: "theo", yes: false }));
+  expect(w.log("probe_replaced").map(entry => entry.detail)).toContainEqual(expect.objectContaining({ oppId, out: "theo", in: "r", askedAgain: ["a"] }));
+  expect(w.probed("r")).toBe(false);
+  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+  await w.say("a", "Yes.");
   expect(await w.runUntil(() => w.probed("r"))).toBe(true);
   const opportunity = w.net.opps.get(oppId)!;
   expect(opportunity.participants).toEqual(["a", "r"]);

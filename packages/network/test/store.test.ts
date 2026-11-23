@@ -43,6 +43,7 @@ async function scripted(restartAfter?: number, check?: (w: Mini) => void) {
     () => w.run(30 * MINUTE),
     () => w.until(10),
     () => w.answerProbes(everyone),
+    () => w.answerProbes(everyone),
     () => w.say("u", "34"),
     () => w.run(3 * DAY),
     async () => { for (const id of everyone) await w.say(id, "It was great, we really clicked. Would do it again."); },

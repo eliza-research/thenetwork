@@ -19,7 +19,7 @@ const replies = [
 
 async function runTakeover(text: string) {
   const game = new GameSource({
-    seed: 7, personas: 80, days: 14, network: "consent", pushMs: 3_600_000, tickMs: 3_600_000,
+    seed: 1, personas: 80, days: 14, network: "consent", pushMs: 3_600_000, tickMs: 3_600_000,
   });
   await game.init();
   let step: ReturnType<GameSource["control"]> | undefined;

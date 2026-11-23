@@ -1,6 +1,6 @@
 import { classifyYesNo, DAY } from "@thenetwork/core";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
-import { parseRelayRequest, relayPhotoReferenceAllowed, relayStatedDestination } from "../../engine/src/relay.ts";
+import { parseRelayRequest, relayAffirmsIt, relayPhotoReferenceAllowed, relayStatedDestination } from "../../engine/src/relay.ts";
 import { photoPickFor, photoSlotsMax, type PhotoPickResult } from "../../core/src/generated/photoRelayItem.ts";
 import { maskOf as numbersMask, numbersOf as maskNumbers } from "../../platform/src/photo-relay.ts";
 
@@ -108,6 +108,17 @@ function wordsOf(t: string): string[] {
     .map(w => w.replace(/^["'(\[]+/, "").replace(/["')\]?:;.!]+$/, ""))
     .filter(Boolean);
 }
+
+function sentenceEnds(t: string): number[] {
+  const ends: number[] = [];
+  let from = 0;
+  for (const raw of t.replace(/,/g, " , ").replace(/&/g, " & ").split(" ")) {
+    if (raw.replace(/^["'(\[]+/, "").replace(/["')\]?:;.!]+$/, "")) ends.push(-1);
+    if (/[.!?;]["')\]]*$/.test(raw) && !ABBREVIATION.test(raw)) { ends.fill(ends.length, from); from = ends.length; }
+  }
+  return ends.fill(ends.length, from);
+}
+const ABBREVIATION = /^["'(\[]*(?:no|nos|nr|st|dr|mt|mr|mrs|ms|jr|sr|ave|rd|blvd|vs|approx|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|mon|tue|tues|wed|thu|thur|thurs|fri|[a-z](?:\.[a-z])+)\.$/;
 
 const bit = (n: number, count: number): number => (n >= 1 && n <= count ? 2 ** (n - 1) : 0);
 const plain = (w: string): string => (w.endsWith("'s") ? w.slice(0, -2) : w);
@@ -525,9 +536,10 @@ function asPhotoRequest(t: string, region: string[]): string {
 }
 
 function sendOf(t: string, original: string, ctx: ReaderContext): PhotoReading | null {
-  const words = wordsOf(t);
-  for (let v = 0; v < words.length; v++) {
-    if (!VERBS.has(words[v]!)) continue;
+  const all = wordsOf(t), ends = sentenceEnds(t);
+  for (let v = 0; v < all.length; v++) {
+    if (!VERBS.has(all[v]!)) continue;
+    const words = all.slice(0, ends[v]);
     const options: { target: Target; phrase: string[]; alsoText: boolean; end: number }[] = [];
     const after = (at: number, target: Target) => { const cut = cutAlsoText(words.slice(at)); return { target, ...cut, end: at + markedLength(cut.phrase) }; };
     const direct = targetAt(words, v + 1, ctx, false);
@@ -719,7 +731,7 @@ export function readPhotoMessage(text: string, ctx: ReaderContext): PhotoReading
   if (!t) return NONE;
   if (/^photos ok$/.test(t)) return { kind: "photos_ok" };
   if (NO_MORE.test(t)) return { kind: "no_more_photos" };
-  const share = parseRelayRequest(text).kind === "contact_share";
+  const share = parseRelayRequest(text).kind === "contact_share" && !(ctx.draft && relayAffirmsIt(text));
   return holdingsOf(t, ctx) ?? nameOf(t, text, ctx) ?? deleteOf(t, text, ctx) ?? takeBackOf(t, text, ctx)
     ?? (hedged(t) || share ? NONE : sendOf(t, text, ctx) ?? (ctx.draft ? draftOf(t, text, ctx, ctx.draft) : NONE));
 }

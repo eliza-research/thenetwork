@@ -26,7 +26,7 @@ test.each([true, false])("a growth run with writeLog=%s returns the invited pers
     }) });
     const result = await world.run();
     const joined = result.records.flatMap(record => record.type === "join" ? [record.memberId] : []);
-    const expected = ["host", "nyc-g1-0001"];
+    const expected = ["host", "nyc-gmrvtce-0001"];
     expect(joined).toEqual(expected);
     expect(result.records.flatMap(record => record.type === "persona" ? [record.persona.id] : [])).toEqual(expected);
     expect(initial.map(persona => persona.id)).toEqual(["host"]);

@@ -287,3 +287,18 @@ lemma checkCandidate_ensures(s: CandidateSearch, value: int, ordinal: int)
     }
   }
 }
+
+lemma lawPackBoundSound_ensures(weight: int, packValue: int, packBound: int)
+  ensures (lawPackBoundSound(weight, packValue, packBound) == true)
+{
+  if packValue <= packBound {
+    var w := pairValue_utilityTermWeight(pairValue_UtilityTerm(weight, packValue));
+    assert w == pairValue_utilityTermWeight(pairValue_UtilityTerm(weight, packBound));
+    var a := pairValue_boundedValue(packValue);
+    var b := pairValue_boundedValue(packBound);
+    assert a <= b;
+    assert w >= 0;
+    assert w * b - w * a == w * (b - a);
+    assert w * (b - a) >= 0;
+  }
+}

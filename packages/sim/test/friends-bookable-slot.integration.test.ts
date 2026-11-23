@@ -7,8 +7,8 @@ test("a second mutually accepted Friends meetup uses its free alternate slot", (
   const result = runFriendsWorld({
     seed: 114, n: 80, weeks: 1,
     matcher: { name: "overlapping pairs", propose: () => [
-      { ...plan, invited: ["f0012", "f0039"], options: [0] },
-      { ...plan, invited: ["f0012", "f0058"], options: [0, 1] },
+      { ...plan, invited: ["f0058", "f0012"], options: [0] },
+      { ...plan, invited: ["f0058", "f0014"], options: [0, 1] },
     ] },
   });
   expect(result.flows.map(f => f.yes)).toEqual([2, 2]);
