@@ -229,6 +229,14 @@ test.each([
   ["Please send Sam my number.", "block"],
   ["Please send my number to Sam.", "block"],
   ["Yes, send it to Sam.", "block"],
+  ["Yes, send it, to Sam.", "block"],
+  ["Yes, send it to Herman.", "block"],
+  ["Yes, send it to Ari9.", "none"],
+  ["Yes, send it (to Sam).", "none"],
+  ["Yes, send it. To Sam.", "none"],
+  ["Yes, send it to Ari Smith.", "none"],
+  ["Please send my number to her and Sam.", "none"],
+  ["Please send her my number, to Sam.", "none"],
   ["Please send my number to Sam when you can.", "block"],
   ["Please send my number to Ari Smith.", "none"],
   ["Please send my number to Ari Smith when you can.", "none"],
@@ -250,6 +258,8 @@ test.each([
   "Please send my number to Ari, thanks.",
   "Please send my number to Ari when you can.",
   "Yes, send it to Ari.",
+  "Yes, send it: to Ari, thanks.",
+  "Yes, send it to my match.",
 ])("a complete trailing name can finish the selected swap: %s", async text => {
   const id = "named-number-match-" + randomUUID();
   const before = await sharesQueued();
@@ -420,6 +430,8 @@ test.each(["Ari said “Don't send my number.”", "Ari said ‘don't send it pl
 
 test.each([
   "Tell Ana to send him my number",
+  "Tell Ari to send my number to Sam9.",
+  "Tell Ari to send my photo to Sam9.",
   "Ask Ana to text him my number",
   "Could you tell Ana to please give him my number?",
   "Let Ana share my number with him",

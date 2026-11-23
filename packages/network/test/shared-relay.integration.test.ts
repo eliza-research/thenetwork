@@ -471,9 +471,12 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
     ["Please send Ana this photo.", "block"],
     ["Please send this photo to Ana when you can.", "block"],
     ["Please send this photo to Elle if she asks.", "none"],
+    ["Please send this photo to Herman when you can.", "block"],
+    ["Please send this photo to her and Ana.", "none"],
+    ["Please send him this photo to Ana.", "none"],
   ].entries()) {
     const messageId = "delegated-selected-photo-" + index;
-    clock.advance(MINUTE);
+    clock.advance(MINUTE / 6);
     const opened = await post(TURN_PATH, { ...turn(sender, messageId, text), app: "slop" });
     expect(opened.status).toBe(200);
     const openResult = await opened.json();
