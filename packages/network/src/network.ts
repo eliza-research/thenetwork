@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, directAgreementIdiom, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, readParticipationWithdrawal, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -168,8 +168,13 @@ export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind
 const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
   .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
 
+const COMPLETE_SAFETY_CONTROL = /^(?:(?:yes|yeah|sure|ok(?:ay)?)[\s,!.]+)?(?:yes|yeah|yep|yup|sure(?: thing)?|ok(?:ay)?|correct|no|nope|nah|naw|not (?:right )?now)(?:[\s,]+(?:please|pls|thanks|thank you))?$/;
+
 function safetyReplyConsent(text: string) {
-  return consentOf(text.replace(/(?![\x00-\x7F])[\p{L}\p{M}\p{N}]/gu, "_")).answer;
+  const normalized = safetyName(text);
+  const complete = COMPLETE_SAFETY_CONTROL.test(normalized) || ACK_ONLY.test(normalized)
+    || directAgreementIdiom(text) || readParticipationWithdrawal(text).reading === "DirectWithdrawal";
+  return complete ? consentOf(text).answer : "unclear";
 }
 
 const CONFIRM_SAFETY_QUESTION = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|correct|that's (?:him|her|them))[.!,\s]*$/i;
@@ -204,7 +209,7 @@ export function pendingReportReplyName(text: string): string | undefined {
   const body = text.trim();
   if (!safetyQuestionReply(body).acceptsName || ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || safetyReplyConsent(body) !== "unclear") return;
   const name = safetyName(body).replace(SAFETY_TARGET_PREFIX, "");
-  return name || undefined;
+  return name && safetyQuestionReply(name).acceptsName ? name : undefined;
 }
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */

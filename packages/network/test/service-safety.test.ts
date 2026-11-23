@@ -515,6 +515,13 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([]);
   }, T);
 
+  test("a full exact name with a standalone affirmative word still names the safety target", async ({ onTestFinished }) => {
+    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, ["Mara Sure", "Ben"]);
+    await askSlop("full-name-with-affirmative");
+    expect(await signed("answer-full-name-with-affirmative", "Mara Sure", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+  }, T);
+
   const safetyControlCases = [
     { name: "Nvm", reply: "nvm", probeReply: undefined },
     { name: "No", reply: "no", probeReply: undefined },
@@ -549,19 +556,21 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     }, T);
   }
 
-  // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
-  test("an unqualified cancellation cannot route to the app where it looks like a name", async ({ onTestFinished }) => {
-    const { askSlop, clock, pending, peonAri, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, ["Nvm", "Ben"]);
-    const askedAt = await askSlop("shared-control-safety-ask");
-    await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts)
-      values ('peon', 'shared-control-competing-probe', ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.',
-        'dry_run', 'peon.shared-control-competing-opportunity', true, false, ${new Date(clock.now())})`;
-    clock.advance(MINUTE);
+  for (const [reply, name] of [["nvm", "Nvm"], ["I mean No", "No"]] as const) {
+    // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+    test(`a signed ${reply} cannot route to the app where it looks like a control name`, async ({ onTestFinished }) => {
+      const { askSlop, clock, pending, peonAri, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, [name, "Ben"]);
+      const askedAt = await askSlop("shared-control-safety-ask");
+      await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts)
+        values ('peon', 'shared-control-competing-probe', ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.',
+          'dry_run', 'peon.shared-control-competing-opportunity', true, false, ${new Date(clock.now())})`;
+      clock.advance(MINUTE);
 
-    expect.soft(await signed("shared-control-ordinary-route", "nvm")).toMatchObject({ app: "peon" });
-    expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
-    expect(await reports("slop")).toEqual([]);
-  }, T);
+      expect.soft(await signed("shared-control-ordinary-route", reply)).toMatchObject({ app: "peon" });
+      expect(await pending("slop")).toMatchObject({ at: askedAt, targets: [slopBen] });
+      expect(await reports("slop")).toEqual([]);
+    }, T);
+  }
 
   // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
   test("an exact name with a non-ASCII letter remains a name", async ({ onTestFinished }) => {
