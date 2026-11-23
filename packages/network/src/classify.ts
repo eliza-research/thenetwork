@@ -1017,16 +1017,27 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
 
 const NAMED_TIME_JOIN = String.raw`\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)`;
 const BARE_NAMED_TIME_JOIN = new RegExp(`^${NAMED_TIME_JOIN}$`);
-const JOINED_SHORT_DAY = new RegExp(String.raw`^(${NAMED_TIME_JOIN})(${DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|")})\b`);
+const SHORT_DAY_TOKEN = DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|");
+const JOINED_SHORT_DAY = new RegExp(String.raw`^(${NAMED_TIME_JOIN})(${SHORT_DAY_TOKEN})\b`);
 const SCHEDULING_CONSTRAINT = String.raw`(?:my|our|the) (?:schedule|calendar|availability)`;
 const OFFERED_TIME_REFUSAL_DETAIL = String.raw`(?:for (?:me|us)|(?:in|with) ${SCHEDULING_CONSTRAINT}|on (?:my|our) end|either|at all|at the moment|right now|anymore|unfortunately|this (?:weekend|week))`;
 const OFFERED_TIME_REFUSAL_END = String.raw`(?=(?:\s+${OFFERED_TIME_REFUSAL_DETAIL}\b)*\s*(?:$|[,;.!?\n]|\b(?:and|but|so|though|however|because|since|due to)\b))`;
+const REFUSAL_ADVERB = String.raw`(?:(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely)\s+)?`;
+const OFFERED_TIME_REFUSAL_QUALIFIER = String.raw`${REFUSAL_ADVERB}for\s+(?:me|us)\s+${REFUSAL_ADVERB}`;
 const OFFERED_TIME_REFUSAL =
-  String.raw`\s*(?:(?:both|all)\s+)?(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
+  String.raw`\s*(?:(?:both|all)\s+)?(?:${OFFERED_TIME_REFUSAL_QUALIFIER}|${REFUSAL_ADVERB})(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
   String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|(?:fit|suit)(?: ${SCHEDULING_CONSTRAINT})?|make it))?|` +
   String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:good|great|fine|free|available|possible|ideal|an option|a good fit)\b)` + OFFERED_TIME_REFUSAL_END;
 const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
+const DIRECT_SHORT_DAY_REFUSAL = new RegExp(
+  String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)\s+)?(?<day>${SHORT_DAY_TOKEN})\b(?=\s+${OFFERED_TIME_REFUSAL_QUALIFIER})(?=${OFFERED_TIME_REFUSAL})`,
+  "dgu",
+);
 const RESTATED_CLOCK_PART = new RegExp(String.raw`^(?:morning|afternoon|evening|night)(?:\s+(?:on\s+)?(?:${DAY_TOKEN}))?$`);
+
+function probeTimeIsRefused(text: string, at: number, end: number): boolean {
+  return negatedAt(text, at, end - at) || REFUSES_OFFERED_TIME.test(text.slice(end));
+}
 
 function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean, dayLists: readonly ProbeSpan[]): TimeMention[] {
   const mentions = timeMentions(text, recoverTrailingPair);
@@ -1047,16 +1058,23 @@ function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, m
     clock.end = alias.end;
     mentions.splice(mentions.indexOf(alias), 1);
   }
-  // A short final day can lack ordinary day context before the refusal. Recover it only after
-  // a named time and a bare join, so "the sun doesn't..." alone is still ordinary prose.
+  // Recover a short day only at the start of a direct refusal or after a named time and a bare join.
   const byStart = new Set(mentions.map(mention => mention.at));
+  const recover = (at: number, end: number) => {
+    if (byStart.has(at) || !memberChoiceAt(at) || !probeChoiceAuthored(text.slice(0, at))) return;
+    const token = text.slice(at, end);
+    const day = DAY_WORDS.find(([word]) => token.search(word) === 0)?.[1];
+    if (day) { mentions.push({ at, end, day }); byStart.add(at); }
+  };
+  for (const match of text.matchAll(DIRECT_SHORT_DAY_REFUSAL)) {
+    const [at, end] = match.indices!.groups!.day!;
+    recover(at, end);
+  }
   for (const mention of [...mentions]) {
     const tail = JOINED_SHORT_DAY.exec(text.slice(mention.end));
     if (!tail) continue;
-    const at = mention.end + tail[1]!.length, end = mention.end + tail[0].length;
-    if (byStart.has(at) || !REFUSES_OFFERED_TIME.test(text.slice(end)) || !memberChoiceAt(at)) continue;
-    const day = DAY_WORDS.find(([word]) => tail[2]!.search(word) === 0)?.[1];
-    if (day) { mentions.push({ at, end, day }); byStart.add(at); }
+    const end = mention.end + tail[0].length;
+    if (REFUSES_OFFERED_TIME.test(text.slice(end))) recover(mention.end + tail[1]!.length, end);
   }
   return mentions;
 }
@@ -1272,7 +1290,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
     if (!memberChoiceAt(i)) return;
     const cl = clauseAt(t, i, len);
-    if (negatedAt(t, i, len)) return refuse(keys, cl);
+    if (probeTimeIsRefused(t, i, i + len)) return refuse(keys, cl);
     pickedClauses.add(cl);
     for (const k of keys) {
       pos.add(k);
@@ -1342,13 +1360,13 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
         m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
-    const refused = exclusion || negatedAt(t, m.at, m.end - m.at) || joinedRefusals.has(m);
+    const refused = exclusion || probeTimeIsRefused(t, m.at, m.end) || joinedRefusals.has(m);
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
     } else if (refused) {
       namedExclusion ||= exclusion;
       explicitAlternative ||= currentAlternative && matching.length > 0;
-      contradictedExclusion ||= exclusion && NEG_AFTER.test(t.slice(m.end));
+      contradictedExclusion ||= exclusion && (NEG_AFTER.test(t.slice(m.end)) || REFUSES_OFFERED_TIME.test(t.slice(m.end)));
       refusedGroup ||= !!m.group;
       refuse(matching, exclusion ? undefined : clauseAt(t, m.at, m.end - m.at));
       if (exclusion) for (const key of matching) namedExcluded.add(key);
@@ -1400,7 +1418,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const oneSlot = /(?:\bbut\s+|,\s*)not\s+both[.!\s]*$/.exec(t);
   const weakLimit = oneSlot && weakAt?.[0].startsWith("either") && !quoteStillOpen(t.slice(0, weakAt.index))
     && !describesAnotherPerson(t.slice(0, oneSlot.index)) ? oneSlot.index : t.length;
-  const weakNegated = weakCues.some(cue => cue.index! < weakLimit && negatedAt(t, cue.index!, cue[0].length));
+  const weakNegated = weakCues.some(cue => cue.index! < weakLimit && probeTimeIsRefused(t, cue.index!, cue.index! + cue[0].length));
   if (weakAt && (pos.size || unresolved.length || weakOrdinalMissing || weakRefusal || weakNegated)) {
     if (contradictedExclusion) return { ...unclear, why: "slot" };
     if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t.replace(NO_OTHER_TIMES, ""))) return explicitYes([]);
@@ -1436,7 +1454,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = strongAll ?? weakAt;
-  if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
+  if (allAt && !probeTimeIsRefused(t, allAt.index, allAt.index + allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
     if (clarifiedTimes && !clarifiedBroadTimeChoiceAllowed(strongAll !== null,
       /\b(?:both|either)\b/.test(strongAll?.[0] ?? ""), open.length)) {
