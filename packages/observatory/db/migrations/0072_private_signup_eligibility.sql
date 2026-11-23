@@ -31,3 +31,14 @@ begin
       'matching_ages_' || a, format(projection, 'transaction_timestamp()'), a);
   end loop;
 end $$;
+
+-- Cross-app safety staff see the effective numeric age, not its source or date.
+create view platform.observatory_person_ages with (security_barrier=true) as
+  select p.id as person_id,
+    least(p.lowest_age, f.lowest_age,
+      case when transaction_timestamp() >= s.eligible_at then 18 else s.initial_minor_age end) as age
+  from platform.people p
+  left join platform.age_floor f on f.phone_hash = p.phone_hash
+  left join platform.signup_eligibility s on s.person_id = p.id;
+revoke all on platform.observatory_person_ages from public;
+grant select on platform.observatory_person_ages to network_observatory_cross_app;
