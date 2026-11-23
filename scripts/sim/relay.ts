@@ -202,6 +202,8 @@ export async function relayBlock(b: Block): Promise<void> {
     expect(mk("send this photo to Ari", "other-photo-recipient", "Casey")).toBeNull();
     expect(mk("send this photo to Hera", "complete-photo-recipient", "Hera")?.kind).toBe("photo");
     expect(mk("send my number to Herman", "complete-contact-recipient", "Ari")).toBeNull();
+    expect(mk("yes, send it to Ari", "matched-affirmative-recipient", "Ari")?.kind).toBe("contact_share");
+    expect(mk("yes, send it to Herman", "other-affirmative-recipient", "Ari")).toBeNull();
     expect(relayItem(msg!, baseCtx()).rendered).toBe('Sam says: "I\'m running 10 min late"');
     for (const t of ["should I send them my number?", "don't send my number yet", "send them my number if she asks", "send them this photo next week", "how are you?"]) {
       expect([t, mk(t, "r4")]).toEqual([t, null]);

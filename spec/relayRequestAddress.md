@@ -14,6 +14,7 @@ the agent. For a text, contact or photo request, a named recipient must
 match the counterpart of the selected mutual match. The request keeps
 the name of the selected directive. A trailing named recipient must be
 complete. A longer unsupported name leaves a private request unapproved.
+An affirmative reply that supplies a recipient uses that same check.
 
 ```quint
 pure def relayRecipientAllowed(named: bool, counterpartMatches: bool): bool =

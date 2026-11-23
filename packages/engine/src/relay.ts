@@ -471,15 +471,18 @@ const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybo
 const PHONE_SWAP_NAME = "phone number|number|phone|digits|cell";
 const CONTACT_SWAP_NAME = PHONE_SWAP_NAME + "|contact(?: info)?";
 const PHONE_RELAY_ITEM = new RegExp(String.raw`\bmy\s+(?:${PHONE_SWAP_NAME})\b`, "i");
+const RELAY_RECIPIENT_END = String.raw`(?![\p{L}\p{M}\p{N}'-])`;
+const RELAY_DESTINATION = String.raw`[\s,:–—]+(?:to|with)\b`;
 const CONTACT_REQ = new RegExp(
   String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${OTHER})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
-  + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${OTHER})(?![\p{L}\p{M}\p{N}'-])`
-  + String.raw`|^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+(?:it|my number|them my number)\b|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
+  + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${OTHER})${RELAY_RECIPIENT_END}`
+  + String.raw`|^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${OTHER})${RELAY_RECIPIENT_END}|(?!${RELAY_DESTINATION}))`
+  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
   "giu",
 );
 const PHOTO_REQ = new RegExp(
   String.raw`\b(?:send|share|forward|pass|show)\s+(?<leadingRecipient>${OTHER})\s+(?:this|that|the|my|these)\s+(?:photos?|pics?|pictures?|selfies?|images?)\b`
-  + String.raw`|\b(?:send|share|forward|pass|show)\s+(?:this|that|the|these|my)\s+(?:photos?|pics?|pictures?|selfies?|images?)\s+(?:to|with)\s+(?<trailingRecipient>${OTHER})(?![\p{L}\p{M}\p{N}'-])`,
+  + String.raw`|\b(?:send|share|forward|pass|show)\s+(?:this|that|the|these|my)\s+(?:photos?|pics?|pictures?|selfies?|images?)\s+(?:to|with)\s+(?<trailingRecipient>${OTHER})${RELAY_RECIPIENT_END}`,
   "giu",
 );
 const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
@@ -949,7 +952,7 @@ export function parseRelayRequest(text: string): RelayRequest {
   }
 
   if (privateRequest) {
-    const trailingRecipient = privateRequest.groups?.trailingRecipient;
+    const trailingRecipient = privateRequest.groups?.trailingRecipient ?? privateRequest.groups?.affirmedRecipient;
     const target = namedRelayTarget(privateRequest.groups?.leadingRecipient ?? trailingRecipient);
     const privateModal = RELAY_MODAL.exec(spoken);
     const low = spoken.toLowerCase();
@@ -959,7 +962,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
       || question || privateShareQualified(spoken, privateRequest)
-      || (trailingRecipient !== undefined && target.targetName !== undefined && !trailingRelayNameIsComplete(t.slice(start), privateRequest));
+      || (trailingRecipient !== undefined && !trailingRelayNameIsComplete(t.slice(start), privateRequest));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)

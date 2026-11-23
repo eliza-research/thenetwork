@@ -16,6 +16,7 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 
 ```quint
 // quint-check: max-steps=25 max-samples=10000 verify-steps=3
+// quint-witness: witness_deferredFlushed deferredTextFlushesAfterQuietHoursTest
 //
 // Relay between two matched members (PRD 40.5; AGENTS.md founder decision 9 and "Relay (#7)").
 // Module plan: docs/research/2026-11-07-state-machines.md section 6.8. Findings: docs/research/quint-findings/relay.md.
@@ -320,6 +321,13 @@ module relay {
 
   action commitNone(k: str): bool = all {
     ep.phase.get(k) == "claimed", ep.kind.get(k) == "none",
+    ep' = committed(ep, k),
+    w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
+  }
+
+  // The desk refuses a named recipient mismatch before it changes a pending swap.
+  action commitPrivateRecipientMismatch(k: str): bool = all {
+    ep.phase.get(k) == "claimed", ep.kind.get(k) == "share", not(w.erased.get(owner(k))),
     ep' = committed(ep, k),
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
@@ -747,9 +755,14 @@ module relay {
   // One fault at most per committed request keeps the random simulation on long, interesting traces; faults
   // still combine across requests. "rateTheirs"/"rateMine": the engine's rate limit; "refuseAsk",
   // "refuseTheirs", "refuseMine": Network.send refuses (the conversation streak or the leak guard).
+  // A share can also hit the named-recipient check on the sender-side refusal branch.
   pure val FAULTS = Set("none", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
   action commit(k: str, tc: str, fault: str): bool =
     if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
+    else if (ep.kind.get(k) == "share" and fault == "refuseMine") any {
+      commitPrivateRecipientMismatch(k),
+      commitShare(k, false, false, false, false, true),
+    }
     else if (ep.kind.get(k) == "share")
       commitShare(k, fault == "rateTheirs", fault == "rateMine", fault == "refuseAsk", fault == "refuseTheirs", fault == "refuseMine")
     else if (ep.kind.get(k) == "withdraw") commitWithdraw(k)
@@ -942,6 +955,17 @@ module relay {
     and queue.records.keys().contains(i) and queue.records.get(i).decision == "block"))
 
   // ------------------------------------------------------------------------------------------ run tests
+  run deferredTextFlushesAfterQuietHoursTest =
+    init
+      .then(setQuiet("B", true))
+      .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(answer("a1"))
+      .expect(desk.deferred.exists(deferredSend => deferredSend.key == "a1") and not(queue.rows.keys().contains("a1")))
+      .then(setQuiet("B", false)).then(tickFlush(Set()))
+      .expect(queue.rows.get("a1").status == "queued" and safety)
+      .then(queueSend("a1"))
+      .expect(safety)
+      .expect(not(witness_deferredFlushed))
+
   // shared-relay.integration.test.ts:102-115: A asks, B is asked once, B asks back, both numbers go.
   run swapBothAskTest =
     init
@@ -980,6 +1004,15 @@ module relay {
       .expect(photo.state == "approved" and not(photo.claimed) and not(queue.rows.keys().contains(PHOTO_ITEM)))
       .then(photoRequest(false, false))
       .expect(photo.claimed and queue.rows.keys().contains(PHOTO_ITEM) and safety)
+
+  run namedPrivateRecipientMismatchKeepsSwapPendingTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claim("b1", "share")).then(commitPrivateRecipientMismatch("b1")).then(answer("b1"))
+      .expect(ep.receipt.get("b1") == "completed" and desk.swaps.exists(sw => sw.src == "A")
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
+      .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
 
   run pendingSwapPronounWithdrawalTest =
     init
