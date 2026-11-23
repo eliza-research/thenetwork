@@ -993,22 +993,26 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
 const NAMED_TIME_JOIN = String.raw`\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)`;
 const BARE_NAMED_TIME_JOIN = new RegExp(`^${NAMED_TIME_JOIN}$`);
 const JOINED_SHORT_DAY = new RegExp(String.raw`^(${NAMED_TIME_JOIN})(${DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|")})\b`);
-const OFFERED_TIME_REFUSAL_DETAIL = String.raw`(?:for (?:me|us)|(?:in|with) (?:my|our|the) (?:schedule|calendar)|on (?:my|our) end|either|at all|at the moment|right now|anymore|unfortunately|this week)`;
-const OFFERED_TIME_REFUSAL_END = String.raw`(?=(?:\s+${OFFERED_TIME_REFUSAL_DETAIL}\b)*\s*(?:$|[,;.!?\n]|\b(?:and|but|so|though|however|because|since)\b))`;
+const SCHEDULING_CONSTRAINT = String.raw`(?:my|our|the) (?:schedule|calendar|availability)`;
+const OFFERED_TIME_REFUSAL_DETAIL = String.raw`(?:for (?:me|us)|(?:in|with) ${SCHEDULING_CONSTRAINT}|on (?:my|our) end|either|at all|at the moment|right now|anymore|unfortunately|this (?:weekend|week))`;
+const OFFERED_TIME_REFUSAL_END = String.raw`(?=(?:\s+${OFFERED_TIME_REFUSAL_DETAIL}\b)*\s*(?:$|[,;.!?\n]|\b(?:and|but|so|though|however|because|since|due to)\b))`;
 const OFFERED_TIME_REFUSAL =
   String.raw`\s*(?:(?:both|all)\s+)?(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
-  String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|fit|suit|make it))?|` +
+  String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|(?:fit|suit)(?: ${SCHEDULING_CONSTRAINT})?|make it))?|` +
   String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:good|great|fine|free|available|possible|ideal|an option|a good fit)\b)` + OFFERED_TIME_REFUSAL_END;
 const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
+const RESTATED_CLOCK_PART = new RegExp(String.raw`^(?:morning|afternoon|evening|night)(?:\s+(?:on\s+)?(?:${DAY_TOKEN}))?$`);
 
 function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean): TimeMention[] {
   const mentions = timeMentions(text, recoverTrailingPair);
-  // When a daypart merely restates the preceding clock, keep the exact clock as a single mention.
+  // A matching restatement keeps the exact clock and can supply its trailing day.
   for (const clock of mentions.filter(mention => mention.minute !== undefined)) {
-    const alias = mentions.find(part => !part.day && !part.group && part.minute === undefined && part.part === partOf(clock.minute!)
-      && /^(?:morning|afternoon|evening|night)$/.test(text.slice(part.at, part.end))
+    const alias = mentions.find(part => !part.group && part.minute === undefined && part.part === partOf(clock.minute!)
+      && (!part.day || !clock.day || part.day === clock.day)
+      && RESTATED_CLOCK_PART.test(text.slice(part.at, part.end))
       && /^\s+in the\s+$/.test(text.slice(clock.end, part.at)));
     if (!alias) continue;
+    clock.day ??= alias.day;
     clock.end = alias.end;
     mentions.splice(mentions.indexOf(alias), 1);
   }
@@ -1056,7 +1060,7 @@ const ORDINAL_POSITION: Readonly<Record<string, number>> = {
 };
 const ORDINAL_WORD = String.raw`(?:${Object.keys(ORDINAL_POSITION).join("|")})\b`;
 const ORDINAL_SUFFIX = /^\s+(?:one|option|time|slot)\b/;
-const ORDINAL_ITEM = String.raw`(?:the\s+)?${ORDINAL_WORD}(?:\s+(?:one|option|slot))?`;
+const ORDINAL_ITEM = String.raw`(?:the\s+)?${ORDINAL_WORD}(?:\s+(?:one|option|time|slot)\b)?`;
 const ORDINAL_JOIN = String.raw`(?:\s*(?:,\s*(?:and\s+|or\s+)?|\band\b|\bor\b|&|\/)\s*)`;
 const ORDINAL_AFFIRMATIVE = String.raw`\s+(?:works?|will work|is (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`;
 const DIRECT_ORDINAL = new RegExp(

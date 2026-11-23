@@ -23,8 +23,9 @@ The same declined action covers a standalone “afraid not,” “not a chance,�
 The probe reader also removes explicitly excluded options. A trailing
 refusal to the offered time applies to each time in its list, including
 its ordinal position, clock or part of the day. A daypart that restates
-an exact clock keeps that clock's scope. A separate affirmative clause can
-select another offered time. A broad yes with “both” in the refused
+an exact clock keeps that clock and its named day together. A scheduling
+reason can follow the refusal. A separate affirmative clause can select
+another offered time. A broad yes with “both” in the refused
 list leaves the time choice open when the member chooses no other
 time. Fallback selection keeps any stated time-of-day limit before
 calling the modeled answer action. The signed booking test checks the

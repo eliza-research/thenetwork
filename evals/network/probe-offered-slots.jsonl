@@ -103,3 +103,10 @@
 {"text":"The first and second work for me.","answer":"yes","keys":["a","b"]}
 {"text":"The first option and Sunday don't work for me. Saturday works.","answer":"yes","keys":["b"]}
 {"text":"Saturday at 11am in the morning and Sunday at 2pm in the afternoon don't work for me.","answer":"unclear","keys":[]}
+{"text":"Saturday and Sunday don't fit my schedule. Thursday works.","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday don't suit my availability. Thursday works.","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday don't work for me due to work. Thursday works.","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday don't work for me this weekend. Thursday works.","answer":"yes","keys":["a"]}
+{"text":"The first time and second aren't available. The third works.","answer":"yes","keys":["c"]}
+{"text":"11am in the morning on Saturday and 2pm in the afternoon on Sunday don't work. Saturday 10am works.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a"]}
+{"text":"11am in the morning on Saturday and 2pm in the afternoon on Sunday don't work. Thursday 11am works.","labels":["Thursday 11am","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a"]}
