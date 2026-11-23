@@ -28,3 +28,9 @@ The single deterministic replay measures a specific failure and its repair. It d
 The regression gate also delivers a structured refusal, drops an intended refusal, delivers an unlinked plain refusal, and delivers a plain refusal tied to the first probe after a newer invitation. The old judge flagged the early reveal and the later reveal. The corrected judge flags only the reveal after receipt. The original judge used the decision time. Using the planned reply time would still count messages that never reached the channel. Using text alone would miss a delivered refusal that the offline phrase reader could not classify.
 
 The production booking rule and its signed application cases are tracked in [PR #621](https://github.com/eliza-research/thenetwork/pull/621).
+
+## Join notices in booking replies
+
+The same command with 21 days on combined intake `2a6a4ba1` identified two safety flags in one delivery. A person refused a delivered probe and left its roster. The service later appended that person's pending join notice to a booking reply for the same opportunity. Replaying the trace with the earlier judge still flagged both violations. Removing only the notice text cleared them. The repair uses the existing delivered-contact history along with the current roster.
+
+Focused integration cases also reproduced this name disclosure on general and time clarification questions and on a fresh-time retry. The questions now retain the opportunity ID. The retry uses its existing internal reference. In each case the notice waits and can still follow an unrelated member reply. Both generated decision rules keep their existing inputs and behavior.
