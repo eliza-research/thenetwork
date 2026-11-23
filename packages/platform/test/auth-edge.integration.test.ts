@@ -144,46 +144,56 @@ describe.skipIf(!pgAvailable)("auth edge (Postgres)", () => {
     expect(await c.api.accounts.personFor(phone)).toBeUndefined();
   });
 
-  test("SD-181 validateCloudGrant accepts Cloud grant issued up to 30s ahead and rejects >30s ahead", async () => {
-    // Note: full exchange/validate 5s-ahead login also requires parseNetworkDelegation skew support in packages/core/src/svc/network-delegation.ts (outside Slice 1).
-    const ours = { t: Date.UTC(2026, 10, 7, 16) }, cloudNow = () => ours.t;
-    const phone = newPhone(), secret = "synthetic-existing-network-authority-".repeat(2), rows = new Map<string, any>();
-    const producer = networkDelegationService({
-      secret, now: cloudNow,
-      verifyBearer: async v => v === "verified-fixture" ? { userId: "fixture-steward", issuedAt: Math.floor(cloudNow() / 1000), expiration: Math.floor(cloudNow() / 1000) + 3600 } : null,
-      primaryOwner: async () => ({ userId: "11111111-1111-4111-8111-111111111111", organizationId: "22222222-2222-4222-8222-222222222222", stewardUserId: "fixture-steward", e164: phone, agentId: "personal:33333333-3333-4333-8333-333333333333", expiresAt: cloudNow() + 3600_000 }),
-      blockedByLogout: async () => false, insert: async r => { rows.set(r.code_hash, r); }, claim: async k => { const r = rows.get(k); rows.delete(k); return r; },
-    });
-    const transport = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const req = input instanceof Request ? input : new Request(input, init), raw = await req.text(), b = JSON.parse(raw);
-      expect(await networkDelegationServiceRequest(req, secret, raw, cloudNow())).toBe(true);
-      const result = req.url.endsWith("/exchange") ? await producer.exchange(b.target, b.code, b.codeVerifier) : await producer.validate(b.target, b.proof);
-      return req.url.endsWith("/exchange") ? Response.json(result ?? { ok: false }, { status: result ? 200 : 403 }) : Response.json(result ? { ok: true, identity: result } : { ok: false }, { status: result ? 200 : 403 });
-    }, { preconnect() {} }) as typeof fetch;
-    const env = { PLATFORM_ENV: "staging", STAGING_SITE_ORIGINS: JSON.stringify(NETWORK_FRESH_PERSON_SITES), NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_MODE: "own-pages-fresh-person-v1",
-      NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud.eliza.app", NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api.eliza.app", SERVICE_TURN_SECRET: secret };
-    const api = createPublicApi({ store, now: () => ours.t, hashKey: "synthetic-hash-key", sessionSecret: "synthetic-session-key", env, cloudAuthFetch: transport, cloudValidationTtlMs: 0, log: () => {},
-      otp: { name: "unused", send: async () => { throw new Error("no OTP in Cloud mode"); } }, turnstile: { verify: async () => true } });
-    const origin = NETWORK_FRESH_PERSON_SITES.slop, jar = new Map<string, string>();
-    const request = async (path: string, init: RequestInit = {}) => {
-      const headers = new Headers(init.headers);
-      if (jar.size) headers.set("cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; "));
-      const res = (await api.fetch(new Request(origin + path, { ...init, headers })))!;
-      for (const c of res.headers.getSetCookie()) { const pair = c.split(";")[0]!, i = pair.indexOf("="); if (pair.slice(i + 1)) jar.set(pair.slice(0, i), pair.slice(i + 1)); else jar.delete(pair.slice(0, i)); }
-      return res;
+  test("SD-181 a Cloud clock 5 s ahead still signs in on the production delegation path", async () => {
+    const cloudSignIn = async (leadMs: number) => {
+      const ours = { t: Date.UTC(2026, 10, 7, 16) }, cloudNow = () => ours.t + leadMs;
+      const phone = newPhone(), secret = "synthetic-existing-network-authority-".repeat(2), rows = new Map<string, any>();
+      const producer = networkDelegationService({
+        secret, now: cloudNow,
+        verifyBearer: async v => v === "verified-fixture" ? { userId: "fixture-steward", issuedAt: Math.floor(cloudNow() / 1000), expiration: Math.floor(cloudNow() / 1000) + 3600 } : null,
+        primaryOwner: async () => ({ userId: "11111111-1111-4111-8111-111111111111", organizationId: "22222222-2222-4222-8222-222222222222", stewardUserId: "fixture-steward", e164: phone, agentId: "personal:33333333-3333-4333-8333-333333333333", expiresAt: cloudNow() + 3600_000 }),
+        blockedByLogout: async () => false, insert: async r => { rows.set(r.code_hash, r); }, claim: async k => { const r = rows.get(k); rows.delete(k); return r; },
+      });
+      const transport = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = input instanceof Request ? input : new Request(input, init), raw = await req.text(), b = JSON.parse(raw);
+        expect(await networkDelegationServiceRequest(req, secret, raw, cloudNow())).toBe(true);
+        const result = req.url.endsWith("/exchange") ? await producer.exchange(b.target, b.code, b.codeVerifier) : await producer.validate(b.target, b.proof);
+        return req.url.endsWith("/exchange") ? Response.json(result ?? { ok: false }, { status: result ? 200 : 403 }) : Response.json(result ? { ok: true, identity: result } : { ok: false }, { status: result ? 200 : 403 });
+      }, { preconnect() {} }) as typeof fetch;
+      const env = { PLATFORM_ENV: "staging", STAGING_SITE_ORIGINS: JSON.stringify(NETWORK_FRESH_PERSON_SITES), NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_MODE: "own-pages-fresh-person-v1",
+        NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud.eliza.app", NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api.eliza.app", SERVICE_TURN_SECRET: secret };
+      const api = createPublicApi({ store, now: () => ours.t, hashKey: "synthetic-hash-key", sessionSecret: "synthetic-session-key", env, cloudAuthFetch: transport, cloudValidationTtlMs: 0, log: () => {},
+        otp: { name: "unused", send: async () => { throw new Error("no OTP in Cloud mode"); } }, turnstile: { verify: async () => true } });
+      const origin = NETWORK_FRESH_PERSON_SITES.slop, jar = new Map<string, string>();
+      const request = async (path: string, init: RequestInit = {}) => {
+        const headers = new Headers(init.headers);
+        if (jar.size) headers.set("cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; "));
+        const res = (await api.fetch(new Request(origin + path, { ...init, headers })))!;
+        for (const c of res.headers.getSetCookie()) { const pair = c.split(";")[0]!, i = pair.indexOf("="); if (pair.slice(i + 1)) jar.set(pair.slice(0, i), pair.slice(i + 1)); else jar.delete(pair.slice(0, i)); }
+        return res;
+      };
+      const start = await request("/api/auth/cloud/start", { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ returnPath: "/join" }) });
+      expect(start.status).toBe(200);
+      const login = new URL(((await start.json()) as { url: string }).url);
+      const minted = await producer.mint("verified-fixture", networkTarget("slop", "fresh-person-20261015"), login.searchParams.get("challenge")!, login.searchParams.get("state")!);
+      expect(minted).toBeDefined();
+      const u = new URL(minted!.url);
+      const callback = await request(u.pathname + u.search);
+      const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+      return { api, ours, request, callback, cookie, origin };
     };
-    const start = await request("/api/auth/cloud/start", { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ returnPath: "/join" }) });
-    const login = new URL(((await start.json()) as { url: string }).url);
-    const minted = await producer.mint("verified-fixture", networkTarget("slop", "fresh-person-20261015"), login.searchParams.get("challenge")!, login.searchParams.get("state")!);
-    const u = new URL(minted!.url);
-    expect((await request(u.pathname + u.search)).status).toBe(303);
-    const resource = `${origin}/mcp`;
-    const authority = await api.cloudGrantAuthority("slop", new Request(origin, { headers: { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") } }), resource);
+    const level = await cloudSignIn(0);
+    expect(level.callback.status).toBe(303);
+    const ahead = await cloudSignIn(5_000);
+    expect(ahead.callback.status).toBe(303);
+    expect((await ahead.request("/api/me")).status).toBe(200);
+    const resource = `${ahead.origin}/mcp`;
+    const authority = await ahead.api.cloudGrantAuthority("slop", new Request(ahead.origin, { headers: { cookie: ahead.cookie() } }), resource);
+    expect(authority && typeof authority === "object").toBe(true);
     const cloudAuthority = authority as Exclude<typeof authority, "unavailable" | undefined>;
-    // Same-clock validation passes; full 5s Cloud lead through productionDelegation.validate also awaits parseNetworkDelegation skewMs in packages/core/src/svc/network-delegation.ts.
-    expect(await api.validateCloudGrant({ app: "slop", resource, phoneKey: cloudAuthority.phoneKey, personId: null, cloudAuthority })).toBe("valid");
-    // Outside 30s skew -> invalid at validateCloudGrant envelope check.
-    ours.t = cloudAuthority.issuedAt * 1000 - 31_000;
-    expect(await api.validateCloudGrant({ app: "slop", resource, phoneKey: cloudAuthority.phoneKey, personId: null, cloudAuthority })).toBe("invalid");
+    expect(await ahead.api.validateCloudGrant({ app: "slop", resource, phoneKey: cloudAuthority.phoneKey, personId: null, cloudAuthority })).toBe("valid");
+    expect((await cloudSignIn(31_000)).callback.status).toBe(403);
+    ahead.ours.t = cloudAuthority.issuedAt * 1000 - 31_000;
+    expect(await ahead.api.validateCloudGrant({ app: "slop", resource, phoneKey: cloudAuthority.phoneKey, personId: null, cloudAuthority })).toBe("invalid");
   });
 });
