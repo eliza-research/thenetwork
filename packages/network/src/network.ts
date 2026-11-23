@@ -4881,7 +4881,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (o.probeAbout) { const { [out]: _, ...rest } = o.probeAbout; o.probeAbout = rest; }
       if (o.probeDelivery) { const { [out]: _, ...rest } = o.probeDelivery; o.probeDelivery = rest; }
       const askedAgain = this.changeRoster(o, alt);
-      // spec/probeDispatch.md, "A replacement asks again every member who heard about the earlier roster"
+      // spec/probeDispatch.md, "A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster"
       if (o.first === out) o.first = askedAgain[0] ?? alt;
       this.reexplain(o);
       this.ctx.log("probe_replaced", { oppId: o.id, out, in: alt, askedAgain, proposal: this.toProposal(o) });
@@ -4901,7 +4901,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const p of o.participants) {
       if (p === alternate) continue;
       const before = participantProbe(o, p);
-      const after = stepProbe(before, { type: "changeRoster" });
+      const after = stepProbe(before, { type: "changeRoster", requester: p === o.requester });
       if (after.phase === "Queued" && before.phase !== "Queued") {
         if (before.told) askedAgain.push(p);
         if (before.phase === "Available") o.askedAgain = [...new Set([...(o.askedAgain ?? []), p])];

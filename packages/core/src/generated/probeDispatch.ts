@@ -28,7 +28,7 @@ export type Event =
   | { type: "offerOtherTimes"; hasFreshTimes: boolean }
   | { type: "expireProbe"; expired: boolean; timeQuestion: boolean }
   | { type: "joinRoster"; roster: number }
-  | { type: "changeRoster" };
+  | { type: "changeRoster"; requester: boolean };
 
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
 export const questionHoldMs: number = exact_probeDispatch(24 * 3600000);
@@ -52,9 +52,10 @@ export function usePriorIntent(participant: ParticipantProbe, primed: boolean, c
   //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "usePriorIntent", \result)
   //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "usePriorIntent", \result)
   //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "usePriorIntent", \result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "usePriorIntent", \result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "usePriorIntent", \result)
   return { ...participant, phase: "Available", about: participant.roster, told: false };
 }
 
@@ -65,9 +66,10 @@ export function openTurn(participant: ParticipantProbe, first: boolean, firstAva
   //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "openTurn", \result)
   //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "openTurn", \result)
   //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "openTurn", \result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "openTurn", \result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "openTurn", \result)
   return { ...participant, phase: "AwaitingReply", about: participant.roster, told: false };
 }
 
@@ -133,9 +135,10 @@ export function recordProbeSent(participant: ParticipantProbe): ParticipantProbe
   //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordProbeSent", \result)
   //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "recordProbeSent", \result)
   //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "recordProbeSent", \result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordProbeSent", \result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "recordProbeSent", \result)
   return { ...participant, told: true };
 }
 
@@ -164,9 +167,10 @@ export function markUnavailable(participant: ParticipantProbe): ParticipantProbe
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "markUnavailable", \result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "markUnavailable", \result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "markUnavailable", \result)
-  //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "markUnavailable", \result)
+  //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "markUnavailable", \result)
   return { ...participant, phase: "Unavailable" };
 }
 
@@ -241,9 +245,10 @@ export function recordReply(participant: ParticipantProbe, agreed: boolean): Par
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordReply", \result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "recordReply", \result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "recordReply", \result)
-  //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordReply", \result)
+  //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "recordReply", \result)
   return { ...participant, phase: agreed ? "Available" : "Unavailable" };
 }
 
@@ -266,9 +271,10 @@ export function offerOtherTimes(participant: ParticipantProbe, hasFreshTimes: bo
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "offerOtherTimes", \result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "offerOtherTimes", \result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "offerOtherTimes", \result)
-  //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "offerOtherTimes", \result)
+  //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "offerOtherTimes", \result)
   return { ...participant, phase: "AwaitingReply" };
 }
 
@@ -285,9 +291,10 @@ export function expireProbe(participant: ParticipantProbe, expired: boolean, tim
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "expireProbe", \result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "expireProbe", \result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "expireProbe", \result)
-  //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "expireProbe", \result)
+  //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "expireProbe", \result)
   return { ...participant, phase: timeQuestion ? "Available" : "Unavailable" };
 }
 
@@ -393,74 +400,89 @@ export function lawGroupBelowThreeCloses(remaining: number): boolean {
   return !(remaining < 3) || noAlternateRoute(true, remaining) === "CloseWithoutAlternate";
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+//@ pure
+export function stepOnlyARosterChangeMovesTheRoster(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
+  return (!(via !== "changeRoster" && via !== "joinRoster") || after.roster === before.roster) && (!(via === "changeRoster") || after.roster === exact_probeDispatch(before.roster + 1));
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
 export function canJoinRoster(participant: ParticipantProbe, roster: number): boolean {
   return participant.phase === "Queued" && !participant.told && participant.roster === 0 && participant.about === 0 && roster >= 0;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
 export function joinRoster(participant: ParticipantProbe, roster: number): ParticipantProbe {
   //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
   //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "joinRoster", \result)
   //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "joinRoster", \result)
   //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "joinRoster", \result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "joinRoster", \result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "joinRoster", \result)
   return { phase: "Queued", roster: roster, about: roster, told: false };
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
 export function stepAnAlternateJoinsQueuedForTheCurrentRoster(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
   return !(via === "joinRoster") || (after.phase === "Queued" && !after.told && after.about === after.roster);
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
 export function sometimesAgreedAgainAfterARosterChange(participant: ParticipantProbe): boolean {
   return participant.phase === "Available" && participant.told && participant.roster > 0;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
 export function canChangeRoster(participant: ParticipantProbe): boolean {
   return true;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
-export function changeRoster(participant: ParticipantProbe): ParticipantProbe {
+export function changeRoster(participant: ParticipantProbe, requester: boolean): ParticipantProbe {
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "changeRoster", \result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "changeRoster", \result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "changeRoster", \result)
-  //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "changeRoster", \result)
+  //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "changeRoster", \result)
   const local_0 = exact_probeDispatch(participant.roster + 1);
-  return participant.phase === "Unavailable" || participant.phase === "OutsideProbe" ? ({ ...participant, roster: local_0 } as ParticipantProbe) : (participant.told || participant.phase === "AwaitingReply" ? ({ phase: "Queued", roster: local_0, about: local_0, told: false } as ParticipantProbe) : ({ ...participant, roster: local_0, about: local_0 } as ParticipantProbe));
+  return participant.phase === "Unavailable" || participant.phase === "OutsideProbe" ? ({ ...participant, roster: local_0 } as ParticipantProbe) : (requester && participant.phase === "Available" ? ({ ...participant, roster: local_0, about: local_0 } as ParticipantProbe) : (participant.told || participant.phase === "AwaitingReply" ? ({ phase: "Queued", roster: local_0, about: local_0, told: false } as ParticipantProbe) : ({ ...participant, roster: local_0, about: local_0 } as ParticipantProbe)));
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
 export function stepARosterChangeVoidsEveryEarlierProbe(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
-  return !(via === "changeRoster" && (before.phase === "AwaitingReply" || (before.phase === "Available" && before.told))) || (after.phase === "Queued" && !after.told);
+  return !(via === "changeRoster" && before.phase === "AwaitingReply") || (after.phase === "Queued" && !after.told);
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
-export function stepOnlyARosterChangeMovesTheRoster(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
-  return (!(via !== "changeRoster" && via !== "joinRoster") || after.roster === before.roster) && (!(via === "changeRoster") || after.roster === exact_probeDispatch(before.roster + 1));
+export function stepARosterChangeVoidsOrCarriesEveryEarlierYes(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
+  return !(via === "changeRoster" && before.phase === "Available" && before.told) || ((after.phase === "Queued" && !after.told) || (after.phase === "Available" && after.told && after.about === after.roster));
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
-export function lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne(participant: ParticipantProbe): boolean {
+export function lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne(participant: ParticipantProbe, requester: boolean): boolean {
   //@ ensures \result === true
-  return !(participant.told || participant.phase === "AwaitingReply") || !agreedToRoster(changeRoster(participant), exact_probeDispatch(participant.roster + 1));
+  return !(participant.phase === "AwaitingReply" || (participant.told && !requester)) || !agreedToRoster(changeRoster(participant, requester), exact_probeDispatch(participant.roster + 1));
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+//@ pure
+export function lawARequesterYesCarriesOverToTheNewRoster(participant: ParticipantProbe, requester: boolean): boolean {
+  //@ ensures \result === true
+  return !(requester && participant.phase === "Available") || agreedToRoster(changeRoster(participant, requester), exact_probeDispatch(participant.roster + 1));
 }
 
 /** Story: Hear about one reviewed opportunity at a time / Nobody is introduced without a yes to the current roster (spec/probeDispatch.md) */
@@ -588,7 +610,7 @@ export function step(current: ParticipantProbe, event: Event): ParticipantProbe 
   if (event.type === "offerOtherTimes") return canOfferOtherTimes(current, event.hasFreshTimes) ? offerOtherTimes(current, event.hasFreshTimes) : current;
   if (event.type === "expireProbe") return canExpireProbe(current, event.expired) ? expireProbe(current, event.expired, event.timeQuestion) : current;
   if (event.type === "joinRoster") return canJoinRoster(current, event.roster) ? joinRoster(current, event.roster) : current;
-  if (event.type === "changeRoster") return canChangeRoster(current) ? changeRoster(current) : current;
+  if (event.type === "changeRoster") return canChangeRoster(current) ? changeRoster(current, event.requester) : current;
   return current;
 }
 
@@ -614,7 +636,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "offerOtherTimes" && typeof raw.hasFreshTimes === "boolean") return { type: "offerOtherTimes", hasFreshTimes: raw.hasFreshTimes };
   if (raw.type === "expireProbe" && typeof raw.expired === "boolean" && typeof raw.timeQuestion === "boolean") return { type: "expireProbe", expired: raw.expired, timeQuestion: raw.timeQuestion };
   if (raw.type === "joinRoster" && Number.isSafeInteger(raw.roster)) return { type: "joinRoster", roster: raw.roster };
-  if (raw.type === "changeRoster") return { type: "changeRoster" };
+  if (raw.type === "changeRoster" && typeof raw.requester === "boolean") return { type: "changeRoster", requester: raw.requester };
   return undefined;
 }
 

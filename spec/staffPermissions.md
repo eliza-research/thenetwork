@@ -125,7 +125,7 @@ pure val revealMinutesValues = Set(-1, 0, 1, 4, 5, 7, 10, 15, 16, 90)
 
 ### Each console staff step needs the role that its staff route needs
 
-The console offers each staff step and checks the person's own role before it forwards the step. Reading postings needs the reviewer role. Saving or closing a posting, verifying an employer, a seed invitation batch and a staff invite need the admin role. Home help, member verification, a decision on an agent signal, and the held queues need the safety role. Member invitations and reading agent signals need the reviewer or safety role. Reading the judged introductions (`ReadJudgedReviews`: the judged list and one judgment with its explanation and packet) and stopping an approved introduction before its reveal (`StopApprovedReview`) need the reviewer or safety role. A review decision (`DecideReviewItem`) needs the reviewer role and a safety case decision (`DecideSafetyCase`: hold, ban, dismiss, lift, close, clear a minor signal, stop or resume teen friendship introductions (`/teen-intros`; the service still needs admin to resume) and report a member older than stated (`/safety/older-than-stated`)) needs the safety role; the console keeps its own routes for these two, and the steps exist so that the service can refuse a shared token on them. Admin passes every check. A posting or employer step exists only on peon. A privacy request, its confirmation and the privacy replay need admin for all apps, and an app grant does not count. Releasing the sender of a signed shared-line turn that did not finish (`ResolveInboundTurn`), and reading the shared-line turn watch counts (`ReadTurnWatch`), also need admin for all apps, because one shared line serves every app. `ReadHeldRelay` and `DecideHeldRelay` cover both held queues of the console: the leak queue (outbound texts that the leak guard held) and the relay queue (relay photos that the automatic image check flagged, [photo consent and review](photoRelayReview.md)). Both need the safety role, because a held text can show a member's private facts and a flagged photo shows a member's photo. No relayed text is held. Changed (audits PER35, console-api-gaps and STAFF-held-role of 2026-11-21 and 2026-11-22, owner decisions D3, D15 to D17): the steps were staff-port calls with a shared token, the held routes hard-coded the safety role, and the relay queue held texts -> each step is a console step with its own role, the judge-watch steps are new, and the relay queue holds only flagged photos, because the audit must name a person and no relayed text waits for staff. Changed (audit PER35, 2026-11-22): the service admitted a shared token on `/teen-intros` and `/safety/older-than-stated` -> both are `DecideSafetyCase` steps, because the audit must name a person.
+The console offers each staff step and checks the person's own role before it forwards the step. Reading postings needs the reviewer role. Saving or closing a posting, verifying an employer, a seed invitation batch and a staff invite need the admin role. Home help, member verification, a decision on an agent signal, and the held queues need the safety role. Member invitations and reading agent signals need the reviewer or safety role. Reading the judged introductions (`ReadJudgedReviews`: the judged list and one judgment with its explanation and packet) and stopping an approved introduction before its reveal (`StopApprovedReview`) need the reviewer or safety role. A review decision (`DecideReviewItem`) needs the reviewer role and a safety case decision (`DecideSafetyCase`: hold, ban, dismiss, lift, close, clear a minor signal, stop or resume teen friendship introductions (`/teen-intros`; the service still needs admin to resume) and report a member older than stated (`/safety/older-than-stated`)) needs the safety role; the console keeps its own routes for these two. The `DecideSafetyCase` step exists so that the service can refuse a shared token on it; the `DecideReviewItem` step takes a shared reviewer token, which the service records as itself (the step-actor rule below). Admin passes every check. A posting or employer step exists only on peon. A privacy request, its confirmation and the privacy replay need admin for all apps, and an app grant does not count. Releasing the sender of a signed shared-line turn that did not finish (`ResolveInboundTurn`), and reading the shared-line turn watch counts (`ReadTurnWatch`), also need admin for all apps, because one shared line serves every app. `ReadHeldRelay` and `DecideHeldRelay` cover both held queues of the console: the leak queue (outbound texts that the leak guard held) and the relay queue (relay photos that the automatic image check flagged, [photo consent and review](photoRelayReview.md)). Both need the safety role, because a held text can show a member's private facts and a flagged photo shows a member's photo. No relayed text is held. Changed (audits PER35, console-api-gaps and STAFF-held-role of 2026-11-21 and 2026-11-22, owner decisions D3, D15 to D17): the steps were staff-port calls with a shared token, the held routes hard-coded the safety role, and the relay queue held texts -> each step is a console step with its own role, the judge-watch steps are new, and the relay queue holds only flagged photos, because the audit must name a person and no relayed text waits for staff. Changed (audit PER35, 2026-11-22): the service admitted a shared token on `/teen-intros` and `/safety/older-than-stated` -> both are `DecideSafetyCase` steps, because the audit must name a person.
 
 ```quint
 type StaffStep = ReadPostings | SavePosting | ClosePosting | VerifyEmployer | ReadHomeHelp | DecideHomeHelp
@@ -199,25 +199,40 @@ pure val appRolesValues = Set(List(), List("admin"), List("reviewer"), List("saf
 pure val globalRolesValues = Set(List(), List("admin"), List("safety"), List("reviewer", "safety"))
 ```
 
-### The staff API takes a console step only from a named person
+### The staff API takes a step that needs a person only from a named person
 
-When the service has a console token, it refuses every console staff step whose actor the console did not name in `X-Network-Staff-Id`. The console names the signed-in person and never takes the name from the browser. A service without a console token, as in development or a test harness, has no way to name a person, so it records its token. The step list in `serviceStaffStep` decides which routes are console steps; the review decision route (`DecideReviewItem`) and the safety hold, ban, dismiss, lift, close, clear-minor, `/teen-intros` and `/safety/older-than-stated` routes (`DecideSafetyCase`) are console steps. The laws check the decision at fixed inputs: a service with a console token refuses a shared token, a named reviewer is always accepted, the console token only refuses steps, and it changes the answer only for a shared token. Changed (audit PER35): a shared role token recorded itself as the actor of a step, also of a review decision or a minor-signal clear -> a service with a console token refuses a shared token on every console step, because a step could change a gate or a safety state, or let a member be matched again, without a person on the audit row.
+When the service has a console token, it refuses every console staff step that needs a person and whose actor the console did not name in `X-Network-Staff-Id`. The console names the signed-in person and never takes the name from the browser. A service without a console token, as in development or a test harness, has no way to name a person, so it records its token. The step list in `serviceStaffStep` decides which routes are console steps. The review desk steps do not need a person: a review decision on a held item (`DecideReviewItem`), stopping an approved introduction before its reveal (`StopApprovedReview`) and reading the judged introductions (`ReadJudgedReviews`). A shared token with the role of the step (reviewer for a decision; reviewer or safety for a stop and for the judged list) takes them and is the reviewer of record as itself (`token:<role>#...`); the service ignores `X-Network-Staff-Id` from any token other than the console's, so no audit row names a person that the token did not prove. Every other console step needs a person: the safety hold, ban, dismiss, lift, close, clear-minor, `/teen-intros` and `/safety/older-than-stated` routes (`DecideSafetyCase`), the privacy, verification, invitation, posting, home-help, signal, held-relay and shared-line steps. The laws check the decision at fixed inputs: a service with a console token refuses a shared token on a step that needs a person, only the three review desk steps take a shared token, a safety case always needs a person, a named reviewer is always accepted, the console token only refuses steps, and it changes the answer only for a shared token. Changed (audit PER35): a shared role token recorded itself as the actor of a step, also of a review decision or a minor-signal clear -> a service with a console token refuses a shared token on every console step, because a step could change a gate or a safety state, or let a member be matched again, without a person on the audit row. Changed (owner answer 2026-11-23): a service with a console token refused a shared token also on the review desk steps -> a shared reviewer token decides a held item, stops an approval and reads the judged list, recorded as itself, because staff decide only the few items the judge holds, a held item expires unsent at its deadline, and an operator without the console must still be able to clear or stop one; the token, not an unproven name, is on the audit row.
 
 ```quint
 type StepActor = NamedReviewer | SharedToken
 
-pure def staffStepActorAccepted(consoleConfigured: bool, actor: StepActor): bool =
-  actor == NamedReviewer or not(consoleConfigured)
+pure def staffStepNeedsPerson(staffStep: StaffStep): bool =
+  match staffStep {
+    | DecideReviewItem => false
+    | StopApprovedReview => false
+    | ReadJudgedReviews => false
+    | _ => true
+  }
 
-pure def lawConsoleServiceRefusesSharedToken(consoleConfigured: bool): bool =
-  consoleConfigured implies not(staffStepActorAccepted(consoleConfigured, SharedToken))
+pure def staffStepActorAccepted(consoleConfigured: bool, staffStep: StaffStep, actor: StepActor): bool =
+  actor == NamedReviewer or not(consoleConfigured) or not(staffStepNeedsPerson(staffStep))
 
-pure def lawNamedReviewerAlwaysAccepted(consoleConfigured: bool): bool =
-  staffStepActorAccepted(consoleConfigured, NamedReviewer)
+pure def lawConsoleServiceRefusesSharedToken(consoleConfigured: bool, staffStep: StaffStep): bool =
+  (consoleConfigured and staffStepNeedsPerson(staffStep)) implies not(staffStepActorAccepted(consoleConfigured, staffStep, SharedToken))
 
-pure def lawConsoleTokenOnlyTightens(actor: StepActor): bool =
-  staffStepActorAccepted(true, actor) implies staffStepActorAccepted(false, actor)
+pure def lawOnlyReviewDeskStepsTakeSharedToken(staffStep: StaffStep): bool =
+  staffStepActorAccepted(true, staffStep, SharedToken) implies
+    (staffStep == DecideReviewItem or staffStep == StopApprovedReview or staffStep == ReadJudgedReviews)
 
-pure def lawConsoleTokenDecidesOnlyForSharedToken(consoleConfigured: bool, actor: StepActor): bool =
-  staffStepActorAccepted(consoleConfigured, actor) != staffStepActorAccepted(not(consoleConfigured), actor) implies actor == SharedToken
+pure def lawSafetyCaseNeedsPerson(consoleConfigured: bool): bool =
+  consoleConfigured implies not(staffStepActorAccepted(consoleConfigured, DecideSafetyCase, SharedToken))
+
+pure def lawNamedReviewerAlwaysAccepted(consoleConfigured: bool, staffStep: StaffStep): bool =
+  staffStepActorAccepted(consoleConfigured, staffStep, NamedReviewer)
+
+pure def lawConsoleTokenOnlyTightens(staffStep: StaffStep, actor: StepActor): bool =
+  staffStepActorAccepted(true, staffStep, actor) implies staffStepActorAccepted(false, staffStep, actor)
+
+pure def lawConsoleTokenDecidesOnlyForSharedToken(consoleConfigured: bool, staffStep: StaffStep, actor: StepActor): bool =
+  staffStepActorAccepted(consoleConfigured, staffStep, actor) != staffStepActorAccepted(not(consoleConfigured), staffStep, actor) implies actor == SharedToken
 ```

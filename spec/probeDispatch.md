@@ -184,29 +184,37 @@ pure def lawUnjudgedRosterNeverProbes(rosterListed: bool): bool =
 pure val rosterListedValues = Set(false, true)
 ```
 
-### A replacement asks again every member who heard about the earlier roster
+### A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster
 
-A probe and a yes answer one arrangement: the roster revision that the probe described. When an alternate joins an introduction or an activity-partner plan, the roster revision goes up by one. Each member who stays and got a probe of the earlier roster goes back to the queue, whether they said yes or have not answered yet: their earlier answer no longer counts, and they get a new probe in their turn. A turn that opened but whose probe has not gone out also goes back to the queue, so that its probe is written again for the new roster. When the first participant is asked again or was the one replaced, the first turn goes to a member who is asked again, so the alternate gets a probe only after that member agreed again. A prior request that the Network used without a probe moves to the new revision, because no probe described the other person. An unavailable member stays unavailable. When a group continues without an alternate, the roster revision does not change, because nobody joins whom a member was not asked about. A group plan probe describes no single person and says that the Network shares who is coming when enough people say yes, so a backfill there keeps the yeses, with an alternate who leaves the words of each probe unchanged (the rule below). The alternate joins with a queued turn about the new roster revision. After the change, no member who heard about the earlier roster has a yes to the new one. The alternate's join is a transition of the probe state, and the law over the roster change says what the reveal relies on. Changed (audit OPP18): a yes, a waiting probe and an unsent probe carried over to the replacement, and the Network cleared an unprobed prior request -> each is voided or moved as above, because the replacement learned the member's first name and a requester got the wrong question.
+A probe and a yes answer one arrangement: the roster revision that the probe described. When an alternate joins an introduction or an activity-partner plan, the roster revision goes up by one. Each member who stays and got a probe of the earlier roster goes back to the queue, whether they said yes or have not answered yet: their earlier answer no longer counts, and they get a new probe in their turn. The requester of a member request who said yes is the one exception: their yes moves to the new revision and they are not asked again, because they asked for this introduction and a probe names nobody before the reveal, and a replacement happens only before the reveal. A requester whose probe still waits for its answer goes back to the queue like any other member. A turn that opened but whose probe has not gone out also goes back to the queue, so that its probe is written again for the new roster. When the first participant is asked again or was the one replaced, the first turn goes to a member who is asked again, so the alternate gets a probe only after that member agreed again. A prior request that the Network used without a probe moves to the new revision, because no probe described the other person. An unavailable member stays unavailable. When a group continues without an alternate, the roster revision does not change, because nobody joins whom a member was not asked about. A group plan probe describes no single person and says that the Network shares who is coming when enough people say yes, so a backfill there keeps the yeses, with an alternate who leaves the words of each probe unchanged (the rule below). The alternate joins with a queued turn about the new roster revision. After the change, no member who heard about the earlier roster has a yes to the new one, except a requester who said yes, whose yes is about the new one. The alternate's join is a transition of the probe state, and the law over the roster change says what the reveal relies on. The step over the roster change does not know who requested the item, so it lets a yes move to the new revision; the law over the roster change takes the requester as input and keeps that for the requester only. Changed (audit OPP18): a yes, a waiting probe and an unsent probe carried over to the replacement, and the Network cleared an unprobed prior request -> each is voided or moved as above, because the replacement learned the member's first name and a requester got the wrong question. Changed (owner decision 2026-11-23): a requester who said yes was asked again about the replacement -> their yes carries over to the new roster and every other member who heard about the earlier roster is still asked again, because the requester asked for the introduction, no name went out before the reveal, and the new question made many requesters decline (the network meetings gate fell from 174 to 130 against 140).
 
 ```quint
 pure def canChangeRoster(participant: ParticipantProbe): bool = true
-pure def changeRoster(participant: ParticipantProbe): ParticipantProbe =
+pure def changeRoster(participant: ParticipantProbe, requester: bool): ParticipantProbe =
   val newRoster = participant.roster + 1
   if (participant.phase == Unavailable or participant.phase == OutsideProbe) { ...participant, roster: newRoster }
+  else if (requester and participant.phase == Available) { ...participant, roster: newRoster, about: newRoster }
   else if (participant.told or participant.phase == AwaitingReply) { phase: Queued, roster: newRoster, about: newRoster, told: false }
   else { ...participant, roster: newRoster, about: newRoster }
 
 pure def stepARosterChangeVoidsEveryEarlierProbe(before: ParticipantProbe, via: str, after: ParticipantProbe): bool =
-  (via == "changeRoster" and (before.phase == AwaitingReply or (before.phase == Available and before.told)))
-    implies (after.phase == Queued and not(after.told))
+  (via == "changeRoster" and before.phase == AwaitingReply) implies (after.phase == Queued and not(after.told))
+
+pure def stepARosterChangeVoidsOrCarriesEveryEarlierYes(before: ParticipantProbe, via: str, after: ParticipantProbe): bool =
+  (via == "changeRoster" and before.phase == Available and before.told)
+    implies ((after.phase == Queued and not(after.told)) or (after.phase == Available and after.told and after.about == after.roster))
 
 pure def stepOnlyARosterChangeMovesTheRoster(before: ParticipantProbe, via: str, after: ParticipantProbe): bool =
   ((via != "changeRoster" and via != "joinRoster") implies after.roster == before.roster) and
   (via == "changeRoster" implies after.roster == before.roster + 1)
 
-pure def lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne(participant: ParticipantProbe): bool =
-  (participant.told or participant.phase == AwaitingReply)
-    implies not(agreedToRoster(changeRoster(participant), participant.roster + 1))
+pure def lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne(participant: ParticipantProbe, requester: bool): bool =
+  (participant.phase == AwaitingReply or (participant.told and not(requester)))
+    implies not(agreedToRoster(changeRoster(participant, requester), participant.roster + 1))
+
+pure def lawARequesterYesCarriesOverToTheNewRoster(participant: ParticipantProbe, requester: bool): bool =
+  (requester and participant.phase == Available)
+    implies agreedToRoster(changeRoster(participant, requester), participant.roster + 1)
 
 pure def canJoinRoster(participant: ParticipantProbe, roster: int): bool =
   participant.phase == Queued and not(participant.told) and participant.roster == 0 and participant.about == 0 and roster >= 0

@@ -12,7 +12,7 @@ After an ambiguous answer to a timed offer, the reply slot keeps a time choice o
 
 Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch](../probeDispatch.md), [review deadline rule](../reviewDeadline.md), and [meeting confirmation and attendance settlement](../meetingSettlement.md). The Network shell keeps the roster, persisted statuses, channel effects, and attendance records. The [repeat encounter rules](../repeatEncounter.md) cover a new review after two private responses to the same completed meeting.
 
-The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action, so it never starts, confirms or closes a job posting read-back ([posting policy](../postingPolicy.md), "Only the member's own text in the thread issues a command"). Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds. A reply to an expired probe ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended") gets one direct answer and changes no opportunity state, so the modeled answer action does not take it. A replacement asks again each member who heard about the earlier roster ([probe dispatch](../probeDispatch.md), "A replacement asks again every member who heard about the earlier roster"); the model takes the pair path, and the shell applies the same rule to an activity-partner plan backfill. A direct answer to a probe that the replacement voided gets one honest answer that the plan changed and changes no opportunity state ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended"), so the modeled answer action does not take it either. A direct answer to a probe that was waiting when its opportunity closed gets the same one honest answer that the invitation ended and changes no opportunity state, so the modeled answer action does not take it. The model uses the 48-hour window of a generic probe for every probe; the probe dispatch rules give a Slop probe and a time question 24 hours ([probe dispatch](../probeDispatch.md), "A reply or an expired deadline settles the probe").
+The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action, so it never starts, confirms or closes a job posting read-back ([posting policy](../postingPolicy.md), "Only the member's own text in the thread issues a command"). Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds. A reply to an expired probe ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended") gets one direct answer and changes no opportunity state, so the modeled answer action does not take it. A replacement keeps the yes of a requester and asks again each other member who heard about the earlier roster ([probe dispatch](../probeDispatch.md), "A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster"); the model takes the pair path, and the shell applies the same rule to an activity-partner plan backfill. A direct answer to a probe that the replacement voided gets one honest answer that the plan changed and changes no opportunity state ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended"), so the modeled answer action does not take it either. A direct answer to a probe that was waiting when its opportunity closed gets the same one honest answer that the invitation ended and changes no opportunity state, so the modeled answer action does not take it. The model uses the 48-hour window of a generic probe for every probe; the probe dispatch rules give a Slop probe and a time question 24 hours ([probe dispatch](../probeDispatch.md), "A reply or an expired deadline settles the probe").
 
 Review ([automated review](../automatedReview.md)). The review part of an item has a phase (`awaiting` the judge, `held` for staff, `decided`, `stopped`) and an approver (`judge` or `staff`). `judgeRecord(o, verdict, packetCurrent, env)` is `ConsentNetwork.recordJudgment`: an approval by the review judge, or a hold for staff for any other verdict, also `cannot_run` for the tick's `judge_overdue` hold, merged here into one step. A judgment for a changed packet changes nothing, and failed gates close the item as invalidated with no approval. `staffApprove(o, env)` is `decide` approve, only for a held item. `reject` takes any open item. `stopApproved` closes an approved item that is still probing. `replaceOrClose` swaps in only a roster that the approval covered (`judgedRosters`: the base roster and each single swap with an alternate; `replacement_not_judged` otherwise). A staff approval stores no rosters (`decide` sets no `judgedRosters`), so a staff-approved item closes on a replacement. `contactNeedsRecordedApproval` and `heldItemNeedsStaff` state the rule. Changed (owner decisions D15 to D17 of 2026-11-22): the review judge approves each item and staff decide only held items, because the owner removed human review.
 
@@ -507,12 +507,13 @@ module opportunity {
         // only a roster that the approval covered; another roster closes the item.
         if (not(x.review.judgedRosters.contains(stay.union(Set(alt))))) push(s, [J("close", o, "", "replacement_not_judged")])
         else {
-        // spec/probeDispatch.md, "A replacement asks again every member who heard about the earlier roster":
+        // spec/probeDispatch.md, "A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster":
         // a probe that waits for its answer or has still to go out, and a yes after a probe, are about the earlier
         // roster: the member goes back to the queue and gets a new probe in their turn (roster revision, abstracted
         // here as `told` and `askedAgain`). `contacted` stays: it records who heard the time and place (minors rule).
         // When the first participant is out or asked again, the first turn goes to a member asked again.
-        val heard = stay.filter(p => x.status.get(p) == "probing" or (x.status.get(p) == "available" and x.told.contains(p)))
+        // Owner decision 2026-11-23: the requester's yes carries over (no name went out before the reveal).
+        val heard = stay.filter(p => x.status.get(p) == "probing" or (x.status.get(p) == "available" and x.told.contains(p) and p != x.requester))
         val reasked = heard.filter(p => x.told.contains(p))
         val yeses = heard.filter(p => x.status.get(p) == "available")
         val s1 = putO(heard.fold(s, (acc, p) => clearAwFor(acc, p, o)), o, { ...x, alts: Set(), parts: stay.union(Set(alt)),
@@ -1781,6 +1782,18 @@ module opportunity {
       .then(probeSend("o2", "b", ALL_OPEN)).then(settled).then(answer("b", "yes", ALL_OPEN)).then(settled)
       .expect(op(s, "o2").stage == "scheduled" and op(s, "o2").revealSent == Set("a", "b") and namesAfterAllYes and safety)
 
+  // Owner decision 2026-11-23 (probe-replacement-consent.integration.test.ts, the requester case): o1 is a's own
+  // request. a says yes, b says no and c replaces b. a's yes carries over: a is not asked again, c is probed next,
+  // and the names go out only after c's yes.
+  run requesterYesCarriesOverTest =
+    init.then(submit("o1")).then(settled).then(judgeRecord("o1", "approve", true, ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled).then(answer("b", "no", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").parts == Set("a", "c") and stat(s, "o1", "a") == "available" and op(s, "o1").told.contains("a")
+              and op(s, "o1").askedAgain == Set() and stat(s, "o1", "c") == "probing" and op(s, "o1").revealSent == Set() and safety)
+      .then(probeSend("o1", "c", ALL_OPEN)).then(settled).then(answer("c", "yes", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "scheduled" and op(s, "o1").revealSent == Set("a", "c") and namesAfterAllYes and safety)
+
   // Audit OPP18 review (probe-replacement-consent.integration.test.ts, the pending case): a's probe described c and
   // waits for its answer; c stops before their turn and b replaces c. a's open probe is void: a gets a new probe
   // about the new roster before b is asked, and the names go out only after both yeses.
@@ -1936,16 +1949,17 @@ module opportunity {
       .then(tick(UNANSWERED_AFTER - PROBE_TTL, ALL_OPEN)).then(settled)
       .expect(mm(s, "a").initialInvites == Set() and not(mm(s, "a").onlyWhenAsked) and safety)
 
-  // F28. b receives two initial invitations. The second receipt is resolved after the probe expires. Each
-  // replacement asks a again before b is probed (replacementAsksAgainTest; network.ts changeRoster).
+  // F28. b receives two initial invitations. The second receipt is resolved after the probe expires. In o1 the
+  // requester a's yes carries over to c (requesterYesCarriesOverTest); in o2 the replacement asks a again before
+  // b is probed (replacementAsksAgainTest; network.ts changeRoster).
   action confirmedInvitationsFirstItem =
     init.then(submit("o1")).then(settled).then(judgeRecord("o1", "approve", true, ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
       .then(answer("a", "yes", ALL_OPEN)).then(settled).then(probeSend("o1", "b", ALL_OPEN)).then(settled)
       .then(queueDecide("probe", "o1", "b", "delivered")).then(settled)
       .then(tick(PROBE_TTL - 1, ALL_OPEN)).then(settled).expect(unansweredInvitations(s, "b") == Set())
       .then(tick(1, ALL_OPEN)).then(settled)
-      .expect(unansweredInvitations(s, "b") == Set("o1") and not(mm(s, "b").onlyWhenAsked) and stat(s, "o1", "a") == "probing")
-      .then(probeSend("o1", "a", ALL_OPEN)).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .expect(unansweredInvitations(s, "b") == Set("o1") and not(mm(s, "b").onlyWhenAsked) and stat(s, "o1", "a") == "available"
+              and op(s, "o1").told.contains("a") and op(s, "o1").askedAgain == Set() and stat(s, "o1", "c") == "probing")
       .then(probeSend("o1", "c", ALL_OPEN)).then(settled).then(queueDecide("probe", "o1", "c", "delivered")).then(settled)
       .then(answer("c", "no", ALL_OPEN)).then(settled).then(answer("a", "ack", ALL_OPEN)).then(settled)
   run confirmedInvitationsExpireTest =

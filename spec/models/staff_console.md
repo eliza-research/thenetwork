@@ -314,8 +314,9 @@ module staff_console {
   // A console staff step (staffSteps.ts handler, staffStepRoutes): real mode only, the role check of
   // spec/staffPermissions.md staffStepAdmitted (`need` is staffStepRoles of the step), a configured service (with
   // none it answers 503 read_only and writes no row), then the "requested" row of a write before the forward. The
-  // forward names the signed-in person in X-Network-Staff-Id; a step without a named person never reaches the
-  // service (staffStepActorAccepted refuses a shared token when the console token is set). The answer and the
+  // forward names the signed-in person in X-Network-Staff-Id; a console step always carries a named person. The
+  // service refuses a shared token on a step that needs a person when the console token is set (staffStepActorAccepted
+  // and staffStepNeedsPerson); the review desk steps take a shared token recorded as itself. The answer and the
   // timeout are consoleAnswer and consoleTimeout, as for the other console actions.
   action staffStep(st: str, app: str, need: Set[str], named: bool, serviceUp: bool, auditUp: bool): bool = all {
     s.rel.phase != "sent",

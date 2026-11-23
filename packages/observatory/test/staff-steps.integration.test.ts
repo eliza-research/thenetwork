@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import { serveHttp } from "../../core/src/runtime/http.ts";
@@ -138,9 +139,29 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
       expect(answer.status).toBe(403);
       expect(await answer.json()).toMatchObject({ ok: false, code: "named_reviewer_required" });
     }
-    const decisions: Array<[string, object]> = [
+    const decide = (path: string, payload: object | null, token: string, staff?: string) => network.fetch(new Request(`http://127.0.0.1${path}?app=peon`, {
+      method: payload ? "POST" : "GET", headers: { authorization: `Bearer ${token}`, ...(payload ? { "content-type": "application/json" } : {}), ...(staff ? { "x-network-staff-id": staff } : {}) },
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
+    }));
+    const tokenOf = (token: string) => `token:admin#${createHash("sha256").update(token).digest("hex").slice(0, 8)}`;
+    const reviewDesk: Array<[string, object | null]> = [
       ["/review/opp-never-queued", { decision: "approve", revision: 0 }],
       ["/review/opp-never-queued/stop", { revision: 0 }],
+      ["/review/judged", null],
+    ];
+    for (const [path, payload] of reviewDesk) {
+      for (const [token, staff] of [[rawToken, undefined], [rawToken, "mallory@example.org"], [consoleToken, undefined], [consoleToken, "ops.lead@example.org"]] as const) {
+        const answer = await decide(path, payload, token, staff);
+        const body = await answer.json();
+        expect([path, staff ?? null, answer.status === 401 || answer.status === 403 ? body.code ?? body.error : "admitted"]).toEqual([path, staff ?? null, "admitted"]);
+      }
+    }
+    expect((await sql`select distinct actor from network.staff_audit where target_id = 'opp-never-queued' order by actor`).map((row: any) => row.actor as string))
+      .toEqual(["ops.lead@example.org", tokenOf(consoleToken), tokenOf(rawToken)].sort());
+    expect((await sql`select distinct actor from network.staff_audit where action = 'read_review_judged' order by actor`).map((row: any) => row.actor as string).filter((actor: string) => !people.includes(actor)))
+      .toEqual(["ops.lead@example.org", tokenOf(consoleToken), tokenOf(rawToken)].sort());
+    expect((await sql`select count(*)::int as n from network.staff_audit where actor = 'mallory@example.org'`)[0]).toEqual({ n: 0 });
+    const decisions: Array<[string, object]> = [
       ["/safety/hold", { memberId: "m-1", note: "report checked" }],
       ["/safety/ban", { memberId: "m-1", by: "person", note: "report checked" }],
       ["/safety/dismiss", { reportId: "r-1", note: "report checked" }],
@@ -150,9 +171,6 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
       ["/safety/older-than-stated", { memberId: "m-1" }],
       ["/teen-intros", { on: false }],
     ];
-    const decide = (path: string, payload: object, token: string, staff?: string) => network.fetch(new Request(`http://127.0.0.1${path}?app=peon`, {
-      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(staff ? { "x-network-staff-id": staff } : {}) }, body: JSON.stringify(payload),
-    }));
     for (const [path, payload] of decisions) {
       for (const answer of [await decide(path, payload, rawToken), await decide(path, payload, rawToken, "mallory@example.org"), await decide(path, payload, consoleToken)]) {
         expect([path, answer.status, (await answer.json()).code]).toEqual([path, 403, "named_reviewer_required"]);
@@ -163,8 +181,10 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
     const relay = await network.fetch(new Request("http://127.0.0.1/staff/relay/held?app=peon", { headers: { authorization: `Bearer ${rawToken}` } }));
     expect(relay.status).toBe(403);
     expect((await direct(consoleToken, "ops.lead@example.org")).status).toBe(409);
-    const finalActors = (await sql`select distinct actor from network.staff_audit`).map((row: any) => row.actor as string);
-    expect(finalActors.filter(actor => !people.includes(actor))).toEqual(["ops.lead@example.org"]);
+    const finalActors = (await sql`select distinct actor from network.staff_audit order by actor`).map((row: any) => row.actor as string);
+    expect(finalActors.filter(actor => !people.includes(actor))).toEqual(["ops.lead@example.org", tokenOf(consoleToken), tokenOf(rawToken)].sort());
+    expect((await sql`select distinct actor from network.staff_audit where target_id <> 'opp-never-queued' and action <> 'read_review_judged' order by actor`)
+      .map((row: any) => row.actor as string).filter((actor: string) => !people.includes(actor))).toEqual(["ops.lead@example.org"]);
 
     const lonelyAudit: AuditEntry[] = [];
     const lonely = await createServer({ hostname: "127.0.0.1", port: 0, mode: "real", realOnly: true, platformEnv: "dev",

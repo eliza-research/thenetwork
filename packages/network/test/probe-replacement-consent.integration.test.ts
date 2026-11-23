@@ -208,3 +208,33 @@ test("a group plan backfill skips an alternate who would change the words that t
   expect(probesTo(w, "e", mark)).toEqual([]);
   expect(probesTo(w, "f", mark)[0]!.body).toContain("into climbing");
 });
+
+test("a requester who said yes keeps that yes when the candidate is replaced, and the alternate is asked next", async () => {
+  const w = new Mini(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
+  await w.onboard("a", "b", "c");
+  await w.say("a", "Can you find me a regular climbing partner?");
+  const opp = [...w.net.opps.values()].find(o => o.requester === "a")!;
+  expect(opp).toBeDefined();
+  const [candidate] = opp.participants.filter(p => p !== "a");
+  const alternate = candidate === "b" ? "c" : "b";
+  expect(opp.alternates).toContain(alternate);
+  const aboutOpp = (id: string, from: number) => w.to(id, from).filter(s => (s.meta.proposalId ?? (s.meta.probe as { key?: string } | undefined)?.key) === opp.id);
+  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+  await w.say("a", "yes, a works");
+  expect(opp.status.get("a")).toBe("available");
+  expect(await w.runUntil(() => w.probed(candidate!))).toBe(true);
+  const mark = w.mark();
+  await w.say(candidate!, "no");
+
+  expect(w.log("probe_replaced").at(-1)?.detail).toMatchObject({ oppId: opp.id, out: candidate, in: alternate, askedAgain: [] });
+  expect(opp.status.get("a")).toBe("available");
+  expect(opp.askedAgain ?? []).toEqual([]);
+  expect(await w.runUntil(() => w.probed(alternate))).toBe(true);
+  expect(w.probed("a")).toBe(false);
+  expect(aboutOpp("a", mark)).toEqual([]);
+  expect(w.meetings).toEqual([]);
+  expect(w.to(alternate, mark).some(s => /Ana|Ben|Cleo/.test(s.body))).toBe(false);
+  await w.say(alternate, "yes");
+  expect(w.meetings).toMatchObject([{ proposalId: opp.id, participants: expect.arrayContaining(["a", alternate]) }]);
+  expect(aboutOpp("a", mark).some(s => /Ben|Cleo/.test(s.body) && !s.body.includes(candidate === "b" ? "Ben" : "Cleo"))).toBe(true);
+});

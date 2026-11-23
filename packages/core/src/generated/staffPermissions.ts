@@ -15,7 +15,7 @@ export interface RouteCheck { phase: AdmissionPhase; decision: Admission }
 export type MemberAccess = "AnyMember" | "OpenReviewMember" | "MemberRefused";
 /** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
 export type StaffStep = "ReadPostings" | "SavePosting" | "ClosePosting" | "VerifyEmployer" | "ReadHomeHelp" | "DecideHomeHelp" | "ReadMemberInvitations" | "DecideMemberInvitation" | "SeedInvitations" | "VerifyMember" | "InviteMember" | "ReadAgentSignals" | "DecideAgentSignal" | "OpenPrivacyRequest" | "ConfirmPrivacyRequest" | "ReplayPrivacy" | "ReadHeldRelay" | "DecideHeldRelay" | "ResolveInboundTurn" | "ReadTurnWatch" | "DecideReviewItem" | "DecideSafetyCase" | "ReadJudgedReviews" | "StopApprovedReview";
-/** Story: Take a gate or safety step in the console as myself / The staff API takes a console step only from a named person (spec/staffPermissions.md) */
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
 export type StepActor = "NamedReviewer" | "SharedToken";
 
 /** One variant per transition in the spec. */
@@ -196,38 +196,58 @@ export function lawEmployerVerificationOnlyOnPeon(appName: string, appRoles: str
   return !staffStepAdmitted("VerifyEmployer", appName, appRoles, globalRoles) || appName === "peon";
 }
 
-/** Story: Take a gate or safety step in the console as myself / The staff API takes a console step only from a named person (spec/staffPermissions.md) */
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
 //@ pure
-export function staffStepActorAccepted(consoleConfigured: boolean, actor: StepActor): boolean {
-  return actor === "NamedReviewer" || !consoleConfigured;
+export function staffStepNeedsPerson(staffStep: StaffStep): boolean {
+  return staffStep === "DecideReviewItem" ? false : staffStep === "StopApprovedReview" ? false : staffStep === "ReadJudgedReviews" ? false : true;
 }
 
-/** Story: Take a gate or safety step in the console as myself / The staff API takes a console step only from a named person (spec/staffPermissions.md) */
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
 //@ pure
-export function lawConsoleServiceRefusesSharedToken(consoleConfigured: boolean): boolean {
-  //@ ensures \result === true
-  return !consoleConfigured || !staffStepActorAccepted(consoleConfigured, "SharedToken");
+export function staffStepActorAccepted(consoleConfigured: boolean, staffStep: StaffStep, actor: StepActor): boolean {
+  return actor === "NamedReviewer" || !consoleConfigured || !staffStepNeedsPerson(staffStep);
 }
 
-/** Story: Take a gate or safety step in the console as myself / The staff API takes a console step only from a named person (spec/staffPermissions.md) */
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
 //@ pure
-export function lawNamedReviewerAlwaysAccepted(consoleConfigured: boolean): boolean {
+export function lawConsoleServiceRefusesSharedToken(consoleConfigured: boolean, staffStep: StaffStep): boolean {
   //@ ensures \result === true
-  return staffStepActorAccepted(consoleConfigured, "NamedReviewer");
+  return !(consoleConfigured && staffStepNeedsPerson(staffStep)) || !staffStepActorAccepted(consoleConfigured, staffStep, "SharedToken");
 }
 
-/** Story: Take a gate or safety step in the console as myself / The staff API takes a console step only from a named person (spec/staffPermissions.md) */
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
 //@ pure
-export function lawConsoleTokenOnlyTightens(actor: StepActor): boolean {
+export function lawOnlyReviewDeskStepsTakeSharedToken(staffStep: StaffStep): boolean {
   //@ ensures \result === true
-  return !staffStepActorAccepted(true, actor) || staffStepActorAccepted(false, actor);
+  return !staffStepActorAccepted(true, staffStep, "SharedToken") || (staffStep === "DecideReviewItem" || staffStep === "StopApprovedReview" || staffStep === "ReadJudgedReviews");
 }
 
-/** Story: Take a gate or safety step in the console as myself / The staff API takes a console step only from a named person (spec/staffPermissions.md) */
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
 //@ pure
-export function lawConsoleTokenDecidesOnlyForSharedToken(consoleConfigured: boolean, actor: StepActor): boolean {
+export function lawSafetyCaseNeedsPerson(consoleConfigured: boolean): boolean {
   //@ ensures \result === true
-  return !(staffStepActorAccepted(consoleConfigured, actor) !== staffStepActorAccepted(!consoleConfigured, actor)) || actor === "SharedToken";
+  return !consoleConfigured || !staffStepActorAccepted(consoleConfigured, "DecideSafetyCase", "SharedToken");
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawNamedReviewerAlwaysAccepted(consoleConfigured: boolean, staffStep: StaffStep): boolean {
+  //@ ensures \result === true
+  return staffStepActorAccepted(consoleConfigured, staffStep, "NamedReviewer");
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawConsoleTokenOnlyTightens(staffStep: StaffStep, actor: StepActor): boolean {
+  //@ ensures \result === true
+  return !staffStepActorAccepted(true, staffStep, actor) || staffStepActorAccepted(false, staffStep, actor);
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawConsoleTokenDecidesOnlyForSharedToken(consoleConfigured: boolean, staffStep: StaffStep, actor: StepActor): boolean {
+  //@ ensures \result === true
+  return !(staffStepActorAccepted(consoleConfigured, staffStep, actor) !== staffStepActorAccepted(!consoleConfigured, staffStep, actor)) || actor === "SharedToken";
 }
 
 /** Do the rules allow this event in this state? */

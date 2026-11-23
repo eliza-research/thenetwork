@@ -4193,7 +4193,7 @@ export class NetworkService implements RuntimeHost {
       if (!("user" in auth)) return json({ ok: false, error: auth.error }, auth.status);
       const { user, actor } = this.reviewerOfRecord(req, auth.user);
       const consoleStep = serviceStaffStep(req.method, path);
-      if (consoleStep && !staffStepActorAccepted(this.consoleToken !== undefined, actor)) {
+      if (consoleStep && !staffStepActorAccepted(this.consoleToken !== undefined, consoleStep, actor)) {
         return json({ ok: false, code: "named_reviewer_required", error: `${consoleStep} needs the console token with the signed-in person in X-Network-Staff-Id` }, 403);
       }
       if (consoleStep && !staffStepAdmitted(consoleStep, rt.app.id, [...rolesFor(user, rt.app.id, "real")], globalRolesFor(user))) {
