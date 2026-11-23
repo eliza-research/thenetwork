@@ -13,6 +13,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import { slopOnboarding } from "../service/packs.ts";
 import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
@@ -133,6 +134,140 @@ test("a sports score or height leaves a verified adult's age intact across signe
   const birthday = turn("sports-birthday-age", phone, "I just turned 12 and I am undefeated.", "friends");
   expect((await post(birthday)).status).toBe(200);
   expect(await service.accounts.lowestAge(phone, person)).toBe(13);
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("a signed quoted youth cue does not restrict the adult sender", async () => {
+  const app = APPS.friends;
+  const phone = "+12125550179";
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Age fixture signup failed: ${joined.error}`);
+  const rt = service.runtimeFor(app.id)!;
+  const ageState = async () => {
+    const member = (await rt.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+    return { floor: await service.accounts.lowestAge(phone, person), minor: member?.minor, signal: member?.minorSignal };
+  };
+  for (const [i, text] of [
+    "She said “I’m underage.”",
+    'He said "She said ‘I’m in seventh grade.’"',
+    "I overheard a conversation: she is 15.",
+    'Can we adapt what she said: "after school tomorrow"?',
+    "She said 'I’m underage.'",
+    'I heard her say, "I’m underage."',
+    'Can you check the dialogue: "I’m underage."',
+    'The character whispered, "I’m underage."',
+    'The copy reads, "After school tomorrow."',
+    'I told her "Mara said ‘I’m underage.’"',
+    'I said “I’m 17.”',
+    'Yesterday she told me “I’m underage.”',
+    'Yesterday I told her she said “I’m underage.”',
+    'Yesterday I read a draft: “I’m underage.”',
+  ].entries()) {
+    clock.advance(MINUTE);
+    expect((await post(turn(`quoted-youth-${i}`, phone, text, app.id))).status).toBe(200);
+    expect(await ageState(), text).toEqual({ floor: 29, minor: false, signal: false });
+  }
+  clock.advance(MINUTE);
+  expect((await post(turn("own-quoted-youth-cue", phone, 'Yesterday I told her “I’m underage.”', app.id))).status).toBe(200);
+  expect(await ageState()).toEqual({ floor: 29, minor: true, signal: true });
+  clock.advance(MINUTE);
+  expect((await post(turn("own-youth-cue", phone, "I'm underage.", app.id))).status).toBe(200);
+  expect(await ageState()).toEqual({ floor: 17, minor: true, signal: true });
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("a signed unfinished draft does not set the adult sender's exact age", async () => {
+  const phone = "+12125550176";
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Age fixture signup failed: ${joined.error}`);
+  clock.advance(MINUTE);
+  expect((await post(turn("unclosed-quoted-draft-age", phone, 'Can you proofread this draft: "Hello. Age: 15', app.id))).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  const member = (await service.runtimeFor(app.id)!.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+  expect(member).toMatchObject({ minor: false, minorSignal: false, age: 29 });
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("fresh Slop onboarding preserves the member's age and matching tags across a quoted age", () => {
+  const now = clock.now();
+  const fresh = slopOnboarding.read(undefined, "I'm a woman looking for men.", [], { now, age: 29 });
+  expect(fresh.state).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
+  expect(fresh.tags.some(tag => tag.tag.startsWith("romance:"))).toBe(true);
+
+  for (const text of [
+    'She said "Hello. Age: 12."',
+    'Can you proofread this draft: "Hello. Age: 15',
+    'The character whispered, "I’m in 7th grade."',
+    'Can you check the dialogue: "I’m underage."',
+    'One example: "I’m in middle school.',
+    'I told her "Mara said ‘I’m underage.’"',
+    'I said “I’m 17.”',
+    'Yesterday she told me “I’m underage.”',
+    'Yesterday I told her “I’m 17.”',
+    'Yesterday I read a draft: “I’m underage.”',
+    'She said "For a meme: ‘I’m underage.’"',
+    'Translate this: “I’m underage.”',
+    'Caption for the photo: "Hello. Age: 15',
+    '“I’m in seventh grade.”',
+    "He said 'my parents' place is too far. I'm 12 years old.'",
+    'He said ‘my parents’ place is too far. I’m 12 years old.’',
+    "She said 'cause I'm underage'",
+  ]) {
+    const quoted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
+    expect(quoted.state, text).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
+    expect(quoted.tags, text).toEqual(fresh.tags);
+  }
+
+  for (const text of [
+    'Yesterday, I told her “I’m underage.”',
+    'I’ve literally said “I’m underage.”',
+    'Yesterday I told her “I’m in 7th grade.”',
+    "I replied late 'cause I'm underage.",
+    'I replied late ’cause I’m underage.',
+    'I replied late, ’cause I’m underage.',
+    "She said 'we are friends' and I'm underage.",
+  ]) {
+    const restricted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
+    expect(restricted.state, text).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
+    expect(restricted.tags).toEqual([]);
+  }
+
+  const own = slopOnboarding.read(fresh.state, "I'm in 7th grade.", [], { now, age: 29 });
+  expect(own.state).toMatchObject({ age: { value: 12 }, minor: true, declined: false });
+  expect(own.tags).toEqual([]);
+}, 60_000);
+
+test.each([
+  ["third-party nested quote", "+17185550182", 'She said "For a meme: ‘I’m underage.’"', 29, false],
+  ["translation of quoted dialogue", "+17185550183", 'Translate this: “I’m underage.”', 29, false],
+  ["unfinished caption with an exact age", "+17185550184", 'Caption for the photo: "Hello. Age: 15', 29, false],
+  ["a possessive in reported speech", "+17185550185", "He said 'my parents' place is too far. I'm 12 years old.'", 29, false],
+  ["a direct disclosure after an elision", "+17185550186", "I replied late 'cause I'm underage.", 17, true],
+  ["a direct disclosure after a closing quote", "+17185550187", "She said 'we are friends' and I'm underage.", 17, true],
+  ["reported speech beginning with an elision", "+17185550188", "She said 'cause I'm underage'", 29, false],
+  ["a direct disclosure after a comma and elision", "+17185550189", "I replied late, ’cause I’m underage.", 17, true],
+])("a signed review attributes age evidence for %s", async (scenario, phone, text, floor, minor) => {
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(joined.error);
+  clock.advance(MINUTE);
+  expect((await post(turn(scenario, phone, text, app.id))).status).toBe(200);
+  const stored = (await service.runtimeFor(app.id)!.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+  const state = { floor: await service.accounts.lowestAge(phone, person), minor: stored?.minor, signal: stored?.minorSignal };
+  expect(state, text).toEqual({ floor, minor, signal: minor });
 }, 60_000);
 
 // spec/travelPresence.md, "Tell the Network my travel dates"

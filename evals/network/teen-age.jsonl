@@ -330,3 +330,42 @@
 {"text":"I'm turning 18 in two years","teen":false}
 {"text":"I turn 18 in two years","teen":false}
 {"text":"I'm 21 years old. My brother is 18 this Friday.","teen":false,"age":21}
+{"text":"He told me \"I'm underage\"","teen":false}
+{"text":"She said \"I'm in 7th grade\"","teen":false}
+{"text":"cant go 'cause my mom won't let me","teen":true}
+{"text":"I told her \"I'm underage\"","teen":true}
+{"text":"ugh \"so tired. i have a math test tomorrow","teen":true}
+{"text":"Can we adapt what she said: \"after school tomorrow\"?","teen":false}
+{"text":"He said \"She said ‘I’m underage.’\"","teen":false}
+{"text":"She said “I’m in middle school.”","teen":false}
+{"text":"I'm underage.","teen":true,"age":17}
+{"text":"She said 'I'm underage.'","teen":false}
+{"text":"I heard her say, \"I’m underage.\"","teen":false}
+{"text":"She said \"I am a minor","teen":false}
+{"text":"Can you check the dialogue: \"I’m underage.\"","teen":false}
+{"text":"Can you proofread this draft: \"Hello. Age: 15","teen":false}
+{"text":"One example: \"I’m in middle school.","teen":false}
+{"text":"I told her \"Mara said ‘I’m underage.’\"","teen":false}
+{"text":"I said “I’m 17.”","teen":false}
+{"text":"I just texted her “I’m underage.”","teen":true}
+{"text":"I’m quoting myself: “I’m underage.”","teen":true}
+{"text":"I told her \"I said ‘I’m underage.’\"","teen":true}
+{"text":"'cuz i'm underage","teen":true}
+{"text":"Yesterday I told her “I’m underage.”","teen":true}
+{"text":"Yesterday, I told her “I’m underage.”","teen":true}
+{"text":"Earlier I told her “I’m underage.”","teen":true}
+{"text":"Yesterday I told her “I’m underage","teen":true}
+{"text":"Yesterday she told me “I’m underage.”","teen":false}
+{"text":"Yesterday I told her she said “I’m underage.”","teen":false}
+{"text":"Yesterday I told her “I’m 17.”","teen":false}
+{"text":"Yesterday I told her “Mara said ‘I’m underage.’”","teen":false}
+{"text":"Yesterday I read a draft: “I’m underage.”","teen":false}
+{"text":"ugh \"so tired. I'm in high school","teen":true}
+{"text":"I love \"the office. i'm 15","teen":false}
+{"text":"ive said \"i'm underage\"","teen":true}
+{"text":"i literally said \"i have a math test tomorrow\"","teen":true}
+{"text":"i'd asked \"can i go to prom\"","teen":true}
+{"text":"me and my friend said \"i have homework\"","teen":false}
+{"text":"`i have homework` lol","teen":false}
+{"text":"She said \"For a meme: ‘I’m underage.’\"","teen":false}
+{"text":"Translate this: “I’m underage.”","teen":false}

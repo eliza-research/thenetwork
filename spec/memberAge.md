@@ -65,6 +65,33 @@ pure def lawDeclineKeepsStatedAge(age: int, appMinimum: int): bool =
   recordedChatAge(age, appMinimum, true) == age
 ```
 
+### Quoted age evidence does not change the sender
+
+Use the speaker's own unquoted words for age and youth cues. Preserve
+quote scope across sentence punctuation and check the cue itself when
+surrounding words extend outside the quote. Quoted school, underage, and
+numeric age evidence from another speaker cannot restrict the sender or
+change their age. A direct cue outside the quote still counts. A sender
+can repeat their own youth disclosure. A stray opening quote in casual
+text and an apostrophe in a contraction do not hide a youth cue. A quote
+introduced as reported speech remains attributable even without a
+closing mark. A separate report about another person follows its own
+reporting rules.
+
+```quint
+pure def ownAgeEvidenceAllowed(quoted: bool): bool =
+  not(quoted)
+
+pure def lawQuotedWordsDoNotSetSenderAge(quoted: bool): bool =
+  quoted implies not(ownAgeEvidenceAllowed(quoted))
+
+pure def ownYouthCueAllowed(quoted: bool, ownAttribution: bool, unfinishedCasual: bool): bool =
+  not(quoted) or ownAttribution or unfinishedCasual
+
+pure def lawAnotherSpeakersYouthCueCannotRestrictSender(quoted: bool): bool =
+  quoted implies not(ownYouthCueAllowed(quoted, false, false))
+```
+
 ### Project a committed age using its original owner
 
 Use the person identified by the write transaction for cross-app cleanup. For phone-scoped signup cleanup, read the current stored floor and check ownership again under the phone age guard. Skip this cleanup when the phone now belongs to another person. A legacy member's observation applies to an unbound number. Moving a number carries its floor to the new binding. Projection never writes either age.
