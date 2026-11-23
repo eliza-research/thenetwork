@@ -54,5 +54,8 @@
 {"text":"sat sun both","answer":"unclear","keys":[]}
 {"text":"the 2nd and 3rd both work","answer":"unclear","keys":[]}
 {"text":"Both Saturday, not Thursday.","answer":"unclear","keys":[]}
+{"text":"Yes both Saturday, not Thursday.","answer":"unclear","keys":[]}
 {"text":"Either Saturday works, but not both.","answer":"yes","keys":["b"]}
 {"text":"Saturday works and we both like coffee.","answer":"yes","keys":["b"]}
+{"text":"Saturday works. I saw the sun both days.","answer":"yes","keys":["b"]}
+{"text":"Sunday works. We sat both times.","answer":"yes","keys":["c"]}
