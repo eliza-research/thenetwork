@@ -398,6 +398,7 @@ test.each([
   { text: "Send him my number. Hold on, let me ask him first.", shares: false },
   { text: "Send him my number. Hold on, send it.", shares: true },
   { text: "Send him my number. Hold on, SEND IT!", shares: true },
+  { text: "Send him my number. Hold on, send it, no rush.", shares: true },
   { text: "Send him my number. Hold on, please send him my number now.", shares: true },
   { text: "Send him my number. No worries.", shares: true },
   { text: "Send him my number. No rush at all.", shares: true },

@@ -572,6 +572,7 @@ test("a signed photo request respects the intended item and separately preserves
     "Send him my photo. Scratch that, I'll show him in person.",
     "Send him my photo. Scratch that, I'll show it to him in person.",
     "Send him my photo. Hold on, send him my number.",
+    "Send him my photo. Hold on, send my photo to her.",
     "Send him my photo. Wait, send it, she said.",
     "Send him my photo. 🚫📸 I'll show him myself.",
     "Send him my photo, Ana said.",
@@ -606,7 +607,7 @@ test("a signed photo request respects the intended item and separately preserves
   clock.advance(MINUTE);
   expect((await post(TURN_PATH, { ...turn(recipient, "scoped-photo-recipient-ack", "I read the note. Thanks."), app: "slop" })).status).toBe(200);
   const beforeShare = posts;
-  const text = "Don't send him my number. I am unsure what time it is. Send him my photo. Hold on, please send it now.";
+  const text = "Don't send him my number. I am unsure what time it is. Please send him my photo. Hold on, send my photo.";
   const messageId = "scoped-photo-share";
   clock.advance(MINUTE / 6);
   const opened = await post(TURN_PATH, { ...turn(sender, messageId, text), app: "slop" });

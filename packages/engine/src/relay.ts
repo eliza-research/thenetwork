@@ -548,8 +548,8 @@ const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
   "iu",
 );
 const LATE_PRIVATE_STOP_LEAD = new RegExp(String.raw`^[,\s–—]*${RELAY_MARKED_STOP}[,;:\s–—]+`, "u");
-const RENEW_PRIVATE_PRONOUN = /\bsend\s+it\b/i;
-const RENEW_PRIVATE_END = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you))*\s*$/i;
+const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
+const RENEW_PRIVATE_END = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -610,7 +610,11 @@ function retractsPrivateSentence(sentence: string, source: string, request: RegE
   const rest = sentence.slice(lead[0].length);
   const repeated = [...rest.matchAll(CONTACT_REQ), ...rest.matchAll(PHOTO_REQ)]
     .find(candidate => candidate[0].toLowerCase() === request[0].toLowerCase());
-  const renewal = repeated ?? RENEW_PRIVATE_PRONOUN.exec(rest);
+  const requestedItem = PRIVATE_RELAY_ITEM.exec(request[0].toLowerCase())?.[0];
+  const renewal = repeated ?? [...rest.matchAll(RENEW_PRIVATE_ITEM)].find(candidate => {
+    const item = candidate[1]!.toLowerCase();
+    return item === "it" || item === requestedItem;
+  });
   return !renewal || !DIRECT_RELAY_LEAD.test(rest.slice(0, renewal.index!))
     || !RENEW_PRIVATE_END.test(rest.slice(renewal.index! + renewal[0].length));
 }
