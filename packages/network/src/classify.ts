@@ -760,10 +760,13 @@ const DAY_NAMES = [
   ["Sunday", "sun"], ["Monday", "mon"], ["Tuesday", "tues?"], ["Wednesday", "weds?"],
   ["Thursday", "thu|thur|thurs"], ["Friday", "fri"], ["Saturday", "sat"],
 ] as const;
-const dayWords = (trailingChoice = ""): [RegExp, string][] => DAY_NAMES.map(([label, abbreviation]) => [
-  new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|${trailingChoice}works?\b|is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`, "g"),
-  label,
-]);
+function dayWords(trailingChoice = ""): [RegExp, string][] {
+  const context = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|${trailingChoice}works?\b|`
+    + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
+  return DAY_NAMES.map(([label, abbreviation]) => [
+    new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${context}`, "g"), label,
+  ]);
+}
 const DAY_WORDS = dayWords();
 const PROBE_DAY_WORDS = dayWords(String.raw`both\b|`);
 const NEITHER = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times|other times?)\b/;
@@ -824,8 +827,8 @@ function partOf(minute: number): TimeMention["part"] {
   return minute >= 5 * 60 && minute < 12 * 60 ? "morning" : minute >= 12 * 60 && minute < 17 * 60 ? "afternoon" : "evening";
 }
 
-function timeMentions(text: string): TimeMention[] {
-  const days = PROBE_DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
+function timeMentions(text: string, dayPatterns: readonly [RegExp, string][]): TimeMention[] {
+  const days = dayPatterns.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
   const times: TimeMention[] = [...text.matchAll(CLOCK_MENTION)].map(m => ({ at: m.index!, end: m.index! + m[0].length, minute: clockMinute(m) }));
   for (const m of text.matchAll(DAYPART_MENTION)) {
     const part = /^morning/.test(m[0]) ? "morning" : /^(?:afternoon|lunch)/.test(m[0]) ? "afternoon" : "evening";
@@ -923,7 +926,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const clock = [...o.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
     return { key: o.key, day: o.label.split(" ")[0], minute: clock ? clockMinute(clock) : undefined };
   });
-  for (const m of timeMentions(t)) {
+  const dayPatterns = explicitTimesOnly ? DAY_WORDS : PROBE_DAY_WORDS;
+  for (const m of timeMentions(t, dayPatterns)) {
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (!m.part || o.minute !== undefined && partOf(o.minute) === m.part)).map(o => o.key);
     const exclusion = NAMED_EXCLUSION.test(t.slice(0, m.at));
@@ -948,7 +952,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
-  for (const [re] of PROBE_DAY_WORDS) residue = residue.replace(re, " ");
+  for (const [re] of dayPatterns) residue = residue.replace(re, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
   if (!residue && !/\?/.test(t)) for (const k of pos) strong.add(k);
   const picked = all.filter(k => pos.has(k) && (!explicitTimesOnly || !neg.has(k)));
