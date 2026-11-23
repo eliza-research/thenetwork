@@ -181,19 +181,44 @@ test("fresh Slop onboarding preserves the member's age and matching tags across 
     'Yesterday she told me “I’m underage.”',
     'Yesterday I told her “I’m 17.”',
     'Yesterday I read a draft: “I’m underage.”',
+    'She said "For a meme: ‘I’m underage.’"',
+    'Translate this: “I’m underage.”',
+    'Caption for the photo: "Hello. Age: 15',
+    '“I’m in seventh grade.”',
   ]) {
     const quoted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
     expect(quoted.state, text).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
     expect(quoted.tags, text).toEqual(fresh.tags);
   }
 
-  const repeated = slopOnboarding.read(fresh.state, 'Yesterday, I told her “I’m underage.”', [], { now, age: 29 });
-  expect(repeated.state).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
-  expect(repeated.tags).toEqual([]);
+  for (const text of ['Yesterday, I told her “I’m underage.”', 'I’ve literally said “I’m underage.”']) {
+    const repeated = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
+    expect(repeated.state).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
+    expect(repeated.tags).toEqual([]);
+  }
 
   const own = slopOnboarding.read(fresh.state, "I'm in 7th grade.", [], { now, age: 29 });
   expect(own.state).toMatchObject({ age: { value: 12 }, minor: true, declined: false });
   expect(own.tags).toEqual([]);
+}, 60_000);
+
+test.each([
+  ["third-party nested quote", "+17185550182", 'She said "For a meme: ‘I’m underage.’"'],
+  ["translation of quoted dialogue", "+17185550183", 'Translate this: “I’m underage.”'],
+  ["unfinished caption with an exact age", "+17185550184", 'Caption for the photo: "Hello. Age: 15'],
+])("a signed review preserves adult matching and age for %s", async (scenario, phone, text) => {
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(joined.error);
+  clock.advance(MINUTE);
+  expect((await post(turn(scenario, phone, text, app.id))).status).toBe(200);
+  const stored = (await service.runtimeFor(app.id)!.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+  const state = { floor: await service.accounts.lowestAge(phone, person), minor: stored?.minor, signal: stored?.minorSignal };
+  expect(state, text).toEqual({ floor: 29, minor: false, signal: false });
 }, 60_000);
 
 // spec/travelPresence.md, "Tell the Network my travel dates"
