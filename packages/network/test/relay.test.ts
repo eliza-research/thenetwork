@@ -234,6 +234,63 @@ async function startNumberSwap(id: string, who: "ari" | "bo") {
 }
 
 test.each([
+  ["Please send Sam my number.", "block"],
+  ["Please send my number to Sam.", "block"],
+  ["Yes, send it to Sam.", "block"],
+  ["Yes, send it, to Sam.", "block"],
+  ["Yes, send it - to Sam.", "block"],
+  ["Yes, send it over to Sam.", "block"],
+  ["Yes, send it? To Sam.", "none"],
+  ["Yes, send it “to Sam”.", "none"],
+  ["Please send him my number. Directly to Sam.", "none"],
+  ["Please send Ari my number. To be clear, I'll be there at seven. To Sam.", "none"],
+  ["Please send Ari my number. To be clear, tell them I'll be there at seven. To Sam.", "none"],
+  ["Yes, send it to Herman.", "block"],
+  ["Yes, send it to Ari9.", "none"],
+  ["Yes, send it (to Sam).", "none"],
+  ["Yes, send it. To Sam.", "none"],
+  ["Yes, send it to Ari Smith.", "none"],
+  ["Please send my number to her and Sam.", "none"],
+  ["Please send her my number, to Sam.", "none"],
+  ["Please send my number to Sam when you can.", "block"],
+  ["Please send my number to Ari Smith.", "none"],
+  ["Please send my number to Ari Smith when you can.", "none"],
+  ["Please send my number to Ari if he asks.", "none"],
+])("a named private request keeps the selected swap pending: %s", async (text, decision) => {
+  const id = "named-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+  const response = await post(await ask("bo", id + "-reply", text));
+  expect(response.status).toBe(200);
+  expect({
+    response: await response.json(),
+    newShares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id),
+  }).toMatchObject({ response: { decision, delivered: false }, newShares: 0, pending: original });
+}, 60_000);
+
+test.each([
+  "Please send my number to Ari, thanks.",
+  "Please send my number to Ari when you can.",
+  "Yes, send it to Ari.",
+  "Yes, send it: to Ari, thanks.",
+  "Yes, send it - to Ari.",
+  "Yes, send it over to Ari.",
+  "Please send Ari my number with thanks.",
+  "Please send Ari my number. To be clear, I'll be there at seven.",
+  "Please send Ari my number. With that settled, I'll be there at seven.",
+  "Yes, send it to my match.",
+])("a complete recipient can finish the selected swap: %s", async text => {
+  const id = "named-number-match-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  expect(await (await post(await ask("bo", id + "-reply", text))).json()).toMatchObject({ decision: "pass", delivered: false });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
   "Give him my number if he asks.",
   "Send him my number. Scratch that. Send it. If he asks.",
   "Give Ari my number if Ari asks.",
@@ -395,6 +452,8 @@ test.each(["Ari said “Don't send my number.”", "Ari said ‘don't send it pl
 
 test.each([
   "Tell Ana to send him my number",
+  "Tell Ari to send my number to Sam9.",
+  "Tell Ari to send my photo to Sam9.",
   "Ask Ana to text him my number",
   "Could you tell Ana to please give him my number?",
   "Let Ana share my number with him",
