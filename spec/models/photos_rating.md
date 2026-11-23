@@ -32,6 +32,9 @@ Imported from `quint/photos_rating.qnt` at `30d950e`. See [model index](README.m
 // sweeps photo rows a crash left hidden (PH:631-636) and runs the age hook again (SV:866-876).
 // A row with deleted_at set ("hidden") is not a photo: no read sees it (PH:350-353).
 // The rater (Clef) is an oracle: it returns a score, a refusal (null) or an error.
+// The upload publication in PgPhotoStore.publish shares the person lock with verified browser signup.
+// This checkout writes the object before creating the live row. The model still represents a hidden
+// upload row for the separate crash recovery case. The publication guard and refusal are the same.
 // deleteFor ends its rows (rating, bytes, row) in one action; a crash inside it leaves hidden rows that the
 // sweep ends, the same end state.
 //
@@ -265,8 +268,8 @@ module photos_rating {
     st' = { ...st, upl: st.upl.set(u, "bytes"), objects: st.objects.union(Set(u)), last: "uploadBytes" },
   }
   /**
-   * PH:524 meta.show (PH:413-423): one transaction that locks the person row, runs mayTake again, counts the
-   * live rows and shows the row. Then rate() (PH:526). SD-052, SD-372.
+   * PgPhotoStore.publish: one transaction locks the person row, runs mayTake again, counts the
+   * live rows and publishes the row. Then rate(). SD-052, SD-372.
    */
   action uploadShow(u: int): bool = all {
     st.upl.get(u) == "bytes",
@@ -750,12 +753,12 @@ module photos_rating {
       .then(rateCheck3).then(rateDrop)
       .expect(not(st.rating) and st.rows == Set() and settled(st) and safety)
 
-  /** SD-052 fixed: the upload passes mayTake, the age drops, then show checks again and refuses; the bytes go. */
+  /** The age drops while private storage is in progress. Publication refuses and removes the bytes. */
   run sd052UploadRefusedAfterAgeDropTest =
     init
-      .then(uploadStart(1, CONSENT))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadPut(1))
       .then(ageCommit).then(ageHide).then(ageEnd).then(ageDropRatings).then(ageMembers)
-      .then(uploadCount(1)).then(uploadPut(1)).then(uploadBytes(1)).then(uploadShow(1)).then(uploadUndo(1)).then(uploadUndoRow(1))
+      .then(uploadBytes(1)).then(uploadShow(1)).then(uploadUndo(1)).then(uploadUndoRow(1))
       .expect(st.rows == Set() and st.objects == Set() and st.hidden == Set() and st.age < 18 and settled(st) and safety)
 
   /** SD-052 fixed: the same with leave; the forget comes first, so show refuses (no member). */
