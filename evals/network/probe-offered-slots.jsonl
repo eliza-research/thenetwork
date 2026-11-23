@@ -110,3 +110,10 @@
 {"text":"The first time and second aren't available. The third works.","answer":"yes","keys":["c"]}
 {"text":"11am in the morning on Saturday and 2pm in the afternoon on Sunday don't work. Saturday 10am works.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a"]}
 {"text":"11am in the morning on Saturday and 2pm in the afternoon on Sunday don't work. Thursday 11am works.","labels":["Thursday 11am","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a"]}
+{"text":"sat and sun either","answer":"yes","keys":["b","c"]}
+{"text":"sun and sat either","answer":"yes","keys":["b","c"]}
+{"text":"sat and sun either works","answer":"yes","keys":["b","c"]}
+{"text":"the 2nd and 3rd either work","answer":"yes","keys":["b","c"]}
+{"text":"the first and second either work","answer":"yes","keys":["a","b"]}
+{"text":"sat and sun either at 11am","answer":"unclear","keys":[]}
+{"text":"sat and sun either but not sunday","answer":"yes","keys":["b"]}
