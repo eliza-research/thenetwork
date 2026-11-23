@@ -218,7 +218,9 @@ const RELAY_SCHOOL_ESTIMATE = new RegExp(
 );
 const RELAY_SCHOOL_ROLE = String.raw`as\s+(?:a|an|the)\s+(?:teacher|coach|counselor|principal|nurse|tutor|librarian|aide|staff(?: member)?)\b`;
 const RELAY_SCHOOL_ROLE_BEFORE = new RegExp(String.raw`(?:^|,)\s*${RELAY_SCHOOL_ROLE}(?:\s+(?:at|for|of|in)\b[^,]*)?\s*,?\s*$`);
-const RELAY_SCHOOL_ROLE_AFTER = new RegExp(String.raw`^\s*,?\s*${RELAY_SCHOOL_ROLE}`);
+const RELAY_SCHOOL_ROLE_AFTER = new RegExp(
+  String.raw`^\s*,?\s*${RELAY_SCHOOL_ROLE}(?:\s+(?:at|for|of|in)\s+[^.!?,;:)"'\n]+)?(?=\s*(?:$|[.!?,;:)"']))`,
+);
 const RELAY_ESTIMATE_HYPOTHETICAL = /\b(?:if|unless|when|imagine|pretend(?:ing)?(?: that)?|as if|as though|feel like|heard)\s*,?\s*$/;
 
 function ownsRelayEstimate(text: string, start: number, end: number): boolean {
@@ -244,8 +246,11 @@ export function relayMinorEstimate(text: string): boolean {
   }
   for (const reading of normalized.matchAll(RELAY_SCHOOL_ESTIMATE)) {
     const start = reading.index!, end = start + reading[0].length;
-    if (!RELAY_SCHOOL_ROLE_BEFORE.test(beforeQuote(normalized, start))
-      && !RELAY_SCHOOL_ROLE_AFTER.test(normalized.slice(end)) && ownsRelayEstimate(normalized, start, end)) return true;
+    // A completed role describes the speaker. A teacher's words can instead explain the student's grade.
+    const followingRole = RELAY_SCHOOL_ROLE_AFTER.exec(normalized.slice(end));
+    const adultRole = RELAY_SCHOOL_ROLE_BEFORE.test(beforeQuote(normalized, start))
+      || (!!followingRole && !SPEECH_FRAME.test(followingRole[0]));
+    if (!adultRole && ownsRelayEstimate(normalized, start, end)) return true;
   }
   return false;
 }

@@ -674,6 +674,9 @@ test.each([
   { label: "short birthday", body: "16 next month", minor: true },
   { label: "own birthday quotation", body: "I said “I'm turning 16 next month”", minor: true },
   { label: "own grade quotation", body: "I said ‘I'm in seventh grade’", minor: true },
+  { label: "own grade quotation with teacher attribution", body: "I said ‘I'm in seventh grade, as a teacher told me.’", minor: true },
+  { label: "own grade quotation with qualified teacher role", body: "I said ‘I'm in 12th grade, as a teacher at the school.’", minor: false },
+  { label: "another speaker quotes a grade with teacher attribution", body: "She said ‘I'm in seventh grade, as a teacher told me.’", minor: false },
   { label: "unfinished casual birthday", body: "“I'm turning 16 next month", minor: true },
 ])("signed TURN and relay classify age at their own boundary: $label", async ({ label, body, minor, incomingAge }) => {
   const id = "relay-age-estimate-" + randomUUID();
