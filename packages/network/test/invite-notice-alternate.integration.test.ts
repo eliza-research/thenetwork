@@ -6,6 +6,7 @@
 import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 test("a join notice never rides a reply about an opportunity in which the invitee has not said yes", async () => {
   const w = new Mini([
@@ -31,6 +32,10 @@ test("a join notice never rides a reply about an opportunity in which the invite
   const from = w.mark();
   await w.say("a", "Anyone around who'd want to go climbing this week? I'm near Greenpoint.");
   const opp = [...w.net.opps.values()].find(o => o.participants.includes("a"))!;
+  expect(opp.stage).toBe("review");
+  const [work] = w.net.judgePackets().work.filter(x => x.packet.oppId === opp.id);
+  expect(w.net.recordJudgment(simulatedReviewJudge({ exceptions: false })(work!.packet)!)).toEqual({ ok: true });
+  expect(opp.review).toMatchObject({ decision: "approve", approver: "judge" });
   for (let i = 0; i < 4; i++) for (const id of ["a", "r"]) if (w.probed(id)) await w.say(id, "yes");
   expect(opp.participants).toEqual(["a", "r"]);
   expect(opp.alternates).toContain("theo");

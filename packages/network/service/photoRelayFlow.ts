@@ -137,6 +137,14 @@ export class PhotoRelayFlow {
   constructor(private readonly d: PhotoRelayFlowDeps) {}
 
   async turn(input: { rt: NetworkRuntime; e164: string; memberId: string; personId: string | undefined; text: string; rowId: string }): Promise<boolean> {
+    let heard = false;
+    const hear = async () => { if (!heard) { heard = true; await input.rt.unitOfWork(net => net.photoMemberHeard(input.memberId as MemberId)); } };
+    const handled = await this.handleTurn(input, hear);
+    if (handled) await hear();
+    return handled;
+  }
+
+  private async handleTurn(input: { rt: NetworkRuntime; e164: string; memberId: string; personId: string | undefined; text: string; rowId: string }, hear: () => Promise<void>): Promise<boolean> {
     const { rt, e164, memberId, personId, text, rowId } = input;
     if (!personId) return false;
     const who: Who = { rt, app: rt.app.id, personId, memberId };
@@ -172,6 +180,7 @@ export class PhotoRelayFlow {
       const choice = photoAskAnswerFor(newest, true, answer === "yes", answer === "no", false);
       if (choice === "ReceiverTakes" || choice === "ReceiverDeclines") {
         const taken = choice === "ReceiverTakes";
+        await hear();
         const done = await this.d.sql.begin(tx => this.d.relay.answer(tx, ask.offerId, personId, taken ? "yes" : "no"));
         await say(done.outcome === "taken" ? PHOTO_RELAY_TEXT.taking : done.outcome === "declined" ? PHOTO_RELAY_TEXT.declined(ask.firstName) : PHOTO_RELAY_TEXT.askGone);
         if (done.outcome === "taken") await this.screenOffer(who.app, ask.offerId);
@@ -247,7 +256,7 @@ export class PhotoRelayFlow {
     if (!spoken.draft) return { status: spoken.unavailable ? "unavailable" : scene.reading.kind === "take_back" && !spoken.asked ? "done" : "refused", text: spoken.text };
     const saved = await this.d.sql.begin(tx => this.d.relay.saveDraft(tx, { ...spoken.draft!, personId: input.personId, app: input.app, prompt: { via: "send" } }));
     const body = spoken.link && saved.link ? spoken.text.replaceAll(LINK, saved.link) : spoken.text;
-    const sent = await rt.unitOfWork(net => net.photoNotice(input.memberId as MemberId, saved.promptKey, body, "info"));
+    const sent = await rt.unitOfWork(net => net.photoNotice(input.memberId as MemberId, saved.promptKey, body, "info", undefined, spoken.link && saved.link ? saved.link : undefined));
     return sent ? { status: "texted", text: PHOTO_RELAY_TEXT.connector } : { status: "unavailable", text: PHOTO_RELAY_TEXT.unavailable };
   }
 
@@ -303,7 +312,9 @@ export class PhotoRelayFlow {
     try {
       if (rt) filed = await rt.unitOfWork(net => {
         const reported = net.photoReport(offer.recipientMemberId as MemberId, offer.senderMemberId as MemberId, offer.threadId);
-        if (textAfter) net.photoNotice(offer.recipientMemberId as MemberId, `photo-report:${offer.id}`, reported ? PHOTO_RELAY_TEXT.reported : PHOTO_RELAY_TEXT.closed, "info");
+        if (textAfter) {
+          net.photoReportAnswer(offer.recipientMemberId as MemberId, `photo-report:${offer.id}`, reported ? PHOTO_RELAY_TEXT.reported : PHOTO_RELAY_TEXT.closed);
+        }
         rt.unit.completeAction = close;
         return reported;
       });
@@ -324,7 +335,7 @@ export class PhotoRelayFlow {
     const name = await this.d.relay.firstName(app, settled.senderMemberId);
     const to = settled.recipientMemberId as MemberId;
     if (settled.phase === "ready") {
-      const sent = !!settled.viewLink && await rt.unitOfWork(net => net.photoNotice(to, `photo-ready:${settled.offerId}`, PHOTO_RELAY_TEXT.ready(name, settled.count, settled.viewLink!), "relay", settled.threadId));
+      const sent = !!settled.viewLink && await rt.unitOfWork(net => net.photoNotice(to, `photo-ready:${settled.offerId}`, PHOTO_RELAY_TEXT.ready(name, settled.count, settled.viewLink!), "relay", settled.threadId, settled.viewLink!));
       if (!sent) this.d.log(`[alert] photo relay ${app}: the view link of ${settled.offerId} was not sent`);
     } else if (settled.from === "reviewing" && (settled.phase === "rejected" || settled.phase === "check_timed_out")) {
       await rt.unitOfWork(net => net.photoNotice(to, `photo-not-ready:${settled.offerId}`, PHOTO_RELAY_TEXT.notReady(name), "relay", settled.threadId));
@@ -383,10 +394,11 @@ export class PhotoRelayFlow {
 
   private async scene(who: Who, text: string, currentThreadId: string | null): Promise<Scene> {
     const at = this.d.now();
-    const [zone, slots, threads, draft, rows] = await Promise.all([
+    const [zone, listed, threads, draft, rows] = await Promise.all([
       this.zoneOf(who.rt, who.memberId), this.d.relay.slots(who.personId, who.app), this.threads(who.rt, who.memberId),
       this.d.relay.draftOf(who.personId, who.app), this.d.photos.rows(who.personId, who.app),
     ]);
+    const slots = listed.map(s => ({ ...s, sharedWith: s.heldBy }));
     const readerDraft = draft ? this.readerDraft(draft, slots) : null;
     const reading = readPhotoMessage(text, { photos: slots, now: at, timeZone: zone, threads, currentThreadId, draft: readerDraft });
     return { at, zone, slots, threads, draft, reading, setSha: photoSetSha(rows) };
@@ -669,7 +681,7 @@ export class PhotoRelayFlow {
   private async draftIsNewest(who: Who, e164: string, rowId: string, draft: PhotoDraft): Promise<boolean> {
     const newest = await this.newestOutbound(who);
     if (draft.promptVia === "send") return !!newest && newest.id === draft.promptKey && !(await this.inboundSince(e164, rowId, newest.ts));
-    if (newest && newest.ts > draft.shownAt) return false;
+    if (newest && newest.ts >= draft.shownAt) return false;
     const [current] = await this.d.sql`select arrived_at from platform.inbound where id=${inboundRowOf(rowId)}`;
     const [previous] = await this.d.sql`select id from platform.inbound where sender_hash=${this.d.phoneKey(e164)} and id<>${inboundRowOf(rowId)}
       ${current ? this.d.sql`and arrived_at<=${current.arrived_at}` : this.d.sql``} order by arrived_at desc,id desc limit 1`;

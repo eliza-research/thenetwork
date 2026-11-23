@@ -318,7 +318,8 @@ export class MemoryPhotoStore implements PhotoStore {
       if (refused) return refused;
       const held = [...this.rows.values()].filter(x => x.personId === r.personId && x.hiddenAt === null).length;
       if (photoSlotsFull(held)) return "too_many";
-      this.rows.set(r.id, { ...r, storedAt: null, hiddenAt: null });
+      const last = Math.max(-Infinity, ...[...this.rows.values()].filter(x => x.personId === r.personId).map(x => x.createdAt));
+      this.rows.set(r.id, { ...r, createdAt: Math.max(r.createdAt, last + 1), storedAt: null, hiddenAt: null });
       return undefined;
     });
   }
@@ -379,8 +380,10 @@ export class PgPhotoStore implements PhotoStore {
       if (refused) return refused;
       const [held] = await tx<{ n: number }[]>`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
       if (photoSlotsFull(held?.n ?? 0)) return "too_many" as const;
+      const [last] = await tx<{ at: Date | null }[]>`select max(created_at) as at from platform.photos where person_id = ${r.personId}::uuid`;
+      const createdAt = Math.max(r.createdAt, last?.at ? new Date(last.at).getTime() + 1 : -Infinity);
       await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, stored_at, batch_id)
-        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)}, null, ${r.batchId})`;
+        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(createdAt)}, null, ${r.batchId})`;
       return undefined;
     });
   }

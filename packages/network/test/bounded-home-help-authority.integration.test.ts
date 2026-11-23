@@ -123,11 +123,15 @@ describe.skipIf(!pgAvailable)("canonical home-help roster authority (Postgres)",
     await accounts.recordConsent({ app, e164: phone, state: "opted_in", source: "keyword:start", at: START - 1 });
     expect(await current()).toMatchObject({ helperIds });
 
+    const [ageOfB] = await sql<{ birth_lower: number; birth_upper: number; birth_youngest: number; birth_first_exact: boolean }[]>`
+      select birth_lower,birth_upper,birth_youngest,birth_first_exact from platform.people where id=${people.get(helperB)}`;
     await sql`update network.members set age=null where id=${helperB}`;
-    await sql`update platform.people set lowest_age=null where id=${people.get(helperB)}`;
+    await sql`update platform.people set lowest_age=null,birth_lower=null,birth_upper=null,birth_youngest=null,birth_first_exact=null
+      where id=${people.get(helperB)}`;
     expect(await current()).toBeUndefined();
     await sql`update network.members set age=${members[2]!.age} where id=${helperB}`;
-    await sql`update platform.people set lowest_age=${members[2]!.age} where id=${people.get(helperB)}`;
+    await sql`update platform.people set lowest_age=${members[2]!.age},birth_lower=${ageOfB!.birth_lower},birth_upper=${ageOfB!.birth_upper},
+      birth_youngest=${ageOfB!.birth_youngest},birth_first_exact=${ageOfB!.birth_first_exact} where id=${people.get(helperB)}`;
     expect(await current()).toMatchObject({ helperIds });
 
     await sql`update network.members set prefs=${{ ...prefs, categoriesOptIn: ["social"] }}::jsonb where id=${helperB}`;

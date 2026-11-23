@@ -35,7 +35,7 @@ async function settleRestoredTexts(tx: SQL, src: SQL | undefined, at: Date): Pro
     switch (restoredText(restoredTextStatus(status), src !== undefined, row !== undefined)) {
       case "TakeSourceText":
         await tx.unsafe(`update platform.outbound t set (${SOURCE_TEXT_COLUMNS}) =
-          (select ${SOURCE_TEXT_COLUMNS} from jsonb_populate_record(null::platform.outbound, $1::jsonb)) where t.id = $2`, [row!, id]);
+          (select ${SOURCE_TEXT_COLUMNS} from jsonb_populate_record(null::platform.outbound, $1::text::jsonb)) where t.id = $2`, [row!, id]);
         textsTaken++;
         break;
       case "EndRestoredText": ended.push(id); break;
@@ -62,7 +62,7 @@ async function copyMissing(source: SQL, target: SQL, table: "consent_events" | "
   const have = new Set((await target.unsafe(`select ${key}::text as k from platform.${table}`) as { k: string }[]).map(r => r.k));
   const rows = (await source.unsafe(`select to_jsonb(t) as row from platform.${table} t order by ${key}`) as { row: Row }[])
     .map(r => r.row).filter(row => replaysSourceRow(have.has(String(row[key])))).map(adjust).filter(keep);
-  if (rows.length) await target.unsafe(`insert into platform.${table} select * from jsonb_populate_recordset(null::platform.${table}, $1::jsonb)`, [JSON.stringify(rows)]);
+  if (rows.length) await target.unsafe(`insert into platform.${table} select * from jsonb_populate_recordset(null::platform.${table}, $1::text::jsonb)`, [JSON.stringify(rows)]);
   return rows;
 }
 

@@ -88,11 +88,11 @@ test("the later close of an introduction that a pause kept tells the paused memb
     expect(command(x, "what am I looking for", "list-1").kind).toBe("reply");
     expect(command(x, "pause 1", "pause-1")).toEqual({ kind: "reply", body:
       "Paused: “find a regular climbing partner”. No new searches for it. Reply UNDO to turn it back on. An introduction already in progress continues. Reply CLOSE to close that too." });
-    const pausedAt = x.clock.now();
+    const pausedAt = x.mark();
     await x.say("b", "No, thanks.");
     await x.run(2 * HOUR);
     expect(x.net.exportState().opps.find(o => o.id === oppId)!.stage).toBe("closed");
-    expect(x.sent.filter(s => s.to === "a" && s.t >= pausedAt)).toEqual([]);
+    expect(x.sent.slice(pausedAt).filter(s => s.to === "a")).toEqual([]);
     const after = x.net.exportState().requests.find(r => r.id === request.id)!;
     expect(after).toMatchObject({ withdrawn: true, closed: true, outcome: "none" });
   }

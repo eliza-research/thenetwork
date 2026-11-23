@@ -396,7 +396,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
   // Founder decision (2026-10-11, issue #22): a woman or a man who stays unclear about who they hope to
   // meet after the seeks question was asked its two times is read as straight. The read-back says so,
   // and the member can change it. Before this, seeks stayed empty and the member was never matchable.
-  test("an unclear seeks answer after both asks defaults to straight, shown in the read-back", async () => {
+  test("an unclear seeks answer after both asks defaults to straight, shown in the read-back, and never for a member who stated an orientation", async () => {
     const clock = new SimClock(START);
     const s = svc = new NetworkService({
       url: URL_, clock, instance: "slop-seeks", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
@@ -405,14 +405,26 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     });
     await s.start();
     const JO = "+12125550163";
-    for (const body of ["slop", "Jo, 30", "I'm a woman, I'm bi. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works"]) await text(s, clock, JO, body);
+    for (const body of ["slop", "Jo, 30", "I'm a woman. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works"]) await text(s, clock, JO, body);
     const jo = (await memberId(JO))!;
     expect(jo).toEqual(expect.any(String));
     await text(s, clock, JO, "25 to 35, within 5 miles of 11237");
     const all = (await inbox(jo)).map(m => m.body);
     debug(all.join(" | "));
     expect(all.filter(b => /Who are you hoping to meet/.test(b))).toHaveLength(2);
+    expect(all.filter(b => /Which genders are you open to dating/.test(b))).toHaveLength(0);
     expect(all.some(b => /looking for men/.test(b))).toBe(true);
+
+    const KIT = "+12125550164";
+    for (const body of ["slop", "Kit, 30", "I'm a woman, I'm bi. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works", "not sure", "whatever"]) await text(s, clock, KIT, body);
+    const kit = (await memberId(KIT))!;
+    expect(kit).toEqual(expect.any(String));
+    await text(s, clock, KIT, "25 to 35, within 5 miles of 11237");
+    const bi = (await inbox(kit)).map(m => m.body);
+    debug(bi.join(" | "));
+    expect(bi.filter(b => /Who are you hoping to meet/.test(b))).toHaveLength(2);
+    expect(bi.filter(b => /Which genders are you open to dating/.test(b))).toHaveLength(2);
+    expect(bi.some(b => /looking for (men|women)/.test(b))).toBe(false);
     await s.close(); svc = undefined;
   }, T);
 

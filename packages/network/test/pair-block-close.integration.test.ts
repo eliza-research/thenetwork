@@ -25,6 +25,9 @@ async function meetAndWaitForFeedback(w: Mini, pair: [string, string]): Promise<
   expect(await w.runUntil(() => pair.every(member => w.to(member, booked).some(message =>
     message.meta.proposalId === id && message.meta.type === "reminder")), 7 * DAY)).toBe(true);
   for (const member of pair) await w.say(member, "Yes, I'll be there.");
+  const dayOf = (member: string) => w.to(member, booked).some(message => message.meta.proposalId === id && message.body.startsWith("Still good for"));
+  expect(await w.runUntil(() => pair.every(dayOf), 7 * DAY)).toBe(true);
+  for (const member of pair) await w.say(member, "Yes, still good.");
   expect(await w.runUntil(() => pair.every(member =>
     w.net.memberList().find(m => m.id === member)?.awaiting?.kind === "feedback"), 7 * DAY)).toBe(true);
   return id;
@@ -55,6 +58,9 @@ test("a check-in report closes the pair's other open item and counts toward the 
   expect(w.net.memberList().find(m => m.id === "a")?.awaiting?.kind).toBe("feedback");
 
   await w.say("a", "He never showed up.");
+  expect(w.sent.at(-1)).toMatchObject({ to: "a", body: copy.checkInSafetyAsk("Ben") });
+  expect(w.net.safetyReports()).toEqual([]);
+  await w.say("a", "REPORT");
   expect(w.net.safetyReports().filter(r => r.subjectId === "b").map(r => [r.kind, r.source, r.reporterId])).toEqual([["no_show", "check_in", "a"]]);
   expect(opp(w, second)).toMatchObject({ stage: "closed", closedFrom: "review", closedReason: "blocked" });
   expect(w.net.reviewQueue().some(o => o.oppId === second)).toBe(false);
@@ -62,6 +68,8 @@ test("a check-in report closes the pair's other open item and counts toward the 
 
   await meetAndWaitForFeedback(w, ["c", "b"]);
   await w.say("c", "He never showed up.");
+  expect(w.sent.at(-1)).toMatchObject({ to: "c", body: copy.checkInSafetyAsk("Ben") });
+  await w.say("c", "REPORT");
   expect(w.net.safetyReports().filter(r => r.subjectId === "b").map(r => r.reporterId).sort()).toEqual(["a", "c"]);
   expect(w.net.trust.level("b")).toBe("watch");
   expect(w.net.safetyCases().find(c => c.memberId === "b")?.events.map(e => [e.kind, e.points])).toEqual(expect.arrayContaining([["report_received", 0], ["report_received", 3]]));
@@ -72,6 +80,9 @@ test("peon: an answer to the check-in after a meeting that reports harm files a 
   await w.onboard("a", "b");
   const id = await meetAndWaitForFeedback(w, ["a", "b"]);
   await w.say("a", "He never showed up.");
+  expect(w.sent.at(-1)).toMatchObject({ to: "a", body: copy.checkInSafetyAsk("Ben") });
+  expect(w.net.safetyReports()).toEqual([]);
+  await w.say("a", "REPORT");
   expect(w.net.safetyReports().map(r => [r.kind, r.source, r.reporterId, r.subjectId, r.opportunityId])).toEqual([["no_show", "check_in", "a", "b", id]]);
   expect(w.sent.at(-1)).toMatchObject({ to: "a", body: expect.stringContaining("flagged this for the safety team") });
 }, T);

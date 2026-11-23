@@ -817,7 +817,8 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const member = (await db`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'slop' and ph.e164 = ${phone}`)[0]!;
         const about = "I'm Rae, 30, in Williamsburg, looking for a long-term relationship. I like climbing and live music. Free weekend afternoons.";
         expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, connection.token!.access_token)).submitted).toBe(true);
-        expect((await db`select member_id from network.messages where member_id = ${member.id} and body = ${about}`).length).toBe(1);
+        expect((await db`select member_id from network.messages where member_id = ${member.id} and direction = 'inbound' and type = 'agent_profile' and body = 'Private profile from the member''s agent.'`).length).toBe(1);
+        expect((await db`select member_id from network.messages where body = ${about}`).length).toBe(0);
         expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
         // A handler restart uses the SAME Postgres clients, grants and tokens; off suspends, not revokes.
         const authorizeQuery = new URLSearchParams({ response_type: "code", client_id: connection.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource: `${pilot.sites.slop.origin}/mcp` });
@@ -992,8 +993,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(r).toMatchObject({ app: "friends", submitted: true });
       const m = (await memberRow("friends", phone))!;
       // Stored as the member's own inbound message, and the Network answered it like a text.
-      const msgs = await sql`select direction, body from network.messages where member_id = ${m.id} order by ts`;
-      expect(msgs.some((x: any) => x.direction === "inbound" && x.body === about)).toBe(true);
+      const msgs = await sql`select direction, body, type from network.messages where member_id = ${m.id} order by ts`;
+      expect(msgs.filter((x: any) => x.direction === "inbound" && x.type === "agent_profile" && x.body === "Private profile from the member's agent.")).toHaveLength(1);
+      expect(msgs.some((x: any) => x.body === about)).toBe(false);
       // A phone number or a code in the profile is refused and stored nowhere.
       const bad = toolData(await rpc(st, "friends", "/mcp", "tools/call", { name: "submit_profile", arguments: { about: "text me at 212 555 0199 about games" } }, token));
       expect(bad.error).toMatch(/phone numbers, codes and email/);
@@ -1040,8 +1042,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const tools = (await rpc(st, "peon", "/mcp", "tools/list")).body!.result.tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
       // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes;
       // get_updates takes an update reference (T-XXXXXX), never a verification code.
-      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : ["app"]);
-      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "read_profile", "start_signup", "submit_profile"]);
+      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "pause_looking_for" || t.name === "resume_looking_for" ? ["app", "ref"] : ["app"]);
+      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "list_looking_for", "pause_looking_for", "read_profile", "resume_looking_for", "start_signup", "submit_profile"]);
+      for (const t of tools) expect(JSON.stringify(t.inputSchema), t.name).not.toMatch(/phone|code|otp|birth/i);
     });
   });
 
@@ -1149,8 +1152,11 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       // The control: the same request from an adult is stored (no ID check, founder decision 9).
       const ok = await upload(ab);
       expect(ok.status, await ok.clone().text()).toBe(200);
-      const tools = (await rpc(st, "slop", "/mcp", "tools/list")).body!.result.tools as { name: string }[];
-      expect(tools.some(t => /photo|image|upload/i.test(t.name))).toBe(false);
+      const tools = (await rpc(st, "slop", "/mcp", "tools/list")).body!.result.tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
+      expect(tools.some(t => /image|upload/i.test(t.name))).toBe(false);
+      const photoTools = tools.filter(t => /photo/i.test(t.name));
+      expect(photoTools.map(t => [t.name, Object.keys(t.inputSchema.properties)])).toEqual([["my_photos", ["app"]], ["photo_request", ["app", "words"]]]);
+      for (const t of photoTools) expect(JSON.stringify(t.inputSchema), t.name).not.toMatch(/image|upload|base64|"format"|contentEncoding/i);
       const personOf = async (p: string) => (await sql`select person_id from platform.phone_identities where e164 = ${p}`)[0]!.person_id;
       expect((await sql`select 1 from platform.photos where person_id = ${await personOf(teen)}`).length).toBe(0);
       expect((await sql`select 1 from platform.photos where person_id = ${await personOf(adult)}`).length).toBe(1);

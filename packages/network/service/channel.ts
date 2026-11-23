@@ -695,7 +695,7 @@ export class BlooioAdapter implements ChannelAdapter {
 
   async direct(to: string, body: string, id: string, kind: DirectKind): Promise<string> {
     await this.queue.enqueue(this.queue.sql, [{ id, to, kind, text: body, city: this.city }]);
-    await this.rt!.drained(await this.queue.drain());
+    await this.rt!.deliver();
     return (await this.queue.statusOf(id)) ?? "failed";
   }
 

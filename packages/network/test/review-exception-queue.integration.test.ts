@@ -167,12 +167,11 @@ describe.skipIf(!pgAvailable)("staff exception queue of the automated review (ow
     expect(audit.map(r => [r.phase, r.ok])).toEqual([["requested", true], ["result", false], ["requested", true], ["result", true]]);
     expect((await sql`select count(*)::int as n from network.events where type = 'review_stopped' and object_id = ${item.oppId}`)[0].n).toBe(1);
 
-    const probed = first.filter(m => m.type === "probe").map(m => m.member_id);
-    expect(probed.length).toBeGreaterThan(0);
-    expect(probed).not.toContain("r");
+    expect(first).toEqual([{ member_id: "r", type: "scheduling" }]);
     const stopped = (await aboutOpp(item.oppId)).length;
+    expect(stopped).toBe(1);
     clock.advance(10 * MINUTE);
-    await say(s, clock, probed[0]!, "Yes, I'd love that!");
+    await say(s, clock, "r", "Saturday works, yes I'd love that!");
     clock.advance(HOUR);
     expect(await s.tick()).toBe(true);
     const after = (await aboutOpp(item.oppId)).slice(stopped);

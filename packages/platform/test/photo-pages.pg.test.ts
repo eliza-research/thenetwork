@@ -290,6 +290,9 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(second).toMatchObject({ admission: "OfferAsk", phase: "asking" });
     const third = await w.draft([3]);
     expect((await w.relay.prepareOffer(w.sender, "slop", third.draftId, third.revision, w.at()))?.admission).toBe("OfferWaitForAnswer");
+    const thirdCheck = await w.call("open", { token: w.token(third.link!) });
+    expect(thirdCheck.body!.photos!.map(p => [p.n, p.shared])).toEqual([[1, true], [2, true], [3, false]]);
+    expect(await w.call("answer", { token: w.token(third.link!), revision: third.revision, answer: "pick", numbers: [1] }, thirdCheck.cookie)).toMatchObject({ status: 200, body: { state: "refused" } });
     expect((await w.relay.offer(first.offerId))?.phase).toBe("ready");
 
     expect(await w.photos.remove(w.sender, "slop", w.ids[0]!)).toBe(true);
@@ -346,6 +349,11 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const mine = await w.call("open", { token: w.token((await w.relay.mineLink(w.sender, "slop"))!) });
     expect(mine.body!.photos!.map(p => p.access)).toEqual([askedLine, [], []]);
     expect(await w.noticesOf(asked.offerId!)).toEqual([]);
+    const again = await w.draft([2]);
+    const check = await w.call("open", { token: w.token(again.link!) });
+    expect(check.body!.photos!.map(p => [p.n, p.shared])).toEqual([[1, false], [2, false], [3, false]]);
+    expect(await w.call("answer", { token: w.token(again.link!), revision: again.revision, answer: "pick", numbers: [1] }, check.cookie)).toMatchObject({ status: 200, body: { state: "proposed", proposed: [1] } });
+    expect(await w.access()).toEqual([askedLine, [], []]);
     w.tick(24 * HOUR);
     expect(await w.access()).toEqual([[], [], []]);
     expect(await w.sharedWith()).toEqual([[], [], []]);

@@ -12,6 +12,7 @@ import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
+import type { SendRequest } from "../../blooio/src/types.ts";
 import {CONTEXT_UNAVAILABLE_REPLY, lookingForAsk, NetworkService} from "../service/service.ts";
 import {inboxKeepMs} from "../../core/src/generated/platformRetention.ts";
 import {turnTombstoneKeepMs} from "../../core/src/generated/signedInbox.ts";
@@ -28,6 +29,7 @@ const secret = "synthetic-shared-agent-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
 let sql: SQL, service: NetworkService, server: HttpServer;
 let escaped = 0, code = "";
+const lineSends: SendRequest[] = [];
 const start = async (routePolicy?: Record<string, unknown>, collectedQueue = false) => {
   // Only this test's newly created database changes realm markers. The service's
   // normal staging/database mismatch guard stays intact.
@@ -39,7 +41,11 @@ const start = async (routePolicy?: Record<string, unknown>, collectedQueue = fal
     network:{seed:1}, publicApi:{minStartMs:0,minVerifyMs:0,otp:{name:"fixture",send:async () => {code="314159";return {code};}}},
     adapter:(_net, rt) => {
       if (collectedQueue) return new BlooioAdapter({ app: rt.app.id, city: rt.city, from: "+12125550160", clock, env: {}, log: () => {},
-        provider: { kind: "sim", send: async () => { escaped++; throw new Error("The signed reply left its collector"); } } });
+        provider: { kind: "sim", send: async request => {
+          if (request.context?.kind === "reply") { escaped++; throw new Error("The signed reply left its collector"); }
+          lineSends.push(request);
+          return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
+        } } });
       const a = new DryRunAdapter(() => {});
       a.direct = async () => { escaped++; return "dry_run"; };
       a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({ id: r.id, status: "dry_run" })); };
@@ -242,7 +248,9 @@ test("reconciles legacy intent controls for the current app and owner once and p
   const before = escaped;
   const result = await post(turn("legacy-intents-show", phone, "list my intents", "friends"));
   expect(result.status).toBe(200);
-  expect((await result.json()).replies[0]).toContain("Your standing intents");
+  const listed: string = (await result.json()).replies[0];
+  expect(listed.split("\n")[0]).toBe("What you're looking for in friends (1/1)");
+  expect(listed.split("\n").at(-1)).toBe("Reply PAUSE 1, RESUME 1 or CLOSE 1.");
   const rows = await snapshot();
   expect([...rows]).toEqual(raw.map(row => ({
     id: row.id, status: row.id === "legacy-pause" ? "paused" : row.id === "legacy-close" ? "closed" : row.status,
@@ -265,6 +273,7 @@ test("signed solo concierge offers current public listings without recruiting an
   await server.stop(true);
   await service.close();
   await start(undefined, true);
+  lineSends.length = 0;
   try {
     const adult = "+12125550157", teen = "+12125550158";
     for (const [phone, age] of [[adult, 20], [teen, 16]] as const) {
@@ -292,6 +301,13 @@ test("signed solo concierge offers current public listings without recruiting an
       listing("116", "Weekday walk", "Nature | All ages", "2026-10-12T14:00:00", "2026-10-12T15:00:00"),
     ]))).toEqual({ published: true, events: 7 });
 
+    await service.runtimeFor("friends")!.deliver();
+    const welcomes = new Map(lineSends.map(sent => [sent.to, sent.text]));
+    expect(lineSends).toHaveLength(2);
+    expect(welcomes).toEqual(new Map([
+      [adult, "Hi Ari, I'm friends.help's planner (an AI). Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?"],
+      [teen, "Hi Ari, I'm friends.help's planner (an AI). Since you're under 18, I won't introduce you to other members, but I can suggest public places and events. If you tell me your birthday (month, day and year), I can look for friends close to your age. Reply STOP anytime to opt out. What are you into?"],
+    ]));
     const before = escaped;
     const request = (id: string, phone: string) => turn(id, phone, "Anything fun this weekend?", "friends");
     const asked = request("adults-solo-events", adult);
@@ -325,6 +341,7 @@ test("signed solo concierge offers current public listings without recruiting an
     const empty = await post(request("no-current-solo-events", adult));
     expect((await empty.json()).replies[0]).toContain("couldn't find any current NYC Parks listings");
     expect(escaped).toBe(before);
+    expect(lineSends).toHaveLength(2);
   } finally {
     await server.stop(true);
     await service.close();
@@ -566,8 +583,9 @@ test("an admitted number whose membership no longer binds gets the fixed reply, 
   const member = joined.memberId as string;
   await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
   const person = (await service.accounts.personFor(phone))!;
-  await sql`update platform.people set lowest_age=null where id=${person.id}`;
+  await sql`update platform.people set lowest_age=null, birth_date=null, birth_lower=null, birth_upper=null, birth_youngest=null, birth_first_exact=null where id=${person.id}`;
   await sql`delete from platform.age_floor where phone_hash=${service.accounts.phoneHash(phone)}`;
+  expect(await service.accounts.lowestAge(phone, person)).toBeUndefined();
   const answer = await post(turn("unbound-open", phone, "Tell me something about the weather", "friends"));
   expect(answer.status).toBe(200);
   const body = await answer.json() as any;

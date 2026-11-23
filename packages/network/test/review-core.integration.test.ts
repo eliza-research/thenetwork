@@ -52,6 +52,9 @@ const pending = (w: Mini) => w.net.exportState().opps.filter(o => o.stage === "r
 const oppOf = (w: Mini, id: string) => w.net.exportState().opps.find(o => o.id === id);
 const itemMessages = (w: Mini, id: string, from: number) => w.sent.slice(from).filter(s => (s.meta.proposalId ?? s.meta.probe?.key) === id);
 const tickNow = (w: Mini) => w.net.tick(w.clock.now());
+const firstProbeSent = (w: Mini, id: string, member: MemberId) => w.log("probe_sent").some(l => l.detail.oppId === id && l.detail.memberId === member);
+const requesterProbes = (w: Mini, id: string, from: number, member: MemberId) =>
+  itemMessages(w, id, from).filter(s => s.to === member && s.meta.type === "scheduling" && s.meta.proactive === false && (s.meta.timeOptions?.length ?? 0) > 0);
 
 async function requestItem(w: Mini, requester: MemberId) {
   await w.say(requester, "Can you find me a regular climbing partner?");
@@ -78,7 +81,8 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(itemMessages(w, item.id, from)).toEqual([]);
     expect(w.net.decide(item.id, "approve", { reviewer: "staff-1", revision: 0 })).toEqual({ ok: true });
     expect(oppOf(w, item.id)?.review).toMatchObject({ decision: "approve", approver: "staff", reviewer: "staff-1" });
-    expect(await w.runUntil(() => itemMessages(w, item.id, from).some(s => s.meta.type === "probe"), DAY)).toBe(true);
+    expect(await w.runUntil(() => firstProbeSent(w, item.id, ARI.id), DAY)).toBe(true);
+    expect(requesterProbes(w, item.id, from, ARI.id)).toHaveLength(1);
   });
 
   test("staff cannot approve an item that waits for the judge, may reject it, and a later judgment is stale", async () => {
@@ -149,7 +153,7 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     const judge = scriptedJudge();
     judge.state.answer = "flag";
     const w = await world([ARI, BEA], judge.judge);
-    const item = await requestItem(w, ARI.id);
+    const item = await proposedItem(w, [ARI.id, BEA.id]);
     await tickNow(w);
     expect(w.net.reviewQueue().map(x => x.oppId)).toContain(item.id);
     const from = w.mark();
@@ -170,6 +174,34 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(itemMessages(w, again.id, from)).toEqual([]);
   });
 
+  test("an open member request retries after its held item expires, and the retried item of the flagged pair is held as prior_flag without a judge call", async () => {
+    const judge = scriptedJudge();
+    judge.state.answer = "flag";
+    const w = await world([ARI, BEA], judge.judge);
+    const item = await requestItem(w, ARI.id);
+    await tickNow(w);
+    expect(w.net.reviewQueue().map(x => x.oppId)).toContain(item.id);
+    const from = w.mark();
+    judge.state.answer = "approve";
+    const calls = judge.calls.length;
+    w.clock.set(item.review!.deadline);
+    await tickNow(w);
+    expect(oppOf(w, item.id)?.review?.decision).toBe("expired");
+    const state = w.net.exportState();
+    expect(state.flagged?.map(([key]) => key)).toEqual([[ARI.id, BEA.id].sort().join("|")]);
+    w.net.importState({ ...state, declined: [] });
+    expect(await w.runUntil(() => pending(w).some(x => x.id !== item.id && x.participants.includes(ARI.id) && x.participants.includes(BEA.id)), 2 * DAY)).toBe(true);
+    const retried = pending(w).find(x => x.id !== item.id && x.participants.includes(ARI.id))!;
+    expect([...retried.participants].sort()).toEqual([ARI.id, BEA.id].sort());
+    await tickNow(w);
+    expect(judge.calls.length).toBe(calls);
+    expect(judge.calls.some(p => p.oppId === retried.id)).toBe(false);
+    expect(w.net.reviewQueue().find(x => x.oppId === retried.id)?.exception).toMatchObject({ verdict: "flag", reason: "prior_flag" });
+    expect(oppOf(w, retried.id)?.stage).toBe("review");
+    expect(itemMessages(w, item.id, from)).toEqual([]);
+    expect(itemMessages(w, retried.id, from)).toEqual([]);
+  });
+
   test("a teen friends pair is approved by the judge with the strict rubric and all four code checks", async () => {
     const judge = scriptedJudge();
     judge.state.answer = "approve";
@@ -182,7 +214,8 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(packet?.ageFacts).toMatchObject({ rosterHasMinor: true, codeChecks: ["teen_age_rule", "teen_place_all_ages", "teen_daytime_10_19", "no_adult_session_nearby"] });
     expect(oppOf(w, item.id)?.review).toMatchObject({ decision: "approve", approver: "judge", reviewer: SIM_REVIEW_JUDGE });
     expect(oppOf(w, item.id)?.review?.judged?.rubric).toBe("minor");
-    expect(await w.runUntil(() => itemMessages(w, item.id, from).some(s => s.meta.type === "probe"), DAY)).toBe(true);
+    expect(await w.runUntil(() => firstProbeSent(w, item.id, TESS.id), DAY)).toBe(true);
+    expect(requesterProbes(w, item.id, from, TESS.id)).toHaveLength(1);
   });
 
   test("an item with no judgment for 30 minutes is held as judge_overdue, and nothing is held while matching is paused", async () => {

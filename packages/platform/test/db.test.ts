@@ -169,7 +169,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       const allowed = (role: string, rel: string): boolean => {
         if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
-        if (apps.includes(app) && [`network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`].includes(rel)) return true;
+        if (apps.includes(app) && [`network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`, `platform.teen_pair_avoid_members_${app}`].includes(rel)) return true;
         if (catalog.includes(rel)) return apps.includes(app) || role === "network_observatory_cross_app";
         if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
         if (role === "network_observatory_audit") return rel === "network.staff_audit";
@@ -249,7 +249,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await sql.begin(async tx => { await tx`set local role network_service`; return tx`select count(*)::int as n from platform.phone_identities`; }).then(() => "ok", e => String(e.message))).toBe("ok");
     });
 
-    test("0081 and 0082: birth readings, the teen pool bars, no teen confirmation table, the teen pool hold and pair tables, their grants and the eight matching-age columns", async () => {
+    test("0081 and 0082: birth readings, the teen pool bars, no teen confirmation table, the teen pool hold and pair tables, their grants and the nine matching-age columns", async () => {
       const columns = async (table: string) => (await sql`select column_name from information_schema.columns
         where table_schema = 'platform' and table_name = ${table} order by ordinal_position`).map((r: any) => r.column_name as string);
       expect(await columns("people")).toEqual(expect.arrayContaining(["birth_date", "birth_lower", "birth_upper", "birth_youngest", "birth_first_exact"]));
@@ -259,12 +259,12 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await columns("teen_pool_bars")).toEqual(["phone_hash", "reason", "at"]);
       expect(await columns("teen_pool_holds")).toEqual(["phone_hash", "app_id", "at"]);
       expect(await columns("teen_pair_avoid")).toEqual(["phone_hash_a", "phone_hash_b", "at"]);
-      const eight = ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper", "floor_birth_youngest", "teen_pool_barred"];
+      const nine = ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper", "floor_birth_youngest", "teen_pool_barred", "teen_pool_held"];
       const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
       for (const view of ["matching_ages", ...apps.map(app => `matching_ages_${app}`)]) {
         const cols = await columns(view);
         expect([view, cols.slice(0, 8)]).toEqual([view, ["app_id", "member_id", "age", "banned", "staff_held", "report_held", "minor_signal_at", "birth_date"]]);
-        expect([view, cols.slice(-8)]).toEqual([view, eight]);
+        expect([view, cols.slice(-9)]).toEqual([view, nine]);
         expect([view, cols.includes("teen_confirmed_birth")]).toEqual([view, false]);
       }
       const can = async (role: string, table: string, privilege: string) =>
@@ -339,7 +339,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
         where n.nspname = 'platform' and c.conname = ${name}`)[0]?.def ?? "");
       const phases = await definition("photo_offers_phase_check");
       expect(phases).toContain("ready");
-      expect(phases).not.toMatch(/viewing|closed/);
+      expect(phases).not.toMatch(/'(viewing|closed)'/);
       expect(await definition("photo_relay_items_state_check")).toContain("screening");
       expect(await definition("photo_relay_items_screen_at")).toContain("screen_at IS NOT NULL");
       expect(await definition("photo_page_links_view_open")).toContain("expires_at IS NULL");

@@ -44,7 +44,8 @@ describe.skipIf(!pgAvailable)("connector updates and grant cleanup", () => {
     const c = await connectMcp(st, "peon", phone, { browser: b });
     expect(c.token?.access_token).toBeTypeOf("string");
 
-    await sql`update network.members set age = 16 where person_id = ${m.person_id}::uuid`;
+    await st.svc.accounts.recordAge(phone, await st.svc.people.getPerson(m.person_id), 16);
+    expect((await sql`select age from platform.matching_ages where app_id = 'peon' and member_id = ${m.id}`)[0].age).toBe(16);
     const read = await updates(c.token!.access_token);
     expect(read.updates.map((u: { summary: string }) => u.summary)).toEqual(["Your resume workshop is on Saturday."]);
     expect(await seenAt(m.person_id, "minor-own-reminder")).not.toBeNull();

@@ -175,7 +175,7 @@ const senderFacts = (o: PhotoOfferRow, at: number): [OfferPhase, boolean, boolea
 ];
 const ACCESS: Record<Exclude<PhotoSenderView, "SeesNothing">, PhotoAccessState> = { SeesAsked: "asked", SeesChecking: "checking", SeesSent: "ready", SeesTakenBack: "taken_back" };
 
-export interface PhotoSlot { n: number; id: string; addedAt: number; batch: string; label: string | null; sharedWith: string[] }
+export interface PhotoSlot { n: number; id: string; addedAt: number; batch: string; label: string | null; sharedWith: string[]; heldBy: string[] }
 export type PhotoAccessState = "asked" | "checking" | "ready" | "taken_back";
 export interface PhotoHolding { n: number; label: string | null; addedAt: number; addedOn: string; access: { firstName: string; state: PhotoAccessState }[] }
 export interface PhotoDraft {
@@ -331,6 +331,7 @@ export class PhotoRelayService {
     return rows.map((r, i) => ({
       n: i + 1, id: r.id, addedAt: r.createdAt, batch: r.batchId ?? r.id, label: r.label,
       sharedWith: [...new Set(shared.filter(s => s.photoId === r.id).map(s => s.offer.recipientMemberId))],
+      heldBy: [...new Set(shared.filter(s => s.photoId === r.id && s.state === "ready").map(s => s.offer.recipientMemberId))],
     }));
   }
 

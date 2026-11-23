@@ -333,6 +333,7 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       TWILIO_AUTH_TOKEN: "fixture", TWILIO_VERIFY_SERVICE_SID: "VAfixture", SERVICE_TURN_SECRET: "t".repeat(40),
       NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_CHANNEL: "",
       SURPLUS_API_KEY: "synthetic-surplus-key", SURPLUS_BASE_URL: "http://127.0.0.1:9/v1", OPENAI_BASE_URL: "http://127.0.0.1:9/v1",
+      PHOTO_STORAGE: "r2", R2_ENDPOINT: "http://127.0.0.1:9", R2_BUCKET: "fixture", R2_ACCESS_KEY_ID: "fixture", R2_SECRET_ACCESS_KEY: "fixture",
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/../../../deploy/backend/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();

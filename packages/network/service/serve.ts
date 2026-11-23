@@ -162,9 +162,11 @@ export function startTicks(svc: NetworkService, log: (s: string) => void = conso
     finally { busy.delete(key); }
   };
   let inbox: Promise<void> = Promise.resolve();
+  let judging: Promise<void> = Promise.resolve();
   const inboxThenNetworks = async () => {
     if (!busy.has("inbox")) inbox = worker("inbox", () => svc.inboxTick());
     await inbox;
+    await judging;
     await Promise.all([...svc.runtimes.values()].map(rt => worker(rt.id, async () => {
       if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`);
     })));
@@ -172,8 +174,11 @@ export function startTicks(svc: NetworkService, log: (s: string) => void = conso
   const inFlight = new Set<Promise<void>>();
   const round = () => {
     const done = Promise.all([
-      inboxThenNetworks(), worker("retention", () => svc.purge()), worker("notify", () => svc.notifyTick()),
-      worker("review_judge", () => svc.reviewJudgeTick()),
+      inboxThenNetworks().then(() => {
+        if (!busy.has("review_judge")) judging = worker("review_judge", () => svc.reviewJudgeTick());
+        return judging;
+      }),
+      worker("retention", () => svc.purge()), worker("notify", () => svc.notifyTick()),
     ]).then(() => undefined);
     inFlight.add(done);
     void done.finally(() => inFlight.delete(done));

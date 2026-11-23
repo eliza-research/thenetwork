@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { DAY, MINUTE, SimClock } from "@thenetwork/core";
 import { earliestDayKeyOf } from "../../core/src/birth-date.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
+import { migrate } from "../../observatory/db/migrate.ts";
 import { APPS, keywordApp, lookingForReading, type AppId } from "../../platform/src/apps.ts";
 import { detectKeyword } from "../../platform/src/consent.ts";
 import { DryRunAdapter } from "../service/channel.ts";
@@ -101,6 +102,7 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     url = await migratedDb("line_routing");
     sql = new SQL({ url, max: 2 });
   }, T);
+  beforeEach(async () => { await migrate(url, { reset: true, lockTimeout: "5s" }); }, T);
   afterEach(async () => { for (const s of open.splice(0)) await s.close(); });
   afterAll(async () => {
     await sql?.close();

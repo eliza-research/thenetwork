@@ -910,19 +910,19 @@ export class NetworkService implements RuntimeHost {
 
   /** One tick on every network, each under its own lock. True when any network ran (one network: whether it ran). */
   async tick(): Promise<boolean> {
-    let any = false;
     await this.inboxTick();
-    for (const rt of this.runtimes.values()) any = (await rt.tick()) || any;
-    await this.reviewJudgeTick();
+    const ran: NetworkRuntime[] = [];
+    for (const rt of this.runtimes.values()) if (await rt.tick()) ran.push(rt);
+    if (ran.length) await this.reviewJudgeTick(ran);
     await this.purge();
-    return any;
+    return ran.length > 0;
   }
 
-  async reviewJudgeTick(): Promise<void> {
+  async reviewJudgeTick(runtimes: readonly NetworkRuntime[] = [...this.runtimes.values()]): Promise<void> {
     for (const app of this.engineBudgets.keys()) {
       await this.refreshEngineBudget(app).catch(e => this.log(`[engine-judge] the budget refresh waits for the next tick (${app}): ${(e as Error).message}`));
     }
-    await Promise.all([...this.runtimes.values()].map(rt => this.reviewJudgeWorker.run(rt, this.judgeAbort.signal)
+    await Promise.all(runtimes.map(rt => this.reviewJudgeWorker.run(rt, this.judgeAbort.signal)
       .catch(e => this.log(`[review-judge] the judge pass waits for the next tick (${rt.id}): ${(e as Error).message}`))));
   }
 
@@ -2855,7 +2855,9 @@ export class NetworkService implements RuntimeHost {
 
   private collectDirect(rt: NetworkRuntime, to: string, reply: CollectedReply): Promise<boolean> {
     return this.sql.begin(async tx => {
-      const reasons = await collectedReplyGuard(rt.adapter).collectedLeaks(tx, {id: reply.id, to, kind: reply.kind, text: reply.body});
+      const origin = `${this.siteOrigin(rt.app)}/`;
+      const ownLinks = reply.body.split(/\s+/).filter(token => token.startsWith(origin));
+      const reasons = await collectedReplyGuard(rt.adapter).collectedLeaks(tx, {id: reply.id, to, kind: reply.kind, text: reply.body, ...(ownLinks.length ? {contactAllow: ownLinks} : {})});
       if (!collectedReplyMayLeave(reasons.length)) {
         this.log(`[alert] a direct reply failed the collected leak guard (${rt.id}, ${reply.id})`);
         return false;

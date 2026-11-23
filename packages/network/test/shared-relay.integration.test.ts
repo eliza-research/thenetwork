@@ -344,7 +344,7 @@ test("relay holds stored before the change are closed: their records say block, 
            ('friends','friends:nyc',${rate},'relay-pair','text',${fromId},${toId},${at},'hold',${"{rate:burst}"}::text[],0,false,false,'relay-1.0.0',null)`;
   const legacyHeld=[{itemId:item,matchId:"relay-pair",app:"friends",kind:"text",from:fromId,to:toId,at:clock.now(),reasons:["scam:money"],text:"legacy held words",status:"held"}];
   const legacyLog=[item,rate].map(itemId=>({itemId,opportunityId:"relay-pair",app:"friends",kind:"text",from:fromId,to:toId,at:clock.now(),decision:"hold",reasons:[itemId===item?"scam:money":"rate:burst"],photoCount:0,contactShared:false,ageSignal:false,policy:"relay-1.0.0"}));
-  await sql`update network.network_state set state=jsonb_set(jsonb_set(state,'{relay,held}',${JSON.stringify(legacyHeld)}::jsonb),'{relay,log}',coalesce(state->'relay'->'log','[]'::jsonb)||${JSON.stringify(legacyLog)}::jsonb) where id='friends:nyc'`;
+  await sql`update network.network_state set state=jsonb_set(jsonb_set(state,'{relay,held}',${sql.json(legacyHeld)}::jsonb),'{relay,log}',coalesce(state->'relay'->'log','[]'::jsonb)||${sql.json(legacyLog)}::jsonb) where id='friends:nyc'`;
   const migration=await readFile(new URL("../../observatory/db/migrations/0086_relay_holds_closed.sql",import.meta.url),"utf8");
   for(let i=0;i<2;i++)await sql.unsafe(migration);
   expect((await sql`select item_id,decision,reasons,review,reviewed_by from network.relay_records where app_id='friends' and item_id in (${item},${rate}) order by item_id`).map((r:any)=>[r.item_id,r.decision,r.reasons,r.review,r.reviewed_by]))
@@ -375,6 +375,13 @@ test("negative feedback in the check-in after the meeting ends the relay thread 
   const open1=await open("relay-feedback-before","tell Ari thanks for coffee",b);
   expect(await(await post(RELAY_PATH,open1)).json()).toMatchObject({decision:"pass",delivered:true});
   await rt.unitOfWork(n=>{const st=n.exportState(),op=st.opps.find(x=>x.id==="relay-pair")!;op.meetingAt=clock.now()-4*HOUR;n.importState(st);});
+  const booked=[[fromId,a,"booking-notice-relay-pair-ari"],[toId,b,"booking-notice-relay-pair-sam"]] as const,bookedAt=new Date(clock.now()-DAY);
+  for(const [member,phone,id] of booked){
+    await sql`insert into network.messages (id,app_id,member_id,direction,channel,body,type,status,opportunity_id,proactive,ts)
+      values (${id},'friends',${member},'outbound','imessage','Coffee is booked.','proposal','accepted','relay-pair',true,${bookedAt})`;
+    await sql`insert into platform.outbound (id,app_id,member_id,line,to_address,kind,body,fingerprint,time_zone,status,next_attempt_at,created_at,updated_at,sent_at,opportunity_id)
+      values (${id},'friends',${member},'+12125550210',${phone},'proactive','Coffee is booked.',${id},'America/New_York','accepted',${bookedAt},${bookedAt},${bookedAt},${bookedAt},'relay-pair')`;
+  }
   try {
     await service.tick();
     const stage=async()=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==="string"?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id==="relay-pair")?.stage;};
@@ -401,6 +408,7 @@ test("negative feedback in the check-in after the meeting ends the relay thread 
   } finally {
     await rt.unitOfWork(n=>{const st=n.exportState();st.avoid=st.avoid.filter(x=>x!==k);st.feedback=st.feedback.filter(f=>f.opportunityId!=="relay-pair");
       for(const m of st.members)if(m.awaiting?.oppId==="relay-pair")delete m.awaiting;n.importState(st);});
+    for(const [,,id] of booked){await sql`delete from platform.outbound where id=${id}`;await sql`delete from network.messages where id=${id}`;}
     await fixturePair();
   }
 },60_000);

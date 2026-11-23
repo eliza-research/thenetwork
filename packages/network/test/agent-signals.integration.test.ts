@@ -20,6 +20,7 @@ const CANARY = "AGENT_SIGNAL_EVIDENCE_CANARY";
 const PAUSE_TEXT = "Matching is paused on friends, as you asked. Say ‘resume matching’ when you want new introductions again.";
 const PAUSE_INBOX = "Matching on friends was paused, as you asked. To undo it, text ‘resume matching’ on the friends line. If you turned texts off, reply START first.";
 const OPEN_TEXT = "Tell me something about the weather";
+const MINOR_OPEN_TEXT = "Weather?";
 const logs: string[] = [];
 let url: string;
 let sql: SQL;
@@ -43,18 +44,18 @@ async function sendTurn(messageId: string, text: string, from: string): Promise<
   return await res.json() as TurnResponse;
 }
 
-async function openTurn(from: string, label: string): Promise<{ messageId: string; memberId: string }> {
+async function openTurn(from: string, label: string, text = OPEN_TEXT): Promise<{ messageId: string; memberId: string }> {
   const messageId = `${from}-${label}`;
-  const opened = await sendTurn(messageId, OPEN_TEXT, from);
+  const opened = await sendTurn(messageId, text, from);
   if (opened.outcome !== "open") throw new Error(`turn ${messageId} did not open: ${opened.outcome}`);
   return { messageId, memberId: opened.memberId };
 }
 
-async function joinFriends(name: string, age: number): Promise<{ phone: string; memberId: string; opened: string }> {
+async function joinFriends(name: string, age: number, openText = OPEN_TEXT): Promise<{ phone: string; memberId: string; opened: string }> {
   const phone = `+1212555${String(1870 + ++phoneSeq).padStart(4, "0")}`;
   const lines = ["friends.help", `${name}, ${age}`, "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
   for (const [index, text] of lines.entries()) await sendTurn(`${phone}-setup-${index}`, text, phone);
-  const { messageId, memberId } = await openTurn(phone, "open");
+  const { messageId, memberId } = await openTurn(phone, "open", openText);
   return { phone, memberId, opened: messageId };
 }
 
@@ -187,7 +188,7 @@ describe.skipIf(!pgAvailable)("agent signals through the signed service path (Po
   }, 120_000);
 
   test("a waiting signal of a member under 18 is listed to reviewer staff without its evidence, and safety staff read it", async () => {
-    const { memberId, opened } = await joinFriends("Sam", 16);
+    const { memberId, opened } = await joinFriends("Sam", 16, MINOR_OPEN_TEXT);
     expect((await signal(opened, "safety_concern", memberId)).status).toBe(200);
     const listed = async (token: string) => (await listedSignals(token)).signals.filter(s => s.memberId === memberId);
     expect(await listed("rev-tok")).toEqual([{ id: expect.any(String), memberId, kind: "safety_concern", minor: true, at: clock.now(), caseId: expect.any(String) }]);

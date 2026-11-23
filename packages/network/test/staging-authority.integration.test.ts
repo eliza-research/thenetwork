@@ -15,7 +15,7 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
  globalThis.fetch=(async(input:any,init?:RequestInit)=>{if(String(input)==='https://challenges.cloudflare.com/turnstile/v0/siteverify'){mcpBotChecks++;return Response.json({success:true,hostname:verifiedHostname})}return originalFetch(input,init)}) as typeof fetch;
  const st=await startStack(); let server:HttpServer|undefined; let mcp:Awaited<ReturnType<typeof createServiceMcp>>;
  const env={PLATFORM_ENV:'staging', NODE_ENV:'production', STAGING_SITE_ORIGINS:JSON.stringify({slop:origin}),PLATFORM_HASH_KEY:'stage-hash-key-'.repeat(3),PLATFORM_SESSION_SECRET:'dev-only-platform-session-secret',PLATFORM_PROXY_SECRET:secret,TURNSTILE_SITE_KEY:'stage-key',TURNSTILE_SECRET_KEY:'fixture-secret',LEAK_LABEL_KEY:'labels'.repeat(8),DATABASE_URL:st.url,MIGRATE_ON_BOOT:'0',OTP_PROVIDER:'twilio',TWILIO_ACCOUNT_SID:'fixture',TWILIO_AUTH_TOKEN:'fixture',TWILIO_VERIFY_SERVICE_SID:'fixture'};
- const bootEnv={...env,NETWORK_PUBLIC_EVENTS_DATABASE_URL:st.url,SERVICE_TURN_SECRET:'stage-turn-secret-'.repeat(3),NETWORK_SERVICE_TOKENS:`admin@*:${'stage-staff-token-'.repeat(3)}`,OTP_PROVIDER:'blooio',BLOOIO_API_KEY:'fixture',BLOOIO_FROM:'+12125550142',PHOTO_STORAGE:'r2'};
+ const bootEnv={...env,NETWORK_PUBLIC_EVENTS_DATABASE_URL:st.url,SERVICE_TURN_SECRET:'stage-turn-secret-'.repeat(3),NETWORK_SERVICE_TOKENS:`admin@*:${'stage-staff-token-'.repeat(3)}`,OTP_PROVIDER:'blooio',BLOOIO_API_KEY:'fixture',BLOOIO_FROM:'+12125550142',PHOTO_STORAGE:'r2',SURPLUS_API_KEY:'fixture',CLOUDFLARE_AI_TOKEN:'fixture',CLOUDFLARE_ACCOUNT_ID:'fixture'};
  const config=loadConfig(bootEnv);
  try{
   const phone=newPhone(); await webJoin(st,'slop',phone,{age:30});
@@ -63,7 +63,7 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
   const about="I'm Rae,30, in Williamsburg, seeking a long-term relationship. I like climbing and live music.";
   expect(((await (await protectedCall('submit_profile',{about})).json()) as any).result.structuredContent.submitted).toBe(true);
   const db=new SQL({url:st.url,max:1});
-  try{const rows=await db`select m.id from network.members m join network.messages msg on msg.member_id=m.id where m.app_id='slop' and m.person_id=${person.id} and msg.body=${about}`;expect(rows.length).toBe(1)}finally{await db.close()}
+  try{const rows=await db`select msg.body from network.members m join network.messages msg on msg.member_id=m.id where m.app_id='slop' and m.person_id=${person.id} and msg.type='agent_profile'`;expect(rows.map(r=>r.body)).toEqual(["Private profile from the member's agent."]);expect((await db`select 1 from network.messages where body=${about}`).length).toBe(0)}finally{await db.close()}
   expect(((await(await protectedCall('check_status')).json()) as any).result.structuredContent).toMatchObject({app:'slop',status:'active'});
   const wrongQuery=new URLSearchParams({response_type:'code',client_id:connection.client.client_id,redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect',code_challenge:pkceS256(VERIFIER),code_challenge_method:'S256',resource:'https://slop.date/mcp'});
   expect((await call(`/oauth/authorize?${wrongQuery}`,undefined,browser)).status).toBe(400);

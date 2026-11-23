@@ -48,7 +48,7 @@ beforeAll(async () => {
         const bad=u.pathname.includes("pri_"+"c".repeat(32)),leads=u.pathname.includes("pri_"+"d".repeat(32));
         return new Response(bad?"<svg/>":Uint8Array.from([255,216,255,218,0,2,1,255,217]),{headers:{"content-type":bad?"image/svg+xml":"image/jpeg","x-network-photo-review-token":`${Date.now()+(leads?10*60_000:60_000)}.${"a".repeat(64)}`}});
       }
-      if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/(release|reject)$/.test(u.pathname)&&req.method==="POST")return Response.json({ok:true,delivered:false});
+      if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/(release|reject)$/.test(u.pathname)&&req.method==="POST"&&u.searchParams.get("app")==="slop")return Response.json({ok:true,delivered:false});
       if ((u.pathname === "/safety/hold" || u.pathname === "/invite") && req.method === "POST") { await sleep(SLOW_SERVICE_MS); return Response.json({ ok: true }); }
       return Response.json({ error: "no route" }, { status: 404 });
     },
@@ -101,7 +101,9 @@ describe("held texts in the console", () => {
     const audit = await (await as(TOK.admin, "/api/audit?app=slop")).json() as { entries: AuditEntry[] };
     const rows = audit.entries.filter(e => e.action.startsWith("held_") || e.action === "read_held_texts");
     expect(rows.some(e => e.action === "read_held_texts" && e.app === "slop")).toBe(true);
-    const phases = rows.filter(e => e.action === "held_release").map(e => `${e.detail?.phase}:${e.ok}`).sort();
+    const release = rows.filter(e => e.action === "held_release");
+    expect(release.filter(e => e.detail?.refused).map(e => `${e.detail?.refused}:${e.ok}:${e.roles.join(",")}`)).toEqual(["forbidden:false:reviewer"]);
+    const phases = release.filter(e => !e.detail?.refused).map(e => `${e.detail?.phase}:${e.ok}`).sort();
     expect(phases).toEqual(["requested:true", "result:true"]);
     expect(rows.filter(e => e.action === "held_reject").map(e => `${e.detail?.phase}:${e.ok}`).sort()).toEqual(["requested:true", "result:false"]);
   }, T);

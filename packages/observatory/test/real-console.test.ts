@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
+import { birthDateLower } from "../../core/src/generated/memberAge.ts";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
 import { GameSource } from "../src/sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource } from "../src/sources/real.ts";
@@ -35,6 +36,14 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     gs = g.state();
     const sql = new SQL(url);
     await writeRows(sql, rowsFromGame(g), { truncate: true });
+    const births = g.world.snapshot().members.filter(m => m.birthExact === true && m.birthKey !== undefined);
+    expect(births.length).toBeGreaterThan(0);
+    for (const m of births) {
+      const person = crypto.randomUUID(), birth = m.birthKey!;
+      await sql`insert into platform.people (id, lowest_age, birth_date, birth_lower, birth_upper, birth_youngest, birth_first_exact)
+        values (${person}, ${m.age ?? null}, ${birth}, ${birthDateLower(birth)}, ${birth}, ${birth}, true)`;
+      await sql`update network.members set person_id = ${person} where id = ${m.id}`;
+    }
     await sql.close();
     // Compare the same observation time. Wall time must not make future simulated meetings overdue.
     vi.setSystemTime(new Date(gs.clock.now));

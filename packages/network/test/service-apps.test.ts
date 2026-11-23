@@ -339,8 +339,31 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       const sent: SendRequest[] = [];
       const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
       const { s } = service(clock, { adapter: (_net, rt) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) });
-      await text(s, clock, newPhone(), "hi", { app: FR });
+      const to = newPhone();
+      await text(s, clock, to, "hi", { app: FR });
       expect(sent.length).toBe(1);
+
+      const rt = s.runtimeFor(FR)!;
+      expect(await rt.tick()).toBe(true);
+      let release!: () => void;
+      let entered!: () => void;
+      const inside = new Promise<void>(r => (entered = r));
+      const held = rt.store.withLock(() => new Promise<void>(r => { release = r; entered(); }));
+      await inside;
+      try {
+        expect((await sql`update network.network_state set state = state where id = ${rt.pg.id} returning id`).length).toBe(1);
+        expect(await rt.scoped(tx => rt.view.isCurrent(tx))).toBe(false);
+        expect(await rt.adapter.direct(to, "stale copy", "stale-copy-1", "reply")).toBe("pending");
+        expect(sent.length).toBe(1);
+        expect([...(await sql`select status from platform.outbound where id = 'stale-copy-1'`)]).toEqual([{ status: "pending" }]);
+      } finally {
+        release();
+        await held;
+      }
+      await rt.deliver();
+      expect(sent.length).toBe(2);
+      expect(sent[1]!.to).toBe(to);
+      expect((await sql`select status from platform.outbound where id = 'stale-copy-1'`)[0].status).toBe("accepted");
     }
 
     const clock = new SimClock(START);
@@ -1572,7 +1595,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       }),
     });
     await s.start();
-    expect(s.runtimeFor("ntwrk")?.adapter).toMatchObject({ name: "eliza_cloud", live: true });
+    expect(s.runtimeFor("ntwrk")?.adapter).toMatchObject({ name: "eliza_cloud", storedStatus: "queued" });
     const inviterPhone = newPhone(), newRecipient = newPhone();
     const invited = await s.accounts.invite(APPS.ntwrk, inviterPhone);
     if (!invited) throw new Error("Missing staff invitation for the fixture");

@@ -149,7 +149,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   for (const pair of (e.BACKEND_EXTRA_HOSTS ?? "").split(",").map(s => s.trim()).filter(Boolean)) {
     const [h, a] = pair.split("=").map(s => s?.trim().toLowerCase());
     if (!h || !a || !isAppId(a)) throw new Error(`BACKEND_EXTRA_HOSTS: "${pair}" is not host=app with a known app`);
-    if (production) throw new Error("BACKEND_EXTRA_HOSTS is for staging and previews, not production");
+    if (env === "production") throw new Error("BACKEND_EXTRA_HOSTS is for staging and previews, not production");
     if (stageOrigins[a] && h !== new URL(stageOrigins[a]!).host) throw new Error("BACKEND_EXTRA_HOSTS conflicts with the staging app authority");
     if (Object.entries(stageOrigins).some(([app, origin]) => new URL(origin).host === h && app !== a)) throw new Error("BACKEND_EXTRA_HOSTS conflicts with the staging app authority");
     hostMap[h] = a;
@@ -378,8 +378,10 @@ export function createBackend(d: BackendDeps) {
     catch (e) { log.error(`${tickKey} tick failed`, { error: (e as Error).message }); }
     finally { releaseTick(tickKey); }
   };
+  let judging: Promise<void> = Promise.resolve();
   const inboxThenNetworks = async () => {
     await serviceTick("inbox", () => svc.inboxTick());
+    await judging;
     await Promise.all([...svc.runtimes.values()].map(async rt => {
       if (!reserveTick(rt.id)) return;
       try {
@@ -394,11 +396,17 @@ export function createBackend(d: BackendDeps) {
   const reviewJudge = svc.reviewJudgeTick;
   const ops = d.ops;
   const publicEvents = d.publicEvents;
+  const networksThenJudge = async () => {
+    await inboxThenNetworks();
+    if (!reviewJudge) return;
+    const pass = Promise.all([judging, serviceTick("review_judge", () => reviewJudge.call(svc))]).then(() => undefined);
+    judging = pass;
+    await pass;
+  };
   const tickAll = () => Promise.all([
-    inboxThenNetworks(),
+    networksThenJudge(),
     serviceTick("retention", () => svc.purge()),
     notify && serviceTick("notify", () => notify.call(svc)),
-    reviewJudge && serviceTick("review_judge", () => reviewJudge.call(svc)),
     ops && serviceTick("ops", () => ops.tick()),
     publicEvents && serviceTick("public_events", publicEvents),
   ]).then(() => undefined);

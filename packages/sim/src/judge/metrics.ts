@@ -15,7 +15,8 @@ import { ageOnDay } from "../../../core/src/generated/memberAge.ts";
 import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../core/src/generated/friendIntroAge.ts";
 import { teenMeetingFirstMinute, teenMeetingLastMinute } from "../../../core/src/generated/teenIntroSwitch.ts";
 import { teenWindowAllowed } from "../teen.ts";
-import { teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
+import { teenFriendApp, teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
+import { copy } from "../../../network/src/copy.ts";
 import { ACTIVITIES } from "../../../engine/src/packs/network/activities.ts";
 import { VENUES } from "../../../network/src/geo.ts";
 import { CONNECTION, LANE_BUDGETS, PRD_BUDGETS } from "../../../network/src/outreach.ts";
@@ -235,6 +236,10 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const teenMeetingBound = (teenMeetingLastMinute - teenMeetingFirstMinute) * 60_000;
   const teenRule = (ids: readonly MemberId[], o: { app: AppId; category: string }, t: number, until = t) =>
     teenRosterSizeAllowed(true, ids.length) && groupAgeAllowed(teenOn, teenFriendCategory(o.app, o.category), earliestDayKeyOf(t), latestDayKeyOf(Math.max(t, until)), ids.map(ageSide));
+  const teenScopeNotice = (m: LoggedMessage, to: MemberId, type: string, namedCount: number, oppId: string | undefined, relayFrom: string | undefined) =>
+    !oppId && !relayFrom && namedCount === 0 && !CONNECT_TYPES.has(type) && teenOn && teenFriendApp(m.app ?? runApp ?? "ntwrk")
+    && ageSide(to).ready && m.body.includes(copy.minorTeenFriends)
+    && !offersConnection(m.body.split(copy.minorTeenFriends).join(" "));
   const teenDuration = new Map<string, number>();
   const teenRegister = (oppId: string, ids: readonly MemberId[], app: unknown, category: unknown, generator: unknown, t: number): boolean => {
     if (!isAppId(app) || typeof category !== "string" || typeof generator !== "string" || !teenGenerator(app, generator)) return false;
@@ -556,7 +561,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (!teenMessage && !teenNotice) {
       if ((oppId && minorRosterOpps.has(oppId)) || aboutMinors.length) minorContact(`message ${m.id} to ${to} about an opportunity involving minor ${aboutMinors.join(",") || "(proposal)"}`);
       else if (isMinor(to) && (CONNECT_TYPES.has(String(meta.type ?? "")) || relayFrom)) minorContact(`${String(meta.type ?? "relay")} message ${m.id} to minor ${to}`);
-      else if (isMinor(to) && offersConnection(m.body)) minorContact(`message ${m.id} to minor ${to} offers a connection`);
+      else if (isMinor(to) && offersConnection(m.body) && !teenScopeNotice(m, to, String(meta.type ?? ""), named.size, oppId, relayFrom)) minorContact(`message ${m.id} to minor ${to} offers a connection`);
       else if (isMinor(to) && named.size) minorContact(`message ${m.id} to minor ${to} names ${[...named].join(",")}`);
       else { const nm = [...named].filter(isMinor); if (nm.length) minorContact(`message ${m.id} to ${to} names minor ${nm.join(",")}`); }
     }

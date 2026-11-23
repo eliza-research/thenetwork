@@ -134,20 +134,39 @@ test("a fallback partner plan closes when a member asked about the plan it came 
   expect(w.sent.slice(from).filter(s => s.meta.proposalId === fallback().id)).toEqual([]);
 });
 
-test.each(["replacement", "repeat"] as const)("a %s plan closes when a member asked about the plan it follows is found to be a minor", async kind => {
+test("a replacement plan closes when a member asked about the plan it follows is found to be a minor", async () => {
   const { w, oppId } = await probedGroupPlan(3);
+  const now = w.clock.now();
+  const venue = PLAN_VENUES.find(v => v.id === "inwood-hill" && v.activities.includes("day_hike"))!;
+  const window = { start: now + 5 * DAY, end: now + 5 * DAY + 2 * HOUR };
   const state = w.net.exportState();
   const source = state.opps.find(o => o.id === oppId)!;
-  Object.assign(source, { stage: kind === "replacement" ? "closed" : "done", closedFrom: "scheduled", closedReason: "participant dropped",
-    contacted: ["a", "b", "c", "d", "e"], meetingAt: w.clock.now() });
+  Object.assign(source, { stage: "closed", closedFrom: "scheduled", closedReason: "participant dropped",
+    contacted: ["a", "b", "c", "d", "e"], meetingAt: now });
+  for (const member of state.members) member.stated = { at: now - 1, until: window.end + DAY, windows: [{ start: window.start - HOUR, end: window.end + HOUR }] };
   w.net.importState(state);
-  const now = w.clock.now();
-  const follow = w.net["submitPlan"]({ ...source.plan!, id: `plan_${kind}`, invited: ["a", "b", "c"], alternates: [],
-    ...(kind === "repeat" ? { repeatOf: oppId } : {}), createdAt: now }, now, kind === "replacement" ? oppId : undefined)!;
+  const follow = w.net["submitPlan"]({ ...source.plan!, id: "plan_replacement", activityId: "day_hike", venueId: venue.id, place: { name: venue.name, area: venue.area },
+    invited: ["a", "b", "c"], alternates: [], window, probeDeadline: now + 4 * DAY, createdAt: now }, now, oppId)!;
+  expect(w.net.exportState().opps.find(o => o.id === follow.id)).toMatchObject({ stage: "review", participants: ["a", "b", "c"],
+    replacementFor: oppId, review: { queuedAt: now } });
   await w.net.tick(w.clock.now());
+  heldFor(w, follow.id);
   expect(w.net.reviewQueue().map(i => i.oppId)).toEqual([follow.id]);
   await w.say("e", "I'm 16, is that ok?");
   expect(w.net.exportState().opps.find(o => o.id === follow.id)).toMatchObject({ stage: "closed", closedReason: "minors policy" });
+  expect(w.net.reviewQueue()).toEqual([]);
+});
+
+test("a repeat plan in review closes when a member asked about the table it repeats is found to be a minor", async () => {
+  const { w, completed, due } = await settledFriendsTable();
+  w.clock.set(due);
+  await w.net.tick(w.clock.now());
+  const repeat = () => w.net.exportState().opps.find(o => o.plan?.repeatOf === completed)!;
+  expect(repeat()).toMatchObject({ generator: "friends_repeat", stage: "review", participants: ["a", "b", "c"], plan: { repeatOf: completed } });
+  heldFor(w, repeat().id);
+  expect(w.net.reviewQueue().map(i => i.oppId)).toEqual([repeat().id]);
+  await w.say("e", "I'm 16, is that ok?");
+  expect(repeat()).toMatchObject({ stage: "closed", closedReason: "minors policy" });
   expect(w.net.reviewQueue()).toEqual([]);
 });
 

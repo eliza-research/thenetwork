@@ -59,11 +59,13 @@ test.skipIf(!pgAvailable).each([
       fixture.propose([first, second], { category: "hobby", objective: "find a climbing partner", alternates: [third] });
       expect(await fixture.runUntil(() => fixture.net.reviewQueue().length > 0, 2 * DAY)).toBe(true);
       const oppId = fixture.net.reviewQueue()[0]!.oppId;
+      expect(fixture.net.decide(oppId, "approve", { reviewer: "fixture-staff", revision: 0 })).toEqual({ ok: true });
       const saved = fixture.net.exportState();
       const opp = saved.opps.find(o => o.id === oppId)!;
+      expect(opp.review).toMatchObject({ decision: "approve", approver: "staff", reviewer: "fixture-staff" });
+      expect([...opp.review!.judgedRosters!].sort()).toEqual([[first, second], [third, second], [first, third]].map(r => r.sort().join("|")).sort());
       const deliveryId = `${first}:probe-roster-queue`;
       opp.stage = "probing";
-      opp.review = { queuedAt: now, deadline: now + DAY, decision: "approve", reviewer: "fixture-staff" };
       opp.status = [[first, "probing"], [second, "queued"]];
       opp.first = first;
       opp.contacted = [first];

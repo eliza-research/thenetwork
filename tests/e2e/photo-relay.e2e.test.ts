@@ -117,6 +117,8 @@ describe.skipIf(!pgAvailable)("photo relay (sender names a photo, receiver says 
     expect(await later.json()).toMatchObject({ purpose: "view", count: 1 });
     expect((await page("image", { token: viewToken, n: 1 }, receiverPhone)).status).toBe(200);
 
+    const heardOf = async () => { const m = (await st.svc.runtimeFor("slop")!.readState(n => n.exportState())).members.find(x => x.id === receiver.memberId)!; return { lastInbound: m.lastInbound, msgsIn: m.msgsIn, replies: m.replies, unsolStreak: m.unsolStreak, outbound: m.outbound }; };
+    const heardBefore = await heardOf();
     const reported = await page("answer", { token: viewToken, answer: "report" }, receiverPhone);
     expect(reported.status).toBe(200);
     expect(await reported.json()).toEqual({ ok: true, state: "reported" });
@@ -128,5 +130,6 @@ describe.skipIf(!pgAvailable)("photo relay (sender names a photo, receiver says 
     expect(state.reports?.some(r => r.kind === "harassment" && r.reporterId === receiver.memberId && r.subjectId === sender.memberId && r.opportunityId === threadId)).toBe(true);
     const [told] = await sql`select body from network.messages where app_id = 'slop' and member_id = ${receiver.memberId} and id = ${`photo-report:${offer!.id}`}`;
     expect(told?.body).toBe("Thanks for telling me. I closed the photo, and the safety team will look at it.");
+    expect(await heardOf()).toEqual({ ...heardBefore, outbound: (heardBefore.outbound ?? 0) + 1 });
   }, T);
 });

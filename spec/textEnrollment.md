@@ -204,7 +204,7 @@ pure def lawRecordedAgeDeclineAtMostOnceADay(statedAge: bool): bool =
 
 ### An active membership gets its welcome and at most one follow-up
 
-The service writes app consent and membership before it creates the runtime member. A waitlist ends after the membership write. An active member gets the normal welcome. If the person has another app, offer limited base-profile sharing without naming that app. Otherwise an uninvited shared-line Network join asks what the member is looking for. The follow-up is a reply to the member's join answer, so a signed turn returns it with the welcome. Changed (audit SHA39): the follow-up was queued as a separate transactional text -> it is a reply to the join answer, because a dry-run backend never sent it.
+The service writes app consent and membership before it creates the runtime member. A waitlist ends after the membership write. An active member gets the normal welcome. If the person has another app, offer limited base-profile sharing without naming that app. Otherwise an uninvited shared-line Network join asks what the member is looking for. The follow-up is a reply to the member's join answer, so a signed turn returns it with the welcome. Changed (audit SHA39): the follow-up was queued as a separate transactional text -> it is a reply to the join answer, because a dry-run backend never sent it. Changed (verification 2026-11-23): the welcome had no example path -> the spec gives the seven-step join that the text join in production takes to the looking-for question, because the recorded-age step and the many new laws of the teen rules put the welcome beyond the random search.
 
 ```quint
 pure def canRecordTextMembership(joining: TextJoin): bool =
@@ -227,6 +227,16 @@ pure def alwaysMembershipRequiresCompletedEligibleAnswer(joining: TextJoin): boo
 pure def sometimesAsksAge(joining: TextJoin): bool = joining.phase == AskForAge
 pure def sometimesRefusesAge(joining: TextJoin): bool = joining.phase == RefuseAge
 pure def sometimesAsksWhatTheyWant(joining: TextJoin): bool = joining.phase == JoinedWithLookingFor
+
+pure val eval_witness_sometimesAsksWhatTheyWant = (
+  ("checkJoinBan", false),
+  ("checkInvitation", false, false, true, true),
+  ("readJoinAnswer", completedAnswer),
+  "recordStatedAge",
+  ("checkTextJoinAge", true),
+  ("recordTextMembership", true),
+  ("recordWelcome", false, true, false)
+)
 ```
 
 ## Story: Choose other apps from The Network
@@ -385,7 +395,7 @@ pure def lawFarJoinableTypedAgeIsDropped(typedAge: int): bool =
 
 ### An older age from a teen with a birth date is a contradiction
 
-A member whose record has an exact birth date that gives 13 to 18 on every day now contradicts it when they state an age about themselves that is 19 or more, or that is more than one year above the age that the birth date gives on the latest civil date on Earth now. This applies in any form the line reads as their own age, on any message, open turns included, and also to a birth date stated in the same message. The shell then calls the network's older-than-stated step once per member, which bars the phone from the teen pool and closes the member's teen items. A typed age alone, a birth date that gives 19 or more, and an age at most one year above the birth-date age are no contradiction. One year above is allowed, because a teen who rounds up to the next age is honest. Changed (owner decision 2026-11-22, D1): no stated age contradicted a teen birth date -> an age of 19 or more, or more than one year above, bars the teen pool, because an adult who typed a teen birth date must lose that access when they say their real age.
+A member whose record has an exact birth date that gives 13 to 18 on every day now contradicts it when they state an age about themselves that is 19 or more, or that is more than one year above the age that the birth date gives on the latest civil date on Earth now. This applies in any form the line reads as their own age, on any message, open turns included, and also to a birth date stated in the same message. The shell then calls the network's older-than-stated step once per member, which bars the phone from the teen pool and closes the member's teen items. A typed age alone, a birth date that gives 19 or more, and an age at most one year above the birth-date age are no contradiction. One year above is allowed, because a teen who rounds up to the next age is honest. An age that is not below the age that the birth date gives, from the same message or from the stored exact birth date, is not stored as a new age reading, because it can only make the readings conflict, and a conflict bars the teen pool: the older-than-stated step is the only path from such an age to a bar. Changed (owner decision 2026-11-22, D1): no stated age contradicted a teen birth date -> an age of 19 or more, or more than one year above, bars the teen pool, because an adult who typed a teen birth date must lose that access when they say their real age. Changed (verification 2026-11-23): an age one year above a stored exact teen birth date was stored as a reading, so the readings conflicted and the honest teen lost the teen pool -> such an age is not stored, because this rule allows one year above.
 
 ```quint
 import friendIntroAge as FriendAge from "./friendIntroAge"

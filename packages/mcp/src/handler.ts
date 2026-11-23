@@ -1360,7 +1360,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const need = TOOL_SCOPE[tool];
         if (need) {
           const scopeChallenge = challenge(resource, {
-            ...(need === "profile:read" || need === "photos:use" ? { scope: need } : {}),
+            ...(auth || need === "profile:read" || need === "photos:use" ? { scope: need } : {}),
             ...(auth ? { error: "insufficient_scope", error_description: `This tool needs ${need}` } : {}),
           });
           // spec/connectorTools.md, "Public tools need no sign-in": a member tool needs a grant that covers its scope.

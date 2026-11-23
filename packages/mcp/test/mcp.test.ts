@@ -20,11 +20,11 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(d.body!.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("the-network");
 
     const l = await rpc(env, NTWRK, "tools/list");
-    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "read_profile", "submit_profile", "get_updates"]);
+    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "read_profile", "submit_profile", "list_looking_for", "pause_looking_for", "resume_looking_for", "get_updates"]);
     for (const t of l.body!.result.tools) {
-      // Profile submission and reading updates modify the person's own state.
-      const ro = !["submit_profile", "get_updates", "prepare_signup"].includes(t.name);
-      expect(t.annotations).toEqual({ title: expect.any(String), readOnlyHint: ro, destructiveHint: false, idempotentHint: ro, openWorldHint: false });
+      const ro = !["submit_profile", "get_updates", "prepare_signup", "pause_looking_for", "resume_looking_for"].includes(t.name);
+      const idempotent = ro || ["pause_looking_for", "resume_looking_for"].includes(t.name);
+      expect(t.annotations).toEqual({ title: expect.any(String), readOnlyHint: ro, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false });
       expect(t.inputSchema.additionalProperties).toBe(false);
     }
     const info = await call(env, NTWRK, "app_info", { app: "peon" });
@@ -84,7 +84,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     const future = await rpc(env, NTWRK, "initialize", { protocolVersion: "2030-01-01", capabilities: {} }, { modern: false });
     expect(future.body!.result.protocolVersion).toBe("2025-11-25");
     const list = await rpc(env, NTWRK, "tools/list", {}, { modern: false, headers: { "mcp-protocol-version": "2025-06-18" } });
-    expect(list.body!.result.tools).toHaveLength(7);
+    expect(list.body!.result.tools).toHaveLength(10);
     const tool = await call(env, NTWRK, "app_info", {}, { modern: false });
     expect(tool.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
   });
@@ -113,6 +113,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
       const teen = await addMember(env, PHONE_A, [{ app, state: "active" }], 16);
       await addMember(env, PHONE_B, [{ app, state: "active" }], 30);
       const status = async (phone: string) => {
+        env.clock.t += 3_600_000;
         const connection = await connect(env, domain, phone, { scope: "membership:read" });
         return (await call(env, `${origin(domain)}/mcp`, "check_status", {}, { token: connection.token.access_token })).body!.result.structuredContent;
       };
@@ -251,7 +252,7 @@ describe("no tool accepts a phone number or a code", () => {
     await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
     for (const url of [NTWRK, OPENAI, `${origin("slop.date")}/mcp`]) {
       for (const t of (await rpc(env, url, "tools/list")).body!.result.tools) {
-        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "prepare_signup" ? ["app", "firstName", "homeCity"] : ["app"]);
+        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "prepare_signup" ? ["app", "firstName", "homeCity"] : t.name === "pause_looking_for" || t.name === "resume_looking_for" ? ["app", "ref"] : t.name === "photo_request" ? ["app", "words"] : ["app"]);
         expect(JSON.stringify(t.inputSchema)).not.toMatch(t.name === "prepare_signup" ? /phone|code|otp|age|birth|orientation|gender/i : /phone|code|otp|name|age|birth/i);
       }
     }

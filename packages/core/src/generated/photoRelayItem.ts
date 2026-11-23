@@ -75,7 +75,7 @@ export function ownSlots(count: number): number {
 /** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
 //@ pure
 export function slotBit(m: number, d: number): number {
-  return remainder_photoRelayItem(quotient_photoRelayItem(cleanMask(m), d), 2);
+  return d < 1 ? 0 : remainder_photoRelayItem(quotient_photoRelayItem(cleanMask(m), d), 2);
 }
 
 /** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */

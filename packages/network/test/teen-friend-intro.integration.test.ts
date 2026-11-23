@@ -121,15 +121,15 @@ test("a 16-year-old is never introduced to a 19-year-old", async () => {
   await w.onboard("t16", "a19");
   const from = w.mark();
   await w.say("t16", "Can you find me a regular climbing partner?");
-  await w.run(24 * 3_600_000);
   expect(teenItems(w, "t16")).toEqual([]);
   expect(teenItems(w, "a19")).toEqual([]);
+  await w.run(24 * 3_600_000);
+  expect(w.net.exportState().opps.filter(o => o.participants.includes("t16") && o.participants.includes("a19"))).toEqual([]);
   expect(w.to("a19", from).filter(s => itemOf(s) !== undefined)).toEqual([]);
 
   const control = world(["t16", "t17"]);
   await control.onboard("t16", "t17");
   await control.say("t16", "Can you find me a regular climbing partner?");
-  await control.run(24 * 3_600_000);
   expect(teenItems(control, "t16").map(i => [...i.proposal.participants].sort())).toContainEqual(["t16", "t17"]);
 });
 
@@ -173,7 +173,8 @@ test("a staff stop closes an approved teen item with a notice that names nobody"
   expect(w.log("teen_item_closed").map(l => [l.detail.oppId, l.detail.reason])).toEqual([[item!.oppId, "teen_intros_off"]]);
   expect(w.net.teenItemCurrent(item!.oppId)).toBe(false);
   await w.run(48 * 3_600_000);
-  const after = w.sent.slice(from).filter(s => itemOf(s) === item!.oppId);
+  const after = w.sent.slice(from);
+  expect(after.every(s => itemOf(s) === item!.oppId || (itemOf(s) === undefined && s.meta.type === "info"))).toBe(true);
   expect(after.map(s => s.to).sort()).toEqual(told);
   expect(after.filter(s => /Tess|Uma/.test(s.body))).toEqual([]);
   expect(after.filter(s => s.meta.type !== "cancellation" && s.meta.type !== "info")).toEqual([]);
@@ -265,7 +266,7 @@ test("a teen pair's relay blocks text when the classifier cannot run, passes tex
   const down = { hook: async (): Promise<never> => { throw new Error("classifier_down"); } };
   const unread = w.mark();
   const unclassified = await w.net.relayRequest({ itemId: "teen-text-0", from: "t16", kind: "text", text: "see you at the climbing gym on saturday", matchId: "teen-relay" }, down);
-  expect(unclassified).toMatchObject({ decision: "refused", reason: "I didn't send that, so it didn't reach them." });
+  expect(unclassified).toMatchObject({ decision: "refused", reason: "I couldn't check that message just now, so I didn't send it. Please try again in a few minutes." });
   expect(w.to("t17", unread).filter(s => s.meta.type === "relay")).toEqual([]);
   const from = w.mark();
   const text = await w.net.relayRequest({ itemId: "teen-text-1", from: "t16", kind: "text", text: "see you at the climbing gym on saturday", matchId: "teen-relay" }, clean);
@@ -563,7 +564,7 @@ const tableMeetings = (w: Mini, oppId: string) => w.meetings.filter(m => m.propo
 
 test("a teen table books with its minors seated, and a later yes from an invited teen joins the booked table", async () => {
   const ids = ["t16", "t17", "t18", "z17"];
-  const w = world(ids, { plans: false });
+  const w = world(ids, { plans: false, pack: friendsPack });
   await w.onboard(...ids);
   const { oppId } = await approvedTable(w, tablePlan("teen_table_join", ids, { quorum: 3, max: 4 }));
   expect(w.net.teenItemCurrent(oppId)).toBe(true);
@@ -578,7 +579,7 @@ test("a teen table books with its minors seated, and a later yes from an invited
 
 test("a booked teen table that falls under its quorum closes and offers its reviewed teen alternate no replacement seat", async () => {
   const ids = ["t16", "t17", "t18"];
-  const w = world([...ids, "v17"], { plans: false, matchingEnabled: true });
+  const w = world([...ids, "v17"], { plans: false, matchingEnabled: true, pack: friendsPack });
   await w.onboard(...ids, "v17");
   const { oppId, alternates } = await approvedTable(w, tablePlan("teen_table_drop", ids, { alternates: ["v17"], quorum: 3, max: 3 }));
   expect(alternates).toEqual(["v17"]);

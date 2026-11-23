@@ -940,15 +940,17 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
   const vocab = privateVocabulary(w, others);
   const names = nameTokens(w, others);
   const forbidden = employerValues(w, others);
-  const ok = (text: string) => !tokenize(text).some(t => names.has(t.toLowerCase())) && checkMemberFacing(text, vocab, forbidden).ok;
+  const ok = (text: string, copy: ReadonlySet<string>) =>
+    !tokenize(text).some(t => names.has(t.toLowerCase())) && checkMemberFacing(text, new Set([...vocab].filter(t => !copy.has(t))), forbidden).ok;
   // The activity can itself come from someone's private facet (e.g. a matchable workplace word):
   // then a generic phrase for the category is used instead.
   for (const m of mutual ? [mutual, undefined] : [undefined]) {
     mutual = m;
+    const copy = new Set(tokenize(frame("")).map(t => t.toLowerCase()));
     for (const activity of [...new Set([activityOf(spec.objective), AP.laneActivity[spec.category], "meeting new people"])]) {
       for (const [a, ar] of [[attr, area], [attr, undefined], [undefined, area], [undefined, undefined]] as const) {
         const text = frame(activity, a, ar);
-        if (ok(text)) return { text, ...(a ? { attribute: a } : {}), ...(ar ? { area: ar } : {}), ...(m ? { mutual: m } : {}) };
+        if (ok(text, copy)) return { text, ...(a ? { attribute: a } : {}), ...(ar ? { area: ar } : {}), ...(m ? { mutual: m } : {}) };
       }
     }
   }

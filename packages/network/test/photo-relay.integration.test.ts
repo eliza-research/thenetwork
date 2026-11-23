@@ -32,9 +32,10 @@ const post=async(path:string,body:object,id:string)=>{
 const turn=(who:Who,messageId:string,text:string):TurnRequest=>({channel:"blooio",from:phones[who],to:null,messageId,text,receivedAt:clock.now(),transport:"imessage",app:"slop"});
 const say=async(who:Who,text:string,messageId=`photo-turn-${++seq}`)=>{
   clock.advance(MINUTE);
-  const r=await post(TURN_PATH,turn(who,messageId,text),messageId);expect(r.status).toBe(200);
+  const request=turn(who,messageId,text);
+  const r=await post(TURN_PATH,request,messageId);expect(r.status).toBe(200);
   const body=await r.json() as {outcome:string;replies?:string[]};
-  return {...body,messageId,reply:(body.replies??[]).join(" ")};
+  return {...body,messageId,request,reply:(body.replies??[]).join(" ")};
 };
 const join=async(who:Who,name:string,age:number)=>{
   for(const text of ["slop.date",`${name}, ${age}`,"I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"]) await say(who,text);
@@ -105,7 +106,9 @@ test.skipIf(!pgAvailable)("a sender names a photo in their own words, sees exact
   expect(asks).toEqual([{id:await askOf(offer!.id),body:"Ari wants to send you a photo. An automatic check screens every photo first. Want it? Reply YES or NO. If you say no, Ari isn't told why. Say NO MORE PHOTOS any time and I won't offer you photos again."}]);
   expect(await items(offer!.id)).toEqual([]);
   clock.advance(MINUTE);
-  expect((await post(TURN_PATH,turn("ari",yes.messageId,"yes"),yes.messageId)).status).toBe(200);
+  const replayed=await post(TURN_PATH,yes.request,yes.messageId);
+  expect(replayed.status).toBe(200);
+  expect((await replayed.json() as {replies?:string[]}).replies).toEqual(yes.replies);
   expect(await offers("ari","maya")).toHaveLength(1);
 },120_000);
 
@@ -176,7 +179,7 @@ test.skipIf(!pgAvailable)("a minor receiver is never offered a photo, and a STOP
   expect((await offers("ari","nia"))[0]).toEqual({id:offer!.id,phase:"ended"});
   clock.advance(DAY);await service.tick();
   expect(await messages("nia","photo-ask:")).toHaveLength(1);
-  expect(await messages("ari",`photo-notice:${offer!.id}`)).toEqual([{id:`photo-notice:${offer!.id}`,body:"Nia didn't take your photo, so it stays with you."}]);
+  expect(await messages("ari",`photo-notice:${offer!.id}`)).toEqual([{id:`photo-notice:${offer!.id}`,body:"Nia didn't take your photo, so it stays with you. Reply STOP anytime to opt out."}]);
 },180_000);
 
 test.skipIf(!pgAvailable)("NO MORE PHOTOS silences every later offer, and two unopened offers turn photos off for the pair",async()=>{
@@ -207,7 +210,7 @@ test.skipIf(!pgAvailable)("a connected agent can only ask: the proposal is texte
   expect(held?.photos.map(p=>p.number)).toEqual([1,2]);
   expect(held?.photos[0]).toMatchObject({number:1,name:"beach",addedOn:"2026-11-22"});
   expect(held?.photos[0]!.sharedWith).toContainEqual({firstName:"Maya",state:"ready"});
-  expect(JSON.stringify(held)).not.toMatch(/ph_|http|sha|pof_|pri_/);
+  expect(JSON.stringify(held)).not.toMatch(/ph_|http|sha256|[a-f0-9]{64}|pof_|pri_/);
   expect(await service.photoHoldings(people.ari.personId,"slop",phones.maya)).toBeUndefined();
   const ready=(await offers("ari","maya")).at(-1)!;
   expect(ready.phase).toBe("ready");
@@ -392,14 +395,19 @@ test.skipIf(!pgAvailable)("a ready photo does not hold the next offer to the sam
   expect((await say("ari","send Una photo 2")).reply).toContain("Send Una photo 2");
   expect((await say("ari","yes")).reply).toBe("Okay. I'll ask Una if they want it. An automatic check screens it first. I'll tell you if it doesn't go.");
   expect((await offers("ari","una")).map(o=>o.phase)).toEqual(["ready","asking"]);
-  await say("ari","send Una the beach one");
+  expect((await say("ari","send Una the beach one")).reply).toMatch(/^Una already has photo 1\. Which other one\? 2 \(/);
+  await upload("ari",4);
+  expect((await say("ari","send Una photo 3")).reply).toContain("Send Una photo 3");
   expect((await say("ari","yes")).reply).toBe("Una hasn't answered your last photo yet. You can offer another after that.");
   expect((await offers("ari","una")).map(o=>o.phase)).toEqual(["ready","asking"]);
   expect((await open(browser)).status).toBe(200);
 
   await say("una","STOP");
   await say("una","START");
-  expect((await say("ari","send Una the beach one")).reply).toContain("Send Una photo 1");
+  const afterStop=await say("ari","send Una the beach one");
+  expect(afterStop.reply).toBe('Who should get it? Sam or Tao or Rosa or Kim or Lee or Omar or Jordan or Maya. Say something like "send Sam the beach one".');
+  expect(afterStop.reply).not.toContain("Una");
+  expect(afterStop.reply).not.toMatch(/\/photos\/check/);
   const reopened=await open(browser);
   expect(reopened.status).toBe(410);
   expect(await reopened.json()).toEqual({ok:false,error:"link_expired"});

@@ -41,13 +41,6 @@ async function memberOf(phone: string, app: AppId = "friends"): Promise<string> 
   return row.id;
 }
 
-async function days(n: number) {
-  for (let day = 0; day < n; day++) {
-    for (const r of st.svc.runtimes.values()) await r.tick();
-    st.clock.advance(86_400_000);
-  }
-}
-
 const runtimeOf = (app: AppId) => [...st.svc.runtimes.values()].find(r => r.app.id === app)!;
 const teenItemsOf = async (memberId: string) =>
   ((await staffAs(REVIEWER, "GET", "/apps/friends/review")).body.items as { oppId: string; revision: number; proposal: { participants: string[]; alternates: string[] }; teen?: { members: Record<string, unknown>[] } }[])
@@ -97,7 +90,7 @@ describe.skipIf(!pgAvailable)("spec/teenIntroSwitch.md and spec/friendIntroAge.m
     expect((await staffAs(SAFETY, "GET", `/apps/friends/safety/teen-age?memberId=${encodeURIComponent(t16)}`)).status).toBe(404);
 
     await st.text(p16, "Find me someone to go bouldering with in Brooklyn this Saturday afternoon");
-    await days(1);
+    for (const r of st.svc.runtimes.values()) await r.tick();
     const [item] = await pendingTeenItemsOf(t16);
     expect(item).toBeDefined();
     expect([...item!.proposal.participants].sort()).toEqual([t16, t17].sort());
@@ -149,14 +142,14 @@ describe.skipIf(!pgAvailable)("spec/teenIntroSwitch.md and spec/friendIntroAge.m
     const ntwrkSwitchBefore = (await switchRows("ntwrk:nyc")).map(r => [r.ok, r.on]);
 
     const friendsRefusedBefore = await forbiddenActors("friends:nyc");
-    expect((await staffAs(SLOP_SAFETY, "POST", "/apps/slop/teen-intros", { on: false })).body).toEqual({ ok: false, reason: "forbidden" });
+    expect(await staffAs(SLOP_SAFETY, "POST", "/apps/slop/teen-intros", { on: false })).toEqual({ status: 403, body: { ok: false, reason: "forbidden", code: "forbidden" } });
     expect(await runtimeOf("friends").readState(n => n.teenIntrosEnabled())).toBe(true);
     expect(await runtimeOf("ntwrk").readState(n => n.teenIntrosEnabled())).toBe(true);
     const slopActor = await newActor("friends:nyc", friendsRefusedBefore);
     expect(await refusedRows(slopActor)).toEqual([{ target_id: "teen_intros_friends:nyc", reason: "forbidden" }, { target_id: "teen_intros_ntwrk:nyc", reason: "forbidden" }]);
 
     const ntwrkRefusedBefore = await forbiddenActors("ntwrk:nyc");
-    expect((await staffAs(FRIENDS_SAFETY, "POST", "/apps/friends/teen-intros", { on: false })).body).toEqual({ ok: false, reason: "forbidden" });
+    expect(await staffAs(FRIENDS_SAFETY, "POST", "/apps/friends/teen-intros", { on: false })).toEqual({ status: 403, body: { ok: false, reason: "forbidden", code: "forbidden" } });
     expect(await runtimeOf("friends").readState(n => n.teenIntrosEnabled())).toBe(true);
     expect(await runtimeOf("ntwrk").readState(n => n.teenIntrosEnabled())).toBe(true);
     expect((await switchRows("friends:nyc")).map(r => [r.ok, r.on])).toEqual(friendsSwitchBefore);

@@ -29,36 +29,7 @@
    "whyBack": "it seemed like a good fit"
   }
  ],
- "m7#1": [
-  {
-   "id": "m207",
-   "score": 0.8,
-   "fit": 0.6,
-   "why": "they say they're an experienced climber who likes taking beginners",
-   "whyBack": "it seemed like a good fit"
-  },
-  {
-   "id": "m247",
-   "score": 0.8,
-   "fit": 0.6,
-   "why": "it seemed like a good fit",
-   "whyBack": "it seemed like a good fit"
-  },
-  {
-   "id": "m131",
-   "score": 0.7244444444444444,
-   "fit": 0.6,
-   "why": "it seemed like a good fit",
-   "whyBack": "it seemed like a good fit"
-  },
-  {
-   "id": "m63",
-   "score": 0.7,
-   "fit": 0.5,
-   "why": "they're into bouldering and climbing",
-   "whyBack": "it seemed like a good fit"
-  }
- ],
+ "m7#1": [],
  "m14#2": [
   {
    "id": "m38",

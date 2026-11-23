@@ -129,19 +129,20 @@ test("romance in slop.date refuses a teen-ready teen while teen introductions ru
 });
 
 test("a plan seat and a partner session take a teen only as a guest or peer and only within 2 years", () => {
-  const w = worldOf({ [a]: born(20100315), [b]: born(20090601) });
+  const grouped = metAgain(base);
+  const w = worldOf({ [a]: born(20100315), [b]: born(20090601) }, true, grouped);
   expect(pairReason(w, a, b, "social", "Friend")).toBeNull();
   expect(planMemberReason(w, a)).toBeNull();
   expect(planMemberReason(w, b)).toBeNull();
   expect(planMemberReason(w, a, "host")).toBe("underage");
   expect(friendsPartnerEligible(w, a, b, "social")).toBe(true);
-  const apart = worldOf({ [a]: born(20100315), [b]: born(20080314) });
+  const apart = worldOf({ [a]: born(20100315), [b]: born(20080314) }, true, grouped);
   expect(friendsPartnerEligible(apart, a, b, "social")).toBe(false);
   expect(friendsPartnerEligible(apart, a, b, "hobby")).toBe(false);
-  const unready = worldOf({ [a]: born(20100315, false), [b]: born(20090601) });
+  const unready = worldOf({ [a]: born(20100315, false), [b]: born(20090601) }, true, grouped);
   expect(planMemberReason(unready, a)).toBe("underage");
   expect(friendsPartnerEligible(unready, a, b, "social")).toBe(false);
-  const stopped = worldOf({ [a]: born(20100315), [b]: born(20090601) }, false);
+  const stopped = worldOf({ [a]: born(20100315), [b]: born(20090601) }, false, grouped);
   expect(planMemberReason(stopped, a)).toBe("underage");
   expect(friendsPartnerEligible(stopped, a, b, "social")).toBe(false);
   const ntwrk = new World(withAges(base, { [a]: born(20100315), [b]: born(20090601) }, true), cfg, localEmbed, networkPack);
@@ -374,7 +375,8 @@ test("a crew session plan takes a teen crew only for an all-ages activity at an 
   expect(session).not.toBeNull();
   expect(session!.hostId).toBeUndefined();
   expect(session!.venueId).toBe(library.id);
-  expect(session!.place).toEqual({ name: library.name, area: library.area, ages: { allAges: true, ageMin: 13, adultPlans: false } });
+  expect(session!.place).toEqual({ name: library.name, area: library.area });
+  expect(venueAgesIn([library])(session!.venueId!)).toMatchObject({ allAges: true, ageMin: 13, adultPlans: false });
   expect(crewSessionPlan(adults, games, NOW, library, FRIENDS_PLANS)?.hostId).toBeDefined();
   expect(crewSessionPlan(teens, games, NOW, undefined, FRIENDS_PLANS)).toBeNull();
   expect(crewSessionPlan(teens, games, NOW, { ...library, allAges: false }, FRIENDS_PLANS)).toBeNull();

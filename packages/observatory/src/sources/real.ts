@@ -5,12 +5,12 @@ import {
 } from "@thenetwork/core";
 import { ageOnDay } from "../../../core/src/generated/memberAge.ts";
 import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../core/src/generated/friendIntroAge.ts";
-import { teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
+import { teenFriendApp, teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
 import { JUDGE_VERDICTS } from "@thenetwork/engine/src/reviewJudge.ts";
-import { OUTREACH, teenMeetingEndOf } from "@thenetwork/network";
+import { copy, OUTREACH, teenMeetingEndOf } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
-import { runEngineSummarized } from "../engineCapture.ts";
+import { runEngineSummarized, storedRunSummary, type StoredRunSummary } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
@@ -104,32 +104,45 @@ function teenSwitchOnAt(rows: readonly TeenSwitchRow[], t: number): boolean {
   return on;
 }
 
+function teenSideAt(e: TeenEvidence, id: string, t: number, atT: boolean): AgeSide {
+  const m = e.members.get(id);
+  if (!m || m.birthKey === undefined) return { adult: false, ready: false, birthKey: 0 };
+  const h = teenFlagsAt(e.history.get(id) ?? [], atT ? t : Infinity);
+  const conflict = h.conflict || h.unknown || (!atT && m.ageConflict === true);
+  const signal = h.signal || (!atT && m.minorSignal === true);
+  const reported = h.reported || (!atT && m.minorReported === true);
+  const older = h.older || (!atT && m.olderReported === true);
+  const ready = teenReady(m.birthExact === true, conflict, signal, reported, older, m.teenBarred === true);
+  const adult = canBeMatched(ageOnDay(m.birthKey, earliestDayKeyOf(t))) && !conflict && !signal && !reported;
+  return { adult, ready, birthKey: m.birthKey };
+}
+
 function teenRuleHeldAt(e: TeenEvidence, ids: readonly string[], category: string | undefined, t: number, until = t): boolean {
   if (!e.readable || !teenRosterSizeAllowed(true, ids.length) || category === undefined) return false;
   if (!teenSwitchOnAt(e.switches, t)) return false;
   const lane = teenFriendCategory(e.app, category);
   const minDay = earliestDayKeyOf(t), maxDay = latestDayKeyOf(Math.max(t, until));
-  const side = (id: string, atT: boolean): AgeSide => {
-    const m = e.members.get(id);
-    if (!m || m.birthKey === undefined) return { adult: false, ready: false, birthKey: 0 };
-    const h = teenFlagsAt(e.history.get(id) ?? [], atT ? t : Infinity);
-    const conflict = h.conflict || h.unknown || (!atT && m.ageConflict === true);
-    const signal = h.signal || (!atT && m.minorSignal === true);
-    const reported = h.reported || (!atT && m.minorReported === true);
-    const older = h.older || (!atT && m.olderReported === true);
-    const ready = teenReady(m.birthExact === true, conflict, signal, reported, older, m.teenBarred === true);
-    const adult = canBeMatched(ageOnDay(m.birthKey, minDay)) && !conflict && !signal && !reported;
-    return { adult, ready, birthKey: m.birthKey };
-  };
+  const side = (id: string, atT: boolean): AgeSide => teenSideAt(e, id, t, atT);
   return groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, true)))
     && groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, false)));
 }
 
 const TEEN_NOTICE_TYPES = new Set(["info", "cancellation"]);
 
+function teenScopeNoticeAt(e: TeenEvidence, memberId: string, body: string, t: number, others: readonly string[]): boolean {
+  if (!e.readable || !teenFriendApp(e.app) || !teenSwitchOnAt(e.switches, t) || !body.includes(copy.minorTeenFriends)) return false;
+  const rest = body.split(copy.minorTeenFriends).join(" ");
+  if (offersConnection(rest) || namesAny(rest, others)) return false;
+  return teenSideAt(e, memberId, t, true).ready && teenSideAt(e, memberId, t, false).ready;
+}
+
+function namesAny(body: string, others: readonly string[]): boolean {
+  return others.some(name => name.length >= 2 && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body));
+}
+
 function teenNoticeNamesNobody(body: string, type: string | null | undefined, others: readonly string[]): boolean {
   if (!TEEN_NOTICE_TYPES.has(type ?? "") || offersConnection(body)) return false;
-  return !others.some(name => name.length >= 2 && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body));
+  return !namesAny(body, others);
 }
 const AGE_EVENTS = ["age_unknown", "age_resolved", "minor_signal", "age_conflict"];
 const TEEN_EVENTS = ["safety_action", "minor_reported", "teen_age_contradicted"];
@@ -349,7 +362,7 @@ export class RealSource implements DataSource {
       sql<{ from_id: string; to_id: string; type: EdgeType; strength: number; explicit: boolean; created_at: Date | string | null }[]>`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app}`,
       sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`,
       sql`select opportunity_id, member_id, role, status, enjoyment::text::float8 as enjoyment from network.participations where app_id = ${app}`,
-      sql<{ summary: EngineRunSummary }[]>`select summary from network.matching_runs where app_id = ${app} order by at desc, id desc limit 40`,
+      sql<{ summary: StoredRunSummary }[]>`select summary from network.matching_runs where app_id = ${app} order by at desc, id desc limit 40`,
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${app} and type = any(${`{${FEED_TYPES.join(",")}}`}::text[]) order by at desc, id desc limit 300`,
       sql`select
             (select count(*) from network.messages where app_id = ${app} and not system)::int as messages,
@@ -441,7 +454,7 @@ export class RealSource implements DataSource {
       if (o.meetingAt !== undefined && told.has(r.id)) o.booked = { at: o.meetingAt, optOutHours: BOOKED_OPT_OUT_HOURS, told: told.get(r.id)!, cancelled: cancelled.get(r.id) ?? {} };
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
     }
-    const dbRuns = runs.map(r => r.summary).reverse();
+    const dbRuns = runs.map(r => storedRunSummary(r.summary)).reverse();
     const allRuns = [...dbRuns, ...this.shadowRuns];
     if (JSON.stringify(allRuns.map(r => r.id)) !== JSON.stringify(s.runs.map(r => r.id))) { s.runs.length = 0; for (const r of allRuns) s.addRun(r); }
 
@@ -502,7 +515,7 @@ export class RealSource implements DataSource {
   }
 
   private async minorContacts(sql: SQL, rows: { member_id: string; ts: Date | string; opportunity_id: string | null; type?: string | null; body?: string | null }[]): Promise<{ n: number; teenProblem?: string }> {
-    const counted: { t: number; memberId: string; body: string; type: string | null; o?: ObsOpportunity }[] = [];
+    const counted: { t: number; memberId: string; body: string; type: string | null; o?: ObsOpportunity; scopeNotice?: true }[] = [];
     for (const r of rows) {
       const t = ms(r.ts) ?? 0;
       const minor = (id: string) => minorAt(this.ages, id, this.recordAges.get(id), t);
@@ -510,14 +523,15 @@ export class RealSource implements DataSource {
       const who = new Set([r.member_id, ...(o && o.source !== "shadow" ? o.participants : [])]);
       const row = { t, memberId: r.member_id, body: r.body ?? "", type: r.type ?? null, ...(o && o.source !== "shadow" ? { o } : {}) };
       if ((r.opportunity_id || r.type === "probe") && [...who].some(minor)) { counted.push(row); continue; }
-      if (minor(r.member_id) && (CONNECT_TYPES.has(r.type ?? "") || offersConnection(r.body ?? ""))) counted.push(row);
+      if (minor(r.member_id) && (CONNECT_TYPES.has(r.type ?? "") || offersConnection(r.body ?? ""))) counted.push(CONNECT_TYPES.has(r.type ?? "") ? row : { ...row, scopeNotice: true });
     }
     const teenItem = (o?: ObsOpportunity): o is ObsOpportunity => !!o && o.category !== undefined && teenFriendCategory(this.app, o.category) && teenGenerator(this.app, o.generator);
-    if (!counted.some(c => teenItem(c.o))) return { n: counted.length };
+    if (!counted.some(c => teenItem(c.o) || c.scopeNotice)) return { n: counted.length };
     const evidence = await this.teenEvidence(sql);
     const held = new Set<string>();
     let n = 0;
     for (const c of [...counted].sort((a, b) => a.t - b.t)) {
+      if (c.scopeNotice && teenScopeNoticeAt(evidence, c.memberId, c.body, c.t, [...this.firstNames].flatMap(([id, name]) => id === c.memberId || name.toLowerCase() === this.firstNames.get(c.memberId)?.toLowerCase() ? [] : [name]))) continue;
       if (!teenItem(c.o)) { n++; continue; }
       const roster = [...new Set([...c.o.participants, ...c.o.alternates, c.memberId])];
       const until = teenMeetingEndOf(c.o.meetingAt !== undefined ? { meetingAt: c.o.meetingAt } : {}, c.t);

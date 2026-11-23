@@ -115,7 +115,7 @@ test.skipIf(!pgAvailable)("the main.ts tick loop runs retention and notification
   service.inboxTick = async () => { ran.push("inbox"); };
   try {
     const loop = startTicks(service, line => lines.push(line));
-    for (let i = 0; i < 100 && !(ran.includes("retention") && ran.includes("notify")); i++) await sleep(20);
+    for (let i = 0; i < 100 && !(ran.includes("retention") && ran.includes("notify") && runtimes.every(rt => ran.includes(`network:${rt.id}`))); i++) await sleep(20);
     expect([...ran].sort()).toEqual(["inbox", ...runtimes.map(rt => `network:${rt.id}`), "notify", "retention"].sort());
     expect(lines).toContain("retention: tick failed: retention unavailable");
     release();

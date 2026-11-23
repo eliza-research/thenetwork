@@ -113,7 +113,7 @@ export class PhotoPages {
       const toFirstName = await this.o.relay.firstName(link.app, draft.recipientMemberId!);
       return privateJson(200, {
         ok: true, purpose: "check", toFirstName, notice: PHOTO_SEND_NOTICE.text.replaceAll("{{recipient}}", toFirstName), revision: draft.revision,
-        photos: slots.map(s => ({ n: s.n, label: s.label, addedOn: photoDay(s.addedAt, this.timeZone), shared: s.sharedWith.includes(draft.recipientMemberId!) })),
+        photos: slots.map(s => ({ n: s.n, label: s.label, addedOn: photoDay(s.addedAt, this.timeZone), shared: s.heldBy.includes(draft.recipientMemberId!) })),
         proposed: slots.filter(s => draft.proposedIds.includes(s.id)).map(s => s.n), until,
       }, extra);
     }
@@ -159,7 +159,7 @@ export class PhotoPages {
       const slots = await this.o.relay.slots(link.personId, link.app);
       const numbers = numberList(b.numbers, 1, 3, slots.length);
       if (!numbers) return fail(400, "invalid");
-      const shared = slots.filter(s => s.sharedWith.includes(draft.recipientMemberId!)).map(s => s.n);
+      const shared = slots.filter(s => s.heldBy.includes(draft.recipientMemberId!)).map(s => s.n);
       const pick = photoPickFor(true, false, false, false, 1, slots.length, true, numbers.length > 1, maskOf(numbers), 0, 0, maskOf(shared));
       if (pick.pick !== "ProposePhotos") return privateJson(200, { ok: true, state: "refused" satisfies CheckAnswerState });
       const proposed = numbersOf(pick.chosen, slots.length);

@@ -1520,16 +1520,20 @@ export class NetworkRuntime {
   private async drainQueue() {
     let ds: Delivery[];
     const current = () => this.scoped(tx => this.view.isCurrent(tx));
-    const reload = () => this.store.withLock(async () => {
+    const reload = async () => (await this.store.withTickLock(async () => {
       await this.importStored();
       this.view.imported();
-    });
+      return true as const;
+    })) === true;
     try {
-      if (!await current()) await reload();
+      if (!await current() && !await reload()) {
+        this.host.log(`[deliver] the queue waits for the next tick (${this.id}): the state lock is busy`);
+        return;
+      }
       ds = await this.adapter.deliver([]);
       if (!await current()) {
-        await reload();
-        ds = [...ds, ...await this.adapter.deliver([])];
+        if (await reload()) ds = [...ds, ...await this.adapter.deliver([])];
+        else this.host.log(`[deliver] the rest of the queue waits for the next tick (${this.id}): the state lock is busy`);
       }
     } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     await this.drained(ds);

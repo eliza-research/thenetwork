@@ -574,10 +574,11 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   test("an item past its review SLA expires unsent even when the reviewer acts before the next tick", async () => {
     await reset();
     const clock = new SimClock(START);
-    const s = service(clock, "sla");
+    const s = service(clock, "sla", { reviewJudge: holdEveryItem.judge });
     expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
     for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD) await say(s, clock, id, text);
     expect(await say(s, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    await s.reviewJudgeTick();
     const queue = await (await staff(s, "rev-tok", "GET", "/review")).json();
     const item = queue.items.find((i: any) => i.origin === "request");
     expect(item).toBeDefined();
@@ -600,10 +601,11 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   test("a decision at exactly the review deadline expires the item, the same as the tick", async () => {
     await reset();
     const clock = new SimClock(START);
-    const s = service(clock, "sla-edge");
+    const s = service(clock, "sla-edge", { reviewJudge: holdEveryItem.judge });
     expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
     for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD) await say(s, clock, id, text);
     expect(await say(s, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    await s.reviewJudgeTick();
     const queue = await (await staff(s, "rev-tok", "GET", "/review")).json();
     const item = queue.items.find((i: any) => i.origin === "request");
     expect(item).toBeDefined();
@@ -620,10 +622,11 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   test("a staff approval of the revision before a re-roll is refused as stale, contacts nobody, and keeps both audit rows", async () => {
     await reset();
     const clock = new SimClock(START);
-    const s = service(clock, "stale");
+    const s = service(clock, "stale", { reviewJudge: holdEveryItem.judge });
     expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
     for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD) await say(s, clock, id, text);
     expect(await say(s, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    await s.reviewJudgeTick();
     const queued = async () => (await (await staff(s, "rev-tok", "GET", "/review")).json()).items.find((i: any) => i.origin === "request");
     const seen = await queued();
     expect(seen).toMatchObject({ revision: 0 });
@@ -632,6 +635,8 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
 
     // A second reviewer re-rolls the item: the partner the first reviewer saw is swapped out.
     expect(await (await staff(s, "rev-tok", "POST", `/review/${encodeURIComponent(oppId)}`, { decision: "reroll", revision: 0 })).json()).toEqual({ ok: true });
+    expect(await queued()).toBeUndefined();
+    await s.reviewJudgeTick();
     const now = await queued();
     expect(now).toMatchObject({ oppId, revision: 1 });
     expect(now.proposal.participants).not.toEqual(seen.proposal.participants);

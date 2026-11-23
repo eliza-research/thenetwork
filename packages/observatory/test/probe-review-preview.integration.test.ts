@@ -4,6 +4,7 @@ import type { plans } from "@thenetwork/engine";
 import { serveHttp } from "../../core/src/runtime/http.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { NetworkService } from "../../network/service/service.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 import { Mini } from "../../network/test/mini.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { createServer } from "../src/server.ts";
@@ -19,7 +20,7 @@ test.skipIf(!pgAvailable)("a named reviewer reads the probe and reveal copy of t
   const networkId = "friends:nyc";
   const network = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
     env: { PLATFORM_ENV: "dev" }, networks: [{ id: networkId }, { id: "ntwrk:nyc", matchingEnabled: false }],
-    devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 },
+    devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 }, reviewJudge: holdEveryItem.judge,
     tokens: `reviewer@*:${serviceToken}`, consoleToken: serviceToken,
   });
   const audit: AuditEntry[] = [];
@@ -55,8 +56,9 @@ test.skipIf(!pgAvailable)("a named reviewer reads the probe and reveal copy of t
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members });
       return net["submitPlan"](plan, now)!.id;
     });
+    await network.reviewJudgeTick();
     const item = (await rt.reviewQueue()).find(row => row.oppId === id);
-    expect(item).toMatchObject({ revision: 0 });
+    expect(item).toMatchObject({ revision: 0, exception: { verdict: "flag", reason: "other_concern", revision: 0 } });
 
     server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: async req => {
       if (new URL(req.url).pathname.endsWith("/probes")) reads.push({ actor: req.headers.get("x-network-staff-id"), logged: audit.filter(row => row.action === "read_review_probes").length });

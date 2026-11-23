@@ -12,6 +12,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
+import { earliestDayKeyOf } from "../../core/src/birth-date.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -793,7 +794,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(directs.filter(d => d.to === di.phone).at(-1)?.body).toBe("I deleted your photo and the private rating made from it.");
     expect([await photosOf(di.id), await ratingsOf(di.id)]).toEqual([0, 0]);
     const bo = await joined("Bo");
-    await sql`update platform.people p set lowest_age = 16 from network.members m where m.id = ${bo.id} and m.person_id = p.id`;
+    const sixteen = earliestDayKeyOf(clock.now()) - 160000;
+    await sql`update platform.people p set lowest_age = 16, birth_lower = ${sixteen - 10000}, birth_upper = ${sixteen}, birth_youngest = ${sixteen}
+      from network.members m where m.id = ${bo.id} and m.person_id = p.id`;
     const cy = await joined("Cy");
     await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
       values ('slop', ${`${cy.id}:verify:age`}, ${cy.id}, 'fact', 'age check failed', ${sql.array(["verify:age:fail"], "TEXT")}, 'agent_private', 'vouched', 'staff', 0.95, 'confirmed', ${new Date(clock.now())})`;
@@ -1207,17 +1210,17 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     await adapter.engaged(peerPhone);
     await active.deliver();
     expect(await sql`select status,note,attempts from platform.outbound where id=${messageId}`)
-      .toEqual([{ status: "suppressed_ineligible", note: null, attempts: 0 }]);
+      .toEqual([{ status: "suppressed_ineligible", note: "opportunity_roster_blocked", attempts: 0 }]);
     expect(delivered.some(request => request.idempotencyKey === `tn:${messageId}`)).toBe(false);
 
     const decide = async (action: string, body: object, app: AppId = "friends", token = "friends-safety-tok") =>
       (await staff(restarted.s, token, "POST", `/apps/${app}/safety/${action}`, { ...body, note: "staff reviewed the report" })).json();
     expect(await decide("dismiss", { reportId: harassment }, "slop", "saf-tok")).toEqual({ ok: false, reason: "unknown_report" });
-    expect(await decide("hold", { memberId: former })).toEqual({ ok: false, reason: "unknown_member" });
+    expect(await decide("hold", { memberId: former })).toEqual({ reach: "app", ok: false, reason: "unknown_member" });
     expect(await decide("ban", { memberId: former, reportId: harassment, by: "person" }, "friends", "saf-tok"))
       .toEqual({ ok: false, reason: "no_person" });
-    expect(await decide("hold", { memberId: current, reportId: harassment })).toEqual({ ok: false, reason: "unknown_report" });
-    expect(await decide("hold", { memberId: former, reportId: scam })).toEqual({ ok: true });
+    expect(await decide("hold", { memberId: current, reportId: harassment })).toEqual({ reach: "app", ok: false, reason: "unknown_report" });
+    expect(await decide("hold", { memberId: former, reportId: scam })).toEqual({ reach: "app", ok: true });
     expect(await status()).toEqual([{ app_id: "friends", staff_held: true, report_held: true }, other]);
     expect(await decide("lift", { memberId: current })).toEqual({ ok: true });
     expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
@@ -1299,7 +1302,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(delivered.some(call => call.idempotencyKey === `tn:${notice}`)).toBe(false);
     } finally {
       resume();
-      expect(await (await applying).json()).toEqual({ ok: true });
+      expect(await (await applying).json()).toEqual(decision === "hold" ? { reach: "all", ok: true } : { ok: true });
       rt.unitOfWork = unit;
     }
   }, T);

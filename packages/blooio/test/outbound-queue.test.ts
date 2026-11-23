@@ -405,7 +405,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const { calls, provider } = recorder();
     const q = queue(a, provider, { clock: now });
-    const to = "+12125558100";
+    const to = "+12125558148";
     const reply = (id: string) => ({ id, memberId: "sd148-member", to, kind: "reply" as const, text: "Here is what I found." });
     await a.begin(tx => q.recordCollected(tx, [reply("sd148-accepted"), reply("sd148-unknown")]));
     await a.begin(tx => q.collectedReceipt(tx, ["sd148-accepted"], "accepted", now.now()));
