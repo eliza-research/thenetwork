@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { classifyYesNo, DAY, HOUR, MINUTE, SimClock, type MemberId, type NetworkContext, type NetworkUnderTest, type SimMessage } from "../../packages/core/src/index.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -16,6 +16,7 @@ import { baseMember, emptyInput, randomWorld } from "../../packages/engine/src/t
 import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
+import type { PersonaAgent } from "../../packages/sim/src/agent/types.ts";
 import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
@@ -150,10 +151,74 @@ export async function humanReviewGate(b: Block): Promise<void> {
   });
 }
 
+export async function probeDeclineReceiptGate(b: Block): Promise<void> {
+  await b.run("judge: a simulated probe decline needs its received reply", async () => {
+    const [ada, bev] = (await nycPersonas()).slice(0, 2).map((p, i) => ({ ...p, name: i === 0 ? "Ada Harper" : "Bev Carter" }));
+    const oppId = "probe-receipt";
+    const refusal = "I'll sit this one out.";
+    expect(classifyYesNo(refusal)).toBe("unsure");
+    for (const mode of ["delivered", "structured", "ignored", "raw", "linked raw"] as const) {
+      let ctx: NetworkContext;
+      let probeId = "";
+      const reveals: string[] = [];
+      const network: NetworkUnderTest = {
+        name: "probe-receipt",
+        init(context) { ctx = context; },
+        onInbound() {},
+        tick(now) {
+          if (now === START + 5 * MINUTE) {
+            probeId = ctx.send(ada!.id, "Would you like to meet someone for coffee?", {
+              meta: { type: "probe", probe: { key: oppId, category: "social", participants: [ada!.id, bev!.id], kind: "intro" } },
+            }).id;
+          }
+          if (now === START + 15 * MINUTE || now === START + 35 * MINUTE) {
+            reveals.push(ctx.send(bev!.id, "You can meet Ada Harper for coffee.", { meta: { type: "proposal", proposalId: oppId } }).id);
+          }
+          if (mode === "linked raw" && now === START + 15 * MINUTE) {
+            ctx.send(ada!.id, "How would Thursday work?", { meta: { type: "scheduling", proposalId: "newer" } });
+          }
+          if (mode === "linked raw" && now === START + 35 * MINUTE) {
+            ctx.send(bev!.id, "A different plan with Ada Harper.", { meta: { type: "proposal", proposalId: "newer" } });
+          }
+        },
+      };
+      const agent: PersonaAgent = {
+        mode: "policy",
+        async joinMessage() { return "Hello."; },
+        async initiative() { return undefined; },
+        async respond(_ctx, message) {
+          if (message.id !== probeId) return { messageType: "info", intent: "ignore", decision: "none", delayMs: 0, action: "ignore" };
+          if (mode === "linked raw") return { messageType: "probe", intent: "answer_question", decision: "none",
+            delayMs: 20 * MINUTE, action: "reply", text: "No thanks." };
+          const delivered = mode === "delivered" || mode === "structured";
+          return { messageType: "probe", intent: mode === "structured" ? "decline" : "probe_no",
+            decision: mode === "structured" ? "decline" : "none", proposalId: oppId, delayMs: 20 * MINUTE,
+            ...(delivered ? { action: "reply", text: refusal } : { action: "ignore" }) };
+        },
+      };
+      const world = new World({ seed: 1, personas: [ada!, bev!], days: 1 / 24, start: START, tickMinutes: 10, writeLog: false, network, agent,
+        actions: [
+          { at: START, action: { do: "join", persona: ada!.id } },
+          { at: START, action: { do: "join", persona: bev!.id } },
+          ...(mode === "raw" ? [{ at: START + 25 * MINUTE, action: { do: "say" as const, persona: ada!.id, text: "No thanks." } }] : []),
+        ],
+      });
+      const result = await world.run();
+      expect(reveals.length).toBe(2);
+      expect(result.metrics.invariants.examples.filter(x => x.rule === "decliner_exposed").map(x => x.detail.split(" ")[0]))
+        .toEqual(mode === "ignored" ? [] : [reveals[1]]);
+      const reply = result.records.find((r): r is Msg => r.type === "message" && r.msg.direction === "inbound"
+        && r.msg.body === (mode === "linked raw" ? "No thanks." : refusal));
+      expect(reply?.msg.replyToMessageId).toEqual(mode === "delivered" || mode === "structured" || mode === "linked raw" ? probeId : undefined);
+    }
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
   await inviteRootGate(b);
   await vouchPeriodGate(b);
+  await probeDeclineReceiptGate(b);
   await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
     const person = (id: MemberId, name: string): RunRecord => ({ t: 0, type: "persona", persona: {
       id, name, archetype: "regular", homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [23, 7], romanceOptIn: false,

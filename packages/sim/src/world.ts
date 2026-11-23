@@ -147,8 +147,9 @@ export class World {
     this.records.push(full);
     this.opts.onRecord?.(full);
   }
-  private logMessage(m: SimMessage) {
-    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any } });
+  private logMessage(m: SimMessage, replyToMessageId?: string) {
+    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any,
+      ...(replyToMessageId === undefined ? {} : { replyToMessageId }) } });
   }
 
   private buildNameIndex() {
@@ -246,12 +247,12 @@ export class World {
   }
 
   /** Persona sends a message to the Network (via the channel, so keywords apply). */
-  private personaSend(p: Persona, text: string, reaction?: Reaction): SimMessage | undefined {
+  private personaSend(p: Persona, text: string, reaction?: Reaction, replyToMessageId?: string): SimMessage | undefined {
     const mem = this.memories.get(p.id)!;
     if (mem.optedOut && text.trim().toUpperCase() !== "START") return undefined;
     // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
     const m = this.channel.receive(p.id, text, reaction ? { reaction } : {});
-    this.logMessage(m);
+    this.logMessage(m, replyToMessageId);
     this.unanswered.set(p.id, 0);
     if (m.keyword === "STOP") { mem.optedOut = true; this.optedOut.add(p.id); this.rec({ type: "opt_out", memberId: p.id }); }
     if (m.keyword === "START") { mem.optedOut = false; this.optedOut.delete(p.id); }
@@ -310,7 +311,10 @@ export class World {
 
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
-    s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction); });
+    s.on<{ personaId: MemberId; text: string; reaction?: Reaction; replyToMessageId?: string }>("persona_send", ev => {
+      const { personaId, text, reaction, replyToMessageId } = ev.data;
+      this.personaSend(this.personas.get(personaId)!, text, reaction, replyToMessageId);
+    });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
       const inbound: InboundMessage = { id: m.id, memberId: m.memberId, body: m.body, ts: m.ts, channel: m.channel, keyword: m.keyword };
@@ -410,14 +414,17 @@ export class World {
     if (!p || !mem || mem.optedOut) return;
     const pctx = this.personaCtx(p, msg.id);
     const reply = await this.agent.respond(pctx, msg);
-    this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent, decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs });
+    this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent,
+      decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs, tracksReplyReceipt: true });
     if (reply.worthwhile !== undefined) this.rec({ type: "judgment", memberId: p.id, messageId: msg.id, worthwhile: reply.worthwhile, source: this.agent.mode });
     // A flake notice, or "can't make it" to a booked or scheduled time (timeAware), cancels with notice.
     if ((reply.intent === "flake_notice" || reply.intent === "booked_cancel") && reply.proposalId) this.notices.add(`${reply.proposalId}|${p.id}`);
     // Messages the persona sends on its own after this one (plans: "WEEKLY" to the check-in offer).
     for (const f of reply.followUps ?? []) this.scheduler.after(f.delayMs, "persona_send", { personaId: p.id, text: f.text });
     if (reply.action === "reply" && reply.text) {
-      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, ...(reply.reaction ? { reaction: reply.reaction } : {}) });
+      this.scheduler.after(reply.delayMs, "persona_send", {
+        personaId: p.id, text: reply.text, replyToMessageId: msg.id, ...(reply.reaction ? { reaction: reply.reaction } : {}),
+      });
       if (reply.block?.length) {
         for (const b of reply.block) {
           const other = this.personas.get(b);
