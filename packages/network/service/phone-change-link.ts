@@ -1,7 +1,7 @@
-export const PHONE_CHANGE_PAGE = "/phone";
+const PHONE_CHANGE_PAGE = "/phone";
 
 export function phoneChangeLinkRequest(text: string): boolean {
-  return /^\s*(?:please\s+)?(?:change|update)\s+(?:my\s+)?(?:phone\s+)?number[\s.!?]*$/i.test(text ?? "");
+  return /^\s*(?:please\s+)?(?:change|update)\s+(?:my\s+)?(?:phone\s+)?number[\s.!?]*$/i.test(text);
 }
 
 export function phoneChangeLinkReply(origin: string): string {

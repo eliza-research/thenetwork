@@ -25,7 +25,6 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, judge: "hold-every-item", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: DAY });
-    // A reviewer edits one held item and re-rolls another; an admin flips the matching switch.
     const q = g.state().opportunities.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason);
     expect(q.length).toBeGreaterThanOrEqual(2);
     expect((await g.control({ type: "review", oppId: q[0]!.id, decision: "edit", objective: "a coffee nearby", secondsSpent: 45 }, "rev@example.org")).ok).toBe(true);

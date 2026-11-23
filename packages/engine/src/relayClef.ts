@@ -12,14 +12,6 @@
 // layer (RelayClefWeights: one logistic head per category, a hold threshold, and for harassment a block
 // rule on the threat and slur answers) maps the vector to five scores:
 //   scam, harassment, contact_fishing, rating_probe, minor_signal.
-// `clefRelayClassifier(opts)` wraps it as a RelayClassifierHook for `relayItemAsync`:
-//   - the rules run first and keep their decision; Clef only adds reasons (`clef:<category>` and
-//     `clef_severe:<category>`), and every reason blocks the item. Clef can never pass an item the rules stop;
-//   - clef-flash by default (cheaper; billed on input tokens), model configurable;
-//   - a timeout, a failure or an offline cache miss answers `unavailable`, and the engine blocks the text
-//     (`classifier:unavailable`, spec/relayDecision.md); a Clef answer with low confidence and a middling
-//     score on a high-risk category blocks too (`clef:uncertain`);
-//   - no body is ever logged: `onEvent` gets the model, latency, token count, outcome and categories.
 //
 // The HTTP layer is the shared one in packs/slop/clef.ts (`clefRun`). Recorded answers (`answers`)
 // let the sim and the eval CLI score the Clef arm offline from a cache (evals/relay/clef-answers.jsonl);
@@ -34,7 +26,6 @@ import type { RelayClassifierHook, RelayClassifierInput, RelayClassifierOutput }
 export const RELAY_CLEF_BANK_VERSION = "relay-clef-bank-1";
 export const RELAY_CLEF_CATEGORIES = ["scam", "harassment", "contact_fishing", "rating_probe", "minor_signal"] as const;
 export type RelayClefCategory = (typeof RELAY_CLEF_CATEGORIES)[number];
-/** Categories where an unsure Clef answer (or no answer) holds rather than passes. */
 export const RELAY_CLEF_HIGH_RISK: readonly RelayClefCategory[] = ["scam", "harassment", "minor_signal"];
 
 const HARM = ["none", "low", "some", "high", "severe"];
@@ -120,7 +111,6 @@ export interface RelayClefWeights {
   bank: string;
   mode: RelayClefMode;
   heads: Record<RelayClefCategory, RelayClefHead>;
-  /** Hold (`clef:uncertain`) when Clef's mean answer confidence < minConfidence and a high-risk p >= floor. */
   uncertain: { minConfidence: number; floor: number };
   provenance?: { fitter: string; fittedAt: string; rows: number; files: string[]; model: string; notes?: string; report?: unknown };
 }
@@ -232,7 +222,6 @@ export interface ClefRelayOptions extends Partial<ClefCallOptions> {
   /** "clef-flash" (default, cheaper) or "clef". */
   model?: ClefModel;
   weights?: RelayClefWeights;
-  /** Per-call timeout (default 2500 ms). A timeout answers unavailable. */
   timeoutMs?: number;
   /** Recorded answers: looked up first by `relayClefKey`. A hit makes no call. */
   answers?: (key: string) => ClefResult | undefined | Promise<ClefResult | undefined>;
@@ -245,11 +234,6 @@ export interface ClefRelayOptions extends Partial<ClefCallOptions> {
   clock?: () => number;
 }
 
-
-/**
- * The Clef relay classifier as a `RelayClassifierHook`. Never throws: on a timeout, an HTTP error or
- * a cache miss with `offline`, it answers `unavailable`, and the engine blocks the text.
- */
 export function clefRelayClassifier(opts: ClefRelayOptions = {}): RelayClassifierHook {
   const model: ClefModel = opts.model ?? "clef-flash";
   const w = validateRelayClefWeights(opts.weights ?? DEFAULT_RELAY_CLEF_WEIGHTS);
@@ -262,7 +246,7 @@ export function clefRelayClassifier(opts: ClefRelayOptions = {}): RelayClassifie
     const emit = (e: Omit<RelayClefEvent, "model" | "ms">) => { try { opts.onEvent?.({ model, ms: Math.round(now() - t0), ...e }); } catch { /* telemetry never breaks the relay */ } };
     const fallback = (outcome: RelayClefEvent["outcome"], status?: number): RelayClassifierOutput => {
       emit({ outcome, hold: [], block: [], uncertain: false, ...(status ? { status } : {}) });
-      return { flags: [], source: "clef", unavailable: true };
+      return { flags: [], unavailable: true };
     };
     let result: ClefResult | undefined;
     let outcome: RelayClefEvent["outcome"] = "cached";
@@ -286,7 +270,7 @@ export function clefRelayClassifier(opts: ClefRelayOptions = {}): RelayClassifie
     if (input.met) x.offplatform = 0;
     const d = relayClefDecide(w, x, confidence);
     emit({ outcome, hold: d.hold, block: d.block, uncertain: d.uncertain, ...(result.usage?.input_tokens ? { inputTokens: result.usage.input_tokens } : {}) });
-    return { flags: [...d.hold, ...(d.uncertain ? ["uncertain"] : [])], block: d.block, source: "clef", scores: d.scores };
+    return { flags: [...d.hold, ...(d.uncertain ? ["uncertain"] : [])], block: d.block, scores: d.scores };
   };
 }
 

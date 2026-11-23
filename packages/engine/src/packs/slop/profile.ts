@@ -184,22 +184,23 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   return out;
 }
 
-const TRANS_STATUS: ReadonlySet<string> = new Set(["yes", "no"]);
-const TRANS_OPENNESS: ReadonlySet<string> = new Set(["open", "not_open", "only", "declined"]);
 const STATED_GENDER: Record<Gender, StatedGender> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
+const isGender = (g: string): g is Gender => Object.hasOwn(STATED_GENDER, g);
 const OPENNESS: Record<NonNullable<SlopProfile["transOpenness"]>, TransOpenness> = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans", declined: "TransUnanswered" };
+const isTransStatus = (x: string): x is NonNullable<SlopProfile["trans"]> => x === "yes" || x === "no";
+const isTransOpenness = (x: string): x is NonNullable<SlopProfile["transOpenness"]> => Object.hasOwn(OPENNESS, x);
 
 export type DatingFacts = Pick<SlopProfile, "is" | "seeks" | "trans" | "transOpenness" | "shownTo">;
 export function datingFactsOf(tags: readonly string[]): DatingFacts {
   const has = (prefix: string) => tags.filter(t => t.startsWith(prefix)).map(t => t.slice(prefix.length));
   const one = (prefix: string) => has(prefix)[0];
-  const trans = one("romance:trans:"), open = one("romance:open_trans:");
+  const trans = one("romance:trans:"), open = one("romance:open_trans:"), is = one("romance:is:");
   return {
-    is: one("romance:is:") as Gender | undefined,
-    seeks: [...new Set(has("romance:seeks:"))].sort() as Gender[],
-    trans: trans !== undefined && TRANS_STATUS.has(trans) ? trans as "yes" | "no" : undefined,
-    transOpenness: open !== undefined && TRANS_OPENNESS.has(open) ? open as SlopProfile["transOpenness"] : undefined,
-    shownTo: [...new Set(has("romance:shown_to:"))].filter(g => g === "woman" || g === "man").sort() as Gender[],
+    is: is !== undefined && isGender(is) ? is : undefined,
+    seeks: [...new Set(has("romance:seeks:"))].filter(isGender).sort(),
+    trans: trans !== undefined && isTransStatus(trans) ? trans : undefined,
+    transOpenness: open !== undefined && isTransOpenness(open) ? open : undefined,
+    shownTo: [...new Set(has("romance:shown_to:"))].filter((g): g is Gender => g === "woman" || g === "man").sort(),
   };
 }
 

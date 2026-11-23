@@ -15,10 +15,7 @@ async function crewFixture(handOffAfterSessions = 3) {
     app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true,
     plansConfig: { ...FRIENDS_PLANS, runDays: [], crews: { ...FRIENDS_PLANS.crews, handOffAfterSessions } },
   });
-  for (const id of ids) w.facets.push({
-    id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
-    scope: "agent_private", provenance: "said", confidence: 1,
-  });
+  w.verify(...ids);
   await w.onboard(...ids);
   const crew: plans.Crew = {
     id: "crew_handoff", activityId: "day_hike", venueId: venue.id, city: "nyc", members: ids, cadenceDays: 7,
@@ -44,7 +41,7 @@ test("a conflicting crew occurrence waits for a viable slot and still needs fres
   const queued = session()!;
   expect(queued.proposal).toMatchObject({ participants: ids, window: { start: blockedStart + 7 * DAY } });
   expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
-  expect(w.net.review(queued.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(w.net.review(queued.oppId, "approve", { reviewer: "sim_staff", revision: queued.revision })).toBe(true);
   expect(await w.runUntil(() => ids.every(id => w.probed(id)), 2 * DAY)).toBe(true);
   for (const id of ids.slice(0, 2)) await w.say(id, "yes");
   expect(w.meetings).toEqual([]);
@@ -57,17 +54,17 @@ test("rejected, underfilled, and cancelled crew sessions do not count toward han
   const { w, ids, crew, session } = await crewFixture();
   expect(await w.runUntil(() => !!session(), 10 * DAY)).toBe(true);
   const rejected = session()!;
-  expect(w.net.review(rejected.oppId, "reject", { reviewer: "sim_staff" })).toBe(true);
+  expect(w.net.review(rejected.oppId, "reject", { reviewer: "sim_staff", revision: rejected.revision })).toBe(true);
 
   expect(await w.runUntil(() => !!session(), 10 * DAY)).toBe(true);
   const underfilled = session()!;
-  expect(w.net.review(underfilled.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(w.net.review(underfilled.oppId, "approve", { reviewer: "sim_staff", revision: underfilled.revision })).toBe(true);
   expect(await w.runUntil(() => ids.every(id => w.probed(id)), 2 * DAY)).toBe(true);
   for (const id of ids) await w.say(id, "no");
 
   expect(await w.runUntil(() => !!session(), 10 * DAY)).toBe(true);
   const cancelled = session()!;
-  expect(w.net.review(cancelled.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(w.net.review(cancelled.oppId, "approve", { reviewer: "sim_staff", revision: cancelled.revision })).toBe(true);
   expect(await w.runUntil(() => ids.every(id => w.probed(id)), 2 * DAY)).toBe(true);
   for (const id of ids) await w.say(id, "yes");
   expect(w.meetings).toMatchObject([{ proposalId: cancelled.oppId, participants: ids }]);
@@ -88,7 +85,7 @@ test("a crew hands off only once after its booked session reaches feedback", asy
   const { w, ids, crew, session } = await crewFixture(1);
   expect(await w.runUntil(() => !!session(), 10 * DAY)).toBe(true);
   const q = session()!;
-  expect(w.net.review(q.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(w.net.review(q.oppId, "approve", { reviewer: "sim_staff", revision: q.revision })).toBe(true);
   expect(await w.runUntil(() => ids.every(id => w.probed(id)), 2 * DAY)).toBe(true);
   for (const id of ids) await w.say(id, "yes");
   expect(w.meetings).toMatchObject([{ proposalId: q.oppId, participants: ids }]);

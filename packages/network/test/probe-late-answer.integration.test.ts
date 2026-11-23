@@ -1,8 +1,3 @@
-// A late answer to an expired one-to-one probe (audit OPP19). Before the fix, a short "yep" after the
-// response window was dropped without a reply, and "yes I'm in" opened a model turn with no
-// matching item, so the member could believe the introduction was going ahead. Now the member hears
-// once that the invitation ended and nothing was shared; nothing counts as consent.
-// spec/probeReply.md, "A late answer to an expired probe hears once that the invitation ended"
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
@@ -31,8 +26,6 @@ test.each(["yep", "Yes I'm in!", "no thanks"])("a late %s hears once that the in
   expect(w.log("probe_answer").filter(l => l.detail.memberId === id)).toHaveLength(1);
   expect(w.meetings).toEqual([]);
 
-  // Once only: a second reply while that answer is still the latest message gets no new answer and
-  // opens no model turn about the expired probe.
   const again = w.mark();
   const second = await w.net.onInbound({ id: "late-2", memberId: id, body: late, ts: w.clock.now(), channel: "sms" });
   expect(second).toBe("handled");

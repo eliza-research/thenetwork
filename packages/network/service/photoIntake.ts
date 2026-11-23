@@ -5,12 +5,12 @@ import { readCapped } from "../../platform/src/body.ts";
 import { photoMaxPerMessage } from "../../core/src/generated/photoPolicy.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
 import type { PhotoUploadLinks, UploadLinkIssue } from "../../platform/src/photo-upload-link.ts";
-import type { PeopleStore } from "../../platform/src/store.ts";
+import type { MembershipState, PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
 
 export const PHOTO_APP: AppId = "slop";
 export const PHOTO_MAX_PER_MESSAGE = photoMaxPerMessage;
-const LIVE = new Set(["active", "paused", "onboarding"]);
+export const LIVE_MEMBERSHIP_STATES: readonly MembershipState[] = ["active", "paused", "onboarding"];
 
 export const PHOTO_TEXT = {
   ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree and I will text you a private link to add them. Reply NO PHOTOS and I keep none.`,
@@ -30,16 +30,16 @@ function photoBatchOf(ref: string): string {
   return createHash("sha256").update(`photo-batch:${ref}`).digest("hex").slice(0, 32);
 }
 
-export function photoAddRequest(text: string): boolean {
-  return /^\s*(?:add|upload)\s+(?:my\s+|a\s+|some\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
+function photoAddRequest(text: string): boolean {
+  return /^\s*(?:add|upload)\s+(?:my\s+|a\s+|some\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text);
 }
 
-export function photoDeleteRequest(text: string): boolean {
-  return /^\s*(?:delete|remove|erase)\s+(?:all\s+)?(?:of\s+)?(?:my\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
+function photoDeleteRequest(text: string): boolean {
+  return /^\s*(?:delete|remove|erase)\s+(?:all\s+)?(?:of\s+)?(?:my\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text);
 }
 
 export function photoConsentReply(text: string): "yes" | "no" | undefined {
-  const m = /^\s*(yes|no)[\s,.:!-]+photos?[\s.!]*$/i.exec(text ?? "");
+  const m = /^\s*(yes|no)[\s,.:!-]+photos?[\s.!]*$/i.exec(text);
   return m ? (m[1]!.toLowerCase() as "yes" | "no") : undefined;
 }
 
@@ -52,7 +52,7 @@ export interface PhotoIntakeDeps {
   people: PeopleStore;
   accounts: Accounts;
   photos: PhotoService;
-  links?: Pick<PhotoUploadLinks, "issue" | "refusal" | "recordConsent">;
+  links: Pick<PhotoUploadLinks, "issue" | "refusal" | "recordConsent">;
   phoneKey: (e164: string) => string;
   now: () => number;
   fetchMedia: (url: string, maxBytes: number) => Promise<Uint8Array | "too_large" | undefined>;
@@ -66,7 +66,7 @@ export class PhotoIntake {
   private async member(e164: string) {
     const person = await this.d.accounts.personFor(e164);
     const m = person && (await this.d.people.getMembership(person.id, PHOTO_APP));
-    return person && m && LIVE.has(m.state) ? { person, m } : undefined;
+    return person && m && LIVE_MEMBERSHIP_STATES.includes(m.state) ? { person, m } : undefined;
   }
 
   async photosIn(e164: string, mediaUrls: readonly string[], ref: string): Promise<PhotoIntakeOutcome> {
@@ -107,10 +107,10 @@ export class PhotoIntake {
     await this.d.people.deletePending(key, "photo_consent", PHOTO_APP);
     const who = await this.member(e164);
     if (a === "yes") {
-      const refused = who ? await this.holderRefusal(who.person.id) : "not_member";
-      if (who && !refused && await this.recordConsent(who.person.id)) {
-        const link = await this.d.links?.issue(who.person.id, PHOTO_APP, "text");
-        await this.d.reply(e164, link?.ok ? `Thanks. ${PHOTO_TEXT.link(link.url)}` : PHOTO_TEXT.agreed, `sys:${ref}`);
+      const refused = who ? (await this.d.links.refusal(who.person.id, PHOTO_APP))?.reason : "not_member";
+      if (who && !refused && await this.d.links.recordConsent(who.person.id, PHOTO_APP)) {
+        const link = await this.d.links.issue(who.person.id, PHOTO_APP, "text");
+        await this.d.reply(e164, link.ok ? `Thanks. ${PHOTO_TEXT.link(link.url)}` : PHOTO_TEXT.agreed, `sys:${ref}`);
       } else if (refused && refused !== "banned" && refused !== "not_member") {
         await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
       }
@@ -120,23 +120,11 @@ export class PhotoIntake {
     return true;
   }
 
-  private async holderRefusal(personId: string) {
-    return this.d.links ? (await this.d.links.refusal(personId, PHOTO_APP))?.reason : await this.d.photos.mayTake(personId, PHOTO_APP);
-  }
-
-  private async recordConsent(personId: string): Promise<boolean> {
-    if (this.d.links) return this.d.links.recordConsent(personId, PHOTO_APP);
-    const m = await this.d.people.getMembership(personId, PHOTO_APP);
-    if (!m || !["active", "paused", "onboarding"].includes(m.state)) return false;
-    await this.d.people.putMembership({ ...m, profile: { ...m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
-    return true;
-  }
-
   async addRequest(e164: string, text: string, ref: string, app: AppId = PHOTO_APP): Promise<boolean> {
-    if (app !== PHOTO_APP || !this.d.links || !photoAddRequest(text)) return false;
+    if (app !== PHOTO_APP || !photoAddRequest(text)) return false;
     const who = await this.member(e164);
     if (!who) return false;
-    const refused = await this.holderRefusal(who.person.id);
+    const refused = (await this.d.links.refusal(who.person.id, PHOTO_APP))?.reason;
     if (refused) {
       if (refused !== "banned") await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
       return true;

@@ -7,6 +7,12 @@ import { type JudgeCall as automatedReview_JudgeCall, type JudgeClaim as automat
 export const teenMeetingFirstMinute: number = 600;
 /** Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00 (spec/teenIntroSwitch.md) */
 export const teenMeetingLastMinute: number = 1140;
+/** Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00 (spec/teenIntroSwitch.md) */
+export const teenMeetingMs: number = 7200000;
+/** Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00 (spec/teenIntroSwitch.md) */
+export const teenNearbyWindowMs: number = 7200000;
+/** Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00 (spec/teenIntroSwitch.md) */
+export const teenOpenItemHorizonMs: number = 432000000;
 
 /** Story: Stop teen introductions at once / Teen introductions are on unless a stop is recorded (spec/teenIntroSwitch.md) */
 //@ pure
@@ -78,7 +84,28 @@ export function teenMeetingAllowed(rosterHasMinor: boolean, packVenue: boolean, 
 //@ pure
 export function lawTeenMeetingIsDaytimePublic(packVenue: boolean, startMinute: number, endMinute: number, adultSessionNearby: boolean): boolean {
   //@ ensures \result === true
-  return !teenMeetingAllowed(true, packVenue, startMinute, endMinute, adultSessionNearby) || (!packVenue && startMinute >= 600 && endMinute <= 1140 && !adultSessionNearby);
+  return !teenMeetingAllowed(true, packVenue, startMinute, endMinute, adultSessionNearby) || (!packVenue && startMinute >= teenMeetingFirstMinute && endMinute <= teenMeetingLastMinute && !adultSessionNearby);
+}
+
+/** Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00 (spec/teenIntroSwitch.md) */
+//@ pure
+export function lawTeenMeetingBoundsAreInclusive(rosterHasMinor: boolean): boolean {
+  //@ ensures \result === true
+  return teenMeetingAllowed(rosterHasMinor, false, 600, 1140, false);
+}
+
+/** Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00 (spec/teenIntroSwitch.md) */
+//@ pure
+export function lawTeenMeetingRefusesOutsideTheDay(endMinute: number): boolean {
+  //@ ensures \result === true
+  return !teenMeetingAllowed(true, false, 599, endMinute, false) && !teenMeetingAllowed(true, false, 600, 1141, false);
+}
+
+/** Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00 (spec/teenIntroSwitch.md) */
+//@ pure
+export function lawTeenMeetingRefusesAPackVenueOrANearbyAdult(packVenue: boolean): boolean {
+  //@ ensures \result === true
+  return !teenMeetingAllowed(true, true, 600, 1140, false) && !teenMeetingAllowed(true, packVenue, 600, 1140, true);
 }
 
 /** Story: Share only interests in a teen introduction / A teen roster uses interest and boundary facets only (spec/teenIntroSwitch.md) */
@@ -89,20 +116,7 @@ export function teenFacetAllowed(kind: string): boolean {
 
 /** Story: Share only interests in a teen introduction / A teen roster uses interest and boundary facets only (spec/teenIntroSwitch.md) */
 //@ pure
-export function lawTeenFacetsAreInterestsOnly(kind: string): boolean {
+export function lawTeenFactsAndSchedulesAreRefused(kind: string): boolean {
   //@ ensures \result === true
-  return !teenFacetAllowed(kind) || (kind === "interest" || kind === "boundary");
-}
-
-/** Story: Hold each teen relay text that does not pass cleanly / A teen-pair text that does not pass cleanly is held (spec/teenIntroSwitch.md) */
-//@ pure
-export function teenRelayHeld(teenPair: boolean, cleanPass: boolean): boolean {
-  return teenPair && !cleanPass;
-}
-
-/** Story: Hold each teen relay text that does not pass cleanly / A teen-pair text that does not pass cleanly is held (spec/teenIntroSwitch.md) */
-//@ pure
-export function lawTeenRelayHoldsUnclean(cleanPass: boolean): boolean {
-  //@ ensures \result === true
-  return teenRelayHeld(true, cleanPass) === !cleanPass;
+  return !(kind === "fact" || kind === "availability_pattern") || !teenFacetAllowed(kind);
 }

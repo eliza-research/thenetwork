@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
-import { signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { parseState as parseHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type SignupDraft, type SignupDraftFields, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type SignupDraft, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -27,7 +27,7 @@ const request = (r: Row): AuthRequest => ({
   personId: r.person_id ?? null, step: r.step, createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!,
   ...storedHandoff(r.id, r.handoff),
 });
-export class StoredHandoffInvalid extends Error {
+class StoredHandoffInvalid extends Error {
   constructor(readonly requestId: string) {
     super(`Stored signup handoff of authorization request ${requestId} does not parse`);
     this.name = "StoredHandoffInvalid";
@@ -110,14 +110,6 @@ export class PgOAuthStore implements OAuthStore {
         values (${d.grantId}, ${d.app}, ${d.phoneKey}, ${d.fields}::jsonb, ${ts(d.expiresAt)}) on conflict (grant_id) do nothing returning grant_id`;
       return signupDraftUnique(rows.length);
     });
-  }
-
-  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
-    const rows = await this.sql<{ fields: SignupDraftFields; expires_at: Date; bound: boolean }[]>`
-      select d.fields, d.expires_at, (g.app_id = d.app_id and g.phone_key = d.phone_key and g.person_id is not distinct from ${personId}) as bound
-      from oauth.signup_drafts d join oauth.grants g on g.id = d.grant_id where d.phone_key=${phoneKey} and d.app_id=${app}`;
-    const readable = rows.filter(r => signupDraftRowReadable(r.bound, ms(r.expires_at)!, at));
-    return signupDraftUnique(readable.length) ? readable[0].fields : undefined;
   }
 
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {

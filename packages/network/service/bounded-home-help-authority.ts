@@ -120,7 +120,7 @@ export function createBoundedHomeHelpAuthority(deps: BoundedHomeHelpAuthorityDep
       const member = state?.members.find(candidate => candidate.id === row.id);
       if (!state || !member || !row.person_id || !row.e164 || !permitsHelp(row.prefs)
         || effectiveParticipation(row, now).state === "paused" || member.stage === "new"
-        || !storedInviteNoticePartyCurrent(state, row.id) || state.trust.some(trust => trust.id === row.id && trust.level !== "ok")) return;
+        || !storedInviteNoticePartyCurrent(state, row.id, now) || state.trust.some(trust => trust.id === row.id && trust.level !== "ok")) return;
       const binding = await accounts.activeMembership(info, { e164: row.e164, personId: row.person_id });
       if (binding?.membership.memberId !== row.id || !canBeMatched(await accounts.lowestAge(row.e164, binding.person))) return;
       parties.push({ row, state, member });

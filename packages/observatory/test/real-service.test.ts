@@ -26,7 +26,6 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
   const seen: { path: string; staff: string | null; body: unknown }[] = [];
   beforeAll(async () => {
     url = await testDb();
-    // Two simulated days with a judge that holds every item: items wait for staff, and the spam wave opens safety cases.
     const g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, judge: "hold-every-item", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: 2 * DAY });

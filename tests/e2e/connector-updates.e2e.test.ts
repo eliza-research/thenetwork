@@ -36,7 +36,7 @@ describe.skipIf(!pgAvailable)("connector updates and grant cleanup", () => {
     const m = await member("peon", phone);
     await sql`insert into network.opportunities (id,app_id,kind,state,source,city,objective)
       values ('opp_minor_intro','peon','intro','PROPOSED','network','nyc','A work introduction')`;
-    const intro: Outbound = { id: `minor-intro-${st.clock.now()}`, memberId: m.id as any, body: "Dev, a designer in Brooklyn, would like to meet. Interested?",
+    const intro: Outbound = { id: `minor-intro-${st.clock.now()}`, memberId: m.id, body: "Dev, a designer in Brooklyn, would like to meet. Interested?",
       kind: "proactive", type: "probe", oppId: "opp_minor_intro", proactive: true, system: false, ts: st.clock.now() };
     await st.svc.delivered(runtime("peon"), [intro]);
     await st.svc.notify!.add({ personId: m.person_id, app: "peon", eventType: "reminder", subjectId: "minor-own-reminder", urgency: "requested",
@@ -133,5 +133,43 @@ describe.skipIf(!pgAvailable)("connector updates and grant cleanup", () => {
     expect(await grants()).toBe(0);
     expect(await membership()).toBe("removed");
     expect((await rpc(st, "peon", "/mcp", "tools/call", { name: "get_updates", arguments: {} }, c.token!.access_token)).res.status).toBe(401);
+  }, T);
+
+  test("spec/connectorTools.md, \"The agent can list the person's standing things and pause or resume one, but never close one\": a pause texts one confirmation with UNDO, and a closed thing cannot be resumed", async () => {
+    const phone = newPhone();
+    const { b, res } = await webJoin(st, "friends", phone, { age: 30 });
+    expect(res.status).toBe(200);
+    const m = await member("friends", phone);
+    const c = await connectMcp(st, "friends", phone, { browser: b, scope: "membership:read profile:write profile:read" });
+    const token = c.token!.access_token as string;
+    const tool = async (name: string, args: Record<string, unknown> = {}) => toolData(await rpc(st, "friends", "/mcp", "tools/call", { name, arguments: args }, token));
+    const confirmations = async () => (await sql`select body from network.messages where member_id = ${m.id} and type = 'agent_standing_confirmation'`).map(r => r.body as string);
+    const messageId = `looking-for-close-${st.clock.now()}`;
+    const text = async (body: string) => {
+      const raw = JSON.stringify({ messageId, channel: "blooio", from: phone, to: null, text: body, transport: "imessage", receivedAt: st.clock.now(), app: "friends" } satisfies TurnRequest);
+      const answer = await st.svc.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", body: raw,
+        headers: { "content-type": "application/json", ...await svcSign(TURN_SECRET, { method: "POST", path: TURN_PATH, id: messageId, body: raw, nowS: Math.floor(st.clock.now() / 1000) }) } }));
+      expect(answer.status).toBe(200);
+      return (await answer.json()) as { outcome: string };
+    };
+
+    expect(await tool("submit_profile", { about: "Find me a climbing partner." })).toMatchObject({ app: "friends", submitted: true });
+    const listed = await tool("list_looking_for");
+    expect(listed.looking_for).toHaveLength(1);
+    const ref = listed.looking_for[0].ref as string;
+
+    const paused = await tool("pause_looking_for", { ref });
+    expect(paused).toMatchObject({ app: "friends", changed: true, reason: null, item: { ref, status: "paused" } });
+    expect(paused.next_step).toContain("They can reply UNDO to turn it back on");
+    const sent = await confirmations();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("Reply UNDO to turn it back on.");
+    expect(await tool("pause_looking_for", { ref })).toMatchObject({ app: "friends", changed: false, reason: null });
+    expect(await confirmations()).toHaveLength(1);
+
+    expect((await text(`close ${ref}`)).outcome).toBe("handled");
+    expect(await tool("resume_looking_for", { ref })).toMatchObject({ app: "friends", changed: false, item: null, reason: "closed" });
+    expect(await confirmations()).toHaveLength(1);
+    expect((await tool("list_looking_for")).looking_for).toEqual([]);
   }, T);
 });

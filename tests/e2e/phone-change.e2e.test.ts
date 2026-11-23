@@ -1,6 +1,3 @@
-// spec/phoneChange.md: a member whose number changed keeps one person (Story F25), through HTTP in both
-// sign-in modes, at the API that the /phone page calls: the person signs in on the current number, then proves the
-// new number with a platform code that the agent never sees.
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { serveHttp, type HttpServer } from "../../packages/core/src/runtime/http.ts";
@@ -14,16 +11,14 @@ import { Browser, connectMcp, newPhone, pgAvailable, rpc, signIn, startStack, to
 
 const T = 180_000;
 const MIN = 60_000;
-// A Cloud sign-in site has no platform sign-in code, so the answer names no code.
 const REAUTH_TEXT = "For your safety, sign in again with your current number, then change your number.";
 
-describe.skipIf(!pgAvailable)("phone change on an OTP sign-in site", () => {
+describe.skipIf(!pgAvailable)("spec/phoneChange.md, a member whose number changed keeps one person, on an OTP sign-in site", () => {
   let st: Stack;
   beforeAll(async () => { st = await startStack(); }, T);
   afterAll(async () => { await st?.close(); }, T);
 
-  // spec/phoneChange.md, "The request uses the existing account"; "The verified request can move only when both numbers allow it"
-  test("a fresh sign-in on the old number and a code to the new one keep the person, the membership and the connector", async () => {
+  test("\"The request uses the existing account\" and \"The verified request can move only when both numbers allow it\": a fresh sign-in on the old number and a code to the new one keep the person, the membership and the connector", async () => {
     const [A, B] = [newPhone(), newPhone()];
     const { b, res } = await webJoin(st, "slop", A, { age: 31, firstName: "Ana" });
     expect(res.status).toBe(200);
@@ -50,12 +45,10 @@ describe.skipIf(!pgAvailable)("phone change on an OTP sign-in site", () => {
     expect(await (await st.site("slop", "/api/me", { browser: b })).json()).toMatchObject({ membership: { state: expect.stringMatching(/^(active|onboarding)$/) } });
     expect(await st.svc.publicApi.accounts.personFor(A)).toBeUndefined();
     expect((await st.svc.publicApi.accounts.personFor(B))!.id).toBe(personId);
-    // A native connector grant follows the person to the new number.
     expect(await status()).toMatchObject({ app: "slop", status: expect.stringMatching(/^(active|onboarding)$/) });
   }, T);
 
-  // spec/phoneChange.md, "The verified request can move only when both numbers allow it"
-  test("a banned new number refuses after its code is proved, and the person stays on the old number", async () => {
+  test("\"The verified request can move only when both numbers allow it\": a banned new number refuses after its code is proved, and the person stays on the old number", async () => {
     const [A, B] = [newPhone(), newPhone()];
     const { b } = await webJoin(st, "slop", A, { age: 30 });
     expect(await (await st.site("slop", "/api/me/phone/start", { browser: b, json: { phone: B } })).json()).toEqual({ ok: true });
@@ -69,8 +62,7 @@ describe.skipIf(!pgAvailable)("phone change on an OTP sign-in site", () => {
     expect((await st.site("slop", "/api/me", { browser: b })).status).toBe(200);
   }, T);
 
-  // spec/otpLimits.md, "Start keeps its public response private"; spec/phoneChange.md, "The verified request can move only when both numbers allow it"
-  test("a number banned before the start gets the ordinary answer and no code, and the person stays on the old number", async () => {
+  test("spec/otpLimits.md, \"Start keeps its public response private\": a number banned before the start gets the ordinary answer and no code, and the person stays on the old number", async () => {
     const [A, B] = [newPhone(), newPhone()];
     const { b } = await webJoin(st, "slop", A, { age: 30 });
     await st.svc.people.ban({ id: crypto.randomUUID(), scope: "phone", personId: null, phoneHash: st.svc.publicApi.accounts.phoneHash(B),
@@ -82,8 +74,7 @@ describe.skipIf(!pgAvailable)("phone change on an OTP sign-in site", () => {
     expect((await st.site("slop", "/api/me", { browser: b })).status).toBe(200);
   }, T);
 
-  // spec/phoneChange.md, "Change the phone on my account": the text line sends the one-purpose link
-  test("a member who texts CHANGE NUMBER gets the app's /phone link in one reply, and a person who is not a member gets no link", async () => {
+  test("\"Change the phone on my account\": a member who texts CHANGE NUMBER gets the app's /phone link in one reply, and a person who is not a member gets no link", async () => {
     let seq = 0;
     const turn = async (phone: string, text: string) => {
       const messageId = `phone-link-${++seq}`;
@@ -105,7 +96,7 @@ describe.skipIf(!pgAvailable)("phone change on an OTP sign-in site", () => {
   }, T);
 });
 
-describe.skipIf(!pgAvailable)("phone change on a Cloud sign-in site", () => {
+describe.skipIf(!pgAvailable)("spec/phoneChange.md, a member whose number changed keeps one person, on a Cloud sign-in site", () => {
   let url: string, store: PgPeopleStore, server: HttpServer;
   let now = Date.UTC(2026, 10, 18, 15);
   let cloudPhone = "", challenge = "", exchanges = 0;
@@ -123,9 +114,7 @@ describe.skipIf(!pgAvailable)("phone change on a Cloud sign-in site", () => {
         NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: origin,
         NETWORK_CLOUD_AUTH_SERVER_TOKEN: "phone-change-e2e-cloud-fixture".repeat(2),
       },
-      // The platform OTP service proves only the new number; Cloud proves the current one.
       otp: { name: "fake", send: async e164 => { const code = String(300000 + codes.size); codes.set(e164, code); return { code }; } },
-      // Eliza Cloud's exchange and validation endpoints at their HTTP boundary: Cloud proves the phone it is told to.
       cloudAuthFetch: async input => {
         const req = input instanceof Request ? input : new Request(input);
         if (new URL(req.url).pathname.endsWith("network-validate")) return Response.json({ ok: true });
@@ -144,21 +133,20 @@ describe.skipIf(!pgAvailable)("phone change on a Cloud sign-in site", () => {
     if (body) headers["content-type"] = "application/json";
     const res = await fetch(`http://127.0.0.1:${server.port}${path}`, { method, headers, redirect: "manual", ...(body ? { body: JSON.stringify(body) } : {}) });
     b.take(res);
-    return { status: res.status, location: res.headers.get("location"), body: await res.json().catch(() => null) as any };
+    const text = await res.text();
+    return { status: res.status, location: res.headers.get("location"), body: text ? JSON.parse(text) as unknown : null };
   };
-  /** The /phone page's Cloud sign-in: start, Eliza Cloud's redirect back, and the callback that lands on /phone. */
   const cloudSignIn = async (b: Browser, phone: string) => {
     cloudPhone = phone;
     const start = await call(b, "POST", "/api/auth/cloud/start", { returnPath: "/phone" });
-    expect(start.status).toBe(200);
-    const authorize = new URL(start.body.url);
+    expect(start).toMatchObject({ status: 200, body: { url: expect.any(String) } });
+    const authorize = new URL((start.body as { url: string }).url);
     challenge = authorize.searchParams.get("challenge")!;
     const back = await call(b, "GET", `/api/auth/cloud/callback?code=enso_${(++exchanges).toString(16).padStart(64, "0")}&state=${authorize.searchParams.get("state")}`);
     expect({ status: back.status, location: back.location }).toEqual({ status: 303, location: "/phone" });
   };
 
-  // spec/phoneChange.md, "The request uses the existing account"; "After a move the browser signs in on the new number in its own sign-in mode"
-  test("a fresh Cloud proof of the old number starts the change, the platform code moves the person, and only the new number reaches them", async () => {
+  test("\"The request uses the existing account\" and \"After a move the browser signs in on the new number in its own sign-in mode\": a fresh Cloud proof of the old number starts the change, the platform code moves the person, and only the new number reaches them", async () => {
     const [A, B] = ["+12125550231", "+12125550232"];
     const b = new Browser();
     await cloudSignIn(b, A);
@@ -174,15 +162,12 @@ describe.skipIf(!pgAvailable)("phone change on a Cloud sign-in site", () => {
     expect(await call(b, "POST", "/api/me/phone/start", { phone: B })).toMatchObject({ status: 200, body: { ok: true } });
     expect(await call(b, "POST", "/api/me/phone/confirm", { code: codes.get(B) })).toMatchObject({ status: 200, body: { ok: true } });
 
-    // The browser keeps no session and no Cloud identity that names the released number.
     expect(b.jar.size).toBe(0);
     expect((await call(old, "GET", "/api/me")).status).toBe(401);
     expect(await store.findPhone(A)).toBeUndefined();
-    // A new Cloud proof of the old number does not reach the person.
     const recycled = new Browser();
     await cloudSignIn(recycled, A);
     expect((await call(recycled, "GET", "/api/me")).body).toMatchObject({ membership: null, canJoin: true });
-    // A Cloud sign-in on the new number reaches the same person and membership.
     await cloudSignIn(b, B);
     expect((await call(b, "GET", "/api/me")).body).toMatchObject({ membership: { state: "active", firstName: "Ana" } });
     expect((await store.findPhone(B))!.personId).toBe(personId);

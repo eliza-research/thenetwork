@@ -113,7 +113,7 @@ pure def publicBookedEventLinkAllowed(booked: bool, consenting: bool, exactFinal
 
 ### The backend scans once a day, at most one process at a time, and waits after a failed attempt
 
-Each scheduled round of the deployed backend starts a scan when no scan has succeeded yet, or the last successful scan is at least one day old, and this process has not attempted a scan in the last hour. The shell holds a database session lock for the whole scan and skips the round when another process holds it, so two processes never scan at the same time. A failed scan keeps the last publication and its timestamp; the next attempt waits for the retry interval. The refresh interval is shorter than the freshness limit, so one missed day does not expire the catalog. Changed: this rule is new; before it the catalog was refreshed only by hand and went stale within two days of the last import.
+Each scheduled round of the deployed backend starts a scan when no scan has succeeded yet, or the last successful scan is at least one day old, and this process has not attempted a scan in the last hour. The shell holds a database session lock for the whole scan and skips the round when another process holds it, so two processes never scan at the same time. A failed scan keeps the last publication and its timestamp; the next attempt waits for the retry interval. The refresh interval is shorter than the freshness limit, so one missed day does not expire the catalog. Changed (2026-11-22): the catalog was refreshed only by hand -> each round refreshes it when it is a day old, because it went stale within two days of the last import.
 
 ```quint
 pure val publicEventRefreshMs = 86400000

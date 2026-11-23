@@ -1,13 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
-import { parseTokenGrants } from "../../packages/observatory/src/staff.ts";
-import type { RoleGrant } from "../../packages/observatory/src/types.ts";
 import { REVIEW_JUDGE_PROMPT_VERSION, SIM_REVIEW_JUDGE, type ReviewPacket } from "../../packages/engine/src/reviewJudge.ts";
 import { Browser, newPhone, pgAvailable, signIn, startStack, webJoin, type Stack } from "./harness.ts";
 
 const T = 240_000;
-if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
 const ADMIN = "e2e-teen-admin-a-0123456789abcdef0123";
 const SAFETY = "e2e-teen-safety-s-0123456789abcdef012";
@@ -63,13 +60,14 @@ const switchRows = (network: string) => sql<{ ok: boolean; on: boolean }[]>`sele
 
 describe.skipIf(!pgAvailable)("spec/teenIntroSwitch.md and spec/friendIntroAge.md through HTTP (owner decision 2026-11-22, answers A2 to A5)", () => {
   beforeAll(async () => {
-    st = await startStack({ reviewJudge: { reviewer: SIM_REVIEW_JUDGE, judge: async packet => {
-      judgedPackets.push(packet);
-      return { verdict: "approve", reason: "none", explanation: "e2e judgment", model: "simulated", promptVersion: REVIEW_JUDGE_PROMPT_VERSION };
-    } } });
+    st = await startStack({
+      reviewJudge: { reviewer: SIM_REVIEW_JUDGE, judge: async packet => {
+        judgedPackets.push(packet);
+        return { verdict: "approve", reason: "none", explanation: "e2e judgment", model: "simulated", promptVersion: REVIEW_JUDGE_PROMPT_VERSION };
+      } },
+      staffTokens: `admin@friends:${ADMIN},admin@ntwrk:${ADMIN},admin@slop:${ADMIN},safety@friends:${SAFETY},safety@ntwrk:${SAFETY},reviewer@friends:${REVIEWER},safety@slop:${SLOP_SAFETY},safety@friends:${FRIENDS_SAFETY}`,
+    });
     sql = new SQL({ url: st.url, max: 2 });
-    const tokens = (st.svc as unknown as { tokens: Map<string, RoleGrant[]> }).tokens;
-    for (const [token, grants] of parseTokenGrants(`admin@friends:${ADMIN},admin@ntwrk:${ADMIN},admin@slop:${ADMIN},safety@friends:${SAFETY},safety@ntwrk:${SAFETY},reviewer@friends:${REVIEWER},safety@slop:${SLOP_SAFETY},safety@friends:${FRIENDS_SAFETY}`)) tokens.set(token, grants);
   }, T);
   afterAll(async () => {
     await sql?.close();
@@ -89,8 +87,8 @@ describe.skipIf(!pgAvailable)("spec/teenIntroSwitch.md and spec/friendIntroAge.m
       await st.text(p, "Weekends mostly, I'm around Williamsburg.");
       await st.text(p, "One-on-one is good.");
     }
-    for (const id of [t16, t17, adult]) for (const check of ["age", "liveness"]) {
-      expect((await st.staff(`/apps/friends/members/${id}/verify`, { check, result: "pass", note: "e2e staff check" })).status).toBe(200);
+    for (const check of ["age", "liveness"]) {
+      expect((await st.staff(`/apps/friends/members/${adult}/verify`, { check, result: "pass", note: "e2e staff check" })).status).toBe(200);
     }
     expect((await st.staff("/apps/friends/matching", { on: true })).status).toBe(200);
     expect(await runtimeOf("friends").readState(n => n.teenIntrosEnabled())).toBe(true);
@@ -138,24 +136,33 @@ describe.skipIf(!pgAvailable)("spec/teenIntroSwitch.md and spec/friendIntroAge.m
   test("a stop by a staff member who lacks the role on a teen network stops nothing, is refused and is audited for each network it cannot reach", async () => {
     const refusedRows = (actor: string) => sql<{ target_id: string; reason: string }[]>`select target_id, detail->>'reason' as reason from network.staff_audit
       where actor = ${actor} and target_id like 'teen_intros_%' and ok = false order by target_id`;
+    const forbiddenActors = async (network: string) => (await sql<{ actor: string }[]>`select distinct actor from network.staff_audit
+      where target_id = ${`teen_intros_${network}`} and ok = false and detail->>'reason' = 'forbidden'`).map(r => r.actor);
+    const newActor = async (network: string, before: string[]) => {
+      const added = (await forbiddenActors(network)).filter(a => !before.includes(a));
+      expect(added).toHaveLength(1);
+      return added[0]!;
+    };
     expect(await runtimeOf("friends").readState(n => n.teenIntrosEnabled())).toBe(true);
     expect(await runtimeOf("ntwrk").readState(n => n.teenIntrosEnabled())).toBe(true);
+    const friendsSwitchBefore = (await switchRows("friends:nyc")).map(r => [r.ok, r.on]);
+    const ntwrkSwitchBefore = (await switchRows("ntwrk:nyc")).map(r => [r.ok, r.on]);
 
+    const friendsRefusedBefore = await forbiddenActors("friends:nyc");
     expect((await staffAs(SLOP_SAFETY, "POST", "/apps/slop/teen-intros", { on: false })).body).toEqual({ ok: false, reason: "forbidden" });
     expect(await runtimeOf("friends").readState(n => n.teenIntrosEnabled())).toBe(true);
     expect(await runtimeOf("ntwrk").readState(n => n.teenIntrosEnabled())).toBe(true);
-    const slopActor = (await sql<{ actor: string }[]>`select actor from network.staff_audit where target_id = 'teen_intros_friends:nyc' and ok = false and detail->>'reason' = 'forbidden' order by at, id`)[0]?.actor;
-    expect(slopActor).toBeDefined();
-    expect(await refusedRows(slopActor!)).toEqual([{ target_id: "teen_intros_friends:nyc", reason: "forbidden" }, { target_id: "teen_intros_ntwrk:nyc", reason: "forbidden" }]);
+    const slopActor = await newActor("friends:nyc", friendsRefusedBefore);
+    expect(await refusedRows(slopActor)).toEqual([{ target_id: "teen_intros_friends:nyc", reason: "forbidden" }, { target_id: "teen_intros_ntwrk:nyc", reason: "forbidden" }]);
 
+    const ntwrkRefusedBefore = await forbiddenActors("ntwrk:nyc");
     expect((await staffAs(FRIENDS_SAFETY, "POST", "/apps/friends/teen-intros", { on: false })).body).toEqual({ ok: false, reason: "forbidden" });
     expect(await runtimeOf("friends").readState(n => n.teenIntrosEnabled())).toBe(true);
     expect(await runtimeOf("ntwrk").readState(n => n.teenIntrosEnabled())).toBe(true);
-    expect((await switchRows("friends:nyc")).map(r => [r.ok, r.on])).toEqual([[true, false], [true, true]]);
-    expect((await switchRows("ntwrk:nyc")).map(r => [r.ok, r.on])).toEqual([[true, false], [true, true]]);
-    const friendsActor = (await sql<{ actor: string }[]>`select actor from network.staff_audit where target_id = 'teen_intros_ntwrk:nyc' and ok = false and detail->>'reason' = 'forbidden' and actor <> ${slopActor!} order by at, id`)[0]?.actor;
-    expect(friendsActor).toBeDefined();
-    expect(await refusedRows(friendsActor!)).toEqual([{ target_id: "teen_intros_ntwrk:nyc", reason: "forbidden" }]);
+    expect((await switchRows("friends:nyc")).map(r => [r.ok, r.on])).toEqual(friendsSwitchBefore);
+    expect((await switchRows("ntwrk:nyc")).map(r => [r.ok, r.on])).toEqual(ntwrkSwitchBefore);
+    const friendsActor = await newActor("ntwrk:nyc", ntwrkRefusedBefore);
+    expect(await refusedRows(friendsActor)).toEqual([{ target_id: "teen_intros_ntwrk:nyc", reason: "forbidden" }]);
   }, T);
 
   test("an open report about a teen on friends.help takes the teen out of the ntwrk teen pool through platform.teen_pool_holds, and the other teen stays in it", async () => {

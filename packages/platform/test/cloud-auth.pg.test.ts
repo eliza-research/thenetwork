@@ -55,7 +55,7 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       {NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:59999"},
     ]) expect(() => createPublicApi({...options, env: {...options.env, ...change}})).toThrow();
     const {NETWORK_CLOUD_AUTH_MODE: _mode, ...withoutMode} = options.env;
-    expect(() => createPublicApi({...options, env: {...withoutMode, NETWORK_CLOUD_AUTH_ENABLED: "true"}})).toThrow("NETWORK_CLOUD_AUTH_MODE");
+    expect(() => createPublicApi({...options, env: withoutMode})).toThrow("NETWORK_CLOUD_AUTH_MODE");
     // The real dev router signs the canonical domain while the browser Origin stays loopback.
     const call = async (app: AppId, method: string, path: string, body?: unknown, cookie?: string, boundary = api) => routerHandle(new Request(`http://${HOST[app]}${path}`, {
       method, headers: {origin: app === "slop" ? "http://127.0.0.1:5102" : `http://${HOST[app]}`, ...(body ? {"content-type": "application/json"} : {}), ...(cookie ? {cookie} : {})}, ...(body ? {body: JSON.stringify(body)} : {}),
@@ -155,7 +155,6 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     const freshPending = freshStart.headers.get("set-cookie")!.split(";")[0]!;
     const freshAuthorize = new URL((await freshStart.json()).url);
     challenge = freshAuthorize.searchParams.get("challenge")!;
-    // spec/cloudSignIn.md, "Cloud must accept the exchange and return a live identity"
     sourceExpiresAt = now+2*3_600_000;
     code = `enso_${"7".repeat(64)}`;
     const tooLong = await call("slop", "GET", `/api/auth/cloud/callback?code=${code}&state=${freshAuthorize.searchParams.get("state")}`, undefined, freshPending);
@@ -202,68 +201,51 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     expect((await disabled.fetch(new Request("http://localhost:5102/api/me", {headers: {host: "localhost:5102", cookie: freshCookie}})))!.status).toBe(401);
   });
 
-  // spec/cloudSignIn.md, "The callback requires a live handoff for this app"
-  test("the private home-help page signs in through Cloud and the callback returns to it", async () => {
-    const phone = "+12125550162";
-    const now = Date.UTC(2026, 9, 10, 15);
+  function cloudFixture(o: { phone: string; now: number; name: string; refused: () => boolean }) {
     let challenge = "";
     const transport = (async (request: RequestInfo | URL) => {
       const req = request as Request;
       if (new URL(req.url).pathname.endsWith("network-validate")) return Response.json({ok: true});
       const body = await req.json() as {codeVerifier: string};
       const hash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(body.codeVerifier)))).toString("hex");
-      if (hash !== challenge) return Response.json({ok: false}, {status: 401});
-      return Response.json({userId: "cloud-user-home-help", organizationId: "cloud-org-fixture", stewardUserId: "steward-fixture", e164: phone,
-        issuedAt: Math.floor(now/1000), expiresAt: now+60_000});
+      if (o.refused() || hash !== challenge) return Response.json({ok: false}, {status: 401});
+      return Response.json({userId: `cloud-user-${o.name}`, organizationId: "cloud-org-fixture", stewardUserId: "steward-fixture", e164: o.phone,
+        issuedAt: Math.floor(o.now/1000), expiresAt: o.now+60_000});
     }) as typeof fetch;
-    const api = createPublicApi({store, now: () => now, cloudAuthFetch: transport, cloudValidationTtlMs: 0, minStartMs: 0, log: () => {}, env: {
+    const api = createPublicApi({store, now: () => o.now, cloudAuthFetch: transport, cloudValidationTtlMs: 0, minStartMs: 0, log: () => {}, env: {
       PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_MODE: "staging-local", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
-      NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:5102", NETWORK_CLOUD_AUTH_SERVER_TOKEN: "home-help-fixture".repeat(2),
-    }, otp: {name: "home-help-fixture", send: async () => ({code: "123456"})}});
+      NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:5102", NETWORK_CLOUD_AUTH_SERVER_TOKEN: `${o.name}-fixture`.repeat(2),
+    }, otp: {name: `${o.name}-fixture`, send: async () => ({code: "123456"})}});
     const host = "127.0.0.1:5102";
     const call = async (method: string, path: string, body?: unknown, cookie?: string) => (await api.fetch(new Request(`http://${host}${path}`, {
       method, headers: {host, ...(body ? {"content-type": "application/json"} : {}), ...(cookie ? {cookie} : {})}, ...(body ? {body: JSON.stringify(body)} : {}),
     })))!;
+    return { call, expectChallenge: (value: string) => { challenge = value; } };
+  }
+
+  test("the private home-help page signs in through Cloud and the callback returns to it", async () => {
+    const { call, expectChallenge } = cloudFixture({ phone: "+12125550162", now: Date.UTC(2026, 9, 10, 15), name: "home-help", refused: () => false });
     expect((await call("POST", "/api/auth/cloud/start", {returnPath: "/settings"})).status).toBe(400);
     const start = await call("POST", "/api/auth/cloud/start", {returnPath: "/home-help"});
     expect(start.status).toBe(200);
     const pending = start.headers.get("set-cookie")!.split(";")[0]!;
     const authorize = new URL((await start.json()).url);
-    challenge = authorize.searchParams.get("challenge")!;
+    expectChallenge(authorize.searchParams.get("challenge")!);
     const back = await call("GET", `/api/auth/cloud/callback?code=enso_${"1".repeat(64)}&state=${authorize.searchParams.get("state")}`, undefined, pending);
     expect({status: back.status, location: back.headers.get("location")}).toEqual({status: 303, location: "/home-help"});
     const cookie = back.headers.getSetCookie().filter(value => !value.startsWith("cloud_pending_")).map(value => value.split(";")[0]).join("; ");
     expect(await (await call("GET", "/api/me", undefined, cookie)).json()).toMatchObject({app: "slop", membership: null});
   });
 
-  // spec/cloudSignIn.md, "A failed callback returns to the phone page or the home-help page with an error code"
   test("a failed Cloud sign-in returns /phone and /home-help to their page with an error code, and /join keeps the JSON answer", async () => {
-    const phone = "+12125550164";
-    const now = Date.UTC(2026, 9, 10, 15);
-    let challenge = "", refuse = true;
-    const transport = (async (request: RequestInfo | URL) => {
-      const req = request as Request;
-      if (new URL(req.url).pathname.endsWith("network-validate")) return Response.json({ok: true});
-      const body = await req.json() as {codeVerifier: string};
-      const hash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(body.codeVerifier)))).toString("hex");
-      if (refuse || hash !== challenge) return Response.json({ok: false}, {status: 401});
-      return Response.json({userId: "cloud-user-callback-failure", organizationId: "cloud-org-fixture", stewardUserId: "steward-fixture", e164: phone,
-        issuedAt: Math.floor(now/1000), expiresAt: now+60_000});
-    }) as typeof fetch;
-    const api = createPublicApi({store, now: () => now, cloudAuthFetch: transport, cloudValidationTtlMs: 0, minStartMs: 0, log: () => {}, env: {
-      PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_MODE: "staging-local", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
-      NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:5102", NETWORK_CLOUD_AUTH_SERVER_TOKEN: "callback-failure-fixture".repeat(2),
-    }, otp: {name: "callback-failure-fixture", send: async () => ({code: "123456"})}});
-    const host = "127.0.0.1:5102";
-    const call = async (method: string, path: string, body?: unknown, cookie?: string) => (await api.fetch(new Request(`http://${host}${path}`, {
-      method, headers: {host, ...(body ? {"content-type": "application/json"} : {}), ...(cookie ? {cookie} : {})}, ...(body ? {body: JSON.stringify(body)} : {}),
-    })))!;
+    let refuse = true;
+    const { call, expectChallenge } = cloudFixture({ phone: "+12125550164", now: Date.UTC(2026, 9, 10, 15), name: "callback-failure", refused: () => refuse });
     const begin = async (returnPath: string) => {
       const start = await call("POST", "/api/auth/cloud/start", {returnPath});
       expect(start.status).toBe(200);
       const pending = start.headers.get("set-cookie")!.split(";")[0]!;
       const authorize = new URL((await start.json()).url);
-      challenge = authorize.searchParams.get("challenge")!;
+      expectChallenge(authorize.searchParams.get("challenge")!);
       return {pending, state: authorize.searchParams.get("state")!};
     };
     const code = `enso_${"2".repeat(64)}`;

@@ -8,13 +8,13 @@ The shared text line serves every app. The service reads each message into a sma
 
 ### STOP ends the message before any other check
 
-New rule: before this module, the order of these checks was hand-written in the service. STOP or STOP ALL goes to the consent ledger before the ban, age, invitation or hold checks. The service then applies STOP to every member it covers. A message without STOP goes to the ban check.
+STOP and STOP ALL are one command (`LineStop`), because STOP stops every app (owner decision D6 of 2026-11-22). It goes to the consent ledger before the ban, age, invitation or hold checks. The service then applies STOP to every member it covers. A message without STOP goes to the ban check. Changed: the order of these checks was hand-written in the service, and STOP and STOP ALL were two commands from the time when STOP on one line stopped one app.
 
 ```quint
 import memberAge as Age from "./memberAge"
 import safetyCase as Safety from "./safetyCase"
 
-type LineCommand = LineNoCommand | LineStop | LineStopAll | LineHelp | LineStart
+type LineCommand = LineNoCommand | LineStop | LineHelp | LineStart
 type LineGatePhase = LineAwaitingCommand | LineAwaitingBan | LineAwaitingAge | LineAwaitingInviteDecline |
   LineAwaitingNumberHold | LineStopped | LineBannedIgnored | LineBannedHelp | LineAgeDeclined | LineUnderageHelp |
   LineInviteDeclined | LineNumberHeld | LineContinue
@@ -23,7 +23,7 @@ type LineGate = { phase: LineGatePhase, command: LineCommand, leaveNamed: bool, 
 pure val initial: LineGate =
   { phase: LineAwaitingCommand, command: LineNoCommand, leaveNamed: false, banned: false, underage: false }
 
-pure def lineCommandStops(command: LineCommand): bool = command == LineStop or command == LineStopAll
+pure def lineCommandStops(command: LineCommand): bool = command == LineStop
 
 pure def canReadLineCommand(gate: LineGate): bool = gate.phase == LineAwaitingCommand
 pure def readLineCommand(gate: LineGate, command: LineCommand, leaveNamed: bool): LineGate =
@@ -144,7 +144,7 @@ pure def lawRoutedMemberHearsLeft(membershipInvited: bool, membershipRemoved: bo
 
 ### A refused app is never enrolled, even with "all of them"
 
-Changed: before this rule, "all of them" or "everything" added every app, also an app that the same answer refused ("everything but not dating" enrolled slop.date). Now the shell reads each of friends, dating and work as absent, wanted or refused, and "everything" adds only the apps that the answer did not refuse. A refusal ("not dating", "no work") wins over a mention of the same app. Changed again in review: the shell reading now lets a refusal cover its whole clause up to a comma, a full stop or a word such as "but" or "just" ("not looking for a date"), reads "nothing romantic", "anything but dating" and "dating? no" as refusals, carries a refusal over "or" after a comma ("no dating, or work"), and no longer reads "love" alone as dating ("I'd love to make friends"), because the earlier two-word reach read these refusals as wants and enrolled slop.date. When the reading is not clear it leans to refusal: a missed want only leaves an app out, and the message goes on to the member's conversation, where the person can name the app again. The order is friends, then slop, then peon. The text enrollment rule for other-app enrollment still checks each named app's age and running state.
+The shell reads each of friends, dating and work as absent, wanted or refused, and "everything" adds only the apps that the answer did not refuse. A refusal ("not dating", "no work") wins over a mention of the same app. A refusal covers its whole clause up to a comma, a full stop or a word such as "but" or "just" ("not looking for a date"); "nothing romantic", "anything but dating" and "dating? no" are refusals; a refusal carries over "or" after a comma ("no dating, or work"); and "love" alone is not dating ("I'd love to make friends"). When the reading is not clear it leans to refusal: a missed want only leaves an app out, and the message goes on to the member's conversation, where the person can name the app again. The order is friends, then slop, then peon. The text enrollment rule for other-app enrollment still checks each named app's age and running state. Changed: before this rule, "all of them" or "everything" added every app, also an app that the same answer refused ("everything but not dating" enrolled slop.date), and a two-word reach read such refusals as wants.
 
 ```quint
 type LookingForMention = MentionAbsent | MentionWanted | MentionRefused
@@ -176,7 +176,7 @@ pure def lawEverythingAddsUnrefusedApps(friends: LookingForMention, dating: Look
 
 ### A block, a report and the answer to "Who do you mean?" go to the app where they belong
 
-New rule on 2026-11-22 (audit SD-250 and W3-220): before, these texts went to the app with the newest open item or the last app that wrote to the member, so a report about a person met in another app found nobody, and an answer to "Who do you mean?" could go to another app, where the waiting report lapsed and was never filed. Now, for a member of two or more apps, the service asks each app's network about the text. A block or report claims the app where the member's newest meeting with the named person took place. A text of at most four words claims the app where a "Who do you mean?" question from the last day waits, unless one of the member's other apps sent the member any message newer than the question, or the text is an answer with an age to a pending join for an app the member has yet to join. The service reads an app's network for an answer only when that app's stored state holds a question for the member; a block or report reads every app. The app with the newest claim takes the text, and on equal times the first app read keeps it. Changed again on 2026-11-22 (review of SD-250): before, only a newer open item in another app kept the answer from the question, so a short answer to another app's newer onboarding question ("climbing") or a join answer for a third app ("Kit, 29") went to the old question and was lost; and the service read every app's full state for every short text, which delayed the turn, and chose the newest claim in its own code. The claim comes after a dedicated line, a profile read, a survey reply and an app keyword, and before every other route ([text enrollment](textEnrollment.md)). A member of one app needs no read, because every route then reaches the same app. The network keeps the answer's own rules: an answer of more than four words is never taken as an answer.
+For a member of two or more apps, the service asks each app's network about the text. A block or report claims the app where the member's newest meeting with the named person took place. A text of at most four words claims the app where a "Who do you mean?" question from the last day waits, unless one of the member's other apps sent the member any message newer than the question, or the text is an answer with an age to a pending join for an app the member has yet to join. The service reads an app's network for an answer only when that app's stored state holds a question for the member; a block or report reads every app. The app with the newest claim takes the text, and on equal times the first app read keeps it. The claim comes after a dedicated line, a profile read, a survey reply and an app keyword, and before every other route ([text enrollment](textEnrollment.md)). A member of one app needs no read, because every route then reaches the same app. The network keeps the answer's own rules: an answer of more than four words is never taken as an answer. Changed (audit SD-250 and W3-220, 2026-11-22): before, these texts went to the app with the newest open item or the last app that wrote to the member, so a report about a person met in another app found nobody and an answer to "Who do you mean?" could go to another app, where the waiting report lapsed and was never filed.
 
 ```quint
 pure val maxWhoAnswerWords: int = 4

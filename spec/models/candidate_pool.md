@@ -8,11 +8,11 @@ A member needs recommendations and groups that respect consent, blocks, and loca
 
 Check pool eligibility, pair exclusions, group sizes, and seat uniqueness. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Changed (owner decision 2026-11-22): the invariant `noMinorEnters` is replaced by `teenFriendAgeRule` ([friend introductions with a minor](../friendIntroAge.md)). Retrieval and intro candidates admit a minor only in a friendship lane, only while staff have not stopped teen introductions, and only when every pair of the roster passes the pair rule of `groupAgeAllowed`. While they are stopped, `teenSwitchOffNoMinor` is the old invariant. Group composition in `group.ts` (`composeGroup`) stays adult-only, so its flags still count every minor. The teen `friend_circle` and `group_composer` circles of 3 or more from `match/circles.ts` (allowed under the pairwise rule) and the teen `activity_partner` intros in the `hobby` category are not in this model; `packages/engine/test/teen-friend-age.integration.test.ts` covers them.
+Retrieval and intro candidates admit a minor only in a friendship lane (the `social` lane of friends.help and the Friend lane of The Network, `friendshipLane`), only while staff have not stopped teen introductions (`teenStopped`, false at the start), and only when every pair of the roster passes the pair rule of `groupAgeAllowed` ([friend introductions with a minor](../friendIntroAge.md); `teenFriendAgeRule`, and `teenSwitchOffNoMinor` for the stopped case). An intro with a minor also needs a generator that [relationship lanes](../matchLane.md) `teenGenerator` names and the friendship shape `teenIntroShape` (no via, no event anchor): `introBy` takes the generator, and `intro` gives a pair with no via `intent_to_capability` (network) or `activity_partner` (friends), and a pair with a via `warm_path`. `event_anchor`, `newcomer_welcome`, `help_request` and `second_encounter` never make an intro with a minor. Group composition in `group.ts` (`composeGroup`) stays adult-only, so its flags count every minor.
 
-Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start (`teenStopped` is false; `teenStop` and `teenResume` replace `setTeenIntros`), and the network pack offers them in its `social` lane, the Friend lane of The Network (`friendshipLane`). An intro with a minor also needs a generator that [relationship lanes](../matchLane.md) `teenGenerator` names and the friendship shape `teenIntroShape` (no via, no event anchor): `introBy` takes the generator, and `intro` gives a pair with no via `intent_to_capability` (network) or `activity_partner` (friends), and a pair with a via `warm_path`. `event_anchor`, `newcomer_welcome`, `help_request` and `second_encounter` never make an intro with a minor.
+The friends planner passes (crew sessions, crew offers, same table again, new plans, activity partners) seat a minor only in a roster that passes `teenPlanOk`, as `planMemberReason` (`teenPlanSeat`), `teenGroupReason`, `crewSessionPlan`, `friendsPartnerEligible` and `teenPlanReason` do: friends.help only (`teenGroupPlanApp`), 2 to `TEEN_MAX` people (`teenRosterSizeAllowed`), every pair passes the pair rule, and the activity and place are all-ages (`planActivityOffered`, `planPlaceOffered`). The planner flags count a minor in a roster that fails this rule.
 
-Changed (owner decision 2026-11-22, answer A4; the drift that the first build recorded is now fixed): the friends planner passes (crew sessions, crew offers, same table again, new plans, activity partners) seat a minor, as `planMemberReason` (`teenPlanSeat`), `teenGroupReason`, `crewSessionPlan`, `friendsPartnerEligible` and `teenPlanReason` do. A minor is seated only in a roster that passes the rule (`teenPlanOk`): friends.help only (`teenGroupPlanApp`), 2 to `TEEN_MAX` people (`teenRosterSizeAllowed`), every pair passes the pair rule, and the activity and place are all-ages (`planActivityOffered`, `planPlaceOffered`). The planner flags now count a minor in a roster that fails this rule, not every minor.
+Not in this model: the teen `friend_circle` and `group_composer` circles of 3 or more from `match/circles.ts` and the teen `activity_partner` intros in the `hobby` category; `packages/engine/test/teen-friend-age.integration.test.ts` covers them. Changed (owner decision 2026-11-22, answers A2 to A5): retrieval and the friends planner admit a minor under the rule, because the owner allowed teen friendship introductions and small teen groups.
 
 The [group formation spec](../groupFormation.md) generates the beam composer’s admission decisions, primary selection, and alternate reservations. This model treats retrieval channels as an oracle and follows groups into the service.
 
@@ -43,23 +43,23 @@ Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.
 //     needs a common city (overlap). Hours and intervals are abstracted to "same city".
 //   - complementarity (packages/engine/src/complementarity.ts): romanceMutual gives a romance score
 //     only when both members opted in; the networkPack pair rule romance_incompatible
-//     (packs/network/rules.ts:67-69) is the hard gate. The friends pack excludes the romance lane
+// (packs/network/rules.ts) is the hard gate. The friends pack excludes the romance lane
 //     (packs/friends/rules.ts romance_excluded).
 //   - group composition (packages/engine/src/group.ts composeGroup): minors leave the pool, compat is
 //     -Infinity for a pair that pairReason refuses, the primary group is minSize..maxSize members with
 //     a common city, and each alternate is compatible with each primary member. The ConsentNetwork
-//     then filters the alternates (packages/network/src/network.ts:4271 distinctAlternates, called at 2222).
+// then filters the alternates (packages/network/src/network.ts distinctAlternates, called at 2222).
 //   - the friends planner (packages/engine/src/packs/friends/planner.ts planFriendsWeek) in its pass
 //     order: 1 crew sessions, 2 crew offers (plans.ts detectCrews), 3 same table again (repeats),
 //     4 new plans (tables and planProposals), 5 activity partners. `taken` (passes 1-3) and `used`
 //     (passes 4-5) are the code's sets. The default policy has spreadNew=false, so `busy` is empty.
 //     Pass 4 can also give a partner plan of two (run() -> planProposals with partnerPlans =
-//     pol.partnerFallback, default true; planner.ts:400) for members who attended a group meetup
+// pol.partnerFallback, default true; planner.ts) for members who attended a group meetup
 //     (an oracle here).
 //
 // ABSTRACTIONS (quint/README.md rule 7)
 //   - Scores, embeddings, the channels, venue choice and transit times are oracles. finish()
-//     (planner.ts:196-226) drops invitees for transit as an oracle and fills from alternates, as the code.
+// (planner.ts) drops invitees for transit as an oracle and fills from alternates, as the code.
 //   - Six adults a..f, one member k aged 15, and the teen-rule members t (17), u (18), v (19), w (16) and
 //     y (17). Any member can state a lower age later (minor).
 //   - The friends planner's activity and place are one value: "run" is an all-ages activity at an
@@ -80,15 +80,15 @@ Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.
 //
 // VALUES THAT ARE NOT IN `safety` (each one is a defect that this model found; the code is not changed;
 // each has a run test that reaches it):
-//                            The ConsentNetwork repairs it (network.ts:4279), so `blockedApart` holds for the submitted group.
-//   noSessionBlocked         planner.ts:244-255: a crew session invites every eligible crew member and
+// The ConsentNetwork repairs it (network.ts), so `blockedApart` holds for the submitted group.
+// noSessionBlocked planner.ts: a crew session invites every eligible crew member and
 //                            has no block check. A block made after the crew formed is not seen.
-//   noOfferBlocked           planner.ts:266-279 and plans.ts:662 detectCrews: a crew offer has no block check.
-//   oneCrewPerWeek           planner.ts:244-255: the crew session pass does not read `taken`, so a
+// noOfferBlocked planner.ts and plans.ts detectCrews: a crew offer has no block check.
+// oneCrewPerWeek planner.ts: the crew session pass does not read `taken`, so a
 //                            member in two live crews gets two crew sessions in one week. Two live
 //                            crews are possible: detectCrews keys "already in a crew" by activity,
 //                            and a crew session that finish() refuses leaves the member out of `taken`.
-//   sessionSizeOk            planner.ts:247: a crew session needs only 2 eligible members, below the
+// sessionSizeOk planner.ts: a crew session needs only 2 eligible members, below the
 //                            friends group bound of 3 (rules.ts group_size). This can be intended.
 //
 // TEEN FRIEND INTRODUCTIONS (owner decision 2026-11-22, spec/friendIntroAge.md, teenFriendAgeRule)
@@ -118,7 +118,6 @@ Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.
 module candidate_pool {
 
   // ------------------------------------------------------------------ constants
-  pure val ADULTS = Set("a", "b", "c", "d", "e", "f", "u", "v")
   pure val MEMBERS = Set("a", "b", "c", "d", "e", "f", "k", "t", "u", "v", "w", "y")
   pure val START_AGE = Map("a" -> 30, "b" -> 28, "c" -> 33, "d" -> 41, "e" -> 25, "f" -> 36, "k" -> 15,
                            "t" -> 17, "u" -> 18, "v" -> 19, "w" -> 16, "y" -> 17)
@@ -215,7 +214,7 @@ module candidate_pool {
     introViaMinor: false, minorWhileOff: false,
   }
 
-  // spec/memberAge.md ageOnDay and spec/friendIntroAge.md teenAgesOk, birthKeysWithinTwoYears.
+  // spec/memberAge.md ageOnDay and spec/friendIntroAge.md teenPartnerAge, birthKeysWithinTwoYears.
   pure def ageOnDay(birthKey: int, dayKey: int): int = if (dayKey >= birthKey) (dayKey - birthKey) / 10000 else -1
   pure def teenAgesOk(birthKey: int): bool = ageOnDay(birthKey, DAY) >= 13 and ageOnDay(birthKey, DAY) <= 18
   pure def withinTwoYears(x: int, y: int): bool = if (x >= y) x - y <= 20000 else y - x <= 20000
@@ -254,7 +253,7 @@ module candidate_pool {
   }
 
   // filters.ts memberReason core prefix (minors, holds) plus the pack rule for the lane: networkPack
-  // romance_opt_out (packs/network/rules.ts:20), friendsPack romance_excluded (packs/friends/rules.ts).
+  // romance_opt_out (packs/network/rules.ts), friendsPack romance_excluded (packs/friends/rules.ts).
   // The age prefix is skipped only for a teen friend candidate (P1).
   def memberOk(m: str, lane: str): bool = all {
     not(minor.get(m)) or teenCandidate(m, lane), not(held.get(m)),
@@ -271,8 +270,8 @@ module candidate_pool {
   // complementarity.ts romanceMutual: both opted in (the orientation and age-range checks are an oracle
   // that can only remove).
   def romanceMutual(x: str, y: str): bool = optIn.get(x) and optIn.get(y)
-  // The pack ontology mutualPreferenceMatch that complementarity.ts:71 satisfy calls: networkPack uses
-  // romanceMutual (packs/network/ontology.ts:72), friendsPack is always false (packs/friends/index.ts:89).
+  // The pack ontology mutualPreferenceMatch that complementarity.ts satisfy calls: networkPack uses
+  // romanceMutual (packs/network/ontology.ts), friendsPack is always false (packs/friends/index.ts).
   def romanceSat(x: str, y: str): bool = if (pack == "network") romanceMutual(x, y) else false
   // plans.ts planMemberReason, as the planner's `eligible`: an adult, or a teen plan seat (teenPlanSeat:
   // friends.help and a teen friend candidate in the plans lane), and no hold.
@@ -405,10 +404,10 @@ module candidate_pool {
     all {
       a != NO_ONE, pool.contains(b),
       teenIntroOk(involved, lane, useVia, gen),         // filters.ts candidateAgeReason (groupAgeAllowed, teenGenerator, teenIntroShape)
-      viaOk,                                            // filters.ts:178-184
-      memberOk(a, lane), memberOk(b, lane),             // filters.ts:185-193 memberReason
-      pairOk(a, b, lane),                               // filters.ts:194-197 pairReason
-      city.get(a) == city.get(b),                       // filters.ts:203-209 presence overlap (geo.ts overlap)
+      viaOk, // filters.ts
+      memberOk(a, lane), memberOk(b, lane), // filters.ts memberReason
+      pairOk(a, b, lane), // filters.ts pairReason
+      city.get(a) == city.get(b), // filters.ts presence overlap (geo.ts overlap)
       // complementarity.ts satisfy: a romance want scores SAT.romance only when romanceMutual holds.
       val romanceScore = lane == "romance" and romanceSat(a, b)
       all {
@@ -430,7 +429,7 @@ module candidate_pool {
     }
   }
 
-  // complementarity.ts:124 complementarity: the score of a pool pair, with no hard filter before it
+  // complementarity.ts complementarity: the score of a pool pair, with no hard filter before it
   // (ranking runs on the pool, and the hard gate comes later). A romance want scores SAT.romance
   // only when the ontology says that both sides admit each other. This is the only gate on the
   // score, so romanceScoredOneSided depends on romanceSat alone.
@@ -442,12 +441,12 @@ module candidate_pool {
   }
 
   // ================================================================== group composition (group.ts)
-  // composeGroup on the current pool: minors leave the pool (group.ts:155-157), the primary group is
+  // composeGroup on the current pool: minors leave the pool (group.ts), the primary group is
   // pairwise compatible (evaluateGroup -> null on -Infinity), MIN_G..MAX_G members (the beam stops at
-  // maxSize; `complete` needs minSize) with a common city (overlap). Alternates (group.ts:137-146):
+  // maxSize; `complete` needs minSize) with a common city (overlap). Alternates (group.ts):
   // each is compatible with each primary member and each retained alternate, in the group's city. Then candidateReason
   // (group_size for friends, involvesMinor, memberReason, pairReason over participants), and the
-  // ConsentNetwork distinctAlternates (network.ts:4271): `kept` is its result. distinctAlternates also
+  // ConsentNetwork distinctAlternates (network.ts): `kept` is its result. distinctAlternates also
   // drops a member with unknown age or a minor signal (here: minor) and a second person with the same
   // first name as someone already in it (an oracle here), so any alternate can be dropped.
   action composeGroup(lane: str, primary: Set[str], alts: Set[str], kept: Set[str]): bool = {
@@ -500,7 +499,7 @@ module candidate_pool {
     }
   }
 
-  // Pass 1 (planner.ts:244-255): members = crew.members.filter(eligible); at least 2; crewSessionPlan;
+  // Pass 1 (planner.ts): members = crew.members.filter(eligible); at least 2; crewSessionPlan;
   // finish() may drop invitees for transit (`invited`) and returns null under the quorum min(3, n).
   // `refused`: crewSessionPlan or finish() returned null (no session, nobody taken). A session with a minor
   // needs teenPlanOk over the crew's seated members (crewSessionPlan) and over the invitees (finish()).
@@ -529,7 +528,7 @@ module candidate_pool {
     }
   }
 
-  // Pass 2 (planner.ts:266-279, plans.ts:662 detectCrews with minPlans 1): the positive members of a
+  // Pass 2 (planner.ts, plans.ts detectCrews with minPlans 1): the positive members of a
   // recent outcome who are not in a crew (live or offered at the start of the week) of that activity,
   // and not in a crew that detectCrews found this week (`detected`: its inCrew set grows by every crew
   // it finds, also one that the planner then skips); then filter eligible and not taken; at least
@@ -561,7 +560,7 @@ module candidate_pool {
     }
   }
 
-  // Pass 3 (planner.ts:280-306): pos = positive, eligible, not taken; at least 2; ids = up to MAX_G of
+  // Pass 3 (planner.ts): pos = positive, eligible, not taken; at least 2; ids = up to MAX_G of
   // them (slice). Every pair in the table, including up to 2 eligible alternates from prior
   // attendees, needs a Friend value. The model abstracts value and order but keeps the block
   // and compatibility guards. finish() drops members for transit and fills from compatible alternates.
@@ -597,8 +596,8 @@ module candidate_pool {
     }
   }
 
-  // Pass 4 (planner.ts:324-410 tables and run): the pool is eligible members not `used` (busy is empty
-  // with spreadNew=false); scorePlanGroup is null for a -Infinity pair (plans.ts:176), so the whole
+  // Pass 4 (planner.ts tables and run): the pool is eligible members not `used` (busy is empty
+  // with spreadNew=false); scorePlanGroup is null for a -Infinity pair (plans.ts), so the whole
   // table (primary and alternates) is pairwise compatible; primary MIN_G..MAX_G (slice to size.max);
   // finish() keeps at least size.min invitees; used += invited + alternates. `partner`: run() gives a
   // partner plan of two with no alternates (planProposals partnerPlans; finish() quorum 2). `act` is the
@@ -628,7 +627,7 @@ module candidate_pool {
     }
   }
 
-  // Pass 5 (planner.ts:451-477): activityPartner candidates passed candidateReason (pairReason,
+  // Pass 5 (planner.ts): activityPartner candidates passed candidateReason (pairReason,
   // memberReason, presence overlap); at most partnerIntros per member this run. friendsPartnerEligible
   // (memberReason with the teen seat, pairReason with the pair rule) admits a teen pair; pairActivity and
   // finish() keep it at an all-ages activity and place (teenPlanOk). `act` is the activity and place.
@@ -790,30 +789,30 @@ module candidate_pool {
   // ------------------------------------------------------------------ invariants
   // Owner decision 2026-11-22 (spec/friendIntroAge.md): a minor enters a pool or an intro candidate
   // only as a teen friend candidate whose whole roster passes groupAgeAllowed, never through a via.
-  // Groups (group.ts:155-157) stay adult-only. The friends planner seats a minor only in a roster that
+  // Groups (group.ts) stay adult-only. The friends planner seats a minor only in a roster that
   // passes teenPlanOk (friends.help, 2..TEEN_MAX people, every pair passes the rule, all-ages; answer A4).
   val teenFriendAgeRule = not(h.poolUnsafe or h.introMinor or h.introViaMinor or h.groupMinor or h.sessionMinor
                               or h.offerMinor or h.repeatMinor or h.planMinor or h.partnerMinor)
   // While teen introductions are stopped the old invariant holds: no minor in any pool, candidate, group or plan.
   val teenSwitchOffNoMinor = not(h.minorWhileOff)
   // AGENTS.md hard rule "blocks" (PRD 40, keep every safety guard): a blocked pair is never put together.
-  // filters.ts:71-73 pairReason (blocks win), group.ts:32 makeCompat, plans.ts:176 scorePlanGroup,
-  // network.ts:4279 distinctAlternates. The engine-level gaps are the values below `safety`.
+  // filters.ts pairReason (blocks win), group.ts makeCompat, plans.ts scorePlanGroup,
+  // network.ts distinctAlternates. The engine-level gaps are the values below `safety`.
   val blockedApart = not(h.introBlocked or h.introViaUnsafe or h.groupBlocked or h.groupAltBlockedWithPrimary or h.altPairBlockedEngine
                          or h.submittedBlocked or h.repeatBlocked or h.planBlocked or h.partnerBlocked)
-  // Romance needs mutual opt-in: packs/network/rules.ts:67-69 romance_incompatible, rules.ts:20
-  // romance_opt_out, complementarity.ts:63 romanceMutual (the score gate, also for a pool pair that
+  // Romance needs mutual opt-in: packs/network/rules.ts romance_incompatible, rules.ts
+  // romance_opt_out, complementarity.ts romanceMutual (the score gate, also for a pool pair that
   // no hard filter saw: scorePair); friends.help never matches romance
   // (packs/friends/rules.ts romance_excluded).
   val romanceMutualOptIn = not(h.introRomanceOneSided or h.romanceScoredOneSided or h.groupRomanceOneSided or h.friendsRomance)
-  // geo.ts cityBucketGeo overlap: members meet only in one common city (filters.ts:207, group.ts:62-64).
+  // geo.ts cityBucketGeo overlap: members meet only in one common city (filters.ts, group.ts).
   val coLocated = not(h.introApart or h.groupApart)
   // packs/friends/rules.ts group_size (3..6, scaled to MIN_G..MAX_G), FRIENDS_PLANS.size, planner.ts
   // finish() (repeat quorum, `invited.length < pcfg.size.min` for new plans), group.ts minSize/maxSize.
   val groupSizeBounds = not(h.groupSizeBad or h.offerSizeBad or h.repeatSizeBad or h.planSizeBad)
   // One crew per member per week, the part that holds: a crew offer never invites a member who is
-  // already taken this week (planner.ts:269 `!taken.has(id)`); new plans never seat a member twice
-  // (planner.ts:326, 389 and 407 `used`); partner intros keep partnerIntros (planner.ts:456).
+  // already taken this week (planner.ts `!taken.has(id)`); new plans never seat a member twice
+  // (planner.ts `used`); partner intros keep partnerIntros (planner.ts).
   val seatsOnce = not(h.offerInvitedTwice or h.planSeatTwice or h.partnerOverCap)
 
   val safety = all { teenFriendAgeRule, teenSwitchOffNoMinor, blockedApart, romanceMutualOptIn, coLocated, groupSizeBounds, seatsOnce }
@@ -876,14 +875,14 @@ module candidate_pool {
     .then(composeGroup("social", Set("a", "b", "c"), Set(), Set()))
     .fail()
 
-  // a blocks b after the run crew formed: the crew session still invites both (planner.ts:244-255).
+  // a blocks b after the run crew formed: the crew session still invites both (planner.ts).
   run sessionBlockTest = initWith("friends")
     .then(blockPair("a", "b"))
     .then(startWeek)
     .then(crewSession({ act: "run", members: Set("a", "b", "c") }, Set("a", "b", "c"), false))
     .expect(safety and not(noSessionBlocked))
 
-  // A crew of 3 with one member on a hold: the session goes out to 2 (planner.ts:247).
+  // A crew of 3 with one member on a hold: the session goes out to 2 (planner.ts).
   run sessionSizeTest = initWith("friends")
     .then(setHold("c", true))
     .then(startWeek)
@@ -926,7 +925,7 @@ module candidate_pool {
     .then(crewSession({ act: "dinner", members: Set("a", "d", "e") }, Set("a", "d", "e"), false))
     .expect(safety and not(oneCrewPerWeek))
 
-  // A crew offer never invites a member who has a crew session this week (planner.ts:269).
+  // A crew offer never invites a member who has a crew session this week (planner.ts).
   run offerTakenTest = initWith("friends")
     .then(startWeek)
     .then(crewSession({ act: "run", members: Set("a", "b", "c") }, Set("a", "b", "c"), false))

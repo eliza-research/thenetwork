@@ -33,7 +33,7 @@ The two baseline files:
 | `packages/network/db/network-state.sql` | What the Network's `PgStore` needs: `network.network_state`, `network.opportunities`, `network.participations`, `network.review_items` (with the new columns) and `network.requests`. It works before or after `schema.sql`. |
 
 - Phones and emails live only in `network.channel_identities`.
-- `network.review_items` holds one human-review record per opportunity (PRD 32.8): queued time, deadline, decision (`approve`, `reject`, `expired`), reason code, note, reviewer, and `origin`, `seconds_spent`, `edits`, `rerolls`, `invalidated`.
+- `network.review_items` holds one review record per opportunity (PRD 32.8; the judge or a staff approval, in the `approver` column): queued time, deadline, decision (`approve`, `reject`, `expired`), reason code, note, reviewer, and `origin`, `seconds_spent`, `edits`, `rerolls`, `invalidated`.
 - `network.network_state` holds the whole Network state as one JSON document per network (section 6.2). The view `network.network_state_console` holds only the JSON paths the console reads.
 - `network.requests` holds member requests: kind, category, want id, outcome, tries, opportunity. Never the member's words.
 - `network.staff_audit` is append-only. Triggers refuse update, delete and truncate.
@@ -334,7 +334,7 @@ An item that nobody decides expires at its SLA (12 hours, or 1 hour for a same-d
 1. Built: the production matcher process and the Network admin API (6.5).
 2. Built: the Observatory calls the admin API (4.4). The service records the signed-in person in `X-Network-Staff-Id` as the reviewer of record when the request carries `NETWORK_SERVICE_CONSOLE_TOKEN`. The console steps in `serviceStaffStep` refuse a shared token (403 `named_reviewer_required`). These steps include `POST /review/:oppId` (`DecideReviewItem`) and `POST /safety/hold`, `/safety/ban`, `/safety/dismiss`, `/safety/lift`, `/safety/close` and `/safety/clear-minor` (`DecideSafetyCase`). Checked by `packages/observatory/test/staff-steps.integration.test.ts`.
 3. Built: JWT verification for Cloudflare Access (4.1). Missing: a fresh sign-in before a PII reveal.
-4. **One owner for STOP, START and HELP** on the Blooio line **[FOUNDER]** (6.5, and the warning in `packages/blooio/README.md`). With one shared line for every app (PRD 40.3), the owner must also route the first message by keyword.
+4. Decided: the Eliza gateway owns STOP, START and HELP on the Blooio line and routes the first message by keyword (PRD 40.3). This service answers them only inside the gateway's signed `/internal/turn` (6.5).
 
 Until these exist, do not connect the ConsentNetwork to a real channel.
 
@@ -371,9 +371,8 @@ Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed
 | `NETWORK_SEED` | 1 | The seed of the Network's own random choices |
 | `BLOOIO_WEBHOOK_SECRET` | none | Checks the `X-Blooio-Signature` of the shared line's webhook (`/webhooks/blooio`). Without it, that webhook answers 503. **[CREDENTIALS]** |
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | none | One app's line (`/webhooks/blooio/<app>`), for example `SLOP_BLOOIO_WEBHOOK_SECRET`. Without it, that path answers 503. **[CREDENTIALS]** |
-| `NETWORK_CHANNEL` | dry-run | `blooio` uses the Blooio adapter. `eliza_cloud` sends through Eliza Cloud delivery (`NETWORK_CLOUD_DELIVERY_ORIGIN`, `BLOOIO_FROM`, `SERVICE_TURN_SECRET`); the gateway owns inbound. `--dry-run` always wins. |
 | `BLOOIO_API_KEY`, `BLOOIO_FROM` | none | The Blooio key and the sending line (E.164; `BLOOIO_FROM_NUMBER` is an alias). Needed with `NETWORK_CHANNEL=blooio`. **[CREDENTIALS]** |
-| `NETWORK_CHANNEL` | unset | The live-send gate (below): it alone makes sends real **[FOUNDER]** |
+| `NETWORK_CHANNEL` | unset (dry-run) | The send channel and the live-send gate (below): it alone makes sends real. `blooio` uses the direct Blooio adapter. `eliza_cloud` sends through Eliza Cloud delivery (`NETWORK_CLOUD_DELIVERY_ORIGIN`, `BLOOIO_FROM`, `SERVICE_TURN_SECRET`); the gateway owns inbound. `--dry-run` always wins. **[FOUNDER]** |
 | `PLATFORM_API_PORT` | 8790 | The public API for the sites (`--api-port`) |
 | `PLATFORM_HASH_KEY`, `OTP_PROVIDER`, `TWILIO_*`, `TURNSTILE_SECRET_KEY`, `NODE_ENV`, `PLATFORM_ENV` | see [runbook-platform.md](runbook-platform.md) section 5 | The hash key (required in production), web login codes, bot check, production mode **[CREDENTIALS]** for the keys |
 
@@ -394,7 +393,7 @@ Staff API (send `Authorization: Bearer <token>`; admin for an app passes every r
 | `POST /review/:oppId` | reviewer | `{decision: "approve" \| "reject" \| "edit" \| "reroll", reason?, note?, secondsSpent?, explanations?, objective?, swapOut?}` |
 | `POST /safety/lift` | safety | `{memberId, note?}` |
 | `POST /safety/close` | safety | `{caseId, note?}` |
-| `POST /matching` | admin | `{on: true \| false}`. 409 `matching_not_allowed` for a network that `platform.networks` keeps off (slop, peon). |
+| `POST /matching` | admin | `{on: true \| false}`. 409 `matching_not_allowed` for a network that `platform.networks` keeps off. |
 | `POST /webhooks/blooio` | Blooio signature | The shared line: routed by `platform.app_lines`, then a keyword, then the member's app, then The Network. Bad signature 401, bad JSON 400, no secret 503. |
 | `POST /webhooks/blooio/<app>` | that app's signature | One app's line |
 | `/review-mode` | none | Always 404 |
@@ -404,7 +403,7 @@ Staff API (send `Authorization: Bearer <token>`; admin for an app passes every r
 - A new stored state starts with matching off. An admin turns it on with `POST /matching {"on": true}` **[FOUNDER]** (spec/product/pilot.md).
 - There is no review mode. A staging or production start needs an API key for the judge and recommender providers; the review judge and the engine judge are always on (owner decisions D15 to D17 of 2026-11-22).
 - `/health` is for the heartbeat alert (PRD 35.2). Use the analyst token for the monitor.
-- STOP, STOP ALL, START and HELP: the service answers them through the platform consent ledger (`platform.consent_events`) with the app's own texts. STOP and STOP ALL stop every app, on the shared line and on an app's own line (owner decision 2026-11-22 removed `PLATFORM_STOP_SCOPE`). Each one also sets `network.members.opted_out` and pauses the membership. "leave <app>" leaves one app. The one word "cancel" is a STOP keyword. The founder must decide which system owns keywords on the Blooio line (6.4 item 4).
+- STOP, STOP ALL, START and HELP: the service answers them through the platform consent ledger (`platform.consent_events`) with the app's own texts. STOP and STOP ALL stop every app, on the shared line and on an app's own line (owner decision 2026-11-22 removed `PLATFORM_STOP_SCOPE`). Each one also sets `network.members.opted_out` and pauses the membership. "leave <app>" leaves one app. The one word "cancel" is a STOP keyword. With `NETWORK_CHANNEL=eliza_cloud` the Eliza gateway owns the line: this service answers these keywords only inside the gateway's signed `/internal/turn`, and `/webhooks/blooio` answers 404 `webhook_not_served`.
 
 Checked on 2026-10-07 on a scratch local database: `--once --dry-run` ticked and saved the state. In service mode, a signed webhook from a seeded member got a `dry_run` welcome row, `/review-mode` answered 404, and `GET /review` wrote a `read_review_queue` row to `network.staff_audit`.
 
@@ -414,7 +413,7 @@ Checked again on 2026-10-07, later, on a new scratch database (both schema files
 
 The earlier standalone plan in this section (a separate matcher worker, a `network_rw` login, a Worker for the Blooio webhook, no connectors) was removed on 2026-11-18 because the code no longer follows it. Use these sources:
 
-- [deploy.md](deploy.md): the backend on Railway (`deploy/backend/server.ts`, one process for every network, the public API, `/internal/*` and the MCP server), its variables, the first deploy (the service login is created from `NETWORK_DATABASE_URL`), the four Pages sites, the go-live checklist (section 6), roll back (sections 2.7 and 3.2), monitoring and backups. What makes sends real is in deploy.md section 6; starting real sends is a separate founder decision.
+- [deploy.md](deploy.md): the backend on Railway (`deploy/backend/server.ts`, one process for every network, the public API, `/internal/*` and the MCP server), its variables, the first deploy (the service login is created from `NETWORK_DATABASE_URL`), the four Pages sites, the go-live checklist (section 6), roll back (sections 2.7 and 3.2), monitoring and backups. What makes sends real is in deploy.md section 6.
 - [spec/product/pilot.md](../spec/product/pilot.md): the launch gates (the committed adult cohort; sends are live from the first deploy, owner decision 2026-11-22).
 - Sections 4 and 6 of this runbook: the Observatory in real mode and the review desk.
 

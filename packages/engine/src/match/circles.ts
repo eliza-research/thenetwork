@@ -3,6 +3,7 @@ import {
   circleCoherent, circleRepeatWindowDays, circleSeedAllowed, circleSwapImproves, circleSwapRoundRuns, type CircleEvidence,
 } from "../../../core/src/generated/groupFormation.ts";
 import type { LaneLimits } from "../../../core/src/generated/matchLane.ts";
+import { parityAllowed } from "../../../core/src/generated/pairValue.ts";
 import type { World } from "../world.ts";
 import { compareText, type EntityId, type MatchProfile } from "./profile.ts";
 import type { MatchEdge } from "./search.ts";
@@ -60,7 +61,7 @@ const highestStanding = (group: readonly MatchProfile[]): MatchProfile => group.
 const spreadAllowed = (group: readonly MatchProfile[], band: number): boolean => {
   const low = lowestStanding(group);
   const high = highestStanding(group);
-  return high.standing - low.standing <= band + low.uncertainty + high.uncertainty;
+  return parityAllowed(high.standing - low.standing, band, low.uncertainty, high.uncertainty);
 };
 
 interface Ranked<T> { readonly item: T; readonly low: number; readonly total: number; readonly key: string }
@@ -169,39 +170,46 @@ export function buildCircles(
     take(grow(group));
   }
   if (!circleSwapRoundRuns(rankCircle !== undefined, forced.length)) return circles;
-  return [...circles.slice(0, earlier), ...improveBySwaps(circles.slice(earlier))];
+  return [...circles.slice(0, earlier), ...improveBySwaps(circles.slice(earlier), { links, profileOf, complete, maximum })];
+}
 
-  function improveBySwaps(found: readonly Circle[]): Circle[] {
-    const out = found.map(c => c.members.flatMap(profileOf));
-    const home = new Map<EntityId, number>();
-    out.forEach((group, k) => { for (const p of group) home.set(p.id, k); });
-    const result = found.slice();
-    for (let k = 0; k < out.length; k++) {
-      const neighbours = new Set<number>();
-      for (const p of out[k]!) for (const [id] of links.get(p.id) ?? []) { const h = home.get(id); if (h !== undefined && h > k) neighbours.add(h); }
-      for (const m of [...neighbours].sort((x, y) => x - y)) {
-        const first = out[k]!, second = out[m]!;
-        const before = [result[k]!.evidence.lowestPairValue, result[m]!.evidence.lowestPairValue] as const;
-        const tries: [MatchProfile[], MatchProfile[]][] = [];
-        for (const p of first) tries.push([first.filter(q => q !== p), [...second, p]]);
-        for (const p of second) tries.push([[...first, p], second.filter(q => q !== p)]);
-        for (const p of first) for (const q of second) tries.push([[...first.filter(x => x !== p), q], [...second.filter(x => x !== q), p]]);
-        let best: { a: Circle; b: Circle; low: number; key: string } | undefined;
-        for (const [a, b] of tries) {
-          if (a.length > maximum || b.length > maximum) continue;
-          const ca = complete(a), cb = complete(b);
-          if (!ca || !cb || !circleSwapImproves(before[0], before[1], ca.evidence.lowestPairValue, cb.evidence.lowestPairValue)) continue;
-          const low = Math.min(ca.evidence.lowestPairValue, cb.evidence.lowestPairValue);
-          const key = `${ca.members.join(",")}|${cb.members.join(",")}`;
-          if (!best || low > best.low || (low === best.low && compareText(key, best.key) < 0)) best = { a: ca, b: cb, low, key };
-        }
-        if (!best) continue;
-        result[k] = best.a; result[m] = best.b;
-        out[k] = best.a.members.flatMap(profileOf); out[m] = best.b.members.flatMap(profileOf);
-        for (const p of out[k]!) home.set(p.id, k);
-        for (const p of out[m]!) home.set(p.id, m);
+interface SwapContext {
+  readonly links: ReadonlyMap<EntityId, ReadonlyMap<EntityId, number>>;
+  readonly profileOf: (id: EntityId) => MatchProfile[];
+  readonly complete: (group: readonly MatchProfile[]) => Circle | undefined;
+  readonly maximum: number;
+}
+
+function improveBySwaps(found: readonly Circle[], { links, profileOf, complete, maximum }: SwapContext): Circle[] {
+  const out = found.map(c => c.members.flatMap(profileOf));
+  const home = new Map<EntityId, number>();
+  out.forEach((group, k) => { for (const p of group) home.set(p.id, k); });
+  const result = found.slice();
+  for (let k = 0; k < out.length; k++) {
+    const neighbours = new Set<number>();
+    for (const p of out[k]!) for (const [id] of links.get(p.id) ?? []) { const h = home.get(id); if (h !== undefined && h > k) neighbours.add(h); }
+    for (const m of [...neighbours].sort((x, y) => x - y)) {
+      const first = out[k]!, second = out[m]!;
+      const before = [result[k]!.evidence.lowestPairValue, result[m]!.evidence.lowestPairValue] as const;
+      const tries: [MatchProfile[], MatchProfile[]][] = [];
+      for (const p of first) tries.push([first.filter(q => q !== p), [...second, p]]);
+      for (const p of second) tries.push([[...first, p], second.filter(q => q !== p)]);
+      for (const p of first) for (const q of second) tries.push([[...first.filter(x => x !== p), q], [...second.filter(x => x !== q), p]]);
+      let best: { a: Circle; b: Circle; low: number; key: string } | undefined;
+      for (const [a, b] of tries) {
+        if (a.length > maximum || b.length > maximum) continue;
+        const ca = complete(a), cb = complete(b);
+        if (!ca || !cb || !circleSwapImproves(before[0], before[1], ca.evidence.lowestPairValue, cb.evidence.lowestPairValue)) continue;
+        const low = Math.min(ca.evidence.lowestPairValue, cb.evidence.lowestPairValue);
+        const key = `${ca.members.join(",")}|${cb.members.join(",")}`;
+        if (!best || low > best.low || (low === best.low && compareText(key, best.key) < 0)) best = { a: ca, b: cb, low, key };
       }
+      if (!best) continue;
+      result[k] = best.a; result[m] = best.b;
+      out[k] = best.a.members.flatMap(profileOf); out[m] = best.b.members.flatMap(profileOf);
+      for (const p of out[k]!) home.set(p.id, k);
+      for (const p of out[m]!) home.set(p.id, m);
     }
-    return result;
   }
+  return result;
 }

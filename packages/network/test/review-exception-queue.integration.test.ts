@@ -1,20 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { existsSync } from "node:fs";
-import { findExecutable } from "../../core/src/runtime/process.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { REVIEW_JUDGE_PROMPT_VERSION, SIM_REVIEW_JUDGE, type ReviewJudge, type ReviewJudgeReply } from "../../engine/src/reviewJudge.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
-const DB = `review_exception_queue_test_${process.pid}`;
-const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
-const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const s = new SQL({ url: ADMIN_URL, max: 1 }); try { await s.unsafe("set lock_timeout = '5s'"); await s.unsafe(q); } finally { await s.close(); } }
 
 const SECRET = "whsec_review_exception_queue";
 const TOKENS = "admin:adm-tok,reviewer:rev-tok,safety:saf-tok,analyst:ana-tok";
@@ -28,11 +21,12 @@ const FLAG_EXPLANATION = "P2 gives no reason that fits a climbing partner for P1
 const APPROVE_EXPLANATION = "P1 and P2 both climb near Greenpoint and every text is kind.";
 const phone = (id: string) => `+1212556${String(100 + PEOPLE.findIndex(p => p.id === id)).padStart(4, "0")}`;
 
+let url: string;
 let sql: SQL;
 const open: NetworkService[] = [];
 
 async function reset() {
-  await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+  await testDb();
   const joined = new Date(START - 30 * 24 * HOUR);
   const prefs = { categoriesOptIn: ["social", "hobby", "professional", "events", "growth", "help"], quietHours: [21, 9], romanceOptIn: false, formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
   for (const p of PEOPLE) {
@@ -56,7 +50,7 @@ function fixtureJudge(verdict: "approve" | "flag"): ReviewJudge & { calls: numbe
 }
 
 function service(clock: SimClock, instance: string, reviewJudge: ReviewJudge | null) {
-  const s = new NetworkService({ url: URL_, clock, instance, tokens: TOKENS, webhookSecret: SECRET, network: { seed: 1 }, env: { PLATFORM_ENV: "dev" }, reviewJudge, log: () => {} });
+  const s = new NetworkService({ url, clock, instance, tokens: TOKENS, webhookSecret: SECRET, network: { seed: 1 }, env: { PLATFORM_ENV: "dev" }, reviewJudge, log: () => {} });
   open.push(s);
   return s;
 }
@@ -87,15 +81,13 @@ async function requestedItem(s: NetworkService, clock: SimClock): Promise<{ oppI
 
 describe.skipIf(!pgAvailable)("staff exception queue of the automated review (owner decision 2026-11-22, D15 to D17)", () => {
   beforeAll(async () => {
-    await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
-    await admin(`create database ${DB}`);
-    sql = new SQL({ url: URL_, max: 2 });
+    url = await testDb();
+    sql = new SQL({ url, max: 2 });
   }, T);
   afterAll(async () => {
     for (const s of open) await s.close().catch(() => {});
     await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
+    await dropTestDb();
   });
 
   test("a flagged item is in GET /review with its explanation; the judged reads list it; staff approve it; an analyst reads nothing", async () => {
@@ -112,9 +104,9 @@ describe.skipIf(!pgAvailable)("staff exception queue of the automated review (ow
 
     await s.reviewJudgeTick();
     expect(judge.calls).toBe(1);
-    const queue = await (await staff(s, "rev-tok", "GET", "/review")).json();
-    expect(queue.items.map((i: any) => i.oppId)).toEqual([item.oppId]);
-    expect(queue.items[0].exception).toEqual({ verdict: "flag", reason: "weak_fit", rubric: "adult", at: expect.any(Number), revision: item.revision, explanation: FLAG_EXPLANATION });
+    const queue = await (await staff(s, "rev-tok", "GET", "/review")).json() as { items: { oppId: string; exception: unknown }[] };
+    expect(queue.items.map(i => i.oppId)).toEqual([item.oppId]);
+    expect(queue.items[0]!.exception).toEqual({ verdict: "flag", reason: "weak_fit", rubric: "adult", at: expect.any(Number), revision: item.revision, explanation: FLAG_EXPLANATION });
     expect(await aboutOpp(item.oppId)).toEqual([]);
 
     const judged = await (await staff(s, "saf-tok", "GET", "/review/judged")).json();
@@ -171,8 +163,8 @@ describe.skipIf(!pgAvailable)("staff exception queue of the automated review (ow
     expect([stale.status, await stale.json()]).toEqual([409, { ok: false, reason: "review_stale" }]);
     const stop = await staff(s, "saf-tok", "POST", `/review/${item.oppId}/stop`, { revision: item.revision });
     expect([stop.status, await stop.json()]).toEqual([200, { ok: true }]);
-    const audit = await sql`select actor, ok, detail->>'phase' as phase from network.staff_audit where action = 'review_stop' order by id`;
-    expect(audit.map((r: any) => [r.phase, r.ok])).toEqual([["requested", true], ["result", false], ["requested", true], ["result", true]]);
+    const audit = await sql`select actor, ok, detail->>'phase' as phase from network.staff_audit where action = 'review_stop' order by id` as { phase: string; ok: boolean }[];
+    expect(audit.map(r => [r.phase, r.ok])).toEqual([["requested", true], ["result", false], ["requested", true], ["result", true]]);
     expect((await sql`select count(*)::int as n from network.events where type = 'review_stopped' and object_id = ${item.oppId}`)[0].n).toBe(1);
 
     const probed = first.filter(m => m.type === "probe").map(m => m.member_id);
@@ -206,6 +198,6 @@ describe.skipIf(!pgAvailable)("staff exception queue of the automated review (ow
     clock.set(START + 90 * MINUTE);
     expect(await s.tick()).toBe(true);
     expect(await aboutOpp(item.oppId)).toEqual([]);
-    expect((await sql`select decision, approver from network.review_items where opportunity_id = ${item.oppId}`)[0]).toEqual({ decision: "reject", approver: "staff" });
+    expect((await sql`select decision, approver from network.review_items where opportunity_id = ${item.oppId}`)[0]).toEqual({ decision: "reject", approver: null });
   }, T);
 });

@@ -340,7 +340,6 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.length).toBe(0);
   });
 
-  // spec/outboundReceipt.md, "A send that may have reached the person keeps its person-cap slot"
   test("SD-090: a proactive send whose acceptance expires unknown keeps its person-cap slot", async () => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const refunds: string[] = [];
@@ -358,7 +357,6 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(refunds).toEqual([]);
   });
 
-  // spec/outboundAdmission.md, "A check that cannot answer delays the row and never sends it"
   test.each(["stale check", "claim transaction"])("SD-299 / SD-117: an error in the %s delays the row; the next drain sends it with the same key", async where => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const id = where === "stale check" ? "sd299-digest" : "sd117-reminder";
@@ -378,7 +376,6 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.map(c => c.idempotencyKey)).toEqual([`tn:${id}`]);
   });
 
-  // spec/outboundAdmission.md, "A row does not wait for an answer that the person already gave"
   test("SD-147: a conversation-limit answer while the person writes back leaves the row due, not held", async () => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const to = "+12125558147";
@@ -392,7 +389,6 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
         if (!limited) return { providerMessageId: `sim:${req.idempotencyKey}:${calls.length}`, status: "sent" };
         limited = false;
         now.advance(1000);
-        // The person writes while the provider call runs: the release finds no held row yet.
         expect(await q.inbound(to)).toBe(0);
         throw new ChannelSendError("conversation limit", "await_recipient", 429, "conversation_limit");
       },
@@ -405,7 +401,6 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(await q.statusOf("sd147-reminder")).toBe("sent");
   });
 
-  // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
   test("SD-148: a gateway reply counts in the unanswered streak when its turn receipt accepts it", async () => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const { calls, provider } = recorder();
@@ -421,7 +416,6 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls).toEqual([]);
   });
 
-  // spec/outboundAdmission.md, "A current row needs a delivering line and the recipient's eligibility"
   test("Q-outbound_queue-1: a STOP that commits during the checks stops a direct text to a non-member", async () => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const { calls, provider } = recorder();
@@ -436,7 +430,6 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls).toEqual([]);
   });
 
-  // spec/outboundReceipt.md, "An acceptance records a send time only for a send that went out"
   test("SD-337 / SD-091: a failed acceptance gets no send time; a receipt owner's accepted text to a non-member keeps no address or text", async () => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const blooio: ChannelAdapter = { kind: "sim", async send(req) { return { providerMessageId: `sim:${req.idempotencyKey}`, status: "failed" }; } };

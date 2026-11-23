@@ -65,7 +65,6 @@ export class PgNotifyStore implements NotifyStore {
     return this.insertItem(this.sql, input, now, false);
   }
 
-  /** `lock`: an existing item is read for update, so its notified state cannot change before the caller commits. */
   private async insertItem(db: SQL, input: InboxItemInput, now: number, lock: boolean) {
     const key = dedupeKey(input);
     const inserted = await db`

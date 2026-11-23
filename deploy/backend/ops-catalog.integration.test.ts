@@ -1,32 +1,26 @@
 // spec/opsAlertDispatch.md, "The catalog alerts when its last scan is older than a day and one retry"
-import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { applySchema, DEV_PG_PORT } from "../../packages/observatory/db/dev-pg.ts";
+import { dropTestDb, testDb } from "../../packages/observatory/test/pg.ts";
 import { catalogMetrics, createOps, opsConfigFromEnv, PgAlertStore, type Notice } from "./ops.ts";
 
 const HOUR = 60 * MINUTE;
-const db = `ops_catalog_${randomUUID().replaceAll("-", "")}`;
-const admin = new SQL({ url: `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/postgres`, max: 1 });
-const url = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/${db}`;
 const clock = new SimClock(Date.UTC(2026, 10, 21, 16));
 let sql: SQL;
 
 beforeAll(async () => {
-  await admin.unsafe(`create database ${db}`);
-  await applySchema(url, { lockTimeout: "5s" });
-  sql = new SQL({ url, max: 2 });
+  sql = new SQL({ url: await testDb(), max: 2 });
 }, 120_000);
 afterAll(async () => {
   await sql?.close();
-  await admin.unsafe(`drop database if exists ${db} with (force)`).catch(() => {}); await admin.close();
+  await dropTestDb();
 });
 
 function runner() {
   const posts: Notice[] = [];
   const ops = createOps({
-    config: opsConfigFromEnv({}, { env: "test", build: "test", deployed: false }), probes: () => [],
+    config: opsConfigFromEnv({}, { env: "test", build: "test", deployed: false, warn: line => { throw new Error(line); } }), probes: () => [],
     catalog: now => catalogMetrics(sql, now), store: new PgAlertStore(sql), now: () => clock.now(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
     post: async body => { posts.push(...(body as { alerts: Notice[] }).alerts); return true; },

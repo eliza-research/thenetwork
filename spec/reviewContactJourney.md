@@ -65,7 +65,7 @@ pure def sometimesStaffApprovesHeldItem(s: ReviewContactJourney): bool = s.revie
 
 ### Rejected and expired items stay unsent
 
-A timely rejection closes the opportunity. At the review deadline a late judgment or decision closes the opportunity as expired, even before the next service tick. A held item that nobody decides also expires unsent at its deadline, and the record keeps that the judge held it. A tick after either result leaves it closed and unsent. Changed (owner decision 2026-11-22, D17): a held item expires unsent at its deadline like any other open review. The separate state for a held item that expired is new in this revision, so that the journey shows the D17 case and not only an expiry of an item that waited for the judge.
+A timely rejection closes the opportunity. At the review deadline a late judgment or decision closes the opportunity as expired, even before the next service tick. A held item that nobody decides also expires unsent at its deadline, and the record keeps that the judge held it. A tick after either result leaves it closed and unsent. Changed (owner decision 2026-11-22, D17): the journey had no held item -> a held item that expires has its own state, so that the journey shows the D17 case and not only an expiry of an item that waited for the judge.
 
 ```quint
 pure def stepClosedReviewStaysClosed(before: ReviewContactJourney, after: ReviewContactJourney): bool =

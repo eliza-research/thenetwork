@@ -112,15 +112,23 @@ pure def lawReplyStopsPendingReengagement(onlyWhenAsked: bool, used: bool, lastI
 
 ### Recruiting is an adult-only message at the time it is sent
 
-An introduction, a meeting message, a feedback request, a relay, a reviewed home-help consent card, a "worthwhile" prompt, a re-engagement offer, a request to invite other people, or a notice to an inviter that their invitee joined requires an adult recipient, with one exception: a probe, a reveal, a nudge, a scheduling message, a reminder, a feedback request or a text relay may go to a minor when it belongs to a teen friendship item that is still current under the age rule of [friend introductions with a minor](friendIntroAge.md) (`groupAgeAllowed` over the whole roster, while no stop is stored). Check the current age, and for the exception the age rule, when sending, including a message held for a later send window. Changed (owner decision 2026-11-22): before this change every one of these messages required an adult recipient; the owner allowed friendship introductions between people aged 13 to 18 born at most 2 years apart, so the messages of such an introduction may reach its minor while the age rule holds. Growth, invitation, home-help, "worthwhile" and re-engagement messages stay adult-only. Changed (owner decision 2026-11-22, answers A2 to A5): the exception needed a stored switch that two admins turned on; now teen items are current while no staff stop is stored, on friends.help and in the Friend lane of The Network.
+An introduction, a meeting message, a feedback request, a relay, a reviewed home-help consent card, a "worthwhile" prompt, a re-engagement offer, a request to invite other people, or a notice to an inviter that their invitee joined requires an adult recipient. The teen item kinds are the one exception: a probe, a reveal, a nudge, a scheduling message, a reminder, a feedback request or a text relay may go to a minor when it belongs to a teen friendship item that is still current under the age rule of [friend introductions with a minor](friendIntroAge.md) (`groupAgeAllowed` over the whole roster, while no staff stop is stored, on friends.help and in the Friend lane of The Network). Growth, invitation, home-help, "worthwhile" and re-engagement messages stay adult-only. The send path checks the current age, and for the exception the age rule, when it sends, also for a message held for a later send window. Changed (owner decision 2026-11-22, D1): every one of these messages required an adult recipient -> the teen item kinds may reach a minor of a current teen friendship item, because the owner allowed friendship introductions between people aged 13 to 18 born at most 2 calendar years apart.
 
 ```quint
 pure def outreachRequiresAdult(kind: str): bool =
   kind == "probe" or kind == "reveal" or kind == "nudge" or kind == "scheduling" or
   kind == "reminder" or kind == "feedback" or kind == "relay" or kind == "growth" or kind == "invite_notice" or kind == "home_help_consent" or kind == "worthwhile" or kind == "reengage"
 
+pure def outreachTeenItemKind(kind: str): bool =
+  kind == "probe" or kind == "reveal" or kind == "nudge" or kind == "scheduling" or
+  kind == "reminder" or kind == "feedback" or kind == "relay"
+
 pure def lawRecruitingRequiresAdult(kind: str): bool =
   kind == "growth" implies outreachRequiresAdult(kind)
+
+pure def lawRecruitingIsNeverATeenItemKind(kind: str): bool =
+  (kind == "growth" or kind == "invite_notice" or kind == "home_help_consent" or kind == "worthwhile" or kind == "reengage")
+    implies not(outreachTeenItemKind(kind))
 ```
 
 ## Story: Hear when someone I invited joins

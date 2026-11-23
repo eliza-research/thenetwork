@@ -1,10 +1,10 @@
 # MCP signup drafts
 
-The [OAuth and MCP flow model](models/oauth_mcp.md) covers the connector grant, and the [connector browser authorization](oauthBrowserAuthorization.md) covers the connection page and its Finish signup step. The draft passes the approved first name and home city from the agent to that step. The MCP shell reads the site, connector grant, phone session, recorded age, ban and stored records. It keeps the browser response, storage transactions, and cleanup operations.
+The [OAuth and MCP flow model](models/oauth_mcp.md) covers the connector grant, and the [connector browser authorization](oauthBrowserAuthorization.md) covers the connection page and its Finish signup step. The draft keeps the approved first name and home city that the agent saved for that step; the step does not show them, so the person enters the details on the page. The MCP shell reads the site, connector grant, phone session, recorded age, ban and stored records. It keeps the browser response, storage transactions, and cleanup operations.
 
 ## Story: Prepare an editable Join form after authorization
 
-> As a person who has connected an assistant, I want it to prepare my approved first name and home city so I can review them when I finish signup on the connection page.
+> As a person who has connected an assistant, I want it to keep my approved first name and home city only while I can still use them to finish signup on the connection page.
 
 ### The draft belongs to the app on the connection
 
@@ -19,11 +19,11 @@ pure def signupDraftRequestAllowed(appId: str, appProvided: bool, matchesHost: b
 
 ### A live connection prepares one draft under the age guard
 
-The connector must have a grant and storage. The recorded-age check must be available. Changed: the age check used to run inside a phone lock with a cleanup hook that the platform no longer has; it now reads the lowest recorded age of the phone, and the join checks the stated age again. Proceed when the lowest recorded age of the phone allows the app, the grant still belongs to the phone's current owner, and the person is not joined or is invited. After a successful insert, read the lowest recorded age again. The draft is prepared only when the app still allows that age; otherwise delete the phone's drafts of the app and refuse. Changed again (audit MCP-age-guard): the check and the insert were separate steps, so an age that the platform recorded between them left a draft that no check refused; the read after the insert sees every age recorded before it. An age recorded after that read deletes the draft at once when the app does not allow it (see "A recorded age that the app does not allow deletes the draft at once"). The ten-minute deadline is capped at the grant's expiry.
+The connector must have a grant and storage. The check reads the lowest recorded age of the phone, and the join checks the stated age again. Proceed when the lowest recorded age of the phone allows the app, the grant still belongs to the phone's current owner, and the person is not joined or is invited. After a successful insert, read the lowest recorded age again. The draft is prepared only when the app still allows that age; otherwise delete the phone's drafts of the app and refuse. The read after the insert sees every age recorded before it. An age recorded after that read deletes the draft at once when the app does not allow it (see "A recorded age that the app does not allow deletes the draft at once"). The ten-minute deadline is capped at the grant's expiry. Changed (audit MCP-age-guard): the age check ran inside a phone lock with a cleanup hook that the platform no longer has, and the check and the insert were separate steps, so an age recorded between them left a draft that no check refused. Changed (2026-11-23): the step had a guard input and a `UseJoinForm` phase for a connector without the recorded-age check; every connector now has that check, so the input and the phase are removed.
 
 ```quint
 type DraftPreparationPhase = ReadConnection | CheckAge | CheckOwner | CheckMembership | WriteDraft | RecheckAge |
-  Prepared | GrantRefused | UseJoinForm | AgeRefused | ExistingProfile | WriteRefused
+  Prepared | GrantRefused | AgeRefused | ExistingProfile | WriteRefused
 type DraftPreparation = { phase: DraftPreparationPhase }
 
 pure val initial: DraftPreparation = { phase: ReadConnection }
@@ -35,8 +35,8 @@ pure def signupDraftDeadline(draftUntil: int, grantUntil: int): int =
 pure def signupMembershipCanDraft(status: str): bool = status == "not_joined" or status == "invited"
 
 pure def canObserveConnection(s: DraftPreparation): bool = s.phase == ReadConnection
-pure def observeConnection(s: DraftPreparation, grantReady: bool, guardReady: bool): DraftPreparation =
-  { phase: if (not(grantReady)) GrantRefused else if (guardReady) CheckAge else UseJoinForm }
+pure def observeConnection(s: DraftPreparation, grantReady: bool): DraftPreparation =
+  { phase: if (grantReady) CheckAge else GrantRefused }
 
 pure def canObserveAge(s: DraftPreparation): bool = s.phase == CheckAge
 pure def observeAge(s: DraftPreparation, allowed: bool): DraftPreparation =
@@ -66,13 +66,13 @@ pure def stepPreparedRequiresAgeAfterWrite(before: DraftPreparation, after: Draf
 pure def sometimesPrepared(s: DraftPreparation): bool = s.phase == Prepared
 ```
 
-## Story: Review the draft when I finish signup on the connection page
+## Story: Drop the draft when I can no longer use it
 
-> As a person who connects my assistant again to finish signup, I want the connection page to show the draft my assistant saved, so I can approve or correct it before I join.
+> As a person who connects my assistant again to finish signup, I want a draft that I can no longer use to be deleted when I open Finish signup.
 
-### The Finish signup step reads the draft only for a person who can still join
+### The Finish signup step keeps the draft only for a person who can still join
 
-Changed: a same-origin `/oauth/signup-draft` route used to read the draft for a Join page that no site has, so nothing read it (audit MCP16 and SIG46); the Finish signup step of the connection page now reads it, and the rules of that browser route are gone. The shared signup view does not show the draft fields yet, so no reply, skill or page may say that the page shows them until it does. When the person opens Finish signup on a live connection request with a verified phone, the server decides from the request's membership status, the lowest recorded age of the phone and the ban of the number. A banned number reads no draft, and its draft is deleted. A person who is not joined or invited, whose lowest recorded age the app allows, reads the draft. A lowest recorded age that the app does not allow deletes the draft. Any other membership reads no draft and keeps the row. The server reads the draft only after the browser session matches the request. A refused session reads no draft; when the number is banned, the refusal deletes the number's draft of the app, because a ban also ends the session. Changed (audit MCP-draft-before-session): the read and its deletion ran before the session check, so a post without a matching session could make the server read or delete a draft.
+When the person opens Finish signup on a live connection request with a verified phone, the server decides from the request's membership status, the lowest recorded age of the phone and the ban of the number. The page does not show the draft fields, so no reply, skill or page may say that it does. A banned number's draft is deleted. A person who is not joined or invited, whose lowest recorded age the app allows, keeps the draft (`ReadDraft`, a name kept from the removed read; nothing reads the fields). A lowest recorded age that the app does not allow deletes the draft. Any other membership keeps the row until its deadline. The server decides only after the browser session matches the request. A refused session keeps the draft, except that a banned number's draft is deleted, because a ban also ends the session. Changed (audits MCP16, SIG46 and MCP-draft-before-session): a same-origin `/oauth/signup-draft` route read the draft for a Join page that no site has, and the decision ran before the session check, so a post without a matching session could make the server delete a draft; the route is gone and the decision runs after the session check.
 
 ```quint
 type DraftClaimRoute = RefuseClaim | ReadDraft | DiscardDraft
@@ -99,16 +99,13 @@ pure def lawRefusedBannedSessionDeletesDraft(banned: bool): bool =
   banned implies signupDraftRefusedRoute(banned) == DiscardDraft
 ```
 
-### A draft is read only by the phone, app and person that saved it
+### A draft is written only under the grant that saves it, and nothing reads it
 
-Changed: a read used to need the saving grant to be live, so the disconnect that the not-joined next step asks for hid the draft before Finish signup could show it; a read now checks the draft's own binding and deadline, and the draft still lives at most ten minutes. A write needs a live unrevoked grant with the profile write scope and the matching app and phone. A read needs a draft with the request's app and phone, a saving grant bound to the request's person (no person on both sides for a person who has not joined) and a deadline after now. A used draft is deleted, so no read returns it again. Exactly one eligible row returns the fields. PostgreSQL checks the bindings and the deadline in the statement that reads the row.
+A write needs a live unrevoked grant with the profile write scope and the matching app and phone. Exactly one row is written for each grant. No route reads the draft fields: Finish signup keeps or deletes the row, and the signup result, a recorded age, a ban, erasure, a number change and the deadline delete it. Changed (2026-11-23): the rule described a read by phone, app and person, but the only read was removed with the Join page route, so the read decision `signupDraftRowReadable` and the store read are removed.
 
 ```quint
 pure def signupDraftGrantAllowed(bindingMatches: bool, grantCurrent: bool, unrevoked: bool, writeScope: bool): bool =
   bindingMatches and grantCurrent and unrevoked and writeScope
-
-pure def signupDraftRowReadable(bindingMatches: bool, expiresAt: int, asOf: int): bool =
-  bindingMatches and expiresAt > asOf
 
 pure def signupDraftUnique(matches: int): bool = matches == 1
 pure def signupDraftExpired(expiresAt: int, asOf: int): bool = expiresAt <= asOf
@@ -116,15 +113,15 @@ pure def signupDraftExpired(expiresAt: int, asOf: int): bool = expiresAt <= asOf
 
 ### The signup result settles the draft
 
-New: the Finish signup result now decides what happens to the draft, because the draft must not outlive its use (audit MCP16 and SIG46). A completed join uses the draft and deletes it. A join that the app refuses for the stated age deletes it; the platform records that lower age, and the lowest stated age counts from then on. A refusal for review, a ban or a changed account deletes it. A refusal that the person can correct on the form (an invitation, the text message terms or a missing field) keeps it until its deadline. Erasing the account, a number change and the deadline also delete it. A staff ban of a person or a number deletes the drafts of every banned number in every app at once. Changed (audit MCP-draft-ban): a ban used to leave the draft until Finish signup opened or the deadline passed, so the number of a banned person kept stored profile fields after the ban. Changed (review of MCP-draft-ban): the deletion ran before the memberships were restricted, so a connector store error stopped the ban before the restriction; the deletion now runs after every membership is restricted and before the ban is recorded as complete, so a failure still leaves the ban pending for a staff retry.
+A completed join uses the draft and deletes it. A join that the app refuses for the stated age deletes it; the platform records that lower age, and the lowest stated age counts from then on. A refusal for review, a ban or a changed account deletes it. A refusal that the person can correct on the form (an invitation, the text message terms, a missing field or a birth date that is not a real date) keeps it until its deadline. Erasing the account, a number change and the deadline also delete it. A staff ban of a person or a number deletes the drafts of every banned number in every app at once. The ban deletion runs after every membership is restricted and before the ban is recorded as complete, so a failure leaves the ban pending for a staff retry. Changed (audits MCP16, SIG46 and MCP-draft-ban): the Finish signup result now settles the draft and a ban deletes it at once, because a draft must not outlive its use and a banned person's number kept stored profile fields after the ban. Changed (2026-11-23): a birth date that is not a real date (`invalid_birthdate`) keeps the draft, as `invalid` does, because one mistyped date on the same form deleted the draft.
 
 ```quint
 type DraftSettlement = DeleteDraft | KeepDraft
 
-pure val signupResultValues = Set("joined", "under_age", "review", "account_changed", "invite_only", "invalid_invitation", "invalid", "consent_wording")
+pure val signupResultValues = Set("joined", "under_age", "review", "account_changed", "invite_only", "invalid_invitation", "invalid", "invalid_birthdate", "consent_wording")
 
 pure def signupDraftAfterSignup(signupResult: str): DraftSettlement =
-  if (signupResult == "invite_only" or signupResult == "invalid_invitation" or signupResult == "invalid" or signupResult == "consent_wording") KeepDraft
+  if (signupResult == "invite_only" or signupResult == "invalid_invitation" or signupResult == "invalid" or signupResult == "invalid_birthdate" or signupResult == "consent_wording") KeepDraft
   else DeleteDraft
 
 pure def lawUsedOrRefusedForAgeDraftIsDeleted(signupResult: str): bool =
@@ -133,7 +130,7 @@ pure def lawUsedOrRefusedForAgeDraftIsDeleted(signupResult: str): bool =
 
 ### A recorded age that the app does not allow deletes the draft at once
 
-Each time the platform records an age reading for a phone, the connector reads the lowest recorded age of that phone again for each app that has drafts. It deletes the phone's draft of each app that does not allow that age, and it keeps the draft of each app that still allows it. This applies to a stated age, a birth date, the age of a join, the age that a chat states, and a number change, which brings the lowest age of the person and of the old number to the new number. Only the newest connector of the service does this check. A failed check or deletion does not fail the step that recorded the age: the age is already saved, a replayed turn does not record it again, and Finish signup and the ten-minute deadline still refuse the draft, so the connector logs the failure and the step goes on. Changed again 2026-11-22 (owner decision of 2026-11-22, review of the carry-over build): a number change did not run the check, and a failed deletion failed the join or the turn after the age was saved. Changed 2026-11-22 (owner decision of 2026-11-22, carry-over of the connector review): before, an age that the platform recorded after the read that follows the insert left the draft stored until Finish signup read it or its deadline passed, so the stored first name and home city of a person that the app refuses stayed for up to ten minutes.
+Each time the platform records an age reading for a phone, the connector reads the lowest recorded age of that phone again for each app that has drafts. It deletes the phone's draft of each app that does not allow that age, and it keeps the draft of each app that still allows it. This applies to a stated age, a birth date, the age of a join, the age that a chat states, and a number change, which brings the lowest age of the person and of the old number to the new number. Only the newest connector of the service does this check. A failed check or deletion does not fail the step that recorded the age: the age is already saved, a replayed turn does not record it again, and Finish signup and the ten-minute deadline still refuse the draft, so the connector logs the failure and the step goes on. Changed (2026-11-22): an age that the platform recorded after the read that follows the insert left the draft stored for up to ten minutes, a number change did not run the check, and a failed deletion failed the join or the turn after the age was saved.
 
 ```quint
 pure def signupDraftAfterAgeRecorded(ageAllowed: bool): DraftSettlement =

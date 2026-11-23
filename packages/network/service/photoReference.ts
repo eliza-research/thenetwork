@@ -1,13 +1,14 @@
 import { classifyYesNo, DAY } from "@thenetwork/core";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { photoPickFor, photoSlotsMax, type PhotoPickResult } from "../../core/src/generated/photoRelayItem.ts";
+import { maskOf as numbersMask, numbersOf as maskNumbers } from "../../platform/src/photo-relay.ts";
 
 export interface PhotoSlot { n: number; id: string; addedAt: number; batch: string; label: string | null; sharedWith: string[] }
 export interface ReaderThread { threadId: string; recipientMemberId: string; firstName: string }
 export interface ReaderDraft { recipientMemberId: string | null; shown: number[]; proposed: number[]; wantsSet: boolean; listed: boolean }
 export interface ReaderContext { photos: PhotoSlot[]; now: number; timeZone: string; threads: ReaderThread[]; currentThreadId: string | null; draft: ReaderDraft | null }
 export type Target = { kind: "one"; thread: ReaderThread } | { kind: "ask"; recipients: number };
-export type PickWhy = "list" | "ordinal" | "recency" | "date" | "label" | "content" | "has" | "other" | "all" | "this" | "and";
+type PickWhy = "list" | "ordinal" | "recency" | "date" | "label" | "content" | "has" | "other" | "all" | "this" | "and";
 export type PhotoReading =
   | { kind: "none" }
   | { kind: "send"; target: Target; result: PhotoPickResult; numbers: number[]; wantsSet: boolean; why: PickWhy; alsoText: boolean }
@@ -89,14 +90,14 @@ interface PartReading {
 
 interface Resolved { result: PhotoPickResult; wantsSet: boolean; why: PickWhy; hadFeature: boolean }
 
-export function photoWithdrawRequest(text: string): boolean {
-  const t = (text ?? "").replace(/[’‘`´]/g, "'").toLowerCase();
+function photoWithdrawRequest(text: string): boolean {
+  const t = text.replace(/[’‘`´]/g, "'").toLowerCase();
   return /\b(?:don'?t|dont|do not|never|stop|cancel|hold off|withdraw|take back|unsend|changed my mind|scratch)\b/.test(t)
     && /\b(?:photos?|pics?|pictures?|selfies?)\b/.test(t);
 }
 
 function normalized(text: string): string {
-  return (text ?? "").normalize("NFKC").toLowerCase()
+  return text.normalize("NFKC").toLowerCase()
     .replace(/[‘’‛`´]/g, "'").replace(/[“”]/g, "\"")
     .replace(/\s+/g, " ").trim().replace(/[.!\s]+$/, "");
 }
@@ -110,14 +111,10 @@ function wordsOf(t: string): string[] {
 const bit = (n: number, count: number): number => (n >= 1 && n <= count ? 2 ** (n - 1) : 0);
 const plain = (w: string): string => (w.endsWith("'s") ? w.slice(0, -2) : w);
 
-function numbersOf(mask: number): number[] {
-  const out: number[] = [];
-  for (let n = 1; n <= photoSlotsMax; n++) if (Math.floor(mask / 2 ** (n - 1)) % 2 === 1) out.push(n);
-  return out;
-}
+const numbersOf = (mask: number): number[] => maskNumbers(mask, photoSlotsMax);
 
 function maskOf(s: Scope, keep: (p: PhotoSlot) => boolean): number {
-  return s.slots.filter(keep).reduce((m, p) => m + bit(p.n, s.count), 0);
+  return numbersMask(s.slots.filter(p => keep(p) && bit(p.n, s.count) > 0).map(p => p.n));
 }
 
 function stableMask(s: Scope, nums: number[]): number {
@@ -153,7 +150,7 @@ function numberLists(words: string[]): Tok[] {
   return out;
 }
 
-function localDay(ms: number, timeZone: string): { y: number; m: number; d: number; n: number } {
+export function localDay(ms: number, timeZone: string): { y: number; m: number; d: number; n: number } {
   const [y, m, d] = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms)).split("-").map(Number) as [number, number, number];
   return { y, m, d, n: Math.floor(Date.UTC(y, m - 1, d) / DAY) };
 }

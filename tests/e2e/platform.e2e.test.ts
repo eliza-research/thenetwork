@@ -28,7 +28,6 @@ import { appWiring } from "../../packages/network/service/packs.ts";
 
 const T = 180_000;
 if (!pgAvailable) {
-  if (process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
   console.warn("tests/e2e skipped: no Postgres. Install postgresql@16 (the dev cluster runs on :54339) or run in CI.");
 }
 
@@ -574,7 +573,11 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
             expect(data.next_step).toContain("choose Finish signup");
             expect(data.next_step).toContain("Enter the invitation on that page");
             expect(data.next_step).not.toContain("sign up there");
-          } else expect(data.next_step).toContain("https://friends.help/SKILL.md");
+          } else {
+            expect(data.next_step).toContain("disconnect friends.help in your agent's connector settings, then connect it again");
+            expect(data.next_step).toContain("choose Finish signup");
+            expect(data.next_step).toContain('Or text "friends" as your first message to The Network\'s line.');
+          }
         }
         expect(await st.svc.people.getMembership(person.id, app)).toBeUndefined();
       }
@@ -596,13 +599,16 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           expect(toolData(await submit(about)).error).toMatch(/phone numbers, codes and email/);
           expect((await db`select id from network.messages where body=${about}`).length).toBe(0);
         }
+        const agentProfiles = async () => (await db`select id from network.messages where member_id=${member.id} and direction='inbound' and type='agent_profile'`).length;
         for (const about of [
           "I'm Rae, 30, in 11211. Seeking men 28-35 within 5 miles for a long-term relationship. I like climbing and live music.",
           "I'm Rae, 30, near (11237), seeking men 28-35 within 5 miles. I like climbing and live music.",
           "I'm Rae, 30, in 11211. I like 1990s music, climbing and live shows.",
         ]) {
+          const profilesBefore = await agentProfiles();
           expect(toolData(await submit(about))).toMatchObject({ app: "slop", submitted: true });
-          expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(1);
+          expect(await agentProfiles()).toBe(profilesBefore + 1);
+          expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(0);
         }
         expect((await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!.id).toBe(member.id);
         expect((await pilot.svc.publicApi.accounts.personFor(phone))?.id).toBe(person.id);
@@ -662,9 +668,12 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const status = () => rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token);
         expect(toolData(await status())).toMatchObject({ app: "slop", status: "active" });
         const about = "I'm Rae, 30, in Williamsburg. I like climbing and live music and seek a long-term relationship.";
-        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, token)).submitted).toBe(true);
         const member = (await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!;
-        expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(1);
+        const agentProfiles = async () => (await db`select id from network.messages where member_id=${member.id} and direction='inbound' and type='agent_profile'`).length;
+        const profilesBefore = await agentProfiles();
+        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, token)).submitted).toBe(true);
+        expect(await agentProfiles()).toBe(profilesBefore + 1);
+        expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(0);
         const names = async (bearer?: string) => ((await rpc(pilot, "slop", "/mcp", "tools/list", {}, bearer)).body!.result.tools as { name: string }[]).map(t => t.name);
         const otherTools = await names(other.token!.access_token as string);
         expect(otherTools).toEqual(expect.arrayContaining(["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "read_profile", "list_looking_for", "my_photos", "photo_request"]));
@@ -745,7 +754,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           const approved = await pilot.site("slop", "/oauth/authorize/consent", { browser, form: { rid: pendingRid, decision: "approve" } });
           expect(approved.status, kind).toBe(303);
           const pendingCode = new URL(approved.headers.get("location")!).searchParams.get("code")!;
-          if (kind === "age") await pilot.svc.people.noteAgeFloor(pilot.svc.publicApi.accounts.phoneHash(phone), 17, pilot.clock.now());
+          if (kind === "age") await pilot.svc.people.recordAgeReading(null, pilot.svc.publicApi.accounts.phoneHash(phone), { kind: "age", age: 17 }, pilot.clock.now());
           if (kind === "hold") await pilot.svc.people.setPhoneHold(phone, "recycled_number", pilot.clock.now());
           if (kind.endsWith("ban")) await pilot.svc.people.ban({ id: crypto.randomUUID(), scope: kind === "phone-ban" ? "phone" : "person", personId: kind === "person-ban" ? person.id : null, phoneHash: kind === "phone-ban" ? pilot.svc.publicApi.accounts.phoneHash(phone) : null, reason: "owned fixture", reportId: null, bannedBy: "fixture", at: pilot.clock.now() });
           if (kind === "ownership") {

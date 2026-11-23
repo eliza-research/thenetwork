@@ -1,5 +1,5 @@
-import type { MemberId, WorldSnapshot } from "@thenetwork/core";
-import { laneLimits } from "@thenetwork/core/src/generated/matchLane.ts";
+import type { MemberId } from "@thenetwork/core";
+import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { resolveConfig, type EngineConfigInput } from "@thenetwork/engine/src/config.ts";
 import { canonicalInput, type EngineResult } from "@thenetwork/engine/src/engine.ts";
 import { localEmbed } from "@thenetwork/engine/src/embed.ts";
@@ -9,16 +9,16 @@ import { slateCap } from "@thenetwork/engine/src/packs/peon/selection.ts";
 import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { World } from "@thenetwork/engine/src/world.ts";
 
-export interface MarketPair { cand: MemberId; job: MemberId; value: number; proposed: boolean }
+interface MarketPair { cand: MemberId; job: MemberId; value: number; proposed: boolean }
 export interface PeonMarket { week: number; pairs: MarketPair[]; room: Map<MemberId, number>; load: Map<MemberId, { proposals: number; room: number }> }
 
 const pairId = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
-export function peonMarket(week: number, snapshot: WorldSnapshot | EngineInput, cfgIn: EngineConfigInput, pack: AppPack, r: EngineResult): PeonMarket {
+export function peonMarket(week: number, snapshot: EngineInput, cfgIn: EngineConfigInput, pack: AppPack, r: EngineResult): PeonMarket {
   const cfg = resolveConfig(cfgIn);
-  const w = new World(canonicalInput(snapshot as EngineInput), cfg, localEmbed, pack);
+  const w = new World(canonicalInput(snapshot), cfg, localEmbed, pack);
   const proposed = new Set(r.proposals.filter(p => p.lane !== "Cofounder").map(p => pairId(p.participants[0]!, p.participants[1]!)));
-  const pairs: MarketPair[] = [];
+  const best = new Map<string, MarketPair>();
   const room = new Map<MemberId, number>();
   const budget = (id: MemberId) => {
     const mi = w.get(id)!;
@@ -35,9 +35,10 @@ export function peonMarket(week: number, snapshot: WorldSnapshot | EngineInput, 
     const { cand, job } = match;
     if (!room.has(cand.id)) room.set(cand.id, roomOf(cand.id));
     if (!room.has(job.id)) room.set(job.id, roomOf(job.id));
-    pairs.push({ cand: cand.id, job: job.id, value: Math.round(s.score * 1000), proposed: proposed.has(pairId(cand.id, job.id)) });
+    const key = pairId(cand.id, job.id), value = Math.round(s.score * 1000);
+    if ((best.get(key)?.value ?? -Infinity) < value) best.set(key, { cand: cand.id, job: job.id, value, proposed: proposed.has(key) });
   }
-  pairs.sort((a, b) => (a.cand < b.cand ? -1 : a.cand > b.cand ? 1 : a.job < b.job ? -1 : a.job > b.job ? 1 : 0));
+  const pairs = [...best.values()].sort((a, b) => (a.cand < b.cand ? -1 : a.cand > b.cand ? 1 : a.job < b.job ? -1 : a.job > b.job ? 1 : 0));
   const load = new Map<MemberId, { proposals: number; room: number }>();
   for (const p of r.proposals) for (const id of p.participants) {
     const cur = load.get(id) ?? { proposals: 0, room: roomOf(id) };
@@ -46,7 +47,7 @@ export function peonMarket(week: number, snapshot: WorldSnapshot | EngineInput, 
   return { week, pairs, room, load };
 }
 
-export function optimumSelection(market: PeonMarket): { value: number; chosen: MarketPair[] } {
+function optimumSelection(market: PeonMarket): { value: number; chosen: MarketPair[] } {
   const pairs = market.pairs.filter(p => p.value > 0 && (market.room.get(p.cand) ?? 0) > 0 && (market.room.get(p.job) ?? 0) > 0);
   const cands = [...new Set(pairs.map(p => p.cand))], jobs = [...new Set(pairs.map(p => p.job))];
   const S = 0, T = 1 + cands.length + jobs.length, n = T + 1;

@@ -28,12 +28,12 @@ Each site's Pages router forwards `/mcp`, `/oauth/*` and `/.well-known/oauth-*` 
 | `check_status` | `membership:read` | The signed-in person's own state in the client's one app: `not_joined`, `invited`, `onboarding`, `active`, `stopped` or `on_hold`. No age, no member id, no other app. |
 | `read_profile` | `profile:read` | The active member's own saved first name, about text, interests and general location in the connected app. The browser requires explicit approval for this permission. This call leaves the profile and conversation unchanged. |
 | `get_updates` | `membership:read` | The member's unseen updates for the connected app. Reading them marks them seen. |
-| `prepare_signup` | `profile:write` | Network/Friends only, for a person who is not joined or invited: the approved first name and optional `homeCity` (`nyc` or `sf`), one draft per grant, for at most 10 minutes. The Finish signup step of the connection page reads it for the same phone, app and person. The shared signup view does not show the draft yet, so the person enters the approved details on that page. A join, an under-age refusal, a recorded age that the app does not allow, a ban, erasure or the deadline deletes it. It holds no age, text consent, phone, gender or dating preferences, and it never creates a person or membership. |
+| `prepare_signup` | `profile:write` | Network/Friends only, for a person who is not joined or invited: the approved first name and optional `homeCity` (`nyc` or `sf`), one draft per grant, for at most 10 minutes. The Finish signup page does not show the draft, so the person enters the approved details on that page. When the person opens that page, the server deletes the draft if the person is banned or has an age that the app does not allow; a person who already has a membership keeps the draft until its deadline. Nothing reads the draft fields. A join, an under-age refusal, a recorded age that the app does not allow, a ban, erasure or the deadline deletes it. It holds no age, text consent, phone, gender or dating preferences, and it never creates a person or membership. |
 | `submit_profile` | `profile:write` | Sends the person's approved `about` text of 10–1200 characters to their active or onboarding membership in the connected app. The service treats it as profile intake. Keep phone numbers, email addresses and codes out of the text. The server limits profile and draft calls to five per grant in a 24-hour window. Sending a profile only adds: it never pauses or closes anything the person asked for, even when the text leaves it out. The answer lists what is active (`looking_for`) and, in `check_with_person`, each thing that the text said the person no longer wants or that the person closed in the last 30 days. The agent asks the person about each one and changes nothing by itself. |
 | `list_looking_for` | `profile:read` | The active member's own active and paused wants, requests and job posts in the connected app, each with a `ref` like `INT-DPJKAAMBLCNE`, and what they closed in the last 30 days. Each summary passes the output leak gate or is left out. This call changes nothing. |
 | `pause_looking_for` | `profile:write` | Pauses the one thing that `ref` names, only after the person asked in the conversation. The app texts the person a confirmation with UNDO. At most three agent changes for each person a day, across all grants. A job post cannot be paused here. Texts off, a stopped or held membership, or an unknown ref change nothing. |
 | `resume_looking_for` | `profile:write` | Turns one paused thing back on, with the same limit and a confirmation text. A thing that the person closed cannot be resumed here, and a person under 18 cannot resume through the agent. The connector never closes anything: the person replies CLOSE to the app's text or texts the close command. See [standing changes](../../spec/standingIntentManagement.md). |
-| `my_photos` | `photos:use` | slop.date only, for an active adult member: each of the person's own photos by number, its name if they gave one, the day it was added (`addedOn`), and the first name and state (`asked`, `checking`, `ready`, `opened`) of each match who was offered it. Never a photo, a thumbnail, an id, a link or a rating. The browser requires explicit approval for this permission, and it is never a default scope. This call changes nothing. |
+| `my_photos` | `photos:use` | slop.date only, for an active adult member: each of the person's own photos by number, its name if they gave one, the day it was added (`addedOn`), and the first name and state (`asked`, `checking`, `ready`, `taken_back`) of each match who was offered it. Never a photo, a thumbnail, an id, a link or a rating. The browser requires explicit approval for this permission, and it is never a default scope. This call changes nothing. |
 | `photo_request` | `photos:use` | slop.date only, for an active adult member: passes the person's own `words` (1–300 characters) about sending, naming or taking back a photo. The service reads them as on the text line and texts the person the proposal with its check link. The answer has a `status` (`texted`, `done`, `refused`, `unavailable`) and a text with no link. The agent can never confirm a send: only the person's YES to that text, or Send on the check page, is consent. See [photo relay](../../spec/photoRelayItem.md). |
 
 Every input schema has `additionalProperties: false`. Public tools take `app` only, `prepare_signup` accepts `firstName` and optional `homeCity`, `submit_profile` accepts `about`, `get_updates` accepts `update_token`, `pause_looking_for` and `resume_looking_for` accept `ref`, and `photo_request` accepts `words`. A call with any other field (for example `phone` or `code`) is refused. It is not ignored.
@@ -107,18 +107,15 @@ A person can add `https://slop.date/mcp` as a connector in ChatGPT. Its issuer i
 `https://slop.date`. A DCR client whose redirects all use `chatgpt.com` or
 `chat.openai.com` is a full-surface slop.date connection for every person, with the
 same tools, account checks and revocation as every other connector
-([spec/connectorTools.md](../../spec/connectorTools.md)). Owner decision 2026-11-22
-removed the allowlist (`MCP_CUSTOM_CHATGPT_SLOP`, `MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS`)
-and its onboarding-only tool list. Slop.date is still not in the public OpenAI
+([spec/connectorTools.md](../../spec/connectorTools.md)). No allowlist applies.
+Slop.date is not in the public OpenAI
 plugin and has no `/mcp/openai` surface, because that plugin must suit ages 13 to 17
 ([spec/agentEntry.md](../../spec/agentEntry.md), `plugins/build.ts`). A CIMD client
 from an OpenAI host stays unavailable on slop.date.
 
-Preparing or testing this code does not approve activation. Before rollout,
-review the private-connector policy, approve the named accounts, verify staging,
-then obtain deployment approval. The person enters their own real phone/code and
-accepts real Terms/consent only in the site flow. Never enable the development
-pilot or use fictional OTP on the real deployed service.
+The person enters their own phone and code and accepts the terms and text consent
+only in the site flow. Never enable the development pilot or use fictional OTP on
+the deployed service.
 
 ```bash
 pnpm run security                                               # the pending security suite (MCP OAuth with platform and backend checks)

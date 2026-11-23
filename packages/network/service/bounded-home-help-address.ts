@@ -3,8 +3,7 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { BoundedHomeHelpConsent, HomeHelpConsentKey } from "../src/bounded-home-help-consent.ts";
 import { homeHelpPlanCode } from "./bounded-home-help-consent-command.ts";
 
-/** The private page that calls POST /api/home-help/venue. The fragment never reaches a server log. */
-export function homeHelpAddressPage(origin: string, key: { id: string; revision: number }): string {
+function homeHelpAddressPage(origin: string, key: { id: string; revision: number }): string {
   return `${origin}/home-help#${homeHelpPlanCode(key.id)}-${key.revision}`;
 }
 
@@ -30,7 +29,7 @@ export async function homeHelpAddressStepOf(tx: SQL, consent: Pick<BoundedHomeHe
     now, plan?.draft.expiresAt ?? now);
 }
 
-export type HomeHelpAddressStatus = { role: "requester" | "helper"; addressSaved: boolean };
+type HomeHelpAddressStatus = { role: "requester" | "helper"; addressSaved: boolean };
 
 export function homeHelpAddressStatus(step: HomeHelpAddressStep): HomeHelpAddressStatus | undefined {
   switch (step) {
@@ -42,10 +41,6 @@ export function homeHelpAddressStatus(step: HomeHelpAddressStep): HomeHelpAddres
   }
 }
 
-/**
- * spec/privateHomeHelpVenue.md, "The conversation points each participant to the private page".
- * Call inside the signed member's unit after the sender check. The reply carries a link and never the address.
- */
 export async function homeHelpAddressReply(tx: SQL, consent: Pick<BoundedHomeHelpConsent, "currentConsent">, key: HomeHelpConsentKey,
   memberId: string, origin: string, now: number): Promise<{ body: string; link?: string }> {
   const step = await homeHelpAddressStepOf(tx, consent, key, memberId, now);

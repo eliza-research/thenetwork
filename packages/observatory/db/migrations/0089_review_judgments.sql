@@ -41,37 +41,32 @@ grant select, insert, update, delete on network.review_judgments, network.review
 alter table network.review_judgments enable row level security;
 alter table network.review_judgments force row level security;
 drop policy if exists service_all on network.review_judgments;
-create policy service_all on network.review_judgments for all to network_service using (true) with check (true);
+create policy service_all on network.review_judgments for all to network_service
+  using (app_id = current_setting('app.app_id', true)) with check (app_id = current_setting('app.app_id', true));
 
 alter table network.review_judge_requests enable row level security;
 alter table network.review_judge_requests force row level security;
 drop policy if exists service_all on network.review_judge_requests;
-create policy service_all on network.review_judge_requests for all to network_service using (true) with check (true);
+create policy service_all on network.review_judge_requests for all to network_service
+  using (app_id = current_setting('app.app_id', true)) with check (app_id = current_setting('app.app_id', true));
 
 do $$
 declare
   a text;
   role text;
-  t text;
+  cols text := 'app_id, opportunity_id, revision, status, verdict, reason, explanation, decided_at';
 begin
-  foreach t in array array['review_judgments', 'review_judge_requests'] loop
-    for a in select id from platform.apps order by id loop
-      role := 'network_observatory_' || a;
-      if exists (select 1 from pg_roles where rolname = role) then
-        execute format('grant select on network.%I to %I', t, role);
-        execute format('drop policy if exists %I on network.%I', 'console_' || a, t);
-        execute format('create policy %I on network.%I for select to %I using (app_id = %L)', 'console_' || a, t, role, a);
-      end if;
-    end loop;
-    if exists (select 1 from pg_roles where rolname = 'network_observatory') then
-      execute format('grant select on network.%I to network_observatory', t);
-      execute format('drop policy if exists console_shared_login on network.%I', t);
-      execute format('create policy console_shared_login on network.%I for select to network_observatory using (app_id = %L)', t, 'ntwrk');
-    end if;
-    if exists (select 1 from pg_roles where rolname = 'network_observatory_cross_app') then
-      execute format('grant select on network.%I to network_observatory_cross_app', t);
-      execute format('drop policy if exists console_cross_app on network.%I', t);
-      execute format('create policy console_cross_app on network.%I for select to network_observatory_cross_app using (true)', t);
+  for a in select id from platform.apps order by id loop
+    role := 'network_observatory_' || a;
+    if exists (select 1 from pg_roles where rolname = role) then
+      execute format('grant select (%s) on network.review_judgments to %I', cols, role);
+      execute format('drop policy if exists %I on network.review_judgments', 'console_' || a);
+      execute format('create policy %I on network.review_judgments for select to %I using (app_id = %L)', 'console_' || a, role, a);
     end if;
   end loop;
+  if exists (select 1 from pg_roles where rolname = 'network_observatory') then
+    execute format('grant select (%s) on network.review_judgments to network_observatory', cols);
+    drop policy if exists console_shared_login on network.review_judgments;
+    create policy console_shared_login on network.review_judgments for select to network_observatory using (app_id = 'ntwrk');
+  end if;
 end $$;

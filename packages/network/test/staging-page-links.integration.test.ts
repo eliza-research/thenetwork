@@ -1,6 +1,3 @@
-// spec/photoUploadLink.md, "A link is issued only to an adult live member of a photo app who is not banned or held"
-// spec/phoneChange.md, "The request uses the existing account"
-// A staging backend gives member links on the staging site origin: the photo upload link and the phone-change link.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

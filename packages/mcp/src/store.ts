@@ -6,7 +6,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
-import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { signupDraftExpired, signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import { defaultScopes, scopeName, scopeOfferedOn, scopes as connectorScopes } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
@@ -173,7 +173,6 @@ export type AssistantGrantCandidate = { grant: Grant; client: OAuthClient };
 
 export interface OAuthStore {
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
-  claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
   deleteSignupDrafts(phoneKey: string, app: McpAppId): Promise<void>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
@@ -260,13 +259,6 @@ export class MemoryOAuthStore implements OAuthStore {
       || signupDraftExpired(d.expiresAt, at) || this.signupDrafts.has(g.id)) return false;
     this.signupDrafts.set(g.id, structuredClone(d));
     return true;
-  }
-  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
-    const drafts = [...this.signupDrafts.values()].filter(d => {
-      const g = this.grants.get(d.grantId);
-      return signupDraftRowReadable(!!g && d.phoneKey === phoneKey && d.app === app && g.app === app && g.phoneKey === phoneKey && g.personId === personId, d.expiresAt, at);
-    });
-    return signupDraftUnique(drafts.length) ? structuredClone(drafts[0].fields) : undefined;
   }
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
     for (const [id, d] of this.signupDrafts) if (d.phoneKey === phoneKey && d.app === app) this.signupDrafts.delete(id);

@@ -44,7 +44,7 @@ PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_
 pnpm run sites:dev                                                              # the four sites only, backend paths proxied to :8790 (unsigned X-Forwarded-Host unless PLATFORM_PROXY_SECRET is set)
 ```
 
-`pnpm run db:migrate` with no `--url` and no `NETWORK_DATABASE_URL` migrates the shared dev `network` database. It refuses a host that is not local. `main.ts --once --dry-run` prints one line per network, for example `network slop:nyc: sends dry-run, review "human", matching not allowed (registry row)`, then `slop:nyc: tick done`.
+`pnpm run db:migrate` with no `--url` and no `NETWORK_DATABASE_URL` migrates the shared dev `network` database. It refuses a host that is not local. `main.ts --once --dry-run` prints one line per network, for example `network slop:nyc: sends dry-run, review by the judge (staff decide held items), matching allowed (the admin switch decides)`, then `slop:nyc: tick done`.
 
 ## 3. Check the flows with curl
 
@@ -107,7 +107,7 @@ The service reads these. **[FOUNDER]** marks a flag that only the founder may se
 | `PLATFORM_API_ORIGIN` | `http://127.0.0.1:8790` | no | Where `sites:dev` proxies `/api/*` |
 | `NETWORK_SERVICE_HOST`, `NETWORK_SERVICE_PORT` | `127.0.0.1`, 4848 | no | Staff API and webhooks. `X-Forwarded-Host` from the dev proxy is trusted only with `PLATFORM_ENV=dev` on a local bind. |
 | `PLATFORM_PROXY_SECRET` | none | no | The secret the site routers (Cloudflare Workers) sign the visitor IP and the site host with (`packages/platform/src/proxy.ts`: HMAC-SHA256 over method, path, host, IP and time; refused after 60 s). Without a valid signature the API uses the socket address and its own Host map; a header a client sets never picks the app or the rate-limit bucket. Required in production, at least 32 characters. **[CREDENTIALS]** |
-| `PLATFORM_SESSION_SECRET` | a dev key (dev only) | no | The key for the stored session token hashes and the sealed Cloud sign-in cookies. `main.ts` requires it outside dev (at least 32 characters). The combined backend (`pnpm run start:backend`) does not, and without it uses `PLATFORM_HASH_KEY` in its place (docs/deploy.md 2.3). **[CREDENTIALS]** |
+| `PLATFORM_SESSION_SECRET` | a dev key (dev only) | no | The key for the stored session token hashes and the sealed Cloud sign-in cookies. Both entries, `main.ts` and the combined backend (`pnpm run start:backend`), require it outside dev: at least 32 characters, and different from `PLATFORM_HASH_KEY` (docs/deploy.md 2.3). **[CREDENTIALS]** |
 | `PLATFORM_HASH_KEY` | a dev key (dev only) | no | The key for phone, IP and code hashes (rate limits, suppression, age floor). Required outside `PLATFORM_ENV=dev`. Changing it orphans old suppression hashes and age floors. **[CREDENTIALS]** |
 | `OTP_PROVIDER` | the dev console (dev only) | no | `twilio` uses Twilio Verify with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_VERIFY_SERVICE_SID`. `blooio` uses `BLOOIO_API_KEY` and the configured `BLOOIO_FROM` sender. **[CREDENTIALS]** The dev console prints codes and runs only with `PLATFORM_ENV=dev`. |
 | `TURNSTILE_SECRET_KEY` | none (dev bypass) | no | Cloudflare Turnstile check on `otp/start`. Required outside `PLATFORM_ENV=dev` (`main.ts` and the combined backend refuse to start without it). The join page shows the widget (`TURNSTILE_SITE_KEY`). |

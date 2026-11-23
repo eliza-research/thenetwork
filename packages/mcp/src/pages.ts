@@ -13,7 +13,7 @@ import { ConnectedAssistantsView } from "../../ui/src/components/ConnectedAssist
 import { ConsentView } from "../../ui/src/components/ConsentView.tsx";
 import { connectorApp, type McpApp } from "./apps.ts";
 import { connectorCss, styleSource } from "./pages/styles.ts";
-import type { Grant, Scope, SignupDraftFields } from "./store.ts";
+import type { Grant, Scope } from "./store.ts";
 
 const TURNSTILE = "https://challenges.cloudflare.com";
 
@@ -90,7 +90,7 @@ export function consentPage(app: McpApp, rid: string, clientName: string | null,
   return respond(app, "Allow access", view, { formTargets: [redirectOrigin], status: o.unavailable ? 503 : 200 });
 }
 
-export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error"> & { draft?: SignupDraftFields | null };
+export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error">;
 
 /** The verified browser's transient form for confirming the app's signup. */
 export function signupPage(app: McpApp, rid: string, options: SignupPageOptions) {

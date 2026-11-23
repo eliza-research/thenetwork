@@ -1,6 +1,6 @@
 # Stated openness: dating, friendship and cofounder facts (2026-11-22)
 
-Hand-written. Every number comes from a saved output file in `/Users/nubs/tn-work/` (named after each number). The base files are the unchanged code at d483de38 (`base/`); the package files are in `w1-sig/`. The simulator runs used the simulated reviewer (`review: "auto"` in the block worlds, `sim_reviewer_approves_all` in slop-live) and no LLM (`pnpm run sim` clears the provider keys). No real-LLM run was made: the worktree had no provider key.
+Hand-written. Every number comes from a saved output file in `<run dir>/` (named after each number; the wave's run directory on the build machine, not in the repository). The base files are the unchanged code at d483de38 (`base/`); the package files are in `w1-sig/`. The simulator runs used the simulated reviewer (`review: "auto"` in the block worlds, `sim_reviewer_approves_all` in slop-live) and no LLM (`pnpm run sim` clears the provider keys). No real-LLM run was made: the worktree had no provider key. These runs predate the review judge (owner decisions D15 to D17 of 2026-11-22): they used the removed simulated reviewer that approved every item, and the simulator now uses the deterministic stand-in judge.
 
 ## What the package changes
 

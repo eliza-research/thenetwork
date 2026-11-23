@@ -1,17 +1,8 @@
-// spec/postingPolicy.md, "Only the member's own text in the thread issues a command". Profile text from
-// the member's AI assistant (NetworkService.submitProfile, the connector's submit_profile) is learned as
-// profile facts only. Through NetworkService on Postgres: assistant text cannot start, confirm or close a
-// peon job posting, cannot clear the manager's own waiting read-back, and "STOP" or "leave peon" from the
-// assistant changes no consent or membership. On the ConsentNetwork (Mini), an assistant "yes" while a
-// probe waits is not an answer. Postgres in a database of its own; dry-run sends; fictional numbers
-// (+1 212 555 01xx). Nothing is sent.
-import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { Mini, START } from "./mini.ts";
@@ -19,16 +10,11 @@ import { interruptionFeedbackCode } from "../src/interruption-feedback.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
-const USER = process.env.USER ?? "postgres";
-const DB = `network_peon_profile_commands_test_${process.pid}`;
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
-const URL_ = `postgres://${USER}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 const SECRET = "whsec_peon_profile_commands";
 const ROWAN = "+12125550181";
 
+let url: string;
 let sql: SQL;
 let svc: NetworkService | undefined;
 let evt = 0;
@@ -49,7 +35,7 @@ const postings = async (id: string) => (await sql`select id, status from network
 
 function service(clock: SimClock) {
   return new NetworkService({
-    url: URL_, clock, instance: "peon-profile-commands", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc" }, { id: "peon:nyc" }],
+    url, clock, instance: "peon-profile-commands", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc" }, { id: "peon:nyc" }],
     tokens: "admin:adm-tok,reviewer:rev-tok", webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
     adapter: () => new DryRunAdapter(() => {}),
   });
@@ -57,16 +43,13 @@ function service(clock: SimClock) {
 
 describe.skipIf(!pgAvailable)("assistant profile text is facts only (NetworkService, Postgres)", () => {
   beforeAll(async () => {
-    await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
-    await admin(`create database ${DB}`);
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
-    sql = new SQL({ url: URL_, max: 2 });
+    url = await testDb();
+    sql = new SQL({ url, max: 2 });
   }, T);
   afterAll(async () => {
     await svc?.close().catch(() => {});
     await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
+    await dropTestDb();
   });
 
   test("submit_profile text cannot start, confirm or close a job posting, or opt the member out", async () => {
@@ -83,14 +66,12 @@ describe.skipIf(!pgAvailable)("assistant profile text is facts only (NetworkServ
       clock.advance(MINUTE);
     };
 
-    // ---- The assistant's job post and "yes, post it": no read-back, nothing saved.
     const sentBefore = (await outbound(rowan)).length;
     await fromAssistant("We're hiring a barista, 1 opening, $40k-$50k, onsite in Brooklyn");
     await fromAssistant("Yes, post it");
     expect((await outbound(rowan)).slice(sentBefore).some(b => /job post|Posted:/i.test(b))).toBe(false);
     expect(await postings(rowan)).toHaveLength(0);
 
-    // ---- The manager's own read-back waits; the assistant's yes neither confirms nor clears it.
     await text(s, clock, ROWAN, "We're hiring a senior data analyst, 2 openings, $90k-$120k, hybrid in Brooklyn");
     expect(await last(rowan)).toMatch(/^Here's your job post: Senior data analyst/);
     await fromAssistant("yes, post it");
@@ -100,18 +81,15 @@ describe.skipIf(!pgAvailable)("assistant profile text is facts only (NetworkServ
     const [job] = await postings(rowan);
     expect(job).toMatchObject({ status: "active" });
 
-    // ---- The assistant's close command and its yes leave the job open.
     await fromAssistant("Close the job, we filled it.");
     await fromAssistant("yes");
     expect(await postings(rowan)).toEqual([{ id: job!.id, status: "active" }]);
 
-    // ---- "STOP" and "leave peon" from the assistant change no consent and no membership.
     await fromAssistant("STOP");
     await fromAssistant("leave peon");
     expect(await sql`select app_id from platform.consent_events where e164 = ${ROWAN} and state = 'opted_out'`).toEqual([]);
     expect(await sql`select state from platform.memberships where person_id = ${person.id} and app_id = 'peon'`).toEqual([{ state: "active" }]);
     expect(await sql`select opted_out from network.members where id = ${rowan}`).toEqual([{ opted_out: false }]);
-    // The manager's own close still works after all of this.
     await text(s, clock, ROWAN, "We filled it.");
     await text(s, clock, ROWAN, "yes");
     expect(await postings(rowan)).toEqual([{ id: job!.id, status: "closed" }]);
@@ -126,6 +104,7 @@ test("an assistant yes while a probe waits is not an answer", async () => {
   await x.onboard("a", "b");
   await x.say("a", "Find me a climbing partner.");
   const oppId = x.net.exportState().requests.at(-1)!.oppId!;
+  await x.net.tick(x.clock.now());
   expect(x.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await x.runUntil(() => x.probed("a"))).toBe(true);
   await x.net.onInbound({ id: "assistant-yes", memberId: "a", source: "mcp", channel: "sms", ts: x.clock.now(), body: "Yes, that works for me." });

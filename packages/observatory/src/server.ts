@@ -25,7 +25,7 @@ import {
 } from "./staff.ts";
 import type { GameOptions } from "./sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource, type RealOptions } from "./sources/real.ts";
-import { SERVICE_TIMEOUT } from "./sources/service.ts";
+import { isTimeout, PreviewUnavailableError, SERVICE_TIMEOUT, ServiceUnreachableError } from "./sources/service.ts";
 import type { DataSource } from "./sources/source.ts";
 import type { AppHealth, AuditEntry, ControlCommand, ControlResult, EnvInfo, Mode, ObsDelta, ObsMember, RevealGrant, SafetyAction, StaffRole, StaffUser } from "./types.ts";
 
@@ -74,7 +74,8 @@ const DEDUPED_READS = new Set(["read_member", "read_timeline"]);
 export const PERSON_REASON_MIN = 5;
 export const REVIEW_SECONDS_MAX = 1800;
 export const WS_TICKET_MS = 30_000;
-export const PHOTO_PREVIEW_MS = 5 * 60_000;
+const PHOTO_PREVIEW_MS = 5 * 60_000;
+const PHOTO_ITEM = /^pri_[a-f0-9]{32}$/;
 export const SECURITY_HEADERS: Record<string, string> = {
   "cache-control": "no-store", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer",
   "content-security-policy": "default-src 'none'; frame-ancestors 'none'", "cross-origin-resource-policy": "same-origin",
@@ -100,7 +101,7 @@ const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url
 
 const PLATFORM_ENVS: Readonly<Record<string, PlatformEnv>> = { dev: "EnvDev", staging: "EnvStaging", production: "EnvProduction" };
 
-export function platformEnvOf(raw: string | undefined): PlatformEnv {
+function platformEnvOf(raw: string | undefined): PlatformEnv {
   const value = raw?.trim();
   if (!value) return "EnvUnset";
   return Object.hasOwn(PLATFORM_ENVS, value) ? PLATFORM_ENVS[value]! : "EnvUnknown";
@@ -327,8 +328,11 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       return json({ error: "audit log unavailable: request refused" }, 503);
     }
   }
-  const heldStepRefusal = (u: StaffUser, app: AppId, readMode: Mode, s: StaffStep): Response | undefined =>
-    staffStepAdmitted(s, app, [...rolesFor(u, app, readMode)], globalRolesFor(u)) ? undefined : forbidden(`${s} needs ${["admin", ...staffStepRoles(s)].join(" or ")} for ${app}`);
+  async function heldStepRefusal(u: StaffUser, app: AppId, readMode: Mode, s: StaffStep, action: string): Promise<Response | undefined> {
+    if (staffStepAdmitted(s, app, [...rolesFor(u, app, readMode)], globalRolesFor(u))) return undefined;
+    const refused = await record(u, app, { action, ok: false, detail: { refused: "forbidden" } });
+    return refused ?? forbidden(`${s} needs ${["admin", ...staffStepRoles(s)].join(" or ")} for ${app}`);
+  }
   const currentSafety = (u: StaffUser, app: AppId, readMode: Mode): boolean => {
     const staff = u.via === "sso" ? staffUser(u.id, ssoGrants(u.id, auth), "sso") : u;
     return allowed(staff, ["safety"], app, readMode);
@@ -425,8 +429,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       const preview = await pending;
       if (readRevision !== modeRevision) return modeChanged();
       return preview ? json({ ok: true, preview }) : json({ ok: false, error: "preview_unavailable" }, 404);
-    } catch {
-      return json({ ok: false, error: "preview_unavailable" }, 503);
+    } catch (e) {
+      if (isTimeout(e) || e instanceof PreviewUnavailableError || e instanceof ServiceUnreachableError) return json({ ok: false, error: "preview_unavailable" }, 503);
+      return fail(e);
     }
   }, ["reviewer", "safety"]);
 
@@ -650,32 +655,40 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return json(r, statusOf(r));
         }, ["safety"]),
       },
-      "/api/held/:id/photo": {GET:guard(async(req,u,app)=>{
-        const seen=mode,revision=modeRevision;
-        const refused=heldStepRefusal(u,app,seen,"ReadHeldRelay");if(refused)return refused;
-        const id=decodeURIComponent(req.params.id!),reason=req.headers.get("x-network-reason")?.trim()??"";
-        if(!/^pri_[a-f0-9]{32}$/.test(id)||reason.length<PERSON_REASON_MIN||reason.length>500)return json({error:"A selected item and review reason are required."},400);
-        const src=await source(seen,app);if(!src.heldPhoto)return json({error:"Selected photo review is unavailable."},404);
-        const no=await record(u,app,{action:"read_relay_photo",targetType:"case",targetId:id,reason,ok:true});if(no)return no;
-        if(revision!==modeRevision)return modeChanged();
-        const key=revealKey(u,app,`relay-photo:${id}`,seen);photoPreviews.delete(key);
-        const response=await src.heldPhoto(id,u.id,reason),token=response.headers.get("x-network-photo-review-token"),until=Number(token?.split(".")[0]);
-        if(!response.ok)return response;
-        const now=Date.now();
-        if(!token||!Number.isSafeInteger(until)||until<=now){await response.body?.cancel();return json({error:"This photo preview expired. Load it again."},409);}
-        if(revision!==modeRevision){await response.body?.cancel();return modeChanged();}
-        for(const [k,v]of photoPreviews)if(v.until<=now)photoPreviews.delete(k);
-        if(photoPreviews.size>=1000){await response.body?.cancel();return json({error:"Too many active previews. Retry shortly."},429);}
-        photoPreviews.set(key,{token,until:Math.min(until,now+PHOTO_PREVIEW_MS)});
-        const headers=new Headers(response.headers);headers.delete("x-network-photo-review-token");
-        headers.set("cache-control","no-store");headers.set("referrer-policy","no-referrer");
-        return new Response(response.body,{status:200,headers});
-      })},
+      "/api/held/:id/photo": {
+        GET: guard(async (req, u, app) => {
+          const seen = mode, revision = modeRevision;
+          const refused = await heldStepRefusal(u, app, seen, "ReadHeldRelay", "read_relay_photo");
+          if (refused) return refused;
+          const id = decodeURIComponent(req.params.id!), reason = req.headers.get("x-network-reason")?.trim() ?? "";
+          if (!PHOTO_ITEM.test(id) || reason.length < PERSON_REASON_MIN || reason.length > 500) return json({ error: "A selected item and review reason are required." }, 400);
+          const src = await source(seen, app);
+          if (!src.heldPhoto) return json({ error: "Selected photo review is unavailable." }, 404);
+          const no = await record(u, app, { action: "read_relay_photo", targetType: "case", targetId: id, reason, ok: true });
+          if (no) return no;
+          if (revision !== modeRevision) return modeChanged();
+          const key = revealKey(u, app, `relay-photo:${id}`, seen);
+          photoPreviews.delete(key);
+          const response = await src.heldPhoto(id, u.id, reason), token = response.headers.get("x-network-photo-review-token"), until = Number(token?.split(".")[0]);
+          if (!response.ok) return response;
+          const now = Date.now();
+          if (!token || !Number.isSafeInteger(until) || until <= now) { await response.body?.cancel(); return json({ error: "This photo preview expired. Load it again." }, 409); }
+          if (revision !== modeRevision) { await response.body?.cancel(); return modeChanged(); }
+          for (const [k, v] of photoPreviews) if (v.until <= now) photoPreviews.delete(k);
+          if (photoPreviews.size >= 1000) { await response.body?.cancel(); return json({ error: "Too many active previews. Retry shortly." }, 429); }
+          photoPreviews.set(key, { token, until: Math.min(until, now + PHOTO_PREVIEW_MS) });
+          const headers = new Headers(response.headers);
+          headers.delete("x-network-photo-review-token");
+          headers.set("cache-control", "no-store");
+          headers.set("referrer-policy", "no-referrer");
+          return new Response(response.body, { status: 200, headers });
+        }),
+      },
       "/api/held": {
         GET: guard(async (req, u, app) => {
           const queue = new URL(req.url).searchParams.get("queue");
           const seen = mode, revision = modeRevision;
-          const refused = heldStepRefusal(u, app, seen, "ReadHeldRelay");
+          const refused = await heldStepRefusal(u, app, seen, "ReadHeldRelay", "read_held_texts");
           if (refused) return refused;
           if (queue !== "leak" && queue !== "relay") return json({ ok: false, error: "queue must be leak or relay", code: "bad_queue" }, 400);
           const src = await source(seen, app);
@@ -689,19 +702,22 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
         POST: guard(async (req, u, app) => {
           const seen = mode, revision = modeRevision;
-          const refused = heldStepRefusal(u, app, seen, "DecideHeldRelay");
+          const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown; photoReviewed?: unknown } | null;
+          const refused = await heldStepRefusal(u, app, seen, "DecideHeldRelay", b?.decision === "release" || b?.decision === "reject" ? `held_${b.decision}` : "held_decision");
           if (refused) return refused;
-          const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown; photoReviewed?:unknown } | null;
           const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : "";
-          if (!b || (b.queue !== "leak" && b.queue !== "relay") || typeof b.id !== "string" || !b.id || b.id.length > 300 || (b.decision !== "release" && b.decision !== "reject")) {
-            return json({ ok: false, error: "queue (leak or relay), id and decision (release or reject) are required", code: "bad_action" }, 400);
+          if (!b || (b.queue !== "leak" && b.queue !== "relay") || typeof b.id !== "string" || !b.id || b.id.length > 300 || (b.decision !== "release" && b.decision !== "reject")
+            || (b.queue === "relay" && !PHOTO_ITEM.test(b.id))) {
+            return json({ ok: false, error: "queue (leak or relay), id (a held photo for relay) and decision (release or reject) are required", code: "bad_action" }, 400);
           }
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
           const src = await source(seen, app);
           if (!src.heldDecision) return json({ ok: false, error: "held texts exist on real data only", code: "real_only" }, 404);
-          const photo=b.queue==="relay"&&b.id.startsWith("pri_");
-          const preview=photo?photoPreviews.get(revealKey(u,app,`relay-photo:${b.id}`,seen)):undefined;
-          if(photo&&b.decision==="release"&&(b.photoReviewed!==true||!preview||preview.until<=Date.now()))return json({ok:false,error:"Load and review this selected photo before releasing it.",code:"photo_preview_required"},409);
+          const photo = b.queue === "relay";
+          const preview = photo ? photoPreviews.get(revealKey(u, app, `relay-photo:${b.id}`, seen)) : undefined;
+          if (photo && b.decision === "release" && (b.photoReviewed !== true || !preview || preview.until <= Date.now())) {
+            return json({ ok: false, error: "Load and review this selected photo before releasing it.", code: "photo_preview_required" }, 409);
+          }
           const target = { targetType: "case" as const, targetId: `${b.queue}:${b.id}` };
           const no = await record(u, app, { action: `held_${b.decision}`, ...target, ok: true, reason, detail: { phase: "requested", queue: b.queue } });
           if (no) return no;
@@ -709,8 +725,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
             await record(u, app, { action: `held_${b.decision}`, ...target, ok: false, detail: { phase: "result", queue: b.queue, code: "mode_changed" } });
             return modeChanged();
           }
-          const r = await src.heldDecision(b.queue, b.id, b.decision, reason, u.id, photo&&b.decision==="release"?preview!.token:undefined);
-          if(photo&&r.ok)photoPreviews.delete(revealKey(u,app,`relay-photo:${b.id}`,seen));
+          const r = await src.heldDecision(b.queue, b.id, b.decision, reason, u.id, photo && b.decision === "release" ? preview!.token : undefined);
+          if (photo && r.ok) photoPreviews.delete(revealKey(u, app, `relay-photo:${b.id}`, seen));
           const row = resultRow(r);
           await record(u, app, { action: `held_${b.decision}`, ...target, ok: row.ok, detail: { queue: b.queue, ...row.detail } });
           return json(r, r.code === "service_missing" ? 404 : statusOf(r));
@@ -872,7 +888,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   };
 }
 
-const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "mode", "speed", "ms", "action", "participants", "category", "swapOut", "revision", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
+const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "speed", "ms", "action", "participants", "category", "swapOut", "revision", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
 const AUDIT_TEXTS = new Set(["text", "objective", "note", "why"]);
 const auditValue = (v: unknown): unknown =>
   typeof v === "string" ? v.slice(0, 200) : typeof v === "number" || typeof v === "boolean" || v === null ? v

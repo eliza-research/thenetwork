@@ -14,7 +14,6 @@ import { holdEveryItem, simulatedReviewJudge } from "../../engine/src/reviewJudg
 
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
-  // spec/outboundAdmission.md, "A current row needs a delivering line and the recipient's eligibility"
   // spec/outboundAdmission.md, "A cancelled booking can notify a participant who received the booked plan"
   // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
   const url = await migratedDb("participation_outbound");

@@ -12,8 +12,8 @@ import { readCapped } from "../../platform/src/body.ts";
 import { ledgerOptedOut } from "./consent-ledger-read.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
-export type AgentSignalKind = "opt_out" | "travel" | "safety_concern";
-export type AgentSignal = { kind: AgentSignalKind; evidence: string };
+type AgentSignalKind = "opt_out" | "travel" | "safety_concern";
+type AgentSignal = { kind: AgentSignalKind; evidence: string };
 
 const KINDS: readonly AgentSignalKind[] = ["opt_out", "travel", "safety_concern"];
 const WAITING_TAGS = KINDS.filter(kind => agentSignalWaitsForStaff(kind)).map(kind => `signal:${kind}`);
@@ -34,9 +34,9 @@ export function parseAgentSignals(input: unknown): AgentSignal[] | undefined {
   return signals;
 }
 
-export const AGENT_PAUSE_CONFIRMATION_TYPE = "agent_pause_confirmation";
+const AGENT_PAUSE_CONFIRMATION_TYPE = "agent_pause_confirmation";
 
-export function agentPauseConfirmationText(app: Pick<AppInfo, "name">, confirmation: Exclude<AgentPauseConfirmation, "PauseNotConfirmed">): string {
+function agentPauseConfirmationText(app: Pick<AppInfo, "name">, confirmation: Exclude<AgentPauseConfirmation, "PauseNotConfirmed">): string {
   return confirmation === "PauseConfirmedByReplyText"
     ? `Matching is paused on ${app.name}, as you asked. Say ‘resume matching’ when you want new introductions again.`
     : `Matching on ${app.name} was paused, as you asked. To undo it, text ‘resume matching’ on the ${app.name} line. If you turned texts off, reply START first.`;
@@ -63,7 +63,7 @@ export async function recordAgentSignals(tx: SQL, o: {
   const saved = await tx`update network.members set participation_state=${state}, participation_window=null
     where app_id=${app} and id=${o.memberId} and (participation_state is distinct from ${state} or participation_window is not null) returning id`;
   if (saved.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
-    values(${app},${at},'agent',${o.memberId},'member_state_requested','member',${o.memberId},${{ state: "paused", from: null, until: null, source: "agent_signal" }}::jsonb)`;
+    values(${app},${at},'agent',${o.memberId},'member_state_requested','member',${o.memberId},${{ state, from: null, until: null, source: "agent_signal" }}::jsonb)`;
   const textsOff = saved.length > 0 && (member.opted_out || await ledgerOptedOut(tx, o.e164, app));
   const confirmation = agentPauseConfirmation(pause.kind, saved.length > 0, textsOff);
   switch (confirmation) {
@@ -88,7 +88,7 @@ export function agentSignalsOpenCase(signals: readonly AgentSignal[]): boolean {
   return signals.some(signal => agentSignalWaitsForStaff(signal.kind));
 }
 
-export interface AgentSignalReviewDeps {
+interface AgentSignalReviewDeps {
   app: AppId;
   user: StaffUser;
   now(): number;

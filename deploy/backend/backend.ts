@@ -84,7 +84,7 @@ function backendBootMessages(p: BackendBoot, otpProblems: string[], devSwitches:
   if (p.migrationMissing) out.push("MIGRATION_DATABASE_URL (or MIGRATE_ON_BOOT=0)");
   if (p.sharedLogin) out.push("a MIGRATION_DATABASE_URL that is a different login from the service's NETWORK_DATABASE_URL");
   if (p.leakKeyShort) out.push(`LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
-  out.push(...lineAndStaffMessages(p, SECRET_MIN));
+  out.push(...lineAndStaffMessages(p));
   if (p.modelProviderMissing) out.push(MODEL_PROVIDER_MISSING);
   if (providerUnknown) out.push(MODEL_PROVIDER_UNKNOWN);
   if (p.devSwitchSet) out.push(...devSwitches.map(k => `unset ${k} (dev only)`));
@@ -97,12 +97,13 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const databaseUrl = e.NETWORK_DATABASE_URL || e.DATABASE_URL;
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
   const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
-  const lineStaff = lineAndStaffFacts(e, env === "production");
+  const production = isProduction(e);
+  const lineStaff = lineAndStaffFacts(e, production);
   const sessionSecret = e.PLATFORM_SESSION_SECRET ?? "";
   const devSwitches = Object.keys(e).filter(k => k.startsWith("PLATFORM_DEV_") && e[k]);
   const models = modelProviderFacts(e);
   const policy = backendBoot({
-    environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), production: isProduction(e), database: Boolean(databaseUrl),
+    environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), production, database: Boolean(databaseUrl),
     migrate: migrateOnBoot, migrationUrl: Boolean(e.MIGRATION_DATABASE_URL),
     sameLoginUrl: Boolean(e.MIGRATION_DATABASE_URL && databaseUrl && e.MIGRATION_DATABASE_URL === databaseUrl),
     turnstile: Boolean(e.TURNSTILE_SECRET_KEY), turnstileSite: Boolean(e.TURNSTILE_SITE_KEY?.trim()), proxyLength: proxySecret?.length ?? 0,
@@ -114,7 +115,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   });
   const { deployed } = policy;
   const otpProblems = deployed ? otpConfigProblems(e) : [];
-  const workersAi = workersAiProblem(deployed, isProduction(e), e);
+  const workersAi = workersAiProblem(deployed, production, e);
   const photoStorage = photoStorageSetup(deployed, Boolean(e.PHOTO_STORAGE), e.PHOTO_STORAGE === "r2");
   const photoStorageProblem = photoStorage === "PhotoStorageRefused" ? "PHOTO_STORAGE=r2 (private photo storage) on a deployed backend" : undefined;
   if (backendBootRefused(policy) || otpProblems.length || workersAi || photoStorageProblem || models.unknown) {
@@ -148,7 +149,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   for (const pair of (e.BACKEND_EXTRA_HOSTS ?? "").split(",").map(s => s.trim()).filter(Boolean)) {
     const [h, a] = pair.split("=").map(s => s?.trim().toLowerCase());
     if (!h || !a || !isAppId(a)) throw new Error(`BACKEND_EXTRA_HOSTS: "${pair}" is not host=app with a known app`);
-    if (env === "production") throw new Error("BACKEND_EXTRA_HOSTS is for staging and previews, not production");
+    if (production) throw new Error("BACKEND_EXTRA_HOSTS is for staging and previews, not production");
     if (stageOrigins[a] && h !== new URL(stageOrigins[a]!).host) throw new Error("BACKEND_EXTRA_HOSTS conflicts with the staging app authority");
     if (Object.entries(stageOrigins).some(([app, origin]) => new URL(origin).host === h && app !== a)) throw new Error("BACKEND_EXTRA_HOSTS conflicts with the staging app authority");
     hostMap[h] = a;
@@ -163,7 +164,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (!deployed && !proxySecret) warnings.push("PLATFORM_PROXY_SECRET is not set: /api answers only for a Host the platform knows (local site ports)");
   const build = (e.BUILD_ID || e.RAILWAY_GIT_COMMIT_SHA || "dev").slice(0, 40);
   const tickMs = Number(e.TICK_MS ?? 60_000);
-  const ops = opsConfigFromEnv(e, { env, build, deployed });
+  const ops = opsConfigFromEnv(e, { env, build, deployed, warn: line => warnings.push(line) });
   if (deployed && !ops.webhookUrl) warnings.push("ALERT_WEBHOOK_URL is not set: alerts are log lines only (docs/deploy.md 7.2)");
 
   return {
@@ -275,7 +276,6 @@ export interface BackendDeps {
   publicEvents?: () => Promise<unknown>;
 }
 
-const isBlooioWebhook = isBlooioWebhookPath;
 const MCP_PATH = /^\/(mcp(\/.*)?|oauth\/.*|\.well-known\/oauth-[a-z-]+(\/.*)?)$/;
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
@@ -336,9 +336,9 @@ export function createBackend(d: BackendDeps) {
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
         app = n.app;
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
-      } else if (isBlooioWebhook(path) && !c.blooioWebhook) {
+      } else if (isBlooioWebhookPath(path) && !c.blooioWebhook) {
         res = json(404, { ok: false, error: "webhook_not_served" });
-      } else if (isBlooioWebhook(path) || INTERNAL_PATHS.has(path)) {
+      } else if (isBlooioWebhookPath(path) || INTERNAL_PATHS.has(path)) {
         res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
@@ -359,7 +359,7 @@ export function createBackend(d: BackendDeps) {
     const t0 = performance.now();
     const path = new URL(req.url).pathname;
     const res = !backendAcceptsWork(lifecycle) ? json(503, { ok: false, error: "shutting_down" })
-      : isBlooioWebhook(path) && !c.blooioWebhook ? json(404, { ok: false, error: "webhook_not_served" }) : await track(svc.fetch(req));
+      : isBlooioWebhookPath(path) && !c.blooioWebhook ? json(404, { ok: false, error: "webhook_not_served" }) : await track(svc.fetch(req));
     log.info("http", { port: "staff", method: req.method, route: routeLabel(path), status: res.status, ms: Math.round(performance.now() - t0) });
     return stamp(res);
   };

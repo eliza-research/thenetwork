@@ -88,7 +88,6 @@ describe("exportState / importState", () => {
     again.importState(JSON.parse(JSON.stringify(s)));
     expect(again.exportState()).toEqual(s);
     expect(() => again.importState({ ...s, version: 99 })).toThrow();
-    // The judge is never stored: a Network without an inline judge keeps the review judge name after importing a simulator state.
     const deployed = new ConsentNetwork({ seed: 1, engine: { cities: ["nyc"] } });
     deployed.importState(s);
     expect(deployed.judgeReviewer).toBe("review_judge");
@@ -250,7 +249,7 @@ async function nycWorld(days: number, restartAtDay?: number) {
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new Restartable(new ConsentNetwork(opts), opts);
   const records: RunRecord[] = [];
-  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
+  const w = new World({ seed, personas, days, start, app: net.net.app.id, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
   await w.begin();
   if (restartAtDay !== undefined) {
     // Restart right after the hourly tick that ends day `restartAtDay`.
@@ -436,8 +435,6 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     w.net.importState(w.net.exportState());
     await w.say(alt, "I am 12 years old");
     expect(w.net.isDeclined(alt)).toBe(true);
-    // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": the
-    // reviewed item that listed the alternate closes, and the alternate leaves it.
     expect(w.net.exportState().opps.find(o => o.id === oppId)).toMatchObject({ stage: "closed", closedReason: "minors policy" });
     await store.save(w.net.exportState());
     expect(await have()).toEqual(want());

@@ -1,24 +1,17 @@
 import type { Event, FailureKind, ReceiptLifecycle, ReceiptPhase } from "../../packages/core/src/generated/outboundReceipt.ts";
 import { DAY, HOUR, SimClock } from "../../packages/core/src/clock.ts";
-import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { OutboundQueue } from "../../packages/blooio/src/outbound-queue.ts";
 import { ChannelSendError, type DeliveryStatus, type FailureClass, type SendReceipt } from "../../packages/blooio/src/types.ts";
 import { withConformanceDatabase } from "./conformanceDatabase.ts";
 import { serveJourney } from "./serveJourney.ts";
 
-// One queued compliance text per key, each on its own line with its own clock, so a drain or a clock step for one key
-// never touches another. The provider holds every send open until an event decides it, so `Sending` is the row the
-// real queue claimed and leased. Receipts arrive through the queue's own status and receipt-lookup paths.
-
 const unknownTtlMs = HOUR;
-const STATUS_OF: Record<ReceiptPhase, string> = {
-  Sending: "sending", LegacyQueued: "queued", ProviderAccepted: "accepted", ProviderSent: "sent", ProviderDelivered: "delivered",
-  ProviderRead: "read", ProviderFailed: "failed", AcceptanceUnknown: "unknown_acceptance", AcceptanceExpired: "failed_unknown",
-  RetryScheduled: "retry_scheduled", WaitingForReply: "held_awaiting_reply", ProviderBlocked: "blocked", OutsideReceipt: "expired",
-};
-const PHASE_OF = new Map(Object.entries(STATUS_OF).map(([phase, status]) => [status, phase as ReceiptPhase]));
-// A provider acceptance carries only the provider's delivery statuses; its "queued" is the queue's "accepted".
-const ACCEPTANCE: Partial<Record<ReceiptPhase, DeliveryStatus>> = {
+const PHASE_OF = new Map<string, ReceiptPhase>([
+  ["sending", "Sending"], ["queued", "QueuedBeforeAcceptance"], ["accepted", "ProviderAccepted"], ["sent", "ProviderSent"], ["delivered", "ProviderDelivered"],
+  ["read", "ProviderRead"], ["failed", "ProviderFailed"], ["unknown_acceptance", "AcceptanceUnknown"], ["failed_unknown", "AcceptanceExpired"],
+  ["retry_scheduled", "RetryScheduled"], ["held_awaiting_reply", "WaitingForReply"], ["blocked", "ProviderBlocked"], ["expired", "OutsideReceipt"],
+]);
+const PROVIDER_STATUS: Partial<Record<ReceiptPhase, DeliveryStatus>> = {
   ProviderAccepted: "queued", ProviderSent: "sent", ProviderDelivered: "delivered", ProviderRead: "read", ProviderFailed: "failed",
 };
 const FAILURE: Record<FailureKind, FailureClass> = {
@@ -44,12 +37,11 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
   const lanes = new Map<string, Lane>();
   let counter = 0;
 
-  function newLane(db: SQL): Lane {
+  function newLane(): Lane {
     const n = ++counter;
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
-    const lane: Lane = { id: `receipt-conformance-${n}`, clock, allowClaim: true, lookup: ambiguous } as Lane;
-    lane.queue = new OutboundQueue({
-      sql: db, clock, line: `+1212555${String(1000 + n).padStart(4, "0")}`, app: "friends", instance: `receipt-worker-${n}`,
+    const queue = new OutboundQueue({
+      sql, clock, line: `+1212555${String(1000 + n).padStart(4, "0")}`, app: "friends", instance: `receipt-worker-${n}`,
       maxAttempts: 2, baseBackoffMs: 0, unknownTtlMs, ttlMs: 3650 * DAY, ttlProactiveMs: 3650 * DAY,
       checks: {
         live: () => true,
@@ -67,10 +59,10 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
         receipt: () => lane.lookup(),
       },
     });
+    const lane: Lane = { id: `receipt-conformance-${n}`, clock, queue, allowClaim: true, lookup: ambiguous };
     return lane;
   }
 
-  /** Start a drain and wait until the provider holds its send open, or the drain ends without one. */
   async function drainUntilSend(lane: Lane): Promise<void> {
     const started = new Promise<void>(resolve => { lane.started = resolve; });
     lane.drain = lane.queue.drain();
@@ -81,7 +73,7 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
   async function laneFor(key: string): Promise<Lane> {
     const existing = lanes.get(key);
     if (existing) return existing;
-    const lane = newLane(sql);
+    const lane = newLane();
     lanes.set(key, lane);
     await lane.queue.enqueue(sql, [{
       id: lane.id, to: `+1646555${String(1000 + counter).padStart(4, "0")}`, kind: "compliance",
@@ -104,7 +96,6 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
     return PHASE_OF.get(status) ?? "OutsideReceipt";
   }
 
-  /** Settle the held send, then wait for the claimed drain to write its outcome. */
   async function settle(lane: Lane, outcome: { receipt: SendReceipt } | { error: unknown }) {
     const pending = lane.pending!;
     lane.pending = undefined;
@@ -113,7 +104,6 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
     await lane.drain;
   }
 
-  /** A later drain: receipt lookup for an unknown row, expiry, and due rows. */
   async function drainWith(lane: Lane, lookup: () => Promise<SendReceipt>) {
     lane.lookup = lookup;
     try { await lane.queue.drain(); } finally { lane.lookup = ambiguous; }
@@ -123,22 +113,19 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
     const receiptId = `provider-${lane.id}`;
     switch (event.type) {
       case "recordAcceptance": {
-        const status = ACCEPTANCE[event.providerPhase];
+        const status = PROVIDER_STATUS[event.providerPhase];
         if (!status) return;
         const receipt: SendReceipt = { providerMessageId: receiptId, status, chatId: "conformance-chat" };
         if (lane.pending) return settle(lane, { receipt });
         return drainWith(lane, async () => receipt);
       }
       case "applyReceipt": {
-        await lane.queue.applyStatus({
-          kind: "status", channel: "blooio", providerMessageId: receiptId, at: lane.clock.now(),
-          // The webhook parser admits only delivery statuses; the stored status names reach the same comparison.
-          status: STATUS_OF[event.providerPhase] as DeliveryStatus,
-        });
+        const status = PROVIDER_STATUS[event.providerPhase];
+        if (!status) return;
+        await lane.queue.applyStatus({ kind: "status", channel: "blooio", providerMessageId: receiptId, at: lane.clock.now(), status });
         return;
       }
       case "holdUnrecordedReceipt": {
-        // A response without a provider message id cannot be validated, so its acceptance is not recorded.
         const receipt: SendReceipt = { providerMessageId: "", status: "queued" };
         if (lane.pending) return settle(lane, { receipt });
         return drainWith(lane, async () => receipt);
@@ -158,7 +145,6 @@ await withConformanceDatabase("outbound_receipt_conformance", async sql => {
         if (!lane.pending) return drainWith(lane, () => Promise.reject(error));
         await settle(lane, { error });
         if (event.failure !== "Retryable" || event.hasAttemptsLeft) return;
-        // The first claim of a row has attempts left. Its retry is the attempt that has none.
         lane.allowClaim = true;
         lane.autoFail = error;
         try { await lane.queue.drain(); } finally { lane.allowClaim = false; lane.autoFail = undefined; }

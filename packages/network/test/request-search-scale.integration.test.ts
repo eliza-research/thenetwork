@@ -1,12 +1,4 @@
-// The member-request search (ConsentNetwork.searchFor) on worlds of hundreds and thousands of
-// members, with trips away, open opportunities, meetings, declines and blocks. Two checks:
-//  1. The partners, scores, reasons and tie order are exactly those of the search before its scans
-//     were indexed (fixtures/request-search-300.json was written by the earlier code and is kept).
-//  2. The work per request grows linearly with the network: the reads of the snapshot's member and
-//     presence rows and of the opportunities, counted by wrapping those accessors, grow about 10x from
-//     200 to 2,000 members (before the indexes they grew about 100x: one scan per candidate).
-// The interaction list is private, so its reads are not counted here: searchFor reads it once per
-// request (the requester's recent meetings), not once per candidate; check 1 covers the result.
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { DAY, type Category, type Facet, type Member, type MemberId, type Presence } from "@thenetwork/core";
 import { ConsentNetwork, type NetworkState } from "../src/index.ts";
@@ -24,7 +16,6 @@ const REQUESTS: { category: Category; desireId?: string; tags: string[] }[] = [
 ];
 const pair = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
-/** A stored member and a stored opportunity, as the real flow writes them (one onboarded request). */
 async function templates() {
   const x = new Mini([{ id: "a", name: "Alice Able", age: 30 }, { id: "b", name: "Boris Bell", age: 32, skills: ["design"], interests: ["startups"], shareable: true }], { inlineJudge: holdEveryItem.inline });
   await x.onboard("a", "b");
@@ -35,7 +26,6 @@ async function templates() {
 
 interface Counts { members: number; presence: number; facets: number; opps: number }
 
-/** A world of `n` members whose snapshot rows and opportunities are counted as the Network reads them. */
 async function world(n: number) {
   const t = await templates();
   const rnd = (i: number, k: number) => ((i * 2654435761 + k * 40503) >>> 0) % 1000;
@@ -64,7 +54,6 @@ async function world(n: number) {
       status: [[a, "yes"], [b, i % 5 === 0 ? "no" : "probing"]] satisfies typeof t.opp.status, createdAt: now - (i % 10) * DAY,
     };
   });
-  // Pair history is dense around the members who ask (m0, m7, m14...), so it changes who is found.
   const asker = (i: number, k: number) => `m${(7 * (rnd(i, k) % 40)) % n}`;
   state.interactions = Array.from({ length: 4 * n }, (_, i) => ({
     id: `int${i}`, kind: "intro" as const, category: "social" as const, participants: [asker(i, 40), `m${rnd(i, 41) % n}`],
@@ -96,21 +85,19 @@ test("the request search returns exactly the partners, scores and tie order it r
   const { search } = await world(300);
   const found: Record<string, unknown> = {};
   for (let i = 0; i < 40; i++) found[`m${i * 7}#${i % REQUESTS.length}`] = search(`m${i * 7}`, i);
-  // The requests find partners (the regression is about which ones and in what order).
   expect(Object.values(found).filter(x => (x as unknown[]).length > 0).length).toBeGreaterThan(20);
-  await expect(JSON.stringify(found, null, 1) + "\n").toMatchFileSnapshot("fixtures/request-search-300.json");
+  expect(JSON.parse(JSON.stringify(found))).toEqual(JSON.parse(readFileSync(new URL("fixtures/request-search-300.json", import.meta.url), "utf8")));
 });
 
 test("the work per request grows linearly with the number of members", async () => {
   const work = async (n: number) => {
     const { counts, search } = await world(n);
-    search("m0", 0); // the first search builds the snapshot and the known profiles (linear, once)
+    search("m0", 0);
     const before = { ...counts };
     for (let i = 1; i <= 4; i++) search(`m${i}`, i);
     return (counts.members - before.members) + (counts.presence - before.presence) + (counts.facets - before.facets) + (counts.opps - before.opps);
   };
   const small = await work(200), large = await work(2000);
   expect(small).toBeGreaterThan(0);
-  // Linear work grows 10x with 10x members; one scan per candidate grows 100x.
   expect(large / small).toBeLessThan(20);
 });

@@ -11,6 +11,7 @@ import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability", "expired generic invite"] as const;
 
@@ -41,7 +42,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     } });
     return { adapter, service: new NetworkService({
       url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: holdEveryItem.judge,
       networks: [{ id: networkId }], devMatching: [networkId],
       network: { plans: false, growth: false, maxNewPerDay: 0, plansConfig: { probeWindowHours: 6 } }, tokens: "reviewer@friends:group-reviewer",
     }) };
@@ -125,6 +126,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members.map(member => ({ ...member, stated })) });
       net["submitPlan"](plan, now);
     });
+    await service.reviewJudgeTick();
     const [original] = await awaitingReview();
     if (!original) throw new Error("The original plan did not reach staff review");
     expect(original.proposal.participants).toEqual(invited);
@@ -240,6 +242,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
       expect(cancel.text).toContain("off now");
       expect(cancel.text).not.toMatch(/\b(?:Ari|Blair|Charlie|Drew|Elliot)\b/i);
     }
+    await service.reviewJudgeTick();
     const reviews = await awaitingReview();
     expect(reviews).toHaveLength(1);
     const replacement = reviews[0]!;

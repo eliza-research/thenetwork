@@ -946,13 +946,15 @@ export function transStatusOf(identity: string | undefined): "yes" | "no" | unde
   return undefined;
 }
 
+const unstatedOnlyTrans = (p: SlopOnboarding): boolean =>
+  p.transOpenness?.value === "only" && transStatusOf(p.identity?.value) !== "yes";
+
 export function transAnswerOf(p: SlopOnboarding): TransAnswer | undefined {
-  const v = p.transOpenness?.value;
-  return v === "only" && transStatusOf(p.identity?.value) !== "yes" ? undefined : v;
+  return unstatedOnlyTrans(p) ? undefined : p.transOpenness?.value;
 }
 
 export function seeksAnswerOf(p: SlopOnboarding): Gender[] | undefined {
-  return p.transOpenness?.value === "only" && transStatusOf(p.identity?.value) !== "yes" ? undefined : p.seeks?.value;
+  return unstatedOnlyTrans(p) ? undefined : p.seeks?.value;
 }
 
 export interface SlopTag { tag: string; kind: Facet["kind"]; scope: Facet["scope"]; confidence: number }

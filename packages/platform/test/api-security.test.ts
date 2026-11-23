@@ -128,7 +128,7 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
       expect((await joinWith(submitted)).body).toEqual({ ok: false, error: "invalid" });
     }
     expect(await store.findPhone(phone)).toBeUndefined();
-    expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBeUndefined();
+    expect(await store.ageFloorRecord(c.api.accounts.phoneHash(phone))).toBeUndefined();
     expect(await store.consentEvents(phone, "peon")).toEqual([]);
     const ok = await joinWith({ sms: true, wording: `  ${approved.text.replace(/ /g, "\n ")} ` });
     expect(ok.status).toBe(200);

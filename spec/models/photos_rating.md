@@ -88,7 +88,7 @@ module photos_rating {
   /** uploadMaxPerPerson (spec/photoPolicy.md is 6; 2 here). */
   pure val MAX_PHOTOS: int = 2
   /** PHOTO_CONSENT.version (photos.ts): a constant of the build. */
-  pure val CONSENT: str = "2026-11-22"
+  pure val CONSENT: str = "2026-11-23"
   pure val HEADERS: Set[str] = Set(CONSENT, "old", "")
   pure val ADULT_AGE: int = 25
   pure val MINOR_AGE: int = 15
@@ -157,7 +157,7 @@ module photos_rating {
     verifySaga: str,        // idle | committed | erasing             (verify fail; deleteFor, then dropRatings for the app)
     banSaga: str,           // idle | banned | dropped                (the staff ban)
     leaveSaga: str,         // idle | consent | erasing | netGone     (Accounts.leave, onForget)
-    leaveSrc: str,          // text (the sender's own turn) | staff (privacy-staff.ts:221, api.ts POST /api/me/delete)
+    leaveSrc: str, // text (the sender's own turn) | staff (privacy-staff.ts, api.ts POST /api/me/delete)
     delSaga: str,           // idle | floor | erasing | netGone       (Accounts.deleteAll, onForget)
     delSrc: str,            // text | staff
     cmdSaga: str,           // idle | erasing                         (DELETE PHOTOS: deleteRequest, deleteFor)
@@ -443,7 +443,7 @@ module photos_rating {
 
   // ---------------------------------------------------------------- leave slop (Accounts.leave, onForget)
   // src "text": "leave slop.date" runs inside the sender's serialized turn, so it never overlaps a YES PHOTOS
-  // turn. src "staff": the same Accounts.leave from packages/network/service/privacy-staff.ts:221 (the
+  // turn. src "staff": the same Accounts.leave from packages/network/service/privacy-staff.ts (the
   // replay of a recorded help@ leave request) or packages/platform/src/api.ts "POST /api/me/delete" with
   // scope "app" is its own request and takes no lock against consentAnswer, so it can overlap a YES PHOTOS turn.
   // A photo upload by link is its own HTTP request and can overlap either.
@@ -472,7 +472,7 @@ module photos_rating {
   // ---------------------------------------------------------------- delete everything (Accounts.deleteAll)
   /**
    * src "text": a turn of the sender. src "staff": Accounts.deleteAll from
-   * packages/network/service/privacy-staff.ts:133 (help@ erasure) and :219 (its replay), or
+   * packages/network/service/privacy-staff.ts (help@ erasure) and its replay, or
    * packages/platform/src/api.ts "POST /api/me/delete" with scope "all".
    */
   action delFloor(src: str): bool = all {

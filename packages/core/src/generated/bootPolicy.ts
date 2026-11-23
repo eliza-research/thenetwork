@@ -62,12 +62,6 @@ export function lawProductionDisallowsDev(platform: string, node: string): boole
 
 /** Story: Start the service with its declared configuration / Both entries apply one rule to the session secret, the model provider and the dev-only switches (spec/bootPolicy.md) */
 //@ pure
-export function sharedBootRefused(s: SharedBoot): boolean {
-  return s.devConflict || s.sessionMissing || s.sessionShort || s.sessionReused || s.modelProviderMissing || s.devSwitchSet;
-}
-
-/** Story: Start the service with its declared configuration / Both entries apply one rule to the session secret, the model provider and the dev-only switches (spec/bootPolicy.md) */
-//@ pure
 export function sharedBoot(facts: SharedBootFacts): SharedBoot {
   const local_0 = deployedEnvironment(facts.environment);
   return { deployed: local_0, devConflict: facts.environment === "Dev" && facts.production, sessionMissing: local_0 && facts.sessionLength === 0, sessionShort: local_0 && facts.sessionLength < minimumSecretLength, sessionReused: local_0 && facts.sessionIsHashKey, modelProviderMissing: local_0 && !facts.modelProvider, devSwitchSet: local_0 && facts.devSwitch };
@@ -248,6 +242,12 @@ export function lawGatewayClosesBackendWebhook(channelSetting: string): boolean 
 
 /** Story: Start the service with its declared configuration / The configured channel alone decides whether a send is real (spec/bootPolicy.md) */
 //@ pure
+export function channelSettingInvalid(channelSetting: string): boolean {
+  return channelSetting !== "" && channelSetting !== "blooio" && channelSetting !== "eliza_cloud";
+}
+
+/** Story: Start the service with its declared configuration / The configured channel alone decides whether a send is real (spec/bootPolicy.md) */
+//@ pure
 export function sendChannel(channelSetting: string, dryRunRequested: boolean, isolatedRoute: boolean): SendChannel {
   return dryRunRequested || isolatedRoute ? "DryRunChannel" : (channelSetting === "blooio" ? "BlooioChannel" : (channelSetting === "eliza_cloud" ? "ElizaCloudChannel" : "DryRunChannel"));
 }
@@ -256,6 +256,20 @@ export function sendChannel(channelSetting: string, dryRunRequested: boolean, is
 //@ pure
 export function channelCredentialsMissing(channel: SendChannel, blooioKey: boolean, senderLine: boolean, cloudOrigin: boolean, turnSecretLength: number): boolean {
   return channel === "BlooioChannel" ? !blooioKey || !senderLine : (channel === "ElizaCloudChannel" ? !cloudOrigin || !senderLine || turnSecretLength < minimumSecretLength : false);
+}
+
+/** Story: Start the service with its declared configuration / The configured channel alone decides whether a send is real (spec/bootPolicy.md) */
+//@ pure
+export function lawValidChannelSettingIsKnown(channelSetting: string): boolean {
+  //@ ensures \result === true
+  return !(!channelSettingInvalid(channelSetting)) || (channelSetting === "" || sendChannel(channelSetting, false, false) !== "DryRunChannel");
+}
+
+/** Story: Start the service with its declared configuration / The configured channel alone decides whether a send is real (spec/bootPolicy.md) */
+//@ pure
+export function lawValidChannelSettingPicksInboundOwner(channelSetting: string): boolean {
+  //@ ensures \result === true
+  return !(!channelSettingInvalid(channelSetting)) || (carrierInboundOwner(channelSetting) === "ElizaGateway") === (channelSetting === "eliza_cloud");
 }
 
 /** Story: Start the service with its declared configuration / The configured channel alone decides whether a send is real (spec/bootPolicy.md) */

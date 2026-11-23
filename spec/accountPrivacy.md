@@ -8,7 +8,7 @@ The account service acts on the canonical person for the caller's verified phone
 
 ### A leave records app consent before cleanup
 
-Record an opt-out for the chosen app even if the verified phone has no membership to remove. Check the exact phone owner under the identity lock before writing consent. A signed leave uses the message time and the routed membership. The phone binding and the app membership must have existed by that time. The consent write and selection of the membership for cleanup share one transaction. After an admitted leave, run the app's forget hook and remove only that exact membership. A phone move after consent carries the recorded opt-out with the person. Leave does not erase the person or change other apps. Removing the membership also revokes each base-profile grant from or to that app. Leaving an app, a ban and account erasure are the only ways to end a grant. A member cannot revoke one grant and keep both memberships; a targeted revocation, for example a text command, is an open founder decision. Changed: the website share and revoke routes were deleted with the website account portal (audit CRI11), so this rule now states which revocation paths stay.
+Record an opt-out for the chosen app even if the verified phone has no membership to remove. Check the exact phone owner under the identity lock before writing consent. A signed leave uses the message time and the routed membership. The phone binding and the app membership must have existed by that time. The consent write and selection of the membership for cleanup share one transaction. After an admitted leave, run the app's forget hook and remove only that exact membership. A phone move after consent carries the recorded opt-out with the person. Leave does not erase the person or change other apps. Removing the membership also revokes each base-profile grant from or to that app. Leaving an app, a ban, account erasure and an UNSHARE reply end a grant (see "UNSHARE revokes every live grant to or from this app" in [base profile sharing](baseProfileShare.md)). Changed (audit CRI11): the website share and revoke routes were deleted with the website account portal, so this rule now names the revocation paths that stay.
 
 ```quint
 type PrivacyOperation = LeaveApp | DeleteAccount | ExportApp
@@ -173,7 +173,7 @@ pure def sometimesExportsMembership(privacy: PrivacyRequest): bool =
 
 ### Only a global admin with a stated reason opens or confirms a support request
 
-New rule: before this change no staff route served a support request. A support request reaches every app of a person, so only an admin grant for all apps admits it, and the staff member states a reason of 5 to 500 characters at each step. Every other role, an admin of one app included, is refused. Changed after review: the first law only restated the rule, so the laws now say that a missing global admin role and a reason length outside 5 to 500 are each refused for every other input.
+New rule: before this change no staff route served a support request. A support request reaches every app of a person, so only an admin grant for all apps admits it, and the staff member states a reason of 5 to 500 characters at each step. Every other role, an admin of one app included, is refused.
 
 ```quint
 pure val privacySupportReasonMin: int = 5
@@ -245,7 +245,7 @@ pure def lawCompletedSupportRequestNeverActsAgain(elapsedMs: int, echoedPerson: 
 
 ### A support request runs the member's own export or account erasure
 
-New rule: the operator path has no erasure or export of its own. A confirmed erasure runs "Erase my account" for the current owner of the phone: each live membership's forget hook (Network rows, photos and that app's connector grants), grants and connector requests in every app, sessions, shares, pending texts, consent and the phone binding. It keeps the tombstone, the suppression, the lowest age, bans and safety records. A phone with no person erases only its phone data, as the member path does. A confirmed export runs "Read my own app data" for each app in scope. Changed after review: the shell chose the member operation from the request record by itself, so it now selects it through this function.
+New rule: the operator path has no erasure or export of its own. A confirmed erasure runs "Erase my account" for the current owner of the phone: each live membership's forget hook (Network rows, photos and that app's connector grants), grants and connector requests in every app, sessions, shares, pending texts, consent and the phone binding. It keeps the tombstone, the suppression, the lowest age, bans and safety records. A phone with no person erases only its phone data, as the member path does. A confirmed export runs "Read my own app data" for each app in scope.
 
 ```quint
 pure def privacySupportOperation(operation: PrivacySupportOperation): PrivacyOperation =

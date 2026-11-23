@@ -1,22 +1,17 @@
-import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { SIM_REVIEW_JUDGE, simulatedServiceJudge } from "../../engine/src/reviewJudge.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { BlooioAdapter, DryRunAdapter, type Delivery, type Outbound } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import type { NetworkState } from "../src/network.ts";
 
-const database = `network_review_seams_${randomUUID().replaceAll("-", "")}`;
-const local = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}`;
-const url = `${local}/${database}`;
 const secret = "review-approval-seams-signed-fixture";
 const clock = new SimClock(Date.UTC(2026, 10, 12, 17));
-let admin: SQL, db: SQL, service: NetworkService;
+let url: string, db: SQL, service: NetworkService;
 let turnId = 0;
 let holdQueue = true;
 
@@ -26,10 +21,7 @@ class HoldingCarrier extends BlooioAdapter {
 
 beforeAll(async () => {
   if (!pgAvailable) return;
-  await devPgUp();
-  admin = new SQL({ url: `${local}/postgres`, max: 1 });
-  await admin.unsafe(`create database ${database}`);
-  await applySchema(url, { lockTimeout: "60s" });
+  url = await testDb();
   db = new SQL({ url, max: 2 });
   service = new NetworkService({ url, clock, instance: "review-approval-seams", log: () => {}, photoStorage: null, notify: false,
     tokens: "admin:adm-tok", env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: simulatedServiceJudge({ exceptions: false }),
@@ -44,8 +36,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await service?.close();
   await db?.close();
-  await admin?.unsafe(`drop database if exists ${database} with (force)`);
-  await admin?.close();
+  await dropTestDb();
 });
 
 async function turn(from: string, text: string) {
@@ -78,8 +69,7 @@ async function storedReview(oppId: string, change: (review: NonNullable<NetworkS
   await db`update network.network_state set state = ${state}::jsonb where id = ${runtime().id}`;
 }
 
-// spec/automatedReview.md, "An approval names its approver"
-test.skipIf(!pgAvailable)("the Peon send check admits a judge approval and a named legacy reviewer, and refuses a legacy simulator approval and a stopped approval", async () => {
+test.skipIf(!pgAvailable)("the Peon send check admits a judge approval and a named staff approval stored before the automated review, and refuses a simulator approval stored before it and a stopped approval", async () => {
   expect((await staff("/matching", { on: true })).status).toBe(200);
   const roles = ["data analyst", "accountant", "registered nurse", "customer support"] as const;
   const pairs = [];
@@ -111,15 +101,15 @@ test.skipIf(!pgAvailable)("the Peon send check admits a judge approval and a nam
     expect(item.review).toMatchObject({ decision: "approve", approver: "judge", reviewer: SIM_REVIEW_JUDGE });
     expect(await probeOf(item.id)).toEqual([expect.objectContaining({ type: "probe", status: "pending" })]);
   }
-  const [judged, legacySimulator, legacyStaff, stopped] = items as [typeof items[0], typeof items[0], typeof items[0], typeof items[0]];
-  await storedReview(legacySimulator.id, ({ approver: _approver, ...rest }) => ({ ...rest, reviewer: "sim_auto_reviewer" }));
-  await storedReview(legacyStaff.id, ({ approver: _approver, ...rest }) => ({ ...rest, reviewer: "staff-1" }));
+  const [judged, storedSimulator, storedStaff, stopped] = items as [typeof items[0], typeof items[0], typeof items[0], typeof items[0]];
+  await storedReview(storedSimulator.id, ({ approver: _approver, ...rest }) => ({ ...rest, reviewer: "sim_auto_reviewer" }));
+  await storedReview(storedStaff.id, ({ approver: _approver, ...rest }) => ({ ...rest, reviewer: "staff-1" }));
   await storedReview(stopped.id, review => ({ ...review, stopped: { by: "staff-1", at: clock.now() } }));
 
   holdQueue = false;
   await runtime().deliver();
   expect(await probeOf(judged.id)).toEqual([expect.objectContaining({ to: pairs[0]!.candidate, type: "probe", status: "sent" })]);
-  expect(await probeOf(legacySimulator.id)).toEqual([expect.objectContaining({ to: pairs[1]!.candidate, type: "probe", status: "suppressed_ineligible" })]);
-  expect(await probeOf(legacyStaff.id)).toEqual([expect.objectContaining({ to: pairs[2]!.candidate, type: "probe", status: "sent" })]);
+  expect(await probeOf(storedSimulator.id)).toEqual([expect.objectContaining({ to: pairs[1]!.candidate, type: "probe", status: "suppressed_ineligible" })]);
+  expect(await probeOf(storedStaff.id)).toEqual([expect.objectContaining({ to: pairs[2]!.candidate, type: "probe", status: "sent" })]);
   expect(await probeOf(stopped.id)).toEqual([expect.objectContaining({ to: pairs[3]!.candidate, type: "probe", status: "suppressed_ineligible" })]);
 }, 300_000);

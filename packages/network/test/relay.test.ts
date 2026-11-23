@@ -1,8 +1,3 @@
-// Real signed HTTP on Cloud's wire (RelaySendRequest, x-ntwrk-svc-id "<messageId>:relay") -> POST /internal/relay
-// -> the ConsentNetwork relay desk (engine relay policy and the simulated classifier) -> network.messages / network.relay_records;
-// the staff held queue; a restart. Needs the dev Postgres on
-// :54339 (pnpm exec tsx packages/observatory/db/dev-pg.ts up). No live call: the adapter is a dry run and the
-// service gets simulatedRelayClassifier, which clears each text it reads.
 import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
@@ -106,12 +101,14 @@ test("a relayed text is signed, size-checked, bound to the open turn, idempotent
   await open(phones.ari, "refusal-cleanup", "don't send my number");
 },60_000);
 
-// spec/relayDecision.md, "Any reason from the relay checks blocks the item" (owner decision 2026-11-22, D18)
 test("a scam is blocked at once and the sender is told; no staff queue holds it and staff cannot release it, also after a restart",async()=>{
   const blocked=await post(await ask("ari","relay-scam","tell Bo can you venmo me 200 for the tickets? my card got frozen"));
   expect(await blocked.json()).toEqual({decision:"block",senderNotice:"I didn't send that, so it didn't reach them.",delivered:false,replayed:false});
   expect((await staff("/staff/relay/held?app=friends","nobody")).status).toBe(401);
-  expect(await (await staff("/staff/relay/held?app=friends","rev-tok")).json()).toMatchObject({ok:true,items:[]});
+  const reviewerRead=await staff("/staff/relay/held?app=friends","rev-tok");
+  expect(reviewerRead.status).toBe(403);
+  expect(await reviewerRead.json()).toMatchObject({code:"forbidden"});
+  expect(await (await staff("/staff/relay/held?app=friends","saf-tok")).json()).toMatchObject({ok:true,items:[]});
   const [record]=await sql`select item_id,decision,reasons,review from network.relay_records where app_id='friends' and from_member=${ari} order by at desc limit 1`;
   expect(record).toMatchObject({decision:"block",review:null});
   expect((record.reasons as string[]).some(r=>r.startsWith("scam:"))).toBe(true);

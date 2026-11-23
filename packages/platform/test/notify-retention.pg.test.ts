@@ -182,13 +182,13 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
       expect(await people.findPhone(oldPhone)).toMatchObject({ personId: joined.membership.personId });
       expect(await accounts.optedIn(app.id, oldPhone)).toBe(true);
       expect(await people.isSuppressed(accounts.phoneHash(oldPhone))).toBe(false);
-      expect(await people.ageFloor(accounts.phoneHash(oldPhone))).toBe(32);
+      expect((await people.ageFloorRecord(accounts.phoneHash(oldPhone)))?.age).toBe(32);
       expect(await people.getPerson(original.personId)).toMatchObject({ deletedAt: now });
       expect(await people.memberships(original.personId)).toEqual([]);
       expect(await people.findPhone(movedPhone)).toBeUndefined();
       expect(await people.consentEvents(movedPhone, app.id)).toEqual([]);
       expect(await people.isSuppressed(accounts.phoneHash(movedPhone))).toBe(true);
-      expect(await people.ageFloor(accounts.phoneHash(movedPhone))).toBe(27);
+      expect((await people.ageFloorRecord(accounts.phoneHash(movedPhone)))?.age).toBe(27);
       // The old identity cannot authorize a second erasure after the move and reassignment.
       expect(await accounts.deleteAll(original)).toBe(false);
       expect(await accounts.optedIn(app.id, oldPhone)).toBe(true);

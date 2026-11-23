@@ -8,7 +8,7 @@ A person who joins a second app on the shared line gets a link notice that names
 
 ### A grant is usable only while it is current and both memberships are live
 
-The person granted the source app's base profile to this app and did not revoke it. Both memberships are live: not removed, invited or restricted. The phone is not banned. Leaving either app, a ban, deletion or an UNSHARE reply revokes the grant, so a later read finds nothing. New rule: the service stored the grant and nothing read it (audit CRI11). Changed on 2026-11-22 (audit CRI11): UNSHARE now also revokes the grant, because before only leaving an app, a ban or deletion could take a SHARE back.
+The person granted the source app's base profile to this app and did not revoke it. Both memberships are live: not removed, invited or restricted. The phone is not banned. Leaving either app, a ban, deletion or an UNSHARE reply revokes the grant, so a later read finds nothing. Changed (audit CRI11): this rule is new, because the service stored the grant and nothing read it, and UNSHARE now also revokes the grant.
 
 ```quint
 pure def baseProfileGrantUsable(granted: bool, revoked: bool, sourceLive: bool, targetLive: bool, banned: bool): bool =
@@ -23,7 +23,7 @@ pure def lawBannedPhoneHasNoUsableGrant(granted: bool, revoked: bool, sourceLive
 
 ### UNSHARE revokes every live grant to or from this app
 
-A member who replies UNSHARE (the whole message, any case) on an app takes back every live grant of the person that reads from this app or into this app. Grants between two other apps stay. The revocation takes the same person lock as a SHARE, so a SHARE in flight finishes first. A grant that is already revoked keeps its first revocation time, so a retried turn changes nothing. Interests that a SHARE already copied stay as this app's facts, which the person can correct or remove here; the reply says so. The SHARE confirmation tells the person that UNSHARE stops sharing from now on; it does not say "take it back", because the interests already copied stay. Changed on 2026-11-22 (review of CRI11): before, the confirmation said that UNSHARE takes the SHARE back, which promised more than UNSHARE does. The words "stop sharing" are a STOP on the shared line, because a message that starts with "stop" is a likely opt-out. New rule on 2026-11-22 (audit CRI11): before, no text command could take a SHARE back.
+A member who replies UNSHARE (the whole message, any case) on an app takes back every live grant of the person that reads from this app or into this app. Grants between two other apps stay. The revocation takes the same person lock as a SHARE, so a SHARE in flight finishes first. A grant that is already revoked keeps its first revocation time, so a retried turn changes nothing. Interests that a SHARE already copied stay as this app's facts, which the person can correct or remove here; the reply says so. The SHARE confirmation tells the person that UNSHARE stops sharing from now on; it does not say "take it back", because the interests already copied stay. The words "stop sharing" are a STOP on the shared line, because a message that starts with "stop" is a likely opt-out. Changed (audit CRI11, 2026-11-22): this rule is new, because before it no text command could take a SHARE back.
 
 ```quint
 pure def unshareRevokesGrant(alreadyRevoked: bool, readsFromApp: bool, readsIntoApp: bool): bool =

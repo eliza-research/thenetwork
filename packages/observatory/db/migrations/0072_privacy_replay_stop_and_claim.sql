@@ -1,10 +1,3 @@
--- The privacy replay of a restore after review (spec/databaseRestore.md, "A STOP after the backup is replayed on
--- each membership it still covers" and "The backend runs the queued replay at start, and each item by one runner
--- until it holds"):
---  1. kind 'stop': a STOP after the backup, for one membership (app_id and member_id), like a leave.
---  2. claimed_until: a runner claims an item until this time, so two runners never run one item.
---  3. outcome without replayed_at: the last result of an item that could not run yet (held, no phone, refused).
---     It stays open and the next start or staff replay retries it.
 do $$
 declare c record;
 begin

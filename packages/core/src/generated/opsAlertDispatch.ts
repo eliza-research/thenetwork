@@ -34,6 +34,12 @@ export const turnWatchComplianceAfterMs: number = 120000;
 export const turnWatchReplyAfterMs: number = 900000;
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
 export const turnWatchWindowMs: number = 86400000;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+export const judgeCannotRunAlertAbove: number = 10;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+export const judgeRateMinDecisions: number = 20;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+export const judgeRateMarginBp: number = 1000;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 export const initial: AlertDispatch = { phase: "AwaitingNotices" };
 /** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
@@ -265,6 +271,39 @@ export function lawMissedDayAndRetryAlerts(uptimeMs: number): boolean {
 export function lawNewProcessWaitsForFirstScan(scanAgeMs: number): boolean {
   //@ ensures \result === true
   return !catalogScanOverdue(false, scanAgeMs, catalogStaleAfterMs);
+}
+
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function judgeDownRaises(cannotRun: number): boolean {
+  return cannotRun > judgeCannotRunAlertAbove;
+}
+
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function judgeRateRaises(approved: number, held: number, qualified: boolean, qualifiedRateBp: number): boolean {
+  return qualified && exact_opsAlertDispatch(approved + held) >= judgeRateMinDecisions && exact_opsAlertDispatch(approved * 10000) > exact_opsAlertDispatch(exact_opsAlertDispatch(qualifiedRateBp + judgeRateMarginBp) * exact_opsAlertDispatch(approved + held));
+}
+
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawFewDecisionsAreQuiet(approved: number, held: number, qualifiedRateBp: number): boolean {
+  //@ ensures \result === true
+  return !(exact_opsAlertDispatch(approved + held) < judgeRateMinDecisions) || !judgeRateRaises(approved, held, true, qualifiedRateBp);
+}
+
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawNoRecordIsQuiet(approved: number, held: number, qualifiedRateBp: number): boolean {
+  //@ ensures \result === true
+  return !judgeRateRaises(approved, held, false, qualifiedRateBp);
+}
+
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawTenCannotRunIsQuiet(cannotRun: number): boolean {
+  //@ ensures \result === true
+  return !(cannotRun <= judgeCannotRunAlertAbove) || !judgeDownRaises(cannotRun);
 }
 
 /** Do the rules allow this event in this state? */

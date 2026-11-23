@@ -365,8 +365,8 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
         return id;
       };
       const ended = async (ids: string[]) => {
-        const rows = await sql`select id, party_ended from platform.photo_offers where id = any(${ids}::text[])`;
-        return ids.map(id => (rows as any[]).find(r => r.id === id)!.party_ended as boolean);
+        const rows = await sql<{ id: string; party_ended: boolean }[]>`select id, party_ended from platform.photo_offers where id = any(${ids}::text[])`;
+        return ids.map(id => rows.find(r => r.id === id)!.party_ended);
       };
 
       const a = await person(), b = await person(), c = await person();

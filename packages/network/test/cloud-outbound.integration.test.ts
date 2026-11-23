@@ -314,11 +314,11 @@ test("signed-turn replies pass the queue's leak guard (a failing one is parked f
   expect((await sql`select status from network.messages where id='canary-reply'`)[0].status).toBe("dropped_leak_review");
   expect((await sql`select reason from network.staff_audit where action='leak_drop' and target_id='canary-reply'`)[0].reason).toBe("a test canary, never send");
   expect(await (await staffCall("/queue/leak-review/canary-reply?app=friends","POST",{decision:"release",reason:"changed my mind"})).json()).toMatchObject({ok:false,reason:"not_parked"});
-  // Owner decision 2026-11-22, D18: no relayed text waits for staff. A relayed text that the queue's leak guard stops is dropped, never parked.
   const beforeRelay=dispatches;
   await rt.unitOfWork(()=>rt.system(memberId,"relay:leak-1",'Ari says: "Your code is CANARY_TEST_77_x"',"transactional","relay"));
   expect((await sql`select status from platform.outbound where id='relay:leak-1'`)[0].status).toBe("dropped_leak_review");
-  expect(((await (await staffCall("/queue/leak-review?app=friends")).json()) as any).items.map((x:any)=>x.id)).not.toContain("relay:leak-1");
+  const parked=await (await staffCall("/queue/leak-review?app=friends")).json() as {items:{id:string}[]};
+  expect(parked.items.map(x=>x.id)).not.toContain("relay:leak-1");
   expect(dispatches).toBe(beforeRelay);
   // A message whose own status lagged the queue's (a crash between the acceptance commit and the status write):
   // projected once, its status repaired from the queue's, and never selected again.

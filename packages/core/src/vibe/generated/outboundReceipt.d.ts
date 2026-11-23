@@ -1,6 +1,6 @@
 // Generated from spec/outboundReceipt.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
-export type ReceiptPhase = "Sending" | "LegacyQueued" | "ProviderAccepted" | "ProviderSent" | "ProviderDelivered" | "ProviderRead" | "ProviderFailed" | "AcceptanceUnknown" | "AcceptanceExpired" | "RetryScheduled" | "WaitingForReply" | "ProviderBlocked" | "OutsideReceipt";
+export type ReceiptPhase = "Sending" | "QueuedBeforeAcceptance" | "ProviderAccepted" | "ProviderSent" | "ProviderDelivered" | "ProviderRead" | "ProviderFailed" | "AcceptanceUnknown" | "AcceptanceExpired" | "RetryScheduled" | "WaitingForReply" | "ProviderBlocked" | "OutsideReceipt";
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export interface ReceiptLifecycle {
     phase: ReceiptPhase;
@@ -94,9 +94,9 @@ export declare function lawReplySendTimeNotAfterReceipt(replyStatus: string, col
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 export declare function lawLateUnknownReceiptKeepsExpiredReply(replyStatus: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
-export declare function lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus: string, delivery: string): boolean;
+export declare function lawGatewayReceiptNeverChangesAFinalReply(delivery: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
-export declare function lawGatewayReplyEndsOnlyPastLimit(pastLimit: boolean): boolean;
+export declare function lawLateFinalReceiptEndsAnExpiredReply(delivery: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 export declare function lawExpiredGatewayReplyKeepsSlot(pastLimit: boolean): boolean;
 /** Do the rules allow this event in this state? */

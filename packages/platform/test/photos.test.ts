@@ -1,6 +1,7 @@
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { serveHttp } from "../../core/src/runtime/http.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,23 @@ afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true 
 const enc = (s: string) => new TextEncoder().encode(s);
 const cat = (...xs: (Uint8Array | number[])[]) => { const parts = xs.map(x => (x instanceof Uint8Array ? x : Uint8Array.from(x))); const o = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let i = 0; for (const p of parts) { o.set(p, i); i += p.length; } return o; };
 const has = (b: Uint8Array, s: string) => Buffer.from(b).includes(Buffer.from(s));
+const sha256Hex = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
+const hmac = (key: Uint8Array | string, text: string) => createHmac("sha256", key).update(text).digest();
+const rfc3986 = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+function sigV4Valid(req: Request, body: Uint8Array, accessKeyId: string, secret: string): boolean {
+  const m = /^AWS4-HMAC-SHA256 Credential=([^/]+)\/(\d{8})\/([^/]+)\/([^/]+)\/aws4_request, ?SignedHeaders=([a-z0-9;-]+), ?Signature=([0-9a-f]{64})$/.exec(req.headers.get("authorization") ?? "");
+  if (!m || m[1] !== accessKeyId) return false;
+  const [, , day, region, service, signed, signature] = m;
+  const payload = req.headers.get("x-amz-content-sha256") ?? "";
+  if (payload !== "UNSIGNED-PAYLOAD" && payload !== sha256Hex(body)) return false;
+  const url = new URL(req.url);
+  const query = [...url.searchParams].map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`).sort().join("&");
+  const headers = signed.split(";").map(n => `${n}:${(req.headers.get(n) ?? "").trim().replace(/\s+/g, " ")}\n`).join("");
+  const scope = `${day}/${region}/${service}/aws4_request`;
+  const toSign = ["AWS4-HMAC-SHA256", req.headers.get("x-amz-date") ?? "", scope, sha256Hex([req.method, url.pathname, query, headers, signed, payload].join("\n"))].join("\n");
+  const key = [day, region, service, "aws4_request"].reduce<Uint8Array | string>((k, part) => hmac(k, part), `AWS4${secret}`);
+  return createHmac("sha256", key).update(toSign).digest("hex") === signature;
+}
 const seg = (marker: number, payload: Uint8Array) => cat([0xff, marker, (payload.length + 2) >> 8, (payload.length + 2) & 0xff], payload);
 
 // ------------------------------------------------------------------ the corpus
@@ -111,7 +129,11 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
 
   const score: AppearanceScore = { face: 0.7, body: 0.4, overall: 0.6, confidence: 0.5, model: "fake-clef" };
   let n = 0;
-  function setup(o: { rater?: PhotoRater; storage?: (inner: PhotoStorage) => PhotoStorage; log?: (s: string) => void } = {}) {
+  const phoneHashes = new Map<string, string>();
+  const stateAge = async (personId: string, age: number, at: number) => {
+    await people.recordAgeReading(personId, phoneHashes.get(personId)!, { kind: "age", age }, at);
+  };
+  function setup(o: { rater?: PhotoRater; storage?: (inner: PhotoStorage) => PhotoStorage; log?: (s: string) => void; removalFails?: () => boolean } = {}) {
     const dir = mkdtempSync(join(tmpdir(), "photos-test-")); dirs.push(dir);
     const meta = new PgPhotoStore(sql);
     const verified = new Set<string>();
@@ -123,13 +145,18 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
       eligible: async (personId, app) => app === "slop" && verified.has(personId),
       banned: personId => people.isBanned("", personId),
       onRating: async (personId, _app, s) => { ratings.push({ personId, score: s }); },
-      onRemoved: async personId => { removed.push(personId); },
+      onRemoved: async personId => {
+        if (o.removalFails?.()) throw new Error("synthetic crash before the rating is cleared");
+        removed.push(personId);
+      },
       ...(o.log ? { log: o.log } : {}),
     });
     /** A person with a live slop membership (verified unless told otherwise). */
     const person = async (age: number | null, verify = true) => {
       const k = n++;
-      const p = await people.createPerson({ id: crypto.randomUUID(), e164: `+1212555${String(1000 + k).padStart(4, "0")}`, method: "otp_sms", at: now, lowestAge: age });
+      const phoneHash = `photos-test-${process.pid}-${k}`;
+      const p = await people.createPerson({ id: crypto.randomUUID(), e164: `+1212555${String(1000 + k).padStart(4, "0")}`, method: "otp_sms", at: now, lowestAge: age, phoneHash });
+      phoneHashes.set(p.id, phoneHash);
       await people.putMembership({ app: "slop", personId: p.id, memberId: `slop_photos_${process.pid}_${k}`, state: "active", review: null, firstName: `P${k}`, profile: {}, joinedAt: now, leftAt: null });
       if (verify) verified.add(p.id);
       return p.id;
@@ -178,7 +205,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     const adult = await t.person(29);
     expect((await up(t.svc, adult)).ok).toBe(true);
     expect(t.ratings).toEqual([{ personId: adult, score }]);
-    await people.noteAge(adult, 16, t.at());
+    await stateAge(adult, 16, t.at());
     expect(await t.svc.rate(adult, "slop")).toEqual({ rated: false, refused: "adults_only" });
     const other = await t.person(31);
     expect((await up(t.svc, other)).ok).toBe(true);
@@ -211,7 +238,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     let calls = 0;
     const t = setup({ rater: { id: "fake-clef", rate: async () => { calls++; await during?.(); return score; } } });
     const cases: [string, (personId: string) => Promise<void>, PhotoRefusal][] = [
-      ["age", personId => people.noteAge(personId, 16, t.at()).then(() => {}), "adults_only"],
+      ["age", personId => stateAge(personId, 16, t.at()), "adults_only"],
       ["ban", personId => people.ban({ id: `ban_${personId}`, scope: "person", personId, phoneHash: null, reason: "test", reportId: null, bannedBy: "safety@example.org", at: Date.now() }), "banned"],
       ["leave", personId => people.forgetMembership(personId, "slop", Date.now()), "not_member"],
       ["photo", async personId => { for (const r of await t.meta.list(personId, "slop")) await t.meta.delete(r.id); }, "not_found"],
@@ -235,7 +262,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     // onRating is slow: the person states 17 while it writes.
     const svc = new PhotoService({
       people, meta: t.meta, storage: new LocalDiskPhotoStorage(t.dir), signingKey: "k", rater: { id: "fake-clef", rate: async () => score },
-      eligible: async () => true, onRating: async () => { await people.noteAge(id, 17, Date.now()); }, onRemoved: async personId => { t.removed.push(personId); },
+      eligible: async () => true, onRating: async () => { await stateAge(id, 17, t.at()); }, onRemoved: async personId => { t.removed.push(personId); },
     });
     expect((await up(svc, id)).ok).toBe(true);
     expect(t.removed).toContain(id);
@@ -274,6 +301,33 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(await t.svc.staffLinks(kid, "slop", "https://slop.date")).toEqual({ ok: false, reason: "adults_only" });
   }, T);
 
+  test("an open person minor signal refuses upload, rating, relay, staff links and views for an adult and keeps the stored photos; a removed signal lets them work again", async () => {
+    let calls = 0;
+    const t = setup({ rater: { id: "fake-clef", rate: async () => { calls++; return score; } } });
+    const adult = await t.person(30);
+    const first = await up(t.svc, adult);
+    if (!first.ok) throw new Error(JSON.stringify(first));
+    const links = await t.svc.staffLinks(adult, "slop", "https://slop.date");
+    if (!links.ok) throw new Error(JSON.stringify(links));
+    const u = new URL(links.value[0]!.url);
+    const view = () => t.svc.view(u.pathname.split("/").pop()!, Number(u.searchParams.get("exp")), u.searchParams.get("sig")!);
+    const before = calls;
+    await sql`insert into platform.person_minor_signals (person_id, at) values (${adult}::uuid, ${new Date(t.at())})`;
+    expect(await up(t.svc, adult)).toEqual({ ok: false, reason: "adults_only" });
+    expect(await t.svc.rate(adult, "slop")).toEqual({ rated: false, refused: "adults_only" });
+    expect(await t.svc.staffLinks(adult, "slop", "https://slop.date")).toEqual({ ok: false, reason: "adults_only" });
+    expect(await t.svc.relayPhoto(adult, "slop", first.value.id)).toBeUndefined();
+    expect(await view()).toBeUndefined();
+    expect(calls).toBe(before);
+    expect(await t.svc.holdAllowed(adult, "slop")).toBe(true);
+    expect(await rowsOf(adult)).toBe(1);
+    await sql`delete from platform.person_minor_signals where person_id = ${adult}::uuid`;
+    expect((await up(t.svc, adult)).ok).toBe(true);
+    expect((await t.svc.staffLinks(adult, "slop", "https://slop.date")).ok).toBe(true);
+    expect((await t.svc.relayPhoto(adult, "slop", first.value.id))?.id).toBe(first.value.id);
+    expect((await view())?.contentType).toBe("image/jpeg");
+  }, T);
+
   test("deleteFor removes the bytes and the rows (leave, delete everything, a minor age)", async () => {
     const t = setup();
     const adult = await t.person(27);
@@ -285,7 +339,6 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(await rowsOf(adult)).toBe(0);
   }, T);
 
-  // spec/photoRetention.md, "Reserve the photo row under the person lock before the bytes"
   test("an upload in flight while an erasure, a leave or an age drop runs keeps no photo, also for a minor", async () => {
     let entered!: () => void, release!: () => void;
     let gate = { entered: new Promise<void>(r => { entered = r; }), released: new Promise<void>(r => { release = r; }) };
@@ -294,7 +347,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     const erasures: [string, (id: string) => Promise<unknown>][] = [
       ["delete everything", id => t.svc.deleteFor(id)],
       ["leave", async id => { await t.svc.deleteFor(id, "slop"); await people.forgetMembership(id, "slop", Date.UTC(2026, 9, 9, 16)); }],
-      ["age drop", async id => { await people.noteAge(id, 16, t.at()); await t.svc.deleteFor(id); }],
+      ["age drop", async id => { await stateAge(id, 16, t.at()); await t.svc.deleteFor(id); }],
     ];
     for (const [label, erase] of erasures) {
       gate = { entered: new Promise<void>(r => { entered = r; }), released: new Promise<void>(r => { release = r; }) };
@@ -309,19 +362,21 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(t.files()).toHaveLength(0);
   }, T);
 
-  // spec/photoRetention.md, "Reserve the photo row under the person lock before the bytes"
   test("parallel uploads never pass the per-person maximum", async () => {
-    let release!: () => void;
+    let release!: () => void, entered!: () => void;
     const released = new Promise<void>(r => { release = r; });
+    const inPut = new Promise<void>(r => { entered = r; });
     let holding = true;
     const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
-      put: async (k, b, type) => { if (holding) await released; await inner.put(k, b, type); } }) });
+      put: async (k, b, type) => { if (holding) { entered(); await released; } await inner.put(k, b, type); } }) });
     const id = await t.person(31);
     holding = false;
     for (let i = 0; i < PHOTO_MAX_PER_PERSON - 1; i++) expect((await up(t.svc, id)).ok).toBe(true);
     holding = true;
     const racing = [up(t.svc, id), up(t.svc, id), up(t.svc, id), up(t.svc, id)];
-    await new Promise(r => setTimeout(r, 300));
+    await inPut;
+    let settled = 0;
+    await new Promise<void>(resolve => { for (const r of racing) void r.then(() => { if (++settled === racing.length - 1) resolve(); }); });
     release();
     const results = await Promise.all(racing);
     expect(results.filter(r => r.ok)).toHaveLength(1);
@@ -330,11 +385,10 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(t.files()).toHaveLength(PHOTO_MAX_PER_PERSON);
   }, T);
 
-  // spec/photoRetention.md, "The retention tick finishes unfinished photo changes"
   test("a crash in the middle of an upload or a removal leaves nothing behind once the retention tick has run", async () => {
     let failPut = false, failRemoved = false;
     const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
-      put: async (k, b, type) => { await inner.put(k, b, type); if (failPut) throw new Error("synthetic crash after the bytes"); } }) });
+      put: async (k, b, type) => { await inner.put(k, b, type); if (failPut) throw new Error("synthetic crash after the bytes"); } }), removalFails: () => failRemoved });
     const id = await t.person(33);
     failPut = true;
     await expect(up(t.svc, id)).rejects.toThrow("synthetic crash after the bytes");
@@ -345,9 +399,6 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     if (!kept.ok) throw new Error(kept.reason);
     const gone = await up(t.svc, id);
     if (!gone.ok) throw new Error(gone.reason);
-    const svc = t.svc as unknown as { o: { onRemoved: (p: string, a: AppId, photo: string) => Promise<void> } };
-    const onRemoved = svc.o.onRemoved;
-    svc.o.onRemoved = async (p, a, photo) => { if (failRemoved) throw new Error("synthetic crash before the rating is cleared"); await onRemoved(p, a, photo); };
     failRemoved = true;
     await expect(t.svc.remove(id, "slop", gone.value.id)).rejects.toThrow("synthetic crash before the rating is cleared");
     failRemoved = false;
@@ -363,7 +414,6 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect((await t.svc.list(id, "slop")).map(p => p.id)).toEqual([kept.value.id]);
   }, T);
 
-  // spec/photoRetention.md, "The retention tick finishes unfinished photo changes"
   test("one unfinished photo that fails every tick does not stop the sweep of the others", async () => {
     let crash = true;
     const stuck = new Set<string>();
@@ -457,7 +507,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
       threads: async () => [{ id: "thread_fixture", label: "Robin Fixture" }],
     });
     const safety = { id: "staff_safety", roles: ["safety"] }, admin = { id: "staff_admin", roles: ["admin", "reviewer"] };
-    const draftFor = (proposedIds: string[]) => sql.begin(tx => relay.saveDraft(tx as unknown as SQL, {
+    const draftFor = (proposedIds: string[]) => sql.begin(tx => relay.saveDraft(tx, {
       personId: sender, app: "slop", purpose: "send", threadId: "thread_fixture", recipientMemberId: "member_recipient",
       shownIds: [first.value.id, second.value.id], proposedIds, wantsSet: proposedIds.length > 1, listed: false, prompt: { via: "send" },
     }));
@@ -472,9 +522,9 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     allowed = true;
     const prepared = await relay.prepareOffer(sender, "slop", draft.draftId, draft.revision, t.at());
     expect(prepared).toMatchObject({ admission: "OfferAsk", firstAsk: true, count: 1, recipientMemberId: "member_recipient" });
-    const committed = await sql.begin(tx => prepared!.commit(tx as unknown as SQL));
+    const committed = await sql.begin(tx => prepared!.commit(tx));
     expect(committed).toMatchObject({ admission: "OfferAsk", phase: "asking", replayed: false });
-    expect(await sql.begin(tx => prepared!.commit(tx as unknown as SQL))).toMatchObject({ offerId: committed.offerId, replayed: true });
+    expect(await sql.begin(tx => prepared!.commit(tx))).toMatchObject({ offerId: committed.offerId, replayed: true });
     expect(Number((await sql`select count(*)::int as n from platform.photo_offers where sender_person_id = ${sender}::uuid`)[0].n)).toBe(1);
     expect(await relay.held("slop")).toEqual([]);
     expect((await relay.slots(sender, "slop")).map(s => s.sharedWith)).toEqual([["member_recipient"], []]);
@@ -482,7 +532,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(await relay.asksFor(stranger, "slop")).toEqual([]);
     const waiting = await draftFor([second.value.id]);
     expect((await relay.prepareOffer(sender, "slop", waiting.draftId, waiting.revision, t.at()))?.admission).toBe("OfferWaitForAnswer");
-    expect(await sql.begin(tx => relay.answer(tx as unknown as SQL, committed.offerId!, stranger, "yes"))).toEqual({ outcome: "not_open" });
+    expect(await sql.begin(tx => relay.answer(tx, committed.offerId!, stranger, "yes"))).toEqual({ outcome: "not_open" });
 
     const restricted = new SQL({ url, max: 1 });
     try {
@@ -494,7 +544,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
       expect(taken.outcome).toBe("taken");
       expect(taken.offer?.phase).toBe("reviewing");
     } finally { await restricted.close(); }
-    expect(await sql.begin(tx => relay.answer(tx as unknown as SQL, committed.offerId!, recipient, "yes"))).toEqual({ outcome: "not_open" });
+    expect(await sql.begin(tx => relay.answer(tx, committed.offerId!, recipient, "yes"))).toEqual({ outcome: "not_open" });
     expect(await relay.held("slop")).toEqual([]);
     const [screening] = await relay.screensDue("slop", committed.offerId);
     expect(await relay.item(screening!.itemId)).toMatchObject({ state: "screening", screenAttempts: 0 });
@@ -512,47 +562,48 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(await relay.review(item.id, admin, "safe")).toBe(false);
     expect(await relay.review(item.id, safety, "unknown")).toBe(false);
     expect(await relay.review(item.id, safety, "safe")).toBe(true);
-    const settled = await sql.begin(tx => relay.settle(tx as unknown as SQL, committed.offerId!));
+    const settled = await sql.begin(tx => relay.settle(tx, committed.offerId!));
     expect(settled).toMatchObject({ from: "reviewing", phase: "ready", changed: true, notice: "TellSent", dueAt: t.at() });
     expect(settled!.viewLink).toMatch(/^https:\/\/slop\.date\/photos\/view#[A-Za-z0-9_-]{43}$/);
     expect((await relay.notices("slop")).map(n => [n.offerId, n.notice])).toEqual([[committed.offerId, "TellSent"]]);
-    expect(await sql.begin(tx => relay.noticeSent(tx as unknown as SQL, committed.offerId!))).toBe(true);
+    expect(await sql.begin(tx => relay.noticeSent(tx, committed.offerId!))).toBe(true);
     expect(await relay.notices("slop")).toEqual([]);
 
-    expect(await sql.begin(tx => relay.withdraw(tx as unknown as SQL, "slop", stranger, "thread_fixture", null))).toEqual({ revoked: 0, viewing: false });
-    expect(await sql.begin(tx => relay.withdraw(tx as unknown as SQL, "slop", sender, "thread_fixture", null))).toEqual({ revoked: 1, viewing: true });
+    expect(await sql.begin(tx => relay.withdraw(tx, "slop", stranger, "thread_fixture", null))).toEqual({ revoked: 0, viewing: false });
+    expect(await sql.begin(tx => relay.withdraw(tx, "slop", sender, "thread_fixture", null))).toEqual({ revoked: 1, viewing: true });
     expect(await relay.offer(committed.offerId!)).toMatchObject({ phase: "revoked", endedBySender: true, wasReady: true });
     expect((await relay.item(item.id))?.state).toBe("revoked");
-    expect(await sql.begin(tx => relay.withdraw(tx as unknown as SQL, "slop", sender, "thread_fixture", null))).toEqual({ revoked: 0, viewing: false });
+    expect(await sql.begin(tx => relay.withdraw(tx, "slop", sender, "thread_fixture", null))).toEqual({ revoked: 0, viewing: false });
 
     const next = await draftFor([second.value.id]);
-    const nextOffer = await sql.begin(async tx => (await relay.prepareOffer(sender, "slop", next.draftId, next.revision, t.at()))!.commit(tx as unknown as SQL));
+    const nextOffer = await sql.begin(async tx => (await relay.prepareOffer(sender, "slop", next.draftId, next.revision, t.at()))!.commit(tx));
     expect(nextOffer).toMatchObject({ admission: "OfferAsk", phase: "asking", firstAsk: false });
-    expect((await sql.begin(tx => relay.answer(tx as unknown as SQL, nextOffer.offerId!, recipient, "yes"))).outcome).toBe("taken");
+    expect((await sql.begin(tx => relay.answer(tx, nextOffer.offerId!, recipient, "yes"))).outcome).toBe("taken");
     for (const d of await relay.screensDue("slop", nextOffer.offerId)) expect(await relay.screen(d.itemId)).toBe("HoldForStaff");
     const nextItem = (await relay.held("slop"))[0]!;
     await t.svc.remove(sender, "slop", second.value.id);
     expect(await relay.reviewBytes(nextItem.id, safety)).toBeUndefined();
     expect(await relay.review(nextItem.id, safety, "safe")).toBe(false);
     expect(Number((await sql`select count(*)::int n from platform.photo_relay_items where photo_id=${second.value.id}`)[0].n)).toBe(0);
-    expect(await sql.begin(tx => relay.settle(tx as unknown as SQL, nextOffer.offerId!))).toMatchObject({ phase: "ended", notice: "TellNotTaken" });
+    expect(await sql.begin(tx => relay.settle(tx, nextOffer.offerId!))).toMatchObject({ phase: "ended", notice: "TellNotTaken" });
   }, T);
 
   test("R2PhotoStorage on an S3-compatible bucket: signed put, get and delete under photos/<key>; a missing key reads as none, another error is raised; leaving the app deletes the object", async () => {
     const name = "photos-r2-fixture";
     const objects = new Map<string, { bytes: Uint8Array; type: string | null }>();
     const fault = { status: 0 };
-    let unsigned = 0;
+    let badSignatures = 0;
     const xmlError = (status: number, code: string) => new Response(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${code}</Message></Error>`, { status, headers: { "content-type": "application/xml" } });
     const server = await serveHttp({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
         const path = decodeURIComponent(new URL(req.url).pathname.slice(1));
         if (!path.startsWith(`${name}/`)) return xmlError(404, "NoSuchBucket");
-        if (!req.headers.get("authorization")) { unsigned++; return xmlError(403, "AccessDenied"); }
+        const body = new Uint8Array(await req.arrayBuffer());
+        if (!sigV4Valid(req, body, "fixture-key", "fixture-secret")) { badSignatures++; return xmlError(403, "AccessDenied"); }
         if (fault.status) return xmlError(fault.status, "AccessDenied");
         const key = path.slice(name.length + 1);
-        if (req.method === "PUT") { objects.set(key, { bytes: new Uint8Array(await req.arrayBuffer()), type: req.headers.get("content-type") }); return new Response(null, { status: 200, headers: { etag: '"fixture"' } }); }
+        if (req.method === "PUT") { objects.set(key, { bytes: body, type: req.headers.get("content-type") }); return new Response(null, { status: 200, headers: { etag: '"fixture"' } }); }
         if (req.method === "DELETE") { objects.delete(key); return new Response(null, { status: 204 }); }
         if (req.method === "GET") {
           const o = objects.get(key);
@@ -583,7 +634,10 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
       fault.status = 403;
       await expect(r2.get(row!.storageKey)).rejects.toThrow();
       fault.status = 0;
-      expect(unsigned).toBe(0);
+      expect(badSignatures).toBe(0);
+      const forged = new R2PhotoStorage({ endpoint: `http://127.0.0.1:${server.port}`, bucket: name, accessKeyId: "fixture-key", secretAccessKey: "another-secret" });
+      await expect(forged.get(row!.storageKey)).rejects.toThrow();
+      expect(badSignatures).toBe(1);
       expect(await t.svc.deleteFor(id, "slop")).toBe(1);
       expect(objects.size).toBe(0);
       expect(await rowsOf(id)).toBe(0);

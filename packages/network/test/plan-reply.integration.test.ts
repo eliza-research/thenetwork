@@ -15,6 +15,10 @@ const climber = (id: string) => ({
   wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }],
 });
 
+const submit = (w: Mini, plan: plans.Plan, now: number) =>
+  (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): { id: string } | undefined }).submitPlan(plan, now)!.id;
+const heldItem = (w: Mini, oppId: string) => w.net.reviewQueue().find(i => i.oppId === oppId)!;
+
 async function friendsPartnerFixture(partner: boolean, bothAttended: boolean) {
   const ids = ["a", "b", "c", "d"];
   const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, inlineJudge: holdEveryItem.inline });
@@ -35,8 +39,9 @@ async function friendsPartnerFixture(partner: boolean, bothAttended: boolean) {
     size: { min: count, target: count, max: count }, quorum: count, probeDeadline: now + 4 * DAY,
     score: 0.6, u: {}, familiar: {}, createdAt: now, category: partner ? "hobby" : "social",
   };
-  (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
-  return { w, invited, item: w.net.reviewQueue()[0]! };
+  const submitted = submit(w, plan, now);
+  await w.net.tick(now);
+  return { w, invited, item: heldItem(w, submitted) };
 }
 
 describe("plan probe replies", () => {
@@ -112,8 +117,9 @@ describe("plan probe replies", () => {
     for (const member of initial.members) member.stated = { windows: [window], at: now, until: now + 7 * DAY };
     initial.members.find(member => member.id === "a")!.awaiting = { kind: "checkin", at: now };
     w.net.importState(initial);
-    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
-    const item = w.net.reviewQueue()[0]!;
+    const submitted = submit(w, plan, now);
+    await w.net.tick(now);
+    const item = heldItem(w, submitted);
     expect(item.proposal.participants).toEqual(primary);
     w.clock.advance(MINUTE);
     await w.say("a", reply);
@@ -197,8 +203,9 @@ describe("plan probe replies", () => {
         window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: ids, alternates: [], partner: false,
         size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
       };
-      (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
-      const original = w.net.reviewQueue()[0]!;
+      const submitted = submit(w, plan, now);
+      await w.net.tick(now);
+      const original = heldItem(w, submitted);
       expect(w.net.review(original.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
       expect(await w.runUntil(() => ids.every(id => w.probed(id)), 2 * DAY)).toBe(true);
       for (const id of order.slice(0, -1)) await w.say(id, id === "a" ? "no" : "yes");
@@ -207,6 +214,7 @@ describe("plan probe replies", () => {
       expect(w.log("plan_fallback").map(log => log.t)).toEqual([w.clock.now()]);
       expect(w.meetings).toEqual([]);
       // spec/planDecision.md, "Two acceptances for a group require new partner consent"; spec/planDecision.md, "A group plan never books two members directly"
+      await w.net.tick(w.clock.now());
       const partner = w.net.reviewQueue().find(item => item.oppId !== original.oppId)!;
       expect(w.net.exportState().opps.find(o => o.id === partner.oppId)?.plan).toMatchObject({ partner: true, invited: ["b", "c"] });
     }
@@ -225,8 +233,9 @@ describe("plan probe replies", () => {
       createdAt: now, category: "hobby",
     };
     // The group plan: a, b and c accept; d has not answered yet.
-    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
-    const group = w.net.reviewQueue()[0]!.oppId;
+    const submitted = submit(w, plan, now);
+    await w.net.tick(now);
+    const group = heldItem(w, submitted).oppId;
     expect(w.net.review(group, "approve", { reviewer: "sim_staff" })).toBe(true);
     expect(await w.runUntil(() => ["a", "b", "c", "d"].every(id => w.probed(id)), 2 * DAY)).toBe(true);
     for (const id of ["a", "b", "c"]) await w.say(id, "yes");
@@ -246,6 +255,7 @@ describe("plan probe replies", () => {
     expect(fallbacks() - before.fallbacks).toBe(1);
     expect(w.meetings.length).toBe(before.meetings);
     expect(w.net.exportState().opps.find(o => o.id === group)?.stage).toBe("closed");
+    await w.net.tick(w.clock.now());
     const partner = w.net.reviewQueue().find(item => item.oppId !== group)!;
     expect(w.net.exportState().opps.find(o => o.id === partner.oppId)?.plan).toMatchObject({ partner: true, invited: ["a", "b"] });
     expect(w.net.memberList().find(m => m.id === "c")?.note?.text).toBe(copy.planNotTogether);
@@ -264,8 +274,9 @@ describe("plan probe replies", () => {
       window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: primary, alternates: ["d", "e"], partner: false,
       size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
-    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
-    const item = w.net.reviewQueue()[0]!;
+    const submitted = submit(w, plan, now);
+    await w.net.tick(now);
+    const item = heldItem(w, submitted);
     expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
     expect(await w.runUntil(() => primary.every(id => w.probed(id)), DAY)).toBe(true);
     await w.say("a", "yes");
@@ -298,8 +309,9 @@ describe("plan probe replies", () => {
       window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: primary, alternates: [], partner: false,
       size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
-    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
-    const item = w.net.reviewQueue()[0]!;
+    const submitted = submit(w, plan, now);
+    await w.net.tick(now);
+    const item = heldItem(w, submitted);
     const state = w.net.exportState();
     const pending = state.opps.find(o => o.id === item.oppId)!;
     for (const [index, invited] of history.entries()) {
@@ -330,6 +342,7 @@ describe("plan probe replies", () => {
     await w.say("a", "yes");
     await w.say("b", "yes");
     await w.say("c", "no");
+    await w.net.tick(w.clock.now());
 
     const queue = w.net.reviewQueue();
     expect(w.meetings).toHaveLength(0);

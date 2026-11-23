@@ -6,7 +6,6 @@
 // (the leak gate must keep it out of every member-facing string).
 //
 // Field mapping (also in the results doc):
-//   Member.age = age on the snapshot day from the stated birth date (birthKey, birthExact, maxAge); homeCity "nyc"; categoriesOptIn ["social","hobby"] (a minor who is not teen ready: ["social"]; minors are introduced only under the teen age rule, spec/friendIntroAge.md)
 //   Presence {home, areas: [home neighborhood, often-around neighborhoods]}
 //   interest        <activity tag>                       60% shareable, else matchable
 //   trait           friends:energy:<low|mid|high>        matchable
@@ -31,12 +30,8 @@ import { Rng, hash32 } from "@thenetwork/core";
 import { SLOT_TIME } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { verifyTag } from "@thenetwork/engine/src/packs/friends/info.ts";
 import { h01 } from "../../coins.ts";
-import { SLOTS, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
+import { FRIENDS_WORLD_DATE, FRIENDS_WORLD_START, NYC_TZ, SLOTS, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
 
-export const NYC_TZ = "America/New_York";
-/** Monday 2026-10-12 (local): week 0 of every friends run. */
-export const FRIENDS_WORLD_DATE = { y: 2026, m: 10, d: 12 };
-export const FRIENDS_WORLD_START = fromLocal(2026, 10, 12, 0, NYC_TZ);
 
 /** Local instant of `hour` on day `dayOffset` (0 = Monday) of week `week`. */
 export function weekTime(week: number, dayOffset: number, hour: number): number {
@@ -72,8 +67,8 @@ export interface FriendsNetworkState {
   teenStop: boolean;
 }
 
-export interface TeenView {
-  birthKey: number; birthExact: boolean; age: number; maxAge: number;
+interface TeenView {
+  birthKey: number; birthExact: boolean; age: number;
   minorSignal: boolean; minorReported: boolean; olderReported: boolean; barred: boolean;
   ready: boolean;
 }
@@ -81,10 +76,10 @@ export interface TeenView {
 const AGE_CUE = "safety:age_signal";
 const heldFor = (state: FriendsNetworkState, id: MemberId, kind: string) => state.safetyHolds.some(h => h.memberId === id && h.reason === `reported: ${kind}`);
 
-export function teenViewOf(p: FriendsPersona, state: FriendsNetworkState): TeenView {
+function teenViewOf(p: FriendsPersona, state: FriendsNetworkState): TeenView {
   const { birthKey, birthExact } = p.stated;
   const minDay = earliestDayKeyOf(state.now), maxDay = latestDayKeyOf(state.now);
-  const age = ageOnDay(birthKey, minDay), maxAge = ageOnDay(birthKey, maxDay);
+  const age = ageOnDay(birthKey, minDay);
   const minorReported = heldFor(state, p.id, "minor_contact");
   const olderReported = heldFor(state, p.id, "poser_contact");
   const barred = olderReported || minorReported;
@@ -92,7 +87,7 @@ export function teenViewOf(p: FriendsPersona, state: FriendsNetworkState): TeenV
   const adult = canBeMatched(age);
   const ready = teenIntrosStoredOn(teenFriendApp("friends"), state.teenStop) && teenReady(birthExact, false, minorSignal, minorReported, olderReported, barred)
     && (teenFriendCandidate(adult, true, birthKey, minDay, maxDay, true, teenFriendApp("friends")) || teenPartnerAge(birthKey, minDay, maxDay));
-  return { birthKey, birthExact, age, maxAge, minorSignal, minorReported, olderReported, barred, ready };
+  return { birthKey, birthExact, age, minorSignal, minorReported, olderReported, barred, ready };
 }
 
 export interface FriendsSnapshot extends WorldSnapshot {
@@ -184,7 +179,7 @@ export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week: numbe
   for (const s of S.usuallyFree) if (r.next() < K.free) f("availability_pattern", `usually free ${s}`, [`friends:free:${s}`], "agent_private");
   if (K.tolerance) f("preference", `travel tolerance ${S.maxTravel}`, [`friends:max_travel:${S.maxTravel}`], "agent_private");
   if (S.newToCity) f("fact", "recently moved", ["friends:new_to_city"], "agent_private");
-  const v: FriendsPersona["stated"]["verify"] = view.ready && minor ? { liveness: "passed", age: "passed" } : verifyAt(p, week);
+  const v = verifyAt(p, week);
   // The tag is the one the staff verify path and slop write: verify:<check>:<pass|fail> (pending until a result).
   f("fact", `liveness ${v.liveness}`, [`verify:liveness:${verifyTag(v.liveness)}`], "agent_private", { provenance: "connected_source" });
   f("fact", `ageassurance ${v.age}`, [`verify:age:${verifyTag(v.age)}`], "agent_private", { provenance: "connected_source" });
@@ -206,7 +201,7 @@ export function friendsMemberOf(p: FriendsPersona, joinedAt: number, view: TeenV
       formats: ["small_group", "one_to_one"], maxTravelMinutes: KNOWS[p.hidden.richness].tolerance ? S.maxTravel : 40, onlyWhenAsked: false,
     },
     joinedAt, age: view.age, unansweredProactive: 0,
-    birthKey: view.birthKey, birthExact: view.birthExact, ageConflict: false, maxAge: view.maxAge,
+    birthKey: view.birthKey, birthExact: view.birthExact, ageConflict: false,
     ...(view.barred ? { teenBarred: true } : {}), ...(view.ready ? { teenReady: true } : {}),
   };
 }

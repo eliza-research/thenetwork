@@ -10,45 +10,28 @@ Check code use, refresh, ownership, ban and revocation, scoped tools, and reques
 
 The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) drives the VibeLang shell from confirmed consent through authority and one commit for request consumption, grant, code and both audit rows. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
-The [signup draft rules](../mcpSignupDraft.md) drive draft preparation, the read at the
-Finish signup step of the connection page, the deletion after signup, and expiry. A revocation
-no longer erases the draft; it lives at most ten minutes. This model keeps no draft state yet:
-its draft machine left with the retired tool, and the next model pass adds it again.
-A staff ban also deletes the signup drafts of every banned number; because the model keeps no
-draft state, its `ban` action still writes no grant, token or request state.
-A recorded age that an app does not allow also deletes the phone's draft of that app at once
-(owner decision of 2026-11-22); this writes no grant, token or request state either.
-The Finish signup enrollment and its stored handoff state ([signup handoff](../agentPhoneHandoff.md))
-are also outside this model; `tests/e2e/connector-signup.e2e.test.ts` covers them.
+Outside this model: the [signup draft rules](../mcpSignupDraft.md) (draft preparation, the keep or delete decision at the Finish signup step of the connection page, the deletion after signup, at a staff ban and at a recorded age that the app does not allow, and the ten-minute expiry) and the Finish signup enrollment with its stored handoff state ([signup handoff](../agentPhoneHandoff.md)). None of them writes grant, token or request state. `packages/mcp/test/signup-draft.test.ts` and `tests/e2e/connector-signup.e2e.test.ts` cover them.
 
-`witness_minorReadsOwn` is reachable: `minorIntroTest` reaches it in four steps after a connection.
-Random simulation did not reach it within the model's bounds, because `becomeMinor` and an "own"
-`produceItem` were one environment branch among many. `step` now lists them once more as their own
-branch. Like the doubled progress families, this changes only how often the simulator picks them.
+A reader who is not an adult reads an update about another member only while the item is a teen item that the rule allows now (`teenFriendAgeRule`; [friend introductions with a minor](../friendIntroAge.md), [connector tools](../connectorTools.md) `readerAgeAllowed`, `ConsentNetwork.teenItemCurrent`): staff have not stopped teen introductions, the reader is teen ready, and the item was not closed by the teen sweep. A stop, a report and the sweep end readability for good (`teenSwitchOffNoMinor`). A minor with an exact birth date (`teenBirthDate`, `birthExact`) and no barred phone is teen ready (`teenReadyIn`), with no staff step. Teen introductions are on from the start (`teenStopped` is false); the staff roles of `teenStop` and `teenResume` are in [review_desk](review_desk.md) and [opportunity](opportunity.md). Erasure deletes the birth date, and a bar stays on the number. This model's apps are friends, peon and slop: a teen item is a friends.help item here, and an ntwrk `Friend`-lane teen item takes the same path in the code (`teenFriendApp`). A report is a bar here (a stricter abstraction: the code keeps a minor report as a doubt until the teen doubt clear of [safety_trust](safety_trust.md)). `minorIntroTest` shows that a minor reads their own items (four steps after a connection). Changed (owner decision 2026-11-22, answers A1 to A5): a minor may read a current teen friendship item, because the owner allowed teen friendship introductions with no staff confirm step.
 
-Changed (owner decision 2026-11-22): `noIntroToMinor` is replaced by `teenFriendAgeRule` ([friend introductions with a minor](../friendIntroAge.md), [connector tools](../connectorTools.md) `readerAgeAllowed`). A reader who is not an adult reads an update about another member only while the item is a friends.help teen item that the rule allows now (`ConsentNetwork.teenItemCurrent`): staff have not stopped teen introductions, the reader is teen ready, and the item was not closed by the teen sweep. A stop, a report and the sweep end readability for good. `teenSwitchOffNoMinor` is the earlier rule for the stopped case.
+The tools `listLookingFor`, `pauseLookingFor` and `resumeLookingFor` ([connector tools](../connectorTools.md), "The agent can list the person's standing things") have the grant owner check of `checkStatus` and serve only an active member; a resume serves only an adult (`lookingForOnlyActive`, `agentResumeOnlyAdult`; `noBannedUse`, `servedOnLiveOwnGrant` and `heldIsHeld` cover the three calls). The network change, its daily limit of three agent changes and the text to the person are in [standing changes](../standingIntentManagement.md). A grant holds the profile read scope only when its request asked for it; the model fixes this by request number (`readsProfile`: grant 2 only). A list needs that scope, and `listed` records that a result showed summaries; `lookingForListNeedsProfileRead` states that only a grant with the profile read scope sees them, from `submit_profile` and the change results too. Changed (owner decision D5 of 2026-11-22, standing changes): the model adds the three tools and the profile read scope, so that it can show that `submit_profile` gives the list only to a grant with that scope.
 
-Changed (owner decision 2026-11-22, answers A2 to A5): readiness is derived, with no staff confirm step: a minor with an exact birth date (`birthExact`) and no barred phone is teen ready (`teenReadyIn`). The action `teenConfirm` and the set `teenReady` are deleted, and `teenBirthDate` (the person states an exact birth date) takes their place; `teenReadyIsMinor` is deleted because readiness is now a definition. Teen introductions are on from the start (`teenStopped` is false); `teenStop` and `teenResume` replace `teenSwitch` (the staff roles are in [review_desk](review_desk.md) and [opportunity](opportunity.md)). Erasure deletes the birth date, and a bar stays on the number. This model's apps are friends, peon and slop: a teen item is a friends.help item here, and an ntwrk `Friend`-lane teen item takes the same path in the code (`teenFriendApp`). A report is a bar here (a stricter abstraction: the code keeps a minor report as a doubt until the teen doubt clear of [safety_trust](safety_trust.md)).
-
-Changed (owner decision 2026-11-22, standing changes): the tool family adds `listLookingFor`, `pauseLookingFor` and `resumeLookingFor` ([connector tools](../connectorTools.md), "The agent can list the person's standing things"). They have the same grant owner check as `checkStatus` and serve only an active member; a resume serves only an adult. `lookingForOnlyActive` and `agentResumeOnlyAdult` state this, and `noBannedUse`, `servedOnLiveOwnGrant` and `heldIsHeld` cover the three calls. The network change, its daily limit of three agent changes and the text to the person are in [standing changes](../standingIntentManagement.md), not here. A grant holds the profile read scope only when its request asked for it; the model fixes this by request number (`readsProfile`: grant 2 only). A list needs that scope, and `listed` records that a result showed summaries; `lookingForListNeedsProfileRead` states that only a grant with the profile read scope sees them, from `submit_profile` and the change results too. Changed (owner decision 2026-11-22): before this sentence the model had no scopes, so it could not show that `submit_profile` gave the list to a grant with the default scopes only.
-
-Changed (owner decision 2026-11-22, photo relay): the tool family adds `myPhotos` and `photoRequest` ([connector tools](../connectorTools.md), "The agent sees the person's photo list"). The model adds the slop.date app and its client `cS`, because only the slop.date host lists the photo tools. A grant holds the separate `photos:use` scope only when its request asked for it; the model fixes this by request number (`readsPhotos`: grant 3 only), as it does for the profile read scope. Changed after review (owner decision 2026-11-22): only the slop.date site offers `photos:use` (spec/authorizationPages.md `scopeOfferedOn`), and the other sites drop it from a request, so a grant on another app never holds it; the guard `gr.app == "slop"` beside `readsPhotos` in `photoCall` and in `photoToolsOnlySlopWithScope` is this rule. A call without the scope is refused before the call (403), so the action is not enabled then. The calls have the grant owner check of `checkStatus` and serve only an active adult; `photoToolsOnlySlopWithScope` and `photoToolsOnlyActiveAdult` state this, and `noBannedUse`, `servedOnLiveOwnGrant` and `heldIsHeld` cover the two calls. The photo list, the proposal text and the offer are in [photo relay](../photoRelayItem.md) and the [photo relay model](photo_relay_item.md), not here: a `photo_request` never consents.
+The tools `myPhotos` and `photoRequest` ([connector tools](../connectorTools.md), "The agent sees the person's photo list") exist only on the slop.date host; the model has the slop.date app and its client `cS` for them. A grant holds the separate `photos:use` scope only when its request asked for it (`readsPhotos`: grant 3 only), and only the slop.date site offers that scope (spec/authorizationPages.md `scopeOfferedOn`); the guard `gr.app == "slop"` beside `readsPhotos` in `photoCall` and in `photoToolsOnlySlopWithScope` is this rule. A call without the scope is refused before the call (403), so the action is not enabled then. The calls serve only an active adult (`photoToolsOnlySlopWithScope`, `photoToolsOnlyActiveAdult`). The photo list, the proposal text and the offer are in [photo relay](../photoRelayItem.md) and the [photo relay model](photo_relay_item.md): a `photo_request` never consents. Changed (owner decision D4 of 2026-11-22, photo relay): the two photo tools are new, because photo relay between adults is on.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
 // quint-check: max-steps=60 max-samples=10000 verify-steps=5
 //
-// Model of the MCP OAuth server and its tools: packages/mcp/src/handler.ts (H), tools.ts (T),
-// pg-store.ts (P), hooks.ts (K), and the parts of packages/network/service/service.ts (SVC) and
+// Model of the MCP OAuth server and its tools: packages/mcp/src/handler.ts, tools.ts,
+// pg-store.ts, hooks.ts, and the parts of packages/network/service/service.ts (SVC) and
 // packages/notify/src/scheduler.ts that the tools call. Module plan: docs/research/2026-11-07-state-machines.md
 // section 6.11. Source report: docs/research/state-machines/mcp-oauth.md. Findings and fix status:
 // docs/research/quint-findings/oauth_mcp.md.
 //
 // This version follows the code after the fixes on branch wave2/oauth_mcp (SD-019, SD-089, SD-184,
 // SD-185, SD-186 part (c), SD-214, SD-384, SD-389, SD-390, SD-393, SD-394, SD-395, SD-397, SD-428,
-// SD-430, Q-oauth_mcp-1). Line numbers are for the code on branch claude/formal-main (compared
-// with the code on 2026-11-09).
+// SD-430, Q-oauth_mcp-1).
 //
 // Machines in this model: oauth-auth-request, oauth-grant, oauth-code, oauth-token-family,
 // cloud-grant-authority (as an oracle), mcp-request-gate, grant-owner-binding,
@@ -66,10 +49,10 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //  - Time: grants, codes and tokens expire by nondeterministic clock actions. Auth requests have an
 //    age in 5-minute ticks, because the README gives a minute limit for them (SD-393).
 //  - Cloud validation is an oracle: a Cloud grant is valid only while its owner is the consent person
-//    (packages/platform/src/api.ts:681-697). "unavailable" writes no state (INV-CA3), so it is left out. The ban check that
-//    cloudGrantCurrent now runs first (H:777) is in the model for every grant.
+// (packages/platform/src/api.ts). "unavailable" writes no state (INV-CA3), so it is left out. The ban check that
+// cloudGrantCurrent now runs first is in the model for every grant.
 //  - Bans are per person here (the code also bans by number; the model's bans cover the person's
-//    numbers at ban time through `banned(phoneKey, personId)`, K:159-161).
+// numbers at ban time through `banned(phoneKey, personId)`).
 //  - Revocation and its audit row are one action on every path. A crash between revokeGrant and its
 //    audit row is not modelled.
 //  - Leave, delete everything and the under-13 decline are each one action. The real paths are several
@@ -85,16 +68,16 @@ module oauth_mcp {
   pure val PHONES = Set("n1", "n2")
   pure val APPS = Set("friends", "peon", "slop")
   pure val CLIENTS = Set("cF", "cP", "cS")
-  /** The app a client registered on (H:331; every grant of a client is for this app). */
+  /** The app a client registered on (every grant of a client is for this app). */
   pure def clientApp(c: str): str = if (c == "cF") "friends" else if (c == "cS") "slop" else "peon"
   pure val REQS = Set(1, 2, 3)
   pure val ITEMS = Set(1, 2)
   pure val NONE = "none"
-  /** TTL.requestMs = 10 minutes = 2 ticks (H:74-75, SD-393 fix). */
+  /** TTL.requestMs = 10 minutes = 2 ticks (SD-393 fix). */
   pure val REQ_TTL = 2
   /** packages/mcp/README.md section 3: "at most 10 minutes" = 2 ticks. */
   pure val README_REQ_MAX = 2
-  /** PROFILES_PER_GRANT_DAY (H:103), scaled down from 5 to 2 to keep the state small. */
+  /** PROFILES_PER_GRANT_DAY, scaled down from 5 to 2 to keep the state small. */
   pure val PROFILE_CAP = 2
   pure val MAX_TOKENS = 8
 
@@ -125,7 +108,7 @@ module oauth_mcp {
   type Inbox = { items: int -> Item, active: Set[str] }
   type Procs = { appr: int -> str, deny: int -> str, exch: int -> str, refr: int -> str }
   /**
-   * `audits` are the rows of oauth.audit (real state: the sweep reads consent_granted rows, P:241-243).
+   * `audits` are the rows of oauth.audit (real state: the sweep reads consent_granted rows).
    * The rest is ghost state for the invariants.
    */
   type Ghost = {
@@ -149,13 +132,13 @@ module oauth_mcp {
     { kind: kind, person: person, grant: g, ok: ok, status: "", items: Set(), listed: false }
 
   // ---------------------------------------------------------------- helpers (platform reads)
-  /** K:156-158 personForKey: null when the number is on hold or has no live person. */
+  /** personForKey: null when the number is on hold or has no live person. */
   def personForKey(p: Platform, n: str): str = if (p.holdNum.contains(n)) NONE else p.owner.get(n)
-  /** K:148-150 login: "held" when banned or on hold. */
+  /** login: "held" when banned or on hold. */
   def login(p: Platform, n: str): str =
     if (p.holdNum.contains(n) or p.banned.contains(p.owner.get(n))) "held" else p.owner.get(n)
   /**
-   * K:179-186 status -> publicStatus (packages/mcp/src/hooks.ts publicStatus). SD-428 fix (K:183-185, serve.ts:91-94): an active
+   * status -> publicStatus (packages/mcp/src/hooks.ts publicStatus). SD-428 fix (serve.ts): an active
    * member that the app's Network holds reads on_hold.
    */
   def statusOf(p: Platform, person: str, app: str): str =
@@ -168,13 +151,13 @@ module oauth_mcp {
   /** spec/connectorTools.md decideGrantOwner, called by packages/mcp/src/tools.ts checkGrantOwner (samePerson). */
   pure def stillTheirs(atConsent: str, now: str): bool = if (atConsent == NONE) now == NONE else now == atConsent
   def liveG(o: OAuth, g: int): bool = o.grants.get(g).st == "live" and not(o.grants.get(g).expired)
-  /** K:159-161 banned(phoneKey, personId): the grant's person, else the number's owner now. */
+  /** banned(phoneKey, personId): the grant's person, else the number's owner now. */
   def banSubject(o: OAuth, p: Platform, g: int): str = {
     val gr = o.grants.get(g)
     if (gr.person != NONE) gr.person else p.owner.get(gr.phone)
   }
   /**
-   * H:775-786 cloudGrantCurrent. SD-019 fix (H:777): a ban makes every grant invalid (no tool call,
+   * cloudGrantCurrent. SD-019 fix: a ban makes every grant invalid (no tool call,
    * no code exchange, no refresh). Legacy grants are then "valid" with no Cloud call; a Cloud grant is
    * an oracle.
    */
@@ -185,17 +168,17 @@ module oauth_mcp {
   }
 
   // ---------------------------------------------------------------- helpers (writes)
-  /** P:147-155 revokeGrant: grant and its tokens in one transaction. */
+  /** revokeGrant: grant and its tokens in one transaction. */
   def revokeOa(o: OAuth, g: int): OAuth = {
     ...o,
     grants: o.grants.setBy(g, x => if (x.st == "live") { ...x, st: "revoked" } else x),
     toks: o.toks.keys().mapBy(t => { val k = o.toks.get(t); if (k.g == g) { ...k, revoked: true } else k }),
   }
   /**
-   * H:182-192 revokeGrant then linked(grant, false). SD-186 (c) fix: for each grant in `gs` that this
+   * revokeGrant then linked(grant, false). SD-186 (c) fix: for each grant in `gs` that this
    * revocation ended (st was live) and that has a person, the signal goes off only when no other live
    * grant of that person (and assistant; every client here is Claude) is left on the grant's phone key
-   * (store.grantsFor, P:144-146). `oNew` is the state after every revocation of the step.
+   * (store.grantsFor). `oNew` is the state after every revocation of the step.
    */
   def unlinkAfter(act: Set[str], oOld: OAuth, oNew: OAuth, gs: Set[int]): Set[str] =
     act.exclude(gs.filter(g => {
@@ -289,7 +272,7 @@ module oauth_mcp {
   }
 
   /**
-   * H:513-537 approve, up to the transaction: liveRequest, session and owner checks, the Cloud oracle.
+   * approve, up to the transaction: liveRequest, session and owner checks, the Cloud oracle.
    * The grant object is prepared in memory (no row yet; st stays "none").
    */
   action approveRead(r: int, cloud: bool): bool = all {
@@ -297,7 +280,7 @@ module oauth_mcp {
     all {
       q.live, q.age < REQ_TTL, oa.clients.get(q.client).exists, q.step == "consent", pc.appr.get(r) == "idle",
       if (login(pf, q.phone) == "held" or login(pf, q.phone) != q.person) all {
-        // H:518-527: the number is held or banned, or its person changed: the request is deleted
+        // the number is held or banned, or its person changed: the request is deleted
         // ("Connect again").
         oa' = { ...oa, reqs: oa.reqs.set(r, { ...q, live: false }) },
         pc' = pc, gh' = { ...gh, last: eff("approveOwnerChanged", NONE, r, false) },
@@ -313,7 +296,7 @@ module oauth_mcp {
     }
   }
   /**
-   * SD-389 fix, P:115-132 approveConsent (H:545-562): one transaction deletes the request (only a live request at
+   * SD-389 fix, approveConsent: one transaction deletes the request (only a live request at
    * step consent), and inserts the grant, its code and the consent_granted and code_issued rows. A
    * failed insert (`insertFails`, or the client row is gone: oauth.sql grants.client_id foreign key)
    * rolls everything back and the request stays for a retry. A request that is gone (taken by a
@@ -341,7 +324,7 @@ module oauth_mcp {
     },
     pf' = pf, ib' = ib,
   }
-  /** H:563 linked(grant, true) after the commit: active=true, only for a grant with a person; then the 303 with the code. */
+  /** linked(grant, true) after the commit: active=true, only for a grant with a person; then the 303 with the code. */
   action approveLink(r: int): bool = all {
     pc.appr.get(r) == "committed",
     val p = oa.grants.get(r).person
@@ -357,7 +340,7 @@ module oauth_mcp {
     oa' = oa, pf' = pf, ib' = ib, gh' = { ...gh, last: eff("denyRead", NONE, r, true) },
   }
   /**
-   * SD-397 fix, H:539-540: the delete reports whether it deleted the row. Only then the denial is
+   * SD-397 fix, denyFinish: the delete reports whether it deleted the row. Only then the denial is
    * audited and the client gets access_denied; else (an approval took the request) "This page has expired".
    */
   action denyFinish(r: int): bool = all {
@@ -374,7 +357,7 @@ module oauth_mcp {
 
   /**
    * The clock: each live request gets one tick older (5 minutes). SD-393 fix: the service's tick runs
-   * the OAuth sweep at most once a minute with no OAuth traffic (serve.ts:106, H:205-209), so a
+   * the OAuth sweep at most once a minute with no OAuth traffic (serve.ts), so a
    * request is deleted when it reaches its 10-minute TTL.
    */
   action tickRequests = all {
@@ -386,8 +369,8 @@ module oauth_mcp {
     pf' = pf, ib' = ib, pc' = pc, gh' = { ...gh, last: eff("tick", NONE, 0, true) },
   }
 
-  // ---------------------------------------------------------------- oauth-code: exchange (H:609-647)
-  /** H:609-636: code unused, unexpired, grant live, ban and Cloud check (cloudGrantCurrent). */
+  // ---------------------------------------------------------------- oauth-code: exchange
+  /** The token route checks: code unused, unexpired, grant live, ban and Cloud check (cloudGrantCurrent). */
   action exchCheck(g: int): bool = all {
     oa.codes.get(g).st == "issued", not(oa.codes.get(g).expired), liveG(oa, g), cloudValid(oa, pf, g),
     pc.exch.get(g) == "idle",
@@ -395,7 +378,7 @@ module oauth_mcp {
     oa' = oa, pf' = pf, ib' = ib, gh' = { ...gh, last: eff("exchCheck", banSubject(oa, pf, g), g, true) },
   }
   /**
-   * SD-184 fix, H:637-646 and P:164-182 redeemCode: one transaction marks the code used and, on its
+   * SD-184 fix, redeemCode: one transaction marks the code used and, on its
    * first use, stores both tokens and the token_issued row. The mint callback checks expiry only: when
    * the code or the grant expired meanwhile, the code is used and nothing is stored (invalid_grant).
    * A grant row deleted meanwhile fails the token insert (foreign key): the code stays unused.
@@ -424,7 +407,7 @@ module oauth_mcp {
     pf' = pf, ib' = ib,
   }
   /**
-   * H:614-622 and H:643: a client presents a used code. The grant is revoked as a replay. codeVerdict
+   * The token route: a client presents a used code. The grant is revoked as a replay. codeVerdict
    * (spec/oauthTokenLifecycle.md readCode, called by the token route in packages/mcp/src/handler.ts) reads "used" before "expired": a used code is a replay until the sweep deletes
    * its row, also after it expired.
    * Model ghost: the replay is "true" when an earlier exchange of this code completed; "dead" when the
@@ -441,10 +424,10 @@ module oauth_mcp {
     pf' = pf, pc' = pc,
   }
 
-  // ---------------------------------------------------------------- oauth-token-family: refresh (H:649-675)
+  // ---------------------------------------------------------------- oauth-token-family: refresh
   /**
-   * H:649-658: token unrevoked, unexpired, grant live, ban and Cloud check. The handler keeps the token
-   * row it read: "checkedRot" when it was already rotated then (H:664, a replay with no rotateRefresh call).
+   * The refresh route checks: token unrevoked, unexpired, grant live, ban and Cloud check. The handler keeps the token
+   * row it read: "checkedRot" when it was already rotated then (a replay with no rotateRefresh call).
    */
   action refrCheck(t: int): bool = all {
     oa.toks.keys().contains(t),
@@ -457,7 +440,7 @@ module oauth_mcp {
     oa' = oa, pf' = pf, ib' = ib, gh' = { ...gh, last: eff("refrCheck", banSubject(oa, pf, oa.toks.get(t).g), oa.toks.get(t).g, true) },
   }
   /**
-   * SD-185 fix, H:664-673 and P:194-212 rotateRefresh: one transaction that locks the grant. "stale"
+   * SD-185 fix, and rotateRefresh: one transaction that locks the grant. "stale"
    * when the grant is revoked, expired or gone (invalid_grant; no revocation, no audit row); "replay"
    * when the token was rotated or revoked (the grant is revoked, with a refresh_replay row); else it
    * rotates.
@@ -498,7 +481,7 @@ module oauth_mcp {
     revokeWithAudit(oa.toks.get(t).g, Set(), eff("revoke", NONE, oa.toks.get(t).g, true)),
     pf' = pf, pc' = pc,
   }
-  /** H:689-692 /oauth/revoke with an access token: that token only ends, with a token_revoked row. */
+  /** /oauth/revoke with an access token: that token only ends, with a token_revoked row. */
   action revokeAccessToken(t: int): bool = all {
     oa.toks.keys().contains(t), oa.toks.get(t).kind == "access", not(oa.toks.get(t).revoked),
     oa' = { ...oa, toks: oa.toks.setBy(t, k => { ...k, revoked: true }) },
@@ -520,7 +503,7 @@ module oauth_mcp {
       k.kind == "access" and not(k.revoked) and not(k.expired) and liveG(oa, k.g) and cloudValid(oa, pf, k.g)
     }
 
-  /** SD-394 fix, H:895-899: invalid_grant from a tool revokes the grant and writes consent_revoked when the revoke ended it. */
+  /** SD-394 fix, the tool gate: invalid_grant from a tool revokes the grant and writes consent_revoked when the revoke ended it. */
   action toolInvalidGrant(g: int, tool: str): bool = all {
     revokeWithAudit(g, Set(), eff(tool, NONE, g, false)),
     pf' = pf, pc' = pc,
@@ -553,7 +536,7 @@ module oauth_mcp {
     }
   }
 
-  /** T:293-301 check_status (rate limit left out). */
+  /** check_status (rate limit left out). */
   action checkStatus(t: int): bool = all {
     bearerOk(t),
     val g = oa.toks.get(t).g
@@ -567,8 +550,8 @@ module oauth_mcp {
   }
 
   /**
-   * T:302-316 submit_profile: grantStillTheirs, the status gate (active; the model has no onboarding
-   * state), then (SD-395 fix) the per-grant profile bucket counts the call (T:312, H:889-891), then the
+   * submit_profile: grantStillTheirs, the status gate (active; the model has no onboarding
+   * state), then (SD-395 fix) the per-grant profile bucket counts the call, then the
    * service's own ban check (SVC submitProfile).
    */
   action submitProfile(t: int): bool = all {
@@ -604,7 +587,7 @@ module oauth_mcp {
    * A resume needs an adult (SVC changeLookingFor passes canBeMatched to agentStandingChange). The network state that a
    * pause or a resume changes, its daily limit and its text to the person are outside this model
    * (spec/standingIntentManagement.md standingChangeOutcome); the effect records whether the call served the person.
-   * H:1392 refuses a list without the profile read scope before the call (403), so the action is not enabled then.
+   * refuses a list without the profile read scope before the call (403), so the action is not enabled then.
    * T callTool (resultShowsLookingFor): `listed` records that the result showed summaries, only with the profile read scope.
    */
   action lookingForCall(t: int, kind: str): bool = all {
@@ -689,12 +672,12 @@ module oauth_mcp {
   }
 
   /**
-   * P:232-244 sweep (on every OAuth request and every service tick, at most once a minute; modelled as
+   * sweep (on every OAuth request and every service tick, at most once a minute; modelled as
    * any time). Expired codes and tokens go; revoked or expired grants go (after 30 days, abstracted)
-   * with their codes and tokens. SD-390 fix (P:241-243): a day-old client goes only when no
+   * with their codes and tokens. SD-390 fix: a day-old client goes only when no
    * grant row is left and it never got a consent_granted audit row.
    */
-  /** P:241-243: the client has a consent_granted audit row (audit rows are never swept). */
+  /** The client has a consent_granted audit row (audit rows are never swept). */
   def everConsented(c: str): bool = REQS.exists(g => gh.audits.contains(("consent_granted", g)) and oa.grants.get(g).client == c)
   action sweep = all {
     val work = REQS.exists(g => oa.grants.get(g).st == "revoked" or oa.grants.get(g).expired or oa.codes.get(g).expired)
@@ -834,8 +817,8 @@ module oauth_mcp {
   }
 
   /**
-   * H:994-1008 revokeAllFor(e164, app, {forget}): revoke and audit each live, unexpired grant
-   * (grantsFor), then forgetPhone (P:246-255): delete the sign-in requests, then every grant row of
+   * revokeAllFor(e164, app, {forget}): revoke and audit each live, unexpired grant
+   * (grantsFor), then forgetPhone: delete the sign-in requests, then every grant row of
    * the number and app (with its codes and tokens).
    */
   def revokeAllForgetOa(o: OAuth, ns: Set[str], a: str): OAuth = {
@@ -853,7 +836,7 @@ module oauth_mcp {
     { ...gh, audits: gh.audits.union(gone.map(g => ("revoked", g))), revokedEver: gh.revokedEver.union(gone), last: last }
 
   /**
-   * ACC leave one app: hooks.onForget (SVC hooks().onForget) runs the listener, which calls
+   * The account route, leave one app: hooks.onForget (SVC hooks().onForget) runs the listener, which calls
    * mcp.forgetPerson(personId, app) (serve.ts svc.onForget). SD-089 fix, restored for OPS61: a listener
    * error is not caught, so it stops the leave before forgetMembership and the request fails; the
    * consent opt-out already holds, and a retry deletes the grants and ends the membership.
@@ -879,7 +862,7 @@ module oauth_mcp {
   }
 
   /**
-   * ACC delete everything: onForget for each live membership, then (SD-089 fix, ACC:495)
+   * The account route, delete everything: onForget for each live membership, then (SD-089 fix)
    * onForgetPhone, which runs the listener with no app: revokeAllFor of every app of the number,
    * also an app with no membership. Then the person is deleted (personForKey is null after).
    */
@@ -903,7 +886,7 @@ module oauth_mcp {
   }
 
   /**
-   * SVC statedAge with a decline (under 13). SD-089 fix (SVC:1506): forgetPhone(e164) runs the forget
+   * SVC statedAge with a decline (under 13). SD-089 fix: forgetPhone(e164) runs the forget
    * listeners with no app first (every app's grants), then forgetMembership on every app.
    */
   action declineUnder13(p: str): bool = all {
@@ -967,7 +950,6 @@ module oauth_mcp {
     any {
       flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
       flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
-      any { produceItem(i, p, a, "own", b), becomeMinor(p) },
       // Owner decision 2026-11-22: the teen path (birth date, stop, resume, teen item, sweep, report).
       any { teenBirthDate(p), teenStop, teenResume, produceTeenItem(i, p, kind, b), teenItemEnds(i), teenReadyLost(p) },
       // the environment: the person cancels or revokes, a process stops, clocks and the sweep,
@@ -1001,7 +983,7 @@ module oauth_mcp {
   /**
    * SD-019. AGENTS founder 2026-10-09 #3: a banned number is refused at join, OTP and inbound, on every
    * app; SVC "never matched or texted again". No banned person's agent gets inbox data, a tool answer,
-   * or past the check of a code exchange or a refresh. Fix: cloudGrantCurrent checks the ban (H:777).
+   * or past the check of a code exchange or a refresh. Fix: cloudGrantCurrent checks the ban.
    * A ban that commits while an exchange or a refresh waits between its check and its transaction still
    * lets that one transaction commit; every later use of those tokens fails this check (bearer, refresh).
    */
@@ -1011,7 +993,7 @@ module oauth_mcp {
 
   /**
    * SD-184, SD-185. packages/mcp/README.md section 3: "a reused refresh token or code ends the whole
-   * grant"; H:668 "A refresh token used twice: someone else has a copy". A replay revocation ends a
+   * grant"; "A refresh token used twice: someone else has a copy". A replay revocation ends a
    * usable grant only for a credential that was redeemed before (that redemption completed).
    */
   val replayIsTrue = gh.last.kind == "replay" implies gh.last.ok
@@ -1039,9 +1021,9 @@ module oauth_mcp {
     }
 
   /**
-   * SD-186 part (c), strict form. hooks.ts:69-70 "An assistant was connected (consent granted) or disconnected (grant
+   * SD-186 part (c), strict form. hooks.ts "An assistant was connected (consent granted) or disconnected (grant
    * revoked) for a person", keyed by person and assistant: while a live grant of the person whose
-   * approval completed (linked) exists, the signal stays on. Fix: H:182-192.
+   * approval completed (linked) exists, the signal stays on.
    *
    * NOT in `safety` (Q-oauth_mcp-2, found by this model after the fix run, not fixed): the fix looks for
    * other live grants on the revoked grant's phone key only (store.grantsFor). When the number moves
@@ -1065,7 +1047,7 @@ module oauth_mcp {
 
   /**
    * SD-186 parts (a) and (b), NOT in `safety`: the signal is on exactly when a live grant exists. It
-   * fails by design: the documented assistantLinked contract (hooks.ts:69-70) sends the signal on
+   * fails by design: the documented assistantLinked contract (hooks.ts) sends the signal on
    * "consent granted" and "grant revoked" only, so an expiry does not clear it (b) and a stop between
    * the approval's commit and linked(true) leaves it off (a). The fix commit c4b97ca left both as they
    * are; a change needs a maintainer decision on the hook contract.
@@ -1075,7 +1057,7 @@ module oauth_mcp {
       (ib.active.contains(p) iff REQS.exists(g => liveG(oa, g) and oa.grants.get(g).person == p)))
 
   /**
-   * SD-089, Q-oauth_mcp-1. handler.ts:90-93 and README section 3: after leave or delete everything
+   * SD-089, Q-oauth_mcp-1. handler.ts and README section 3: after leave or delete everything
    * "nothing keeps the phone next to the app"; AGENTS age policy: under 13 is declined with nothing stored.
    */
   val grantDiesWithPerson = pf.forgotten.forall(na =>
@@ -1083,7 +1065,7 @@ module oauth_mcp {
       and oa.grants.get(g).phone == na._1 and oa.grants.get(g).app == na._2)))
 
   /**
-   * SD-428. T:310 "the profile never reaches a stopped or held one"; hooks.ts publicStatus and K:183-185 a held member reads
+   * SD-428. "the profile never reaches a stopped or held one"; hooks.ts publicStatus and a held member reads
    * on_hold. A staff hold must not read "active" nor accept a profile.
    */
   val heldIsHeld =
@@ -1134,7 +1116,7 @@ module oauth_mcp {
     implies (ib.items.get(i).kind != "own" and pf.minor.contains(ib.items.get(i).person) and not(teenReadable(i))))
 
   /**
-   * SD-430. T:327 next_step "They answer by replying to the text": an update shown as new must still
+   * SD-430. next_step "They answer by replying to the text": an update shown as new must still
    * be answerable, so its opportunity must be open.
    */
   val noStaleUpdate = gh.last.kind == "getUpdates" implies gh.last.items.forall(i => ib.items.get(i).oppOpen)
@@ -1194,7 +1176,6 @@ module oauth_mcp {
     and ib.items.get(i).leaky and not(ib.items.get(i).seen) and ib.items.get(i).person == gh.last.person
     and ib.items.get(i).app == oa.grants.get(gh.last.grant).app))
   /** MCP54: a reader who cannot be matched reads an update about themselves. */
-  val witness_minorReadsOwn = not(gh.last.kind == "getUpdates" and pf.minor.contains(gh.last.person) and gh.last.items.size() > 0)
   /** A person leaves an app and the grants of that app are deleted. */
   val witness_leaveDeletes = not(gh.last.kind == "leave" and gh.last.ok and pf.forgotten.size() > 0
     and REQS.exists(g => oa.grants.get(g).st == "deleted"))

@@ -4,7 +4,8 @@ import { laneLimits } from "../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { resolveConfig } from "../src/config.ts";
 import { localEmbed } from "../src/embed.ts";
-import { bruteForceCandidates, eligiblePair, maskRefusesAdmitted, type PackVectors } from "../src/match/mod.ts";
+import { pairReason } from "../src/filters.ts";
+import { bruteForceCandidates, eligiblePair, laneCategory, type PackVectors } from "../src/match/mod.ts";
 import { networkPack } from "../src/packs/network/index.ts";
 import { baseMember, emptyInput } from "../src/testkit.ts";
 import { World } from "../src/world.ts";
@@ -187,7 +188,7 @@ test("pack bounds, acceptance masks and the pair memo keep every search equal to
     }
     const owner = profiles[0], banded = profiles[20];
     expect(eligiblePair(world, owner, banded)).toBe("mask_refused");
-    expect(maskRefusesAdmitted(world, owner, banded)).toBe(true);
+    expect(pairReason(world, owner.memberId, banded.memberId, laneCategory(owner.lane), owner.lane)).toBeNull();
     return world.match.tally();
   });
   for (const tally of tallies) {

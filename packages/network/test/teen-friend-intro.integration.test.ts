@@ -8,22 +8,27 @@ import { planCatalogPlace } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { describeBookingStart, localBookingStart } from "../src/rescheduling.ts";
 import { Mini, START, type Spec } from "./mini.ts";
-import { holdEveryItem, simulatedReviewJudge, type InlineReviewJudge, type ReviewPacket } from "../../engine/src/reviewJudge.ts";
+import { holdEveryItem, simulatedReviewJudge, type ReviewPacket } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string, age: number): Spec => ({
   id, name, age, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
   wants: [{ objective: "find a regular climbing partner", category: "hobby" }],
 });
 
-const BORN: Record<string, number> = { t16: 20100315, t17: 20090601, a19: 20070901, t18: 20080601, s18: 20071007, l18: 20071013 };
-
-const NAMES: Record<string, [string, number]> = {
-  t16: ["Tess Ruiz", 16], t17: ["Uma Park", 17], a19: ["Vic Long", 19], t18: ["Wes Hale", 18], s18: ["Xan Moss", 18], l18: ["Yara Bell", 18],
+const CAST: Record<MemberId, [name: string, age: number, born?: number]> = {
+  t16: ["Tess Ruiz", 16, 20100315], t17: ["Uma Park", 17, 20090601], a19: ["Vic Long", 19, 20070901], t18: ["Wes Hale", 18, 20080601],
+  s18: ["Xan Moss", 18, 20071007], l18: ["Yara Bell", 18, 20071013], z17: ["Zoe Kim", 17, 20090901], v17: ["Val Ortiz", 17, 20090401],
+  a30: ["Ada Stone", 30], a31: ["Bea Lowe", 31], a32: ["Cal Reyes", 32], f30: ["Fay Diaz", 30], i30: ["Ike Wolfe", 30], n31: ["Nia Cole", 31],
 };
 
-function world(ids: MemberId[], judge: InlineReviewJudge = holdEveryItem.inline, app: "friends" | "ntwrk" = "friends", spec = climber) {
-  const w = new Mini(ids.map(id => spec(id, NAMES[id]![0], NAMES[id]![1])), { app, inlineJudge: judge });
-  for (const id of ids) Object.assign(w.members.find(m => m.id === id)!, { birthKey: BORN[id], birthExact: true, ageConflict: false, teenBarred: false });
+function setBirth(w: Mini, id: MemberId) {
+  const born = CAST[id]![2];
+  if (born !== undefined) Object.assign(w.members.find(m => m.id === id)!, { birthKey: born, birthExact: true, ageConflict: false, teenBarred: false });
+}
+
+function world(ids: MemberId[], opts: NetworkOptions = {}, spec = climber) {
+  const w = new Mini(ids.map(id => spec(id, CAST[id]![0], CAST[id]![1])), { app: "friends", inlineJudge: holdEveryItem.inline, ...opts });
+  for (const id of ids) setBirth(w, id);
   return w;
 }
 
@@ -62,10 +67,11 @@ test("teen introductions are on from the start on friends and ntwrk, one staff s
   expect(w.net.teenIntrosEnabled()).toBe(false);
 });
 
-test("after a stop a teen request reaches nobody", async () => {
+test("after a stop and a restart a teen request reaches nobody", async () => {
   const w = world(["t16", "t17"]);
   await w.onboard("t16", "t17");
   expect(w.net.stopTeenIntros("admin-a")).toEqual({ ok: true });
+  w.restart();
   const from = w.mark();
   await w.say("t16", "Can you find me a regular climbing partner?");
   await w.run(24 * 3_600_000);
@@ -73,11 +79,10 @@ test("after a stop a teen request reaches nobody", async () => {
   expect(w.sent.slice(from).filter(s => itemOf(s) !== undefined)).toEqual([]);
 });
 
-// spec/teenIntroSwitch.md, "A teen item is approved by the judge with the strict rubric or by staff"
 test("a teen pair within 2 years reaches the judge with its ages and the strict rubric, and the judge approval contacts only the pair", async () => {
   const packets: ReviewPacket[] = [];
   const approve = simulatedReviewJudge({ exceptions: false });
-  const w = world(["t16", "t17", "a19"], packet => { packets.push(packet); return approve(packet); });
+  const w = world(["t16", "t17", "a19"], { inlineJudge: packet => { packets.push(packet); return approve(packet); } });
   await w.onboard("t16", "t17", "a19");
   await w.say("t16", "Can you find me a regular climbing partner?");
   const [item] = teenItems(w, "t16");
@@ -120,9 +125,15 @@ test("a 16-year-old is never introduced to a 19-year-old", async () => {
   expect(teenItems(w, "t16")).toEqual([]);
   expect(teenItems(w, "a19")).toEqual([]);
   expect(w.to("a19", from).filter(s => itemOf(s) !== undefined)).toEqual([]);
+
+  const control = world(["t16", "t17"]);
+  await control.onboard("t16", "t17");
+  await control.say("t16", "Can you find me a regular climbing partner?");
+  await control.run(24 * 3_600_000);
+  expect(teenItems(control, "t16").map(i => [...i.proposal.participants].sort())).toContainEqual(["t16", "t17"]);
 });
 
-test("a teen with a stored minor signal stays out of the pool until the teen doubt clear, and the clear refuses a barred teen", async () => {
+test("a teen with a stored minor signal stays out of the pool until staff clear the teen doubt, and the clear refuses a barred teen", async () => {
   const w = world(["t16", "t17"]);
   await w.onboard("t16", "t17");
   const st = w.net.exportState();
@@ -155,14 +166,17 @@ test("a staff stop closes an approved teen item with a notice that names nobody"
   await w.net.tick(w.clock.now());
   expect(w.net.decide(item!.oppId, "approve", { reviewer: "reviewer-r", revision: item!.revision })).toEqual({ ok: true });
   await w.run(3_600_000);
+  const told = [...w.net.exportState().opps.find(o => o.id === item!.oppId)!.contacted].sort();
+  expect(told.length).toBeGreaterThan(0);
   const from = w.mark();
   expect(w.net.stopTeenIntros("safety-s")).toEqual({ ok: true });
   expect(w.log("teen_item_closed").map(l => [l.detail.oppId, l.detail.reason])).toEqual([[item!.oppId, "teen_intros_off"]]);
   expect(w.net.teenItemCurrent(item!.oppId)).toBe(false);
   await w.run(48 * 3_600_000);
   const after = w.sent.slice(from).filter(s => itemOf(s) === item!.oppId);
-  expect(after.every(s => !/Tess|Uma/.test(s.body))).toBe(true);
-  expect(after.every(s => s.meta.type === "cancellation" || s.meta.type === "info")).toBe(true);
+  expect(after.map(s => s.to).sort()).toEqual(told);
+  expect(after.filter(s => /Tess|Uma/.test(s.body))).toEqual([]);
+  expect(after.filter(s => s.meta.type !== "cancellation" && s.meta.type !== "info")).toEqual([]);
 });
 
 test("a teen who says they are 24 loses every teen item and opens a case for the other teen", async () => {
@@ -182,7 +196,8 @@ test("an 18-year-old and a 17-year-old born within 2 years reach review with bot
   const w = world(["t17", "t18"]);
   await w.onboard("t17", "t18");
   await w.say("t17", "Can you find me a regular climbing partner?");
-  const [item] = teenItems(w, "t17");
+  await w.net.tick(w.clock.now());
+  const item = w.net.reviewQueue().find(i => i.proposal.participants.includes("t17"));
   expect(item).toBeDefined();
   expect([...item!.proposal.participants].sort()).toEqual(["t17", "t18"]);
   expect(item!.teen?.members.map(m => [m.memberId, m.age, m.maxAge]).sort()).toEqual([["t17", 17, 17], ["t18", 18, 18]]);
@@ -203,18 +218,6 @@ test("an 18-year-old who turns 19 inside the proposal window is never proposed t
   expect(teenItems(later, "t17").map(i => [...i.proposal.participants].sort())).toEqual([["l18", "t17"]]);
 });
 
-test("after a stop and a restart, a teen pair is still refused", async () => {
-  const w = world(["t16", "t17"]);
-  await w.onboard("t16", "t17");
-  expect(w.net.stopTeenIntros("admin-a")).toEqual({ ok: true });
-  w.restart();
-  const from = w.mark();
-  await w.say("t16", "Can you find me a regular climbing partner?");
-  await w.run(24 * 3_600_000);
-  expect(teenItems(w, "t16")).toEqual([]);
-  expect(w.to("t17", from).filter(s => itemOf(s) !== undefined)).toEqual([]);
-});
-
 const COMPONENTS = { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 };
 
 function inject(w: Mini, o: { id: string; participants: MemberId[]; stage: "review" | "probing" | "scheduled"; teen: boolean; meetingAt?: number; venue?: { id: string; name: string; area: string } }) {
@@ -225,7 +228,8 @@ function inject(w: Mini, o: { id: string; participants: MemberId[]; stage: "revi
     status: o.participants.map(p => [p, o.stage === "review" ? "queued" : "yes"]), explanations: {}, stage: o.stage, deadline: now + DAY, createdAt: now, score: 0.5,
     components: COMPONENTS, generator: "activity_partner", exploration: false, sameDay: false, contacted: o.stage === "review" ? [] : o.participants, reminded: [], tags: [],
     replacements: 0, feedbackFrom: [], format: "one_to_one", roles: Object.fromEntries(o.participants.map(p => [p, "peer"])),
-    ...(o.stage === "review" ? { review: { queuedAt: now, deadline: now + DAY } } : {}),
+    review: o.stage === "review" ? { queuedAt: now, deadline: now + DAY }
+      : { queuedAt: now, deadline: now + DAY, decision: "approve", approver: "judge", reviewer: "sim_review_judge", decidedAt: now, judgedRosters: [[...o.participants].sort().join("|")] },
     ...(o.meetingAt !== undefined ? { meetingAt: o.meetingAt, bookedTold: o.participants } : {}),
     ...(o.venue ? { venueId: o.venue.id, venue: o.venue.name, venueArea: o.venue.area } : {}),
     ...(o.teen ? { teenRuleAt: now } : {}),
@@ -236,13 +240,14 @@ function inject(w: Mini, o: { id: string; participants: MemberId[]; stage: "revi
 const stageOf = (w: Mini, id: string) => w.net.exportState().opps.find(o => o.id === id)?.stage;
 
 test("an invited teen newcomer is never paired with an adult host, while an adult newcomer is", async () => {
-  const w = new Mini([climber("i30", "Ike Wolfe", 30), climber("a30", "Ada Stone", 30)], { app: "friends", inlineJudge: holdEveryItem.inline });
+  const w = world(["i30", "a30"]);
   await w.onboard("i30", "a30");
   await w.run(8 * DAY);
-  w.add(climber("t16", "Tess Ruiz", 16));
-  w.add(climber("n31", "Nia Cole", 31));
-  Object.assign(w.members.find(m => m.id === "t16")!, { invitedBy: "i30", birthKey: BORN.t16, birthExact: true, ageConflict: false, teenBarred: false });
-  Object.assign(w.members.find(m => m.id === "n31")!, { invitedBy: "i30" });
+  for (const id of ["t16", "n31"]) {
+    w.add(climber(id, CAST[id]![0], CAST[id]![1]));
+    Object.assign(w.members.find(m => m.id === id)!, { invitedBy: "i30" });
+    setBirth(w, id);
+  }
   await w.onboard("t16", "n31");
   await w.run(2 * DAY);
   const queued = w.log("review_queued").map(l => (l.detail.proposal as { participants: MemberId[] }).participants);
@@ -251,27 +256,28 @@ test("an invited teen newcomer is never paired with an adult host, while an adul
   expect(queued.some(p => p.includes("n31") && p.includes("a30"))).toBe(true);
 });
 
-test("a teen pair's relay blocks text that no classifier read, passes text that the classifier cleared, refuses a number, and refuses the text after a stop", async () => {
+test("a teen pair's relay blocks text when the classifier cannot run, passes text that the classifier cleared, refuses a number, and refuses the text after a stop", async () => {
   const w = world(["t16", "t17"]);
   await w.onboard("t16", "t17");
   inject(w, { id: "teen-relay", participants: ["t16", "t17"], stage: "scheduled", teen: true, meetingAt: w.clock.now() + 2 * DAY });
   expect(w.net.teenItemCurrent("teen-relay")).toBe(true);
-  const clean = { hook: async () => ({ flags: [], block: [], source: "clef" as const }) };
+  const clean = { hook: async () => ({ flags: [], block: [] }) };
+  const down = { hook: async (): Promise<never> => { throw new Error("classifier_down"); } };
   const unread = w.mark();
-  const unclassified = await w.net.relayRequest({ itemId: "teen-text-0", from: "t16", kind: "text", text: "see you at the climbing gym on saturday", matchId: "teen-relay" });
+  const unclassified = await w.net.relayRequest({ itemId: "teen-text-0", from: "t16", kind: "text", text: "see you at the climbing gym on saturday", matchId: "teen-relay" }, down);
   expect(unclassified).toMatchObject({ decision: "refused", reason: "I didn't send that, so it didn't reach them." });
   expect(w.to("t17", unread).filter(s => s.meta.type === "relay")).toEqual([]);
   const from = w.mark();
   const text = await w.net.relayRequest({ itemId: "teen-text-1", from: "t16", kind: "text", text: "see you at the climbing gym on saturday", matchId: "teen-relay" }, clean);
   expect(text.decision).toBe("sent");
   expect(w.to("t17", from).filter(s => s.meta.type === "relay").length).toBe(1);
-  const number = await w.net.relayRequest({ itemId: "teen-number-1", from: "t16", kind: "contact_share", matchId: "teen-relay" });
+  const number = await w.net.relayRequest({ itemId: "teen-number-1", from: "t16", kind: "contact_share", matchId: "teen-relay" }, clean);
   expect(number.decision).toBe("refused");
   expect(w.to("t17", from).filter(s => /\d{3}[-. ]?\d{4}/.test(s.body))).toEqual([]);
   expect(w.net.stopTeenIntros("safety-s")).toEqual({ ok: true });
   const off = w.mark();
   const later = await w.net.relayRequest({ itemId: "teen-text-2", from: "t16", kind: "text", text: "see you at the climbing gym on saturday", matchId: "teen-relay" }, clean);
-  expect(later.decision).not.toBe("sent");
+  expect(later).toMatchObject({ decision: "refused", reason: "That match is closed, so I can't pass anything on to them." });
   expect(w.to("t17", off).filter(s => s.meta.type === "relay")).toEqual([]);
 });
 
@@ -285,6 +291,7 @@ test("a teen who reports their partner as older than stated closes the partner's
   expect(w.net.safetyReports().filter(r => r.subjectId === "t17").map(r => [r.kind, r.status])).toEqual([["older_than_stated", "open"]]);
   expect(stageOf(w, "teen-other")).toBe("closed");
   expect(w.net.teenItemCurrent("teen-other")).toBe(false);
+  expect(w.net.teenPoolHolds()).toEqual(["t17"]);
   expect(w.log("teen_age_contradicted").map(l => l.detail.minors)).toEqual([["t16"]]);
   expect(w.net.safetyCases().some(c => c.memberId === "t16" && c.events.some(e => e.kind === "adult_after_teen_contact" && e.by === "t17"))).toBe(true);
   expect(w.net.safetyCases().some(c => c.memberId === "t18" && c.events.some(e => e.kind === "adult_after_teen_contact"))).toBe(false);
@@ -306,7 +313,7 @@ test("a booked teen pair whose older member turns 19 before the meeting ends is 
 });
 
 test("an adult who later says they are 16 opens a case for everyone they were probed with, without a meeting", async () => {
-  const w = new Mini([climber("a30", "Ada Stone", 30), climber("a31", "Bea Lowe", 31)], { app: "friends", inlineJudge: holdEveryItem.inline });
+  const w = world(["a30", "a31"]);
   await w.onboard("a30", "a31");
   inject(w, { id: "adult-probe", participants: ["a30", "a31"], stage: "probing", teen: false });
   await w.say("a31", "I'm 16, is that ok?");
@@ -315,9 +322,7 @@ test("an adult who later says they are 16 opens a case for everyone they were pr
 });
 
 test("feedback and interactions of a teen pair never reach the friends pack input, while an adult pair's do", async () => {
-  const w = new Mini(["t16", "t17", "a30", "a31"].map(id => climber(id, ({ t16: "Tess Ruiz", t17: "Uma Park", a30: "Ada Stone", a31: "Bea Lowe" } as Record<string, string>)[id]!, ({ t16: 16, t17: 17, a30: 30, a31: 31 } as Record<string, number>)[id]!)),
-    { app: "friends", inlineJudge: holdEveryItem.inline, pack: friendsPack });
-  for (const id of ["t16", "t17"]) Object.assign(w.members.find(m => m.id === id)!, { birthKey: BORN[id], birthExact: true, ageConflict: false, teenBarred: false });
+  const w = world(["t16", "t17", "a30", "a31"], { pack: friendsPack });
   await w.onboard("t16", "t17", "a30", "a31");
   const now = w.clock.now();
   const st = w.net.exportState();
@@ -332,7 +337,7 @@ test("feedback and interactions of a teen pair never reach the friends pack inpu
 });
 
 test("an ntwrk teen pair in the Friend lane reaches review, and the ntwrk engine input holds the teens with only interest and boundary facets and no interaction rows", async () => {
-  const w = world(["t16", "t17", "a19"], holdEveryItem.inline, "ntwrk", friendSeeker);
+  const w = world(["t16", "t17", "a19"], { app: "ntwrk" }, friendSeeker);
   await w.onboard("t16", "t17", "a19");
   const input = w.net.packInput(w.clock.now());
   expect(input.members.map(m => m.id)).toEqual(expect.arrayContaining(["t16", "t17", "a19"]));
@@ -342,7 +347,8 @@ test("an ntwrk teen pair in the Friend lane reaches review, and the ntwrk engine
   expect((input.interactions ?? []).filter(x => x.participants.some(id => id === "t16" || id === "t17"))).toEqual([]);
   expect(input.teenIntros).toBe(true);
   await w.say("t16", "Can you help me make a few new friends in the city?");
-  const [item] = teenItems(w, "t16");
+  await w.net.tick(w.clock.now());
+  const item = w.net.reviewQueue().find(i => i.proposal.participants.includes("t16"));
   expect(item).toBeDefined();
   expect([...item!.proposal.participants].sort()).toEqual(["t16", "t17"]);
   expect(item!.proposal.category).toBe("social");
@@ -350,13 +356,18 @@ test("an ntwrk teen pair in the Friend lane reaches review, and the ntwrk engine
 });
 
 test("an ntwrk teen and a 19-year-old are never paired, and a stop on ntwrk refuses the teen pair", async () => {
-  const w = world(["t16", "a19"], holdEveryItem.inline, "ntwrk", friendSeeker);
+  const w = world(["t16", "a19"], { app: "ntwrk" }, friendSeeker);
   await w.onboard("t16", "a19");
   await w.say("t16", "Can you help me make a few new friends in the city?");
   expect(teenItems(w, "t16")).toEqual([]);
   expect(teenItems(w, "a19")).toEqual([]);
 
-  const stopped = world(["t16", "t17"], holdEveryItem.inline, "ntwrk", friendSeeker);
+  const control = world(["t16", "t17"], { app: "ntwrk" }, friendSeeker);
+  await control.onboard("t16", "t17");
+  await control.say("t16", "Can you help me make a few new friends in the city?");
+  expect(teenItems(control, "t16").map(i => [...i.proposal.participants].sort())).toContainEqual(["t16", "t17"]);
+
+  const stopped = world(["t16", "t17"], { app: "ntwrk" }, friendSeeker);
   await stopped.onboard("t16", "t17");
   expect(stopped.net.stopTeenIntros("safety-s")).toEqual({ ok: true });
   await stopped.say("t16", "Can you help me make a few new friends in the city?");
@@ -365,8 +376,7 @@ test("an ntwrk teen and a 19-year-old are never paired, and a stop on ntwrk refu
 
 test("a named approval of a teen pair writes it as a cross-app avoid pair", async () => {
   const pairs: [MemberId, MemberId][][] = [];
-  const w = new Mini(["t16", "t17"].map(id => climber(id, NAMES[id]![0], NAMES[id]![1])), { app: "friends", inlineJudge: holdEveryItem.inline, onTeenPairAvoid: p => { pairs.push(p); } });
-  for (const id of ["t16", "t17"]) Object.assign(w.members.find(m => m.id === id)!, { birthKey: BORN[id], birthExact: true, ageConflict: false, teenBarred: false });
+  const w = world(["t16", "t17"], { onTeenPairAvoid: p => { pairs.push(p); } });
   await w.onboard("t16", "t17");
   await w.say("t16", "Can you find me a regular climbing partner?");
   const [item] = teenItems(w, "t16");
@@ -407,7 +417,7 @@ test("a teen whose teen-pair text states an age younger than the record opens a 
   const w = world(["t16", "t17"]);
   await w.onboard("t16", "t17");
   inject(w, { id: "teen-age-talk", participants: ["t16", "t17"], stage: "scheduled", teen: true, meetingAt: w.clock.now() + 2 * DAY });
-  const clean = { hook: async () => ({ flags: [], block: [], source: "clef" as const }) };
+  const clean = { hook: async () => ({ flags: [], block: [] }) };
   const from = w.mark();
   const same = await w.net.relayRequest({ itemId: "teen-age-same", from: "t16", kind: "text", text: "I'm 16 btw", matchId: "teen-age-talk" }, clean);
   expect(same.decision).toBe("refused");
@@ -421,8 +431,7 @@ test("a teen whose teen-pair text states an age younger than the record opens a 
 });
 
 test("an 18-year-old's introduction to an adult keeps no minor alternate and reaches review", async () => {
-  const w = new Mini([climber("t18", "Wes Hale", 18), climber("a30", "Ada Stone", 30), climber("t17", "Uma Park", 17)], { app: "friends", inlineJudge: holdEveryItem.inline });
-  for (const id of ["t18", "t17"]) Object.assign(w.members.find(m => m.id === id)!, { birthKey: BORN[id], birthExact: true, ageConflict: false, teenBarred: false });
+  const w = world(["t18", "a30", "t17"]);
   await w.onboard("t18", "a30", "t17");
   const id = w.propose(["t18", "a30"], { alternates: ["t17"] });
   expect(await w.runUntil(() => w.net.reviewQueue().some(i => i.oppId === id), 2 * DAY)).toBe(true);
@@ -433,12 +442,12 @@ test("an 18-year-old's introduction to an adult keeps no minor alternate and rea
   expect(w.log("gate_reason").filter(l => l.detail.reason === "participant_minor")).toEqual([]);
 });
 
-test("a teen with an open minor report stays out of the pool until the teen doubt clear dismisses the report", async () => {
+test("a teen with an open minor report stays out of the pool until the staff clear of the teen doubt dismisses the report", async () => {
   const w = world(["t16", "t17"]);
   await w.onboard("t16", "t17");
   const st = w.net.exportState();
   Object.assign(st.members.find(m => m.id === "t17")!, { minorReported: true });
-  st.reports.push({ id: "r-minor-t17", kind: "minor", reporterId: "t16", subjectId: "t17", at: w.clock.now(), status: "open", source: "message" });
+  (st.reports ??= []).push({ id: "r-minor-t17", kind: "minor", reporterId: "t16", subjectId: "t17", at: w.clock.now(), status: "open", source: "message", met: false });
   w.net.importState(st);
   await w.say("t16", "Can you find me a regular climbing partner?");
   expect(teenItems(w, "t16")).toEqual([]);
@@ -464,10 +473,8 @@ test("after a teen pair meets, each teen gets the feedback ask with no name in i
 });
 
 test("an adult meeting at a place where a booked teen pair meets within 2 hours takes another slot", async () => {
-  const adults = (): Spec[] => [climber("a30", "Ada Stone", 30), climber("a31", "Bea Lowe", 31), climber("t16", "Tess Ruiz", 16), climber("t17", "Uma Park", 17)];
   const book = async (teenAt?: { at: number; venueId: string }) => {
-    const w = new Mini(adults(), { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false });
-    for (const id of ["t16", "t17"]) Object.assign(w.members.find(m => m.id === id)!, { birthKey: BORN[id], birthExact: true, ageConflict: false, teenBarred: false });
+    const w = world(["a30", "a31", "t16", "t17"], { inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false });
     await w.onboard("a30", "a31", "t16", "t17");
     if (teenAt) inject(w, { id: "teen-nearby", participants: ["t16", "t17"], stage: "scheduled", teen: true, meetingAt: teenAt.at, venue: { id: teenAt.venueId, name: "", area: "" } });
     const id = w.propose(["a30", "a31"]);
@@ -508,34 +515,19 @@ test("a booked teen pair that asks to move the meeting to a day on which one of 
 });
 
 test("an ntwrk teen whose other app holds them, or who is in a teen avoid pair read from another app, is never proposed on ntwrk", async () => {
-  const held = world(["t16", "t17"], holdEveryItem.inline, "ntwrk", friendSeeker);
+  const held = world(["t16", "t17"], { app: "ntwrk" }, friendSeeker);
   Object.assign(held.members.find(m => m.id === "t17")!, { teenHeld: true });
   await held.onboard("t16", "t17");
   await held.say("t16", "Can you help me make a few new friends in the city?");
   expect(teenItems(held, "t16")).toEqual([]);
   expect(teenItems(held, "t17")).toEqual([]);
 
-  const avoided = world(["t16", "t17"], holdEveryItem.inline, "ntwrk", friendSeeker);
+  const avoided = world(["t16", "t17"], { app: "ntwrk" }, friendSeeker);
   avoided.edges.push({ from: "t16", to: "t17", type: "avoid", strength: 1, explicit: true, createdAt: avoided.clock.now() });
   await avoided.onboard("t16", "t17");
   await avoided.say("t16", "Can you help me make a few new friends in the city?");
   expect(teenItems(avoided, "t16").filter(i => i.proposal.participants.includes("t17"))).toEqual([]);
 });
-
-type Cast = [id: MemberId, name: string, age: number, born?: number];
-
-const TABLE_CAST: Cast[] = [
-  ["t16", "Tess Ruiz", 16, 20100315], ["t17", "Uma Park", 17, 20090601], ["t18", "Wes Hale", 18, 20080601],
-  ["z17", "Zoe Kim", 17, 20090901], ["v17", "Val Ortiz", 17, 20090401],
-  ["a30", "Ada Stone", 30], ["a31", "Bea Lowe", 31], ["a32", "Cal Reyes", 32], ["f30", "Fay Diaz", 30],
-];
-
-function castWorld(ids: MemberId[], extra: NetworkOptions = {}, app: "friends" | "ntwrk" = "friends", spec = climber) {
-  const cast = ids.map(id => TABLE_CAST.find(c => c[0] === id)!);
-  const w = new Mini(cast.map(([id, name, age]) => spec(id, name, age)), { app, inlineJudge: holdEveryItem.inline, plans: false, ...extra });
-  for (const [id, , , born] of cast) if (born !== undefined) Object.assign(w.members.find(m => m.id === id)!, { birthKey: born, birthExact: true, ageConflict: false, teenBarred: false });
-  return w;
-}
 
 const TEEN_PLACE = (() => {
   for (const venue of PLAN_VENUES) if (venue.allAges && venue.adultPlans) for (const activityId of venue.activities) {
@@ -569,10 +561,9 @@ async function approvedTable(w: Mini, plan: plans.Plan): Promise<{ oppId: string
 
 const tableMeetings = (w: Mini, oppId: string) => w.meetings.filter(m => m.proposalId === oppId).map(m => [...m.participants].sort());
 
-// spec/teenIntroSwitch.md and AMENDMENT 3.2 "Seats": bookPlan and planJoin pass the item, so a teen seat is checked by the teen rule
 test("a teen table books with its minors seated, and a later yes from an invited teen joins the booked table", async () => {
   const ids = ["t16", "t17", "t18", "z17"];
-  const w = castWorld(ids);
+  const w = world(ids, { plans: false });
   await w.onboard(...ids);
   const { oppId } = await approvedTable(w, tablePlan("teen_table_join", ids, { quorum: 3, max: 4 }));
   expect(w.net.teenItemCurrent(oppId)).toBe(true);
@@ -585,10 +576,9 @@ test("a teen table books with its minors seated, and a later yes from an invited
   expect(w.net.exportState().opps.find(o => o.id === oppId)?.status).toContainEqual(["z17", "yes"]);
 });
 
-// AMENDMENT 3.1 F7: no booked replacement, recovery or fallback for a teen item
 test("a booked teen table that falls under its quorum closes and offers its reviewed teen alternate no replacement seat", async () => {
   const ids = ["t16", "t17", "t18"];
-  const w = castWorld([...ids, "v17"], { matchingEnabled: true });
+  const w = world([...ids, "v17"], { plans: false, matchingEnabled: true });
   await w.onboard(...ids, "v17");
   const { oppId, alternates } = await approvedTable(w, tablePlan("teen_table_drop", ids, { alternates: ["v17"], quorum: 3, max: 3 }));
   expect(alternates).toEqual(["v17"]);
@@ -603,11 +593,10 @@ test("a booked teen table that falls under its quorum closes and offers its revi
   expect(tableMeetings(w, oppId)).toEqual([["t16", "t17", "t18"]]);
 });
 
-// AMENDMENT 3.2 "Nearby check both ways": the plan booking skips a slot near a scheduled teen item at the same place
 test("an adult table approved before a teen pair books the same place within 2 hours closes with no common time, and books without that pair", async () => {
   const adults = ["a30", "a31", "a32"];
   const book = async (teenNearby: boolean) => {
-    const w = castWorld([...adults, "t16", "t17"]);
+    const w = world([...adults, "t16", "t17"], { plans: false });
     await w.onboard(...adults, "t16", "t17");
     const plan = tablePlan(`adult_table_${teenNearby}`, adults, { quorum: 3, max: 3 });
     const { oppId } = await approvedTable(w, plan);
@@ -624,7 +613,6 @@ test("an adult table approved before a teen pair books the same place within 2 h
   expect(stageOf(near.w, near.oppId)).toBe("closed");
 });
 
-// spec/capitalLevers.md, organizing reach: no reach for a roster with a minor; reach adds adults only (AMENDMENT 3.1 F10)
 test("organizing reach adds a fitting adult and never a fitting teen-ready 16-year-old, and a table with a minor gets no reach", async () => {
   const venue = PLAN_VENUES.find(v => v.allAges && v.adultPlans && v.activities.includes("coffee_crawl"))!;
   expect(venue).toBeDefined();
@@ -638,7 +626,7 @@ test("organizing reach adds a fitting adult and never a fitting teen-ready 16-ye
   expect(capital.organizingReach("a30", START).reservedForLowExposure).toBeGreaterThan(0);
   const coffee = (id: string, name: string, age: number): Spec => ({ id, name, age, area: venue.area, interests: ["coffee", "climbing"] });
   const ids = ["a30", "a31", "a32", "f30", "t16", "t17"];
-  const w = castWorld(ids, { pack: friendsPack, capital }, "friends", coffee);
+  const w = world(ids, { plans: false, pack: friendsPack, capital }, coffee);
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   await w.onboard(...ids);
   const reach = (plan: plans.Plan) => (w.net as unknown as { withReach(plan: plans.Plan, now: number): plans.Plan }).withReach(plan, w.clock.now());
@@ -649,10 +637,9 @@ test("organizing reach adds a fitting adult and never a fitting teen-ready 16-ye
   expect(w.log("organizing_reach").map(l => l.detail.planId)).toEqual(["adult_reach"]);
 });
 
-// AMENDMENT 1.4 Q15: ntwrk weekly plans and monthly gatherings seat adults only
 test("an ntwrk gathering's priority and grouping evidence hold the adults and never a teen-ready member", async () => {
   const ids = ["t16", "t17", "a30", "a31"];
-  const w = castWorld(ids, {}, "ntwrk", friendSeeker);
+  const w = world(ids, { plans: false, app: "ntwrk" }, friendSeeker);
   await w.onboard(...ids);
   const now = w.clock.now();
   expect(w.net.gatheringPriorityEvidence(now).map(e => e.memberId).sort()).toEqual(["a30", "a31"]);
@@ -665,9 +652,8 @@ async function teenPairMet(w: Mini, oppId: string) {
   expect(await w.runUntil(() => w.net.memberList().find(m => m.id === "t16")?.awaiting?.kind === "feedback", 3 * DAY)).toBe(true);
 }
 
-// spec/meetingSettlement.md, "A check-in answer that describes a problem asks once whether to report or block": a teen pair gets the adult pair's steps
 test("a teen's urgent check-in answer about the other teen files the report at once and puts the other teen on the teen pool hold list", async () => {
-  const w = castWorld(["t16", "t17"]);
+  const w = world(["t16", "t17"], { plans: false });
   await teenPairMet(w, "teen-fb-urgent");
   const mark = w.mark();
   await w.say("t16", "She was creepy and aggressive with me.");
@@ -679,7 +665,7 @@ test("a teen's urgent check-in answer about the other teen files the report at o
 });
 
 test("a teen's concern in the check-in gets one question that names nobody, and 'report' then opens the case", async () => {
-  const w = castWorld(["t16", "t17"]);
+  const w = world(["t16", "t17"], { plans: false });
   await teenPairMet(w, "teen-fb-concern");
   const mark = w.mark();
   await w.say("t16", "She made me really uncomfortable.");
@@ -693,10 +679,9 @@ test("a teen's concern in the check-in gets one question that names nobody, and 
   expect(w.net.teenPoolHolds()).toEqual(["t17"]);
 });
 
-// AMENDMENT 1.4 Q22: a minor report about a known minor closes their teen items and opens adult_after_teen_contact cases; no bar (DECISIONS-network 21)
 test("a minor report about a known teen closes the teen's items, opens a case for each other minor on those rosters and writes no teen pool bar", async () => {
   const bars: [MemberId, string][] = [];
-  const w = castWorld(["t16", "t17", "t18"], { onTeenBar: (id, reason) => { bars.push([id, reason]); } });
+  const w = world(["t16", "t17", "t18"], { plans: false, onTeenBar: (id, reason) => { bars.push([id, reason]); } });
   await w.onboard("t16", "t17", "t18");
   inject(w, { id: "teen-q22-a", participants: ["t16", "t17"], stage: "scheduled", teen: true, meetingAt: w.clock.now() + DAY });
   inject(w, { id: "teen-q22-b", participants: ["t17", "t18"], stage: "review", teen: true });

@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
 import { beforeAll, describe, expect, test } from "vitest";
 import { DAY, LLMError, MINUTE, OpenAILLM } from "@thenetwork/core";
-import { findExecutable } from "../../core/src/runtime/process.ts";
 import { judgeCallDeadlineMs, judgeLeaseMs } from "../../core/src/generated/automatedReview.ts";
 import { sha256, stableStringify } from "../../engine/src/hash.ts";
 import {
@@ -9,6 +7,7 @@ import {
   type JudgeReasonCode, type ReviewJudge, type ReviewJudgeReply, type ReviewPacket,
 } from "../../engine/src/reviewJudge.ts";
 import { devPgUp } from "../../observatory/db/dev-pg.ts";
+import { pgAvailable } from "../../observatory/test/pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { bootConfigProblems, MODEL_PROVIDER_MISSING } from "../../platform/src/env.ts";
 import { dayOf } from "../service/cost.ts";
@@ -16,7 +15,6 @@ import { NetworkService } from "../service/service.ts";
 import { startClimbingRequestFixture } from "../../../test/fixtures/climbingRequestFixture.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 
 type Fixture = Awaited<ReturnType<typeof startClimbingRequestFixture>["ready"]>;
 type Verdict = ReviewJudgeReply["verdict"];
@@ -69,11 +67,9 @@ async function settle(fx: Fixture) {
   await friends(fx).tick();
 }
 
-// spec/automatedReview.md, "Story: Contact a member only after a recorded approval" (owner decisions 2026-11-22, D15 to D17)
 describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres)", () => {
   beforeAll(async () => { await devPgUp(); }, T);
 
-  // spec/automatedReview.md, "The judge decides an awaiting revision once, for the packet it read"
   test("a judge approval is stored once, audited without the explanation, counted, and starts the first probe", async () => {
     const { calls, judge } = countingJudge(async () => reply("approve", "none"));
     await withItem(judge, async fx => {
@@ -91,7 +87,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "Staff approve only a held item and may reject any open item"
   test("a flag holds the item in the staff queue with its reason, and nobody is contacted", async () => {
     const { judge } = countingJudge(async () => reply("flag", "red_flag"));
     await withItem(judge, async fx => {
@@ -102,7 +97,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "A reply approves only when it is complete and consistent"
   test("a model reply with the verdict before the explanation is unparseable and holds the item", async () => {
     const judge = modelReviewJudge(providerReplying(`{"verdict":"approve","explanation":${EXPLANATION},"checks":${ADULT_CHECKS},"reason":"none"}`), "gpt-6-luna");
     await withItem(judge, async fx => {
@@ -113,7 +107,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "A reply approves only when it is complete and consistent"
   test("on the minor rubric an approval with a minor concern is inconsistent, and a minor check on the adult rubric does not parse", async () => {
     const content = `{"explanation":${EXPLANATION},"checks":{"fit":"pass","texts_safe":"pass","red_flags":"none","minor":"concern"},"verdict":"approve","reason":"none"}`;
     await withItem(holdEveryItem.judge, async fx => {
@@ -126,7 +119,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "A judgment that does not come in time is held for staff"
   test("a model timeout is stored as cannot run, audited, and holds the item", async () => {
     const { calls, judge } = countingJudge(async () => { throw new LLMError("timeout", "synthetic provider timeout"); });
     await withItem(judge, async fx => {
@@ -139,7 +131,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "A judge call runs only for a clean packet with no earlier flag, with a provider, inside the limits, before the deadline"
   test("a ledger at the daily review budget makes no call and holds the item as budget reached", async () => {
     const { calls, judge } = countingJudge(async () => reply("approve", "none"));
     await withItem(judge, async fx => {
@@ -155,7 +146,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "A judge call runs only for a clean packet with no earlier flag, with a provider, inside the limits, before the deadline"
   test("a request counter at NETWORK_REVIEW_JUDGE_MAX_REQUESTS makes no call and holds the item as request limit reached", async () => {
     const { calls, judge } = countingJudge(async () => reply("approve", "none"));
     await withItem(judge, async fx => {
@@ -168,12 +158,21 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     }, { NETWORK_REVIEW_JUDGE_MAX_REQUESTS: "1" });
   }, T);
 
-  // spec/automatedReview.md, "One judgment per packet for every replica"
   test("two services on one database judge one item with one call and one stored row", async () => {
-    const { calls, judge } = countingJudge(async () => { await new Promise(resolve => setTimeout(resolve, 50)); return reply("approve", "none"); });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const judging = new Promise<void>(resolve => { entered = resolve; });
+    const { calls, judge } = countingJudge(async () => {
+      if (calls.length === 1) { entered(); await gate; }
+      return reply("approve", "none");
+    });
     await withItem(judge, async fx => {
       const peer = await fx.openPeer(judge);
-      await Promise.all([fx.service.reviewJudgeTick(), peer.reviewJudgeTick()]);
+      const first = fx.service.reviewJudgeTick();
+      await judging;
+      await peer.reviewJudgeTick();
+      release();
+      await first;
       await settle(fx);
       expect(calls).toHaveLength(1);
       expect(await rowsOf(fx)).toEqual([expect.objectContaining({ status: "decided", claims: 1, verdict: "approve" })]);
@@ -183,7 +182,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "One judgment per packet for every replica"
   test("a running row with an expired lease and two claims is decided as interrupted without a call", async () => {
     const { calls, judge } = countingJudge(async () => reply("approve", "none"));
     await withItem(judge, async fx => {
@@ -203,7 +201,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "One judgment per packet for every replica": a stored judgment keeps the judge that wrote it
   test("a stored approval written by another judge is not applied, and nobody is contacted", async () => {
     const { calls, judge } = countingJudge(async () => reply("approve", "none"));
     await withItem(judge, async fx => {
@@ -223,7 +220,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "One judgment per packet for every replica": the lease outlasts a call
   test("a call longer than one tick is not claimed again and its approval is applied once", async () => {
     const holder: { fx?: Fixture } = {};
     const { calls, judge } = countingJudge(async () => {
@@ -243,7 +239,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/bootPolicy.md, "Both entries apply one rule to the session secret, the model provider and the dev-only switches"
   test("a deployed start needs a model key, and a deployed service refuses an injected judge", () => {
     const deployed = { PLATFORM_ENV: "staging", PLATFORM_HASH_KEY: "h".repeat(40), SERVICE_TURN_SECRET: "t".repeat(40) };
     expect(bootConfigProblems(deployed)).toContain(MODEL_PROVIDER_MISSING);
@@ -258,7 +253,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     }
   });
 
-  // spec/automatedReview.md, "One judgment per packet for every replica": retention and erasure
   test("erasure deletes the member's judgments, the purge keeps an old judgment of a member with an open safety case, and the request counter stays", async () => {
     const { judge } = countingJudge(async () => reply("flag", "weak_fit"));
     await withItem(judge, async fx => {
@@ -291,7 +285,6 @@ describe.skipIf(!pgAvailable)("the review judge worker (NetworkService, Postgres
     });
   }, T);
 
-  // spec/automatedReview.md, "A reply approves only when it is complete and consistent"
   test("a reply with a second verdict and reason after a flag does not parse and holds the item", async () => {
     const content = `{"explanation":${EXPLANATION},"checks":${ADULT_CHECKS},"verdict":"flag","reason":"red_flag","verdict":"approve","reason":"none"}`;
     await withItem(modelReviewJudge(providerReplying(content), "gpt-6-luna"), async fx => {

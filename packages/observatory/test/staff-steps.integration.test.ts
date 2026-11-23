@@ -71,6 +71,8 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
       { token: peonReviewer, path: "/api/staff/review/judged?app=peon&since=0", service: "/review/judged", action: "step_read_review_judged" },
       { token: peonSafety, path: "/api/staff/review/judged/opp-1/0?app=peon", service: "/review/judged/opp-1/0", action: "step_read_review_judged", targetId: "opp-1" },
       { token: peonReviewer, path: "/api/staff/review/opp-1/stop?app=peon", body: { revision: 0 }, service: "/review/opp-1/stop", action: "step_stop_review", targetId: "opp-1" },
+      { token: ntwrkAdmin, path: "/api/staff/teen-intros?app=ntwrk", body: { on: false, reason }, service: "/teen-intros", action: "step_switch_teen_intros" },
+      { token: peonSafety, path: "/api/staff/safety/older-than-stated?app=peon", body: { memberId: "m-1", reason }, service: "/safety/older-than-stated", action: "step_report_older_than_stated" },
     ];
     for (const s of steps) {
       const person = await idOf(s.token);
@@ -118,6 +120,8 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
     expect((await api("/api/staff/privacy/replay", ntwrkAdmin, { reason })).status).toBe(403);
     expect((await api("/api/staff/inbound/resolve?app=ntwrk", ntwrkAdmin, { id: "msg:blooio:never-stuck" })).status).toBe(403);
     expect((await api("/api/staff/turn-watch?app=peon", peonAdmin)).status).toBe(403);
+    expect((await api("/api/staff/safety/older-than-stated?app=peon", peonReviewer, { memberId: "m-1" })).status).toBe(403);
+    expect((await api("/api/staff/teen-intros?app=ntwrk", peonSafety, { on: false })).status).toBe(403);
     expect((await api("/api/staff/home-help?app=peon", peonAdmin.replace("admin", "nobody"))).status).toBe(401);
     expect(delegated.length).toBe(quiet);
     expect(audit.filter(row => row.action === "step_verify_employer" && row.detail?.refused === "forbidden").length).toBe(4);
@@ -143,6 +147,8 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
       ["/safety/lift", { memberId: "m-1", note: "report checked" }],
       ["/safety/close", { caseId: "sc-1", note: "report checked" }],
       ["/safety/clear-minor", { memberId: "m-1", note: "age checked by staff" }],
+      ["/safety/older-than-stated", { memberId: "m-1" }],
+      ["/teen-intros", { on: false }],
     ];
     const decide = (path: string, payload: object, token: string, staff?: string) => network.fetch(new Request(`http://127.0.0.1${path}?app=peon`, {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(staff ? { "x-network-staff-id": staff } : {}) }, body: JSON.stringify(payload),

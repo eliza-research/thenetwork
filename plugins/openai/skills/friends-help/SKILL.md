@@ -25,8 +25,8 @@ A draft is not saved until the site confirms it. A saved profile is not a match.
 
 friends.help helps people make friends through small group plans at public places.
 Anyone 13 or older may join. Matching is for adults 18 or older, except friendship
-introductions between people aged 13 to 18 born at most 2 years apart, after a
-person reviews each one. Groups usually
+introductions between people aged 13 to 18 born at most 2 years apart, after an
+automatic check approves each one. Groups usually
 have 3–6 people. Other members see only the first name and neighbourhood, not the
 phone number.
 
@@ -44,7 +44,7 @@ phone number.
 3. Ask for their stated age first and use the lowest age they state. Explain and <!-- agentSignup: draftProfile -->
    stop below 13. Tell people aged 13–17 that friends.help introduces people under
    18 only for friendship, to people aged 13 to 18 born at most 2 years apart, after
-   a person reviews each one. Draft their confirmed first name and home region. Do not draft an
+   an automatic check approves each one. Draft their confirmed first name and home region. Do not draft an
    age or a birth date: the person types their birth date on the signup page.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
@@ -98,6 +98,7 @@ phone number.
 10. To show what friends.help is looking for for the person, call `list_looking_for`.
    Sending a profile only adds; leaving something out never removes it. If the
    person asks to pause one thing, call `pause_looking_for` with its ref; to
+   turn a paused thing back on, call `resume_looking_for` with its ref; to
    close it for good they reply CLOSE to the text they get. Never pause or
    resume anything the person did not ask about.
 

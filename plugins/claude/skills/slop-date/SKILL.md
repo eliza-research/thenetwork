@@ -96,6 +96,7 @@ it does not mean introductions have started.
 10. To show what slop.date is looking for for the person, call `list_looking_for`.
    Sending a profile only adds; leaving something out never removes it. If the
    person asks to pause one thing, call `pause_looking_for` with its ref; to
+   turn a paused thing back on, call `resume_looking_for` with its ref; to
    close it for good they reply CLOSE to the text they get. Never pause or
    resume anything the person did not ask about.
 

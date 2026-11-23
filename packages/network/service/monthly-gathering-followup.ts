@@ -58,7 +58,7 @@ async function admittedMember(tx: SQL, accounts: FollowupAccounts, ctx: Followup
   const { app, key, state, now, city } = ctx;
   const stored = state.members.find(candidate => candidate.id === memberId);
   if (stored?.stage !== "active" || state.trust?.some(record => record.id === memberId && record.level !== "ok") ||
-    !storedInviteNoticePartyCurrent(state, memberId)) return false;
+    !storedInviteNoticePartyCurrent(state, memberId, now)) return false;
   const [owner] = await tx<{ phones: string[] }[]>`select array_agg(ph.e164 order by ph.e164) as phones
     from network.monthly_gathering_rsvps r join network.members m on m.app_id=r.app_id and m.id=r.member_id
     join platform.phone_identities ph on ph.person_id=m.person_id and ph.hold is null

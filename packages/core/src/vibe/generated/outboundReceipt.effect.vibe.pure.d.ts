@@ -67,9 +67,9 @@ export declare function lawReplySendTimeNotAfterReceipt(replyStatus: string, col
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export declare function lawLateUnknownReceiptKeepsExpiredReply(replyStatus: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
-export declare function lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus: string, delivery: string): boolean;
+export declare function lawGatewayReceiptNeverChangesAFinalReply(delivery: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
-export declare function lawGatewayReplyEndsOnlyPastLimit(pastLimit: boolean): boolean;
+export declare function lawLateFinalReceiptEndsAnExpiredReply(delivery: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export declare function lawExpiredGatewayReplyKeepsSlot(pastLimit: boolean): boolean;
 /** Do the rules allow this event in this state? @throws {never} */

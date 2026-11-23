@@ -157,14 +157,16 @@ export function worldOptions(w: WorldSpec = {}): { verification?: VerificationMo
  */
 export async function runArm(arm: string, seeds: number[], weeks: number, perCity: number, options?: Record<string, unknown>, world: WorldSpec = {}): Promise<ArmResult> {
   const out: ArmResult = { arm, seeds, metrics: [], extra: [] };
-  const { $world, $baseline, $engineSalt, ...packOpts } = (options ?? {}) as { $world?: WorldSpec; $baseline?: string; $engineSalt?: number };
+  const { $world, $baseline, $engineSalt, ...packOpts } = (options ?? {}) as { $world?: WorldSpec; $baseline?: string; $engineSalt?: unknown };
+  if ($engineSalt !== undefined && !(typeof $engineSalt === "number" && Number.isSafeInteger($engineSalt) && $engineSalt >= 0)) throw new Error(`runArm: $engineSalt must be a whole number 0 or more, got ${String($engineSalt)}`);
+  const engineSalt = typeof $engineSalt === "number" ? $engineSalt : 0;
   const wo = worldOptions({ ...world, ...($world ?? {}) });
   const base = $baseline ?? (arm in BASELINES && !options ? arm : undefined);
   for (const seed of seeds) {
     const standing = { weeks: 0, kept: 0, positives: 0, negatives: 0, placed: 0, narrowed: 0 };
     const res = base
       ? runSlopWorld({ seed, perCity, weeks, matcher: BASELINES[base as keyof typeof BASELINES] as never, ...wo })
-      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed: saltSeed(seed, $engineSalt ?? 0), onStanding: (_, s) => {
+      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed: saltSeed(seed, engineSalt), onStanding: (_, s) => {
         standing.weeks++; standing.kept += s.validity.predicts ? 1 : 0; standing.placed += s.placed; standing.narrowed += s.narrowed;
         standing.positives = s.validity.positives; standing.negatives = s.validity.negatives;
       } }), ...wo });

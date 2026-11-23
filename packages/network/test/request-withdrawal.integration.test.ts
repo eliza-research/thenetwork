@@ -63,6 +63,7 @@ test("a requester can withdraw an accepted probe while the other reply is pendin
   await x.say("a", "Find me a climbing partner.");
   const request = x.net.exportState().requests.at(-1)!;
   const oppId = request.oppId!;
+  await x.net.tick(x.clock.now());
   expect(x.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await x.runUntil(() => x.probed("a"))).toBe(true);
   await x.say("a", "Yes, that works for me.");

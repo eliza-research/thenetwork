@@ -1,7 +1,3 @@
-// A probe that waits in the delivery queue describes the roster it was written for (audit OPP18 review).
-// Before the fix, the queue rechecked only the member's matching settings, so a probe written before an
-// alternate replaced the other person still went out after the replacement.
-// spec/probeDispatch.md, "A queued probe goes out only for the roster that it describes"
 import { expect, test } from "vitest";
 import { DAY, HOUR, SimClock } from "@thenetwork/core";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";

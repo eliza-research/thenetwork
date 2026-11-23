@@ -105,3 +105,5 @@ pure def lawUnreadableQueuedLinkCannotSend(sameRecipient: bool, boundLink: bool,
 pure def lawForeignQueuedDigestCannotSend(threadCopy: bool, boundLink: bool, appScoped: bool, referenceLive: bool, allAssistantsReadable: bool): bool =
   not(queuedDigestClaimAllowed(false, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable))
 ```
+
+Conformance. test/fixtures/notificationDispatchWorker.ts runs the Notifier on the Postgres inbox, one person for each key. The first event selects the flow. For rereadItems the worker adds the planned items, holds the re-read of the items, applies the event to the inbox (seen items, no recipient, a new number), and then holds the rebuild, the delivery record and the enqueue. Each held effect is the phase. A failed record is an item that the person saw after the re-read. For readQueuedDigest the worker records a digest with two items, holds stillNeeded on its read of the items, and the revalidation event erases an item, makes one expire, or marks the items seen.

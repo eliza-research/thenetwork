@@ -14,9 +14,9 @@ export const UNDECIDED_REASONS = ["insufficient_facts", "unparseable", "inconsis
 export const CANNOT_RUN_REASONS = ["no_provider", "budget_reached", "request_limit_reached", "deadline_too_close", "timeout", "model_error", "interrupted", "judge_overdue"] as const;
 export const SIMULATED_REASONS = ["simulated_flag", "simulated_undecided", "simulated_failure"] as const;
 export type JudgeReasonCode = "none" | typeof FLAG_REASONS[number] | typeof CODE_FLAG_REASONS[number] | typeof UNDECIDED_REASONS[number] | typeof CANNOT_RUN_REASONS[number] | typeof SIMULATED_REASONS[number];
-export const REVIEW_JUDGE_PROMPT_VERSION = "review-judge-v3";
+export const REVIEW_JUDGE_PROMPT_VERSION = "review-judge-v4";
 
-export interface ReviewPacketMember { ref: string; role: "requester" | "participant" | "host" | "manager" | "candidate" | "alternate"; firstName: string; age: number | null; minor: boolean; told: string | null; teen?: { age: number; maxAge: number; accountDays?: number; apps?: string[]; lineType?: string | null } }
+export interface ReviewPacketMember { ref: string; role: "requester" | "participant" | "host" | "manager" | "candidate" | "alternate"; firstName: string; age: number | null; minor: boolean; told: string | null; teen?: { age: number; maxAge: number; accountDays?: number; apps?: string[]; lineType?: string | null; firstReadingExact?: boolean } }
 export interface ReviewPacketProbe { ref: string; text: string | null; fallback?: string; reveal: { text: string; fallback?: string } }
 export type CodeCheck = "teen_age_rule" | "teen_place_all_ages" | "teen_daytime_10_19" | "no_adult_session_nearby";
 export interface ReviewPacket {
@@ -147,7 +147,8 @@ const MINOR_RUBRIC_TEXT = [
   "The rubric of this proposal is \"minor\": at least one member is aged 13 to 17. Do this check also:",
   "- minor: judge the words and the roles only, also when plan is null. The introduction is for friendship only: no dating, romance, flirting, work, money, alcohol or nightlife words.",
   "  No text asks a minor to leave the platform, to share contact details or a photo, or to meet alone in a private place. Give extra care to a member aged 18.",
-  "  Any sign that a person is not the age on record is a concern. If you have any concern, use verdict \"flag\" and reason \"minor_concern\".",
+  "  Any sign that a person is not the age on record is a concern. A member whose teen.firstReadingExact is false first gave an age, not a birth date: that is a concern.",
+  "  If you have any concern, use verdict \"flag\" and reason \"minor_concern\".",
 ].join("\n");
 
 function outputText(rubric: ReviewPacket["rubric"]): string {
@@ -166,7 +167,7 @@ function outputText(rubric: ReviewPacket["rubric"]): string {
   ].join("\n");
 }
 
-export function reviewJudgeMessages(packet: ReviewPacket): ChatMessage[] {
+function reviewJudgeMessages(packet: ReviewPacket): ChatMessage[] {
   const system = [ROLE_TEXT, DATA_TEXT, CODE_TEXT, ADULT_RUBRIC_TEXT, ...(packet.rubric === "minor" ? [MINOR_RUBRIC_TEXT] : []), outputText(packet.rubric)].join("\n\n");
   const data = stableStringify({ ...packet, basePacketHash: undefined, packetHash: undefined });
   return [

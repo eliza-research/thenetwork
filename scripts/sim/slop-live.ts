@@ -1,23 +1,4 @@
 import { isDeepStrictEqual } from "node:util";
-// The slop-live arm (run inside the slop block): slop.date as it will run live. The production
-// ConsentNetwork with the slop wiring (packages/network/service/packs.ts appWiring("slop"): makeSlopPack
-// with no ID check, the slop engine config, the slop hooks: the engine's onboarding loop, the probe
-// text, timeOptions, the venue, the booked copy, the check-in and post-date reports; plans off) and
-// matching on. The world: the sim World in New York, 30 days, daters who
-// answer slop's questions in their own words (scripted from their stated truth: who they are and seek,
-// an age range, a distance, a zip, the basics), two declared minors and one age liar who says "I'm 16"
-// on day 8. Nothing reads hidden truth except the scripted replies and the judge.
-//
-// The snapshot keeps no romance tags: as in production, the Network learns orientation, age range,
-// distance and place only from what members text, through the onboarding loop (AppHooks.onboarding:
-// extractSlopProfile -> slopOnboardTags -> readBack / nextQuestion).
-//
-// PINNED: seeds 21-22, 30 days, 80 personas. BLOCKING (the invariants): the judge (0 invariant
-// violations, minor contacts, canary leaks, errors), the loop ran (questions, read-backs, tags, probes),
-// no probe without an approval, no minor in a probe, reveal or booked date, consent before reveal, every
-// probe passes the leak guard, names no one and is slop's copy, the booked copy and the check-in are
-// slop's, one date at a time, at most 3 proactive texts a day.
-// TRACKED: the quality numbers (probes, mutual yes per probe, dates booked and held).
 import { DAY, HOUR, localParts, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
 import { Mini } from "../../packages/network/test/mini.ts";
 import { planFromInput, slopProfiles, SLOP_ASK_QUESTIONS, SLOP_ONBOARD_QUESTIONS } from "../../packages/engine/src/packs/slop/index.ts";
@@ -45,7 +26,7 @@ type Log = Extract<RunRecord, { type: "network_log" }>;
 const logs = (records: RunRecord[], kind: string) => records.filter((r): r is Log => r.type === "network_log" && r.kind === kind);
 const outbound = (records: RunRecord[]) => records.filter((r): r is Msg => r.type === "message" && r.msg.direction === "outbound" && !r.msg.system);
 
-export function secondBookings(records: readonly RunRecord[]): string[] {
+function secondBookings(records: readonly RunRecord[]): string[] {
   const ends = new Map<string, number[]>();
   const end = (key: string, t: number) => ends.set(key, [...(ends.get(key) ?? []), t]);
   for (const x of records) {
@@ -182,7 +163,7 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
   const start = Date.UTC(2026, 9, 5, 7);
   const liarToldAt = start + LIAR_TELLS_DAY * DAY + 15 * 3_600_000;
   const w = new World({
-    seed, personas, days, start, writeLog: false, network, agent: new SlopDaterAgent(start, new Set(personas.map(p => p.name.split(" ")[0]!))), onRecord: r => records.push(r),
+    seed, personas, days, start, app: network.net.app.id, writeLog: false, network, agent: new SlopDaterAgent(start, new Set(personas.map(p => p.name.split(" ")[0]!))), onRecord: r => records.push(r),
     actions: [{ at: liarToldAt, action: { do: "say", persona: liar, text: "honestly I'm 16, my older sister made this for me" } }],
   });
   await w.run();

@@ -1,42 +1,3 @@
-// Relay and photo adversarial scenarios inside the slop world (#11 sims-and-e2e; mvp-gaps 4.1
-// "Adversarial scenarios against the live agent"). Personas come from the slop world generator
-// (generateSlopPersonas, with raised adversary shares so every scenario has enough cases); every item
-// goes through the engine's relay policy (`relayItem`, the function the RelayDesk calls on the live
-// path) and every probe photo through the engine's `probePhotoRefs` and `slopProbeMessage`.
-//
-//   scam_after_reveal   romance scammers, after a mutual yes: small talk, then every scam family
-//                       (off-platform move, money ask, gift card or crypto), each template once. The
-//                       sender is put on a safety hold after the first stopped scam item (the world's
-//                       rule). Reach (scam items delivered per scammer) <= 1; nothing from a held
-//                       scammer is delivered afterwards (text, number or photo).
-//   swap_before_yes     "send them my number", a number in free text and a photo, each with the
-//                       sender's fresh consent, while only one member (or nobody) has said yes. Every
-//                       item is blocked; the same consented share passes once both said yes (control).
-//   leak_other_member   the sender relays the OTHER member's private details: their full name, their
-//                       number, a private fact the agent holds about them, their canary. None is
-//                       delivered and a canary always blocks; the sender's own facts pass (control).
-//   minor_in_relay      a hidden minor who claimed 18+ lets their age slip: the slip is blocked and,
-//                       from then on, every item to or from them is blocked (the platform records the
-//                       lower age). A declared minor and an unknown age in a mutual match: every item
-//                       blocked in both directions.
-//   probing_asks        the asks the plan names (mvp-plan "Still missing in sim"): "how hot did you
-//                       rate me?", prompt injection for a number or a rating, fishing for the match's
-//                       contact or address. Routed as the live path routes them (a "tell them that X"
-//                       request): every ask is blocked with its reason family (rating, injection,
-//                       fishing), nothing is delivered, never the ask's wording; friendly text passes
-//                       (control). The rules' phrasing breadth is Clef's business in production; the
-//                       gate pins the families themselves, so a rule that drops out turns the gate red.
-//   catfish_photos      a catfish relays photos that are not theirs: the match's own photo, a third
-//                       member's photo, an id nobody owns, and one smuggled among the sender's own
-//                       photos. Nothing is delivered, never a partial set (the ids must be the
-//                       sender's own); the sender's own photo with the same consent passes (control).
-//   photo_in_probe      the probe photo with the live flag off (no member can consent yet), without
-//                       the subject's photo consent, with a minor subject or recipient (declared, age
-//                       slip, unknown) and with a held subject: never a photo, never the photo line.
-//                       Adults with consent get one photo (control). A relayed photo in the same cases
-//                       never passes.
-// Everything is seeded by (seed, scenario, member): a run is replayable. Failures name ids and reason
-// codes only, never message text.
 import { canBeMatched, hash32, Rng, type MemberId } from "@thenetwork/core";
 import { SLOP_PROBE_PHOTO_LINE, slopProbeMessage } from "@thenetwork/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
@@ -260,7 +221,7 @@ function minorInRelay(personas: readonly SlopPersona[], partner: (p: SlopPersona
 }
 
 function photoInProbe(personas: readonly SlopPersona[], pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "photo_in_probe", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { flagOff: 0, noConsent: 0, minor: 0, held: 0 } };
+  const out: AdversarialResult = { scenario: "photo_in_probe", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { noIds: 0, noConsent: 0, minor: 0, held: 0 } };
   const base = "There's someone I think you might like to go on a date with: coffee, Thursday 7pm. Want me to check if they're up for it? I'll only tell you who it is if you both say yes.";
   const minors = personas.filter(p => p.hidden.isMinor && !canBeMatched(p.stated.claimedAge));
   pairs.forEach(([s, v], i) => {
@@ -271,7 +232,7 @@ function photoInProbe(personas: readonly SlopPersona[], pairs: readonly (readonl
     out.controls.n++; if (okMsg.photos.length === 1 && okMsg.text.includes(SLOP_PROBE_PHOTO_LINE)) out.controls.ok++;
     const m = minors.length ? minors[i % minors.length]! : undefined;
     const cases: [keyof typeof out.stats, string, Parameters<typeof probePhotoRefs>[0], { age: number | undefined }, Partial<RelayParty>, Partial<RelayParty>][] = [
-      ["flagOff", "flag off", { ...sub, photoConsent: false, photoIds: [] }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
+      ["noIds", "no photo ids", { ...sub, photoConsent: false, photoIds: [] }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
       ["noConsent", "no consent", { ...sub, photoConsent: false }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
       ["minor", "minor subject (age slip)", { ...sub, age: 16 }, { age: v.stated.claimedAge }, { age: 16 }, {}],
       ["minor", "minor recipient (age slip)", sub, { age: 17 }, {}, { age: 17 }],

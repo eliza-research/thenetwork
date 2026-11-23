@@ -10,6 +10,7 @@ import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 const T = 300_000;
 const CONTACTS = "direction = 'outbound' and not system and status !~ '^(refused|suppressed|blocked|parked|held)'";
 const TEEN_GENERATORS = "('friend_circle', 'activity_partner', 'request', 'plan', 'friends_repeat', 'crew')";
+const LOGIN = `obs_friends_${process.pid}`;
 
 describe.skipIf(!pgAvailable)("real mode: minor contacts in friends.help teen items (CONTRACT 8.4, 8.5; amendment A3)", () => {
   let url: string;
@@ -73,12 +74,18 @@ describe.skipIf(!pgAvailable)("real mode: minor contacts in friends.help teen it
     expect(pairRows).toBeGreaterThan(0);
     audit = new PgAudit(url);
     vi.setSystemTime(new Date(now));
-    real = new RealSource({ url, app: "friends", pollMs: 3_600_000, pushMs: 3_600_000, service: false });
+    await sql.unsafe(`drop role if exists ${LOGIN}`);
+    await sql.unsafe(`create role ${LOGIN} login in role network_observatory_friends`);
+    real = new RealSource({ url, app: "friends", appUrl: url.replace(/\/\/[^@]+@/, `//${LOGIN}@`), pollMs: 3_600_000, pushMs: 3_600_000, service: false });
     await real.init();
   }, T);
   afterAll(async () => {
-    try { await real?.dispose(); await g?.dispose(); await audit?.close(); await sql?.close(); await dropTestDb(); }
-    finally { vi.useRealTimers(); }
+    try {
+      await real?.dispose(); await g?.dispose(); await audit?.close(); await sql?.close(); await dropTestDb();
+      const admin = new SQL(url.replace(/\/[^/]+$/, "/postgres"));
+      await admin.unsafe(`drop role if exists ${LOGIN}`);
+      await admin.close();
+    } finally { vi.useRealTimers(); }
   });
 
   test("a social item of 16 and 17 from a generator that is not a teen friendship generator is counted at every contact", async () => {
@@ -92,19 +99,24 @@ describe.skipIf(!pgAvailable)("real mode: minor contacts in friends.help teen it
     expect(await count()).toBe(on);
   }, T);
 
-  test("nothing recorded means on: the 16+17 item is not counted; one stop audit row turns it off; the later of the audit row and the event decides", async () => {
+  test("the console reads under the app's own login, with no unreadable teen evidence", async () => {
+    await count();
+    expect(real.state().env.appIsolation).toBe("rls_role");
+    expect(real.state().env.error).toBeUndefined();
+    expect((real.state().stats.alerts ?? []).map(a => a.key)).not.toContain("teen_evidence_unreadable");
+  }, T);
+
+  test("nothing recorded means on: the 16+17 item is not counted; the last stored stop event before the message decides; a staff audit row alone changes nothing", async () => {
     const h = 3_600_000;
     const on = await count();
-    await switchAudit(t0 - 6 * h, false);
+    await switchAudit(t0 - 8 * h, false);
+    expect(await count()).toBe(on);
+    await switchEvent(t0 - 6 * h, false);
     const stopped = await count();
     expect(stopped - on).toBe(pairRows);
     await switchEvent(t0 - 5 * h, true);
     expect(await count()).toBe(on);
-    await switchEvent(t0 - 7 * h, false);
-    expect(await count()).toBe(on);
-    await switchAudit(t0 - 4 * h, false);
-    expect(await count()).toBe(stopped);
-    await switchEvent(t0 - 4 * h, true);
+    await switchEvent(t0 - 4 * h, false);
     expect(await count()).toBe(stopped);
     await switchEvent(t0 - 3 * h, true);
     expect(await count()).toBe(on);
@@ -113,7 +125,7 @@ describe.skipIf(!pgAvailable)("real mode: minor contacts in friends.help teen it
   test("after a stop: a notice that names nobody in the item that held the rule is not counted; a probe in it counts", async () => {
     await message("teen-notice-1", teens[0], tLast + 60_000, "cancellation", "That plan is off. Nothing else to do.");
     const on = await count();
-    await switchAudit(tLast + 30_000, false);
+    await switchEvent(tLast + 30_000, false);
     expect(await count()).toBe(on);
     await message("teen-probe-after-stop", teens[0], tLast + 120_000, "probe", "Want to meet up for a walk this weekend?");
     expect(await count()).toBe(on + 1);

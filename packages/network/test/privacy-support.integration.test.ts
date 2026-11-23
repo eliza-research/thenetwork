@@ -1,17 +1,14 @@
-// Story F24 through the staff port and a real backup and restore on the dev Postgres (:54339).
-// spec/accountPrivacy.md, "Story: Staff carry out an export or erasure request sent to support"
-// spec/databaseRestore.md, "Story: Carry privacy changes made after the backup into the restored database"
-import { findExecutable, spawnProcess } from "../../core/src/runtime/process.ts";
+import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { dropTestDb, pgAvailable, TEST_PG_URL, testDb } from "../../observatory/test/pg.ts";
+import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { maskPhone } from "../../platform/src/phone.ts";
@@ -23,15 +20,12 @@ import { backup } from "../../../deploy/backup/backup.ts";
 import { restore } from "../../../deploy/backup/restore.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
-const USER = process.env.USER ?? "postgres";
-const DB = `network_privacy_support_test_${process.pid}`;
 const RESTORED = `restore_privacy_${process.pid}`;
 const RESTORED_LOST = `restore_privacy_lost_${process.pid}`;
 const BOOTED = `restore_privacy_boot_${process.pid}`;
 const BOOT_ROLE = `privacy_boot_${process.pid}`;
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
-const urlOf = (db: string) => `postgres://${USER}@localhost:${DEV_PG_PORT}/${db}`;
+const urlOf = (db: string) => Object.assign(new URL(TEST_PG_URL), { pathname: `/${db}` }).toString();
+const ADMIN_URL = urlOf("postgres");
 async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 const SECRET = "whsec_privacy";
@@ -48,10 +42,10 @@ class FakeOtp implements OtpProvider {
 }
 
 const open: NetworkService[] = [];
-function service(clock: SimClock, db = DB) {
+function service(clock: SimClock, url = TEST_PG_URL) {
   const otp = new FakeOtp();
   const s = new NetworkService({
-    url: urlOf(db), clock, instance: "privacy", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
+    url, clock, instance: "privacy", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
     tokens: "admin:adm-tok,safety:saf-tok,admin@slop:slop-admin-tok", webhookSecret: SECRET,
     network: { seed: 1 }, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 }, photoStorage: null,
     adapter: () => new DryRunAdapter(() => {}),
@@ -73,9 +67,14 @@ async function joinByText(s: NetworkService, clock: SimClock, phone: string, app
   expect(await text(s, clock, phone, app)).toBe("join_asked");
   expect(await text(s, clock, phone, `${name}, 32`)).toBe("joined");
 }
+interface StaffBody {
+  ok?: boolean; error?: string; requestId?: string; personId?: string;
+  items?: { kind: string; outcome: string; done: boolean }[];
+  exports?: Record<string, { app: string; phone: string; membership: unknown; network: unknown }>;
+}
 const staff = async (s: NetworkService, token: string, path: string, b: unknown) => {
   const res = await s.fetch(new Request(`http://127.0.0.1:4848${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(b) }));
-  return { status: res.status, body: await res.json() as any };
+  return { status: res.status, body: await res.json() as StaffBody };
 };
 const liveMembers = (sql: SQL, personId: string) =>
   sql`select app_id, account_status from network.members where person_id = ${personId}::uuid and account_status <> 'removed' order by app_id` as Promise<{ app_id: AppId; account_status: string }[]>;
@@ -83,25 +82,23 @@ const liveMembers = (sql: SQL, personId: string) =>
 describe.skipIf(!pgAvailable)("support export and erasure, and the privacy replay of a restore (Postgres)", () => {
   let sql: SQL;
   beforeAll(async () => {
-    await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
+    await testDb();
     await admin(`drop database if exists ${RESTORED} with (force)`);
     await admin(`drop database if exists ${RESTORED_LOST} with (force)`);
     await admin(`drop database if exists ${BOOTED} with (force)`);
-    await admin(`create database ${DB}`);
-    sql = new SQL({ url: urlOf(DB), max: 2 });
+    sql = new SQL({ url: TEST_PG_URL, max: 2 });
   }, T);
   afterEach(async () => { for (const s of open.splice(0)) await s.close().catch(() => {}); });
   afterAll(async () => {
     await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
+    await dropTestDb();
     await admin(`drop database if exists ${RESTORED} with (force)`).catch(() => {});
     await admin(`drop database if exists ${RESTORED_LOST} with (force)`).catch(() => {});
     await admin(`drop database if exists ${BOOTED} with (force)`).catch(() => {});
     await admin(`drop role if exists ${BOOT_ROLE}`).catch(() => {});
     await admin(`drop role if exists ${BOOT_ROLE}_events`).catch(() => {});
   });
-  const fresh = () => applySchema(urlOf(DB), { reset: true, lockTimeout: "5s" });
+  const fresh = testDb;
 
   test("staff erase and export the confirmed holder of a number, and nobody else", async () => {
     await fresh();
@@ -113,7 +110,6 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     const person = (await s.accounts.personFor(phone))!, otherPerson = (await s.accounts.personFor(other))!;
     const ask = { phone, operation: "erase", app: "slop", reason: REASON };
 
-    // spec/accountPrivacy.md, "Only a global admin with a stated reason opens or confirms a support request"
     expect((await staff(s, "saf-tok", "/privacy/requests", ask)).status).toBe(403);
     expect((await staff(s, "slop-admin-tok", "/privacy/requests", ask)).status).toBe(403);
     expect((await staff(s, "adm-tok", "/privacy/requests", { ...ask, reason: "x" })).status).toBe(400);
@@ -124,7 +120,6 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     const code = otp.codes.get(phone)!;
     const confirm = (b: Record<string, unknown>) => staff(s, "adm-tok", `/privacy/requests/${started.body.requestId}/confirm`, { reason: REASON, ...b });
 
-    // spec/accountPrivacy.md, "Staff act only on the confirmed person after a fresh code from the number"
     expect(await confirm({ phone: other, personId: person.id, code })).toEqual({ status: 404, body: { ok: false, error: "request_unavailable" } });
     expect(await confirm({ phone, personId: otherPerson.id, code })).toEqual({ status: 409, body: { ok: false, error: "target_changed" } });
     expect(await confirm({ phone, personId: person.id, code: "999999" })).toEqual({ status: 403, body: { ok: false, error: "code_refused" } });
@@ -143,15 +138,14 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     expect(audit.slice(0, 2)).toEqual(["privacy_request:requested", "privacy_request:result"]);
     expect(audit).toContain("privacy_confirm:result");
 
-    // spec/accountPrivacy.md, "A support export covers one app or every app, and an erasure covers every app"
     clock.advance(MINUTE);
     const exportStart = await staff(s, "adm-tok", "/privacy/requests", { phone: other, operation: "export", app: "slop", scope: "app", reason: REASON });
     expect(exportStart.body).toMatchObject({ ok: true, personId: otherPerson.id });
     const exported = await staff(s, "adm-tok", `/privacy/requests/${exportStart.body.requestId}/confirm`, { phone: other, personId: otherPerson.id, code: otp.codes.get(other), reason: REASON });
     expect(exported.body).toMatchObject({ ok: true, outcome: "exported", personId: otherPerson.id });
-    expect(Object.keys(exported.body.exports)).toEqual(["slop"]);
-    expect(exported.body.exports.slop).toMatchObject({ app: "slop", phone: other, membership: { state: "active", firstName: "Bea" } });
-    expect(exported.body.exports.slop.network).toMatchObject({ member: { name: "Bea" } });
+    expect(Object.keys(exported.body.exports!)).toEqual(["slop"]);
+    expect(exported.body.exports!.slop).toMatchObject({ app: "slop", phone: other, membership: { state: "active", firstName: "Bea" } });
+    expect(exported.body.exports!.slop!.network).toMatchObject({ member: { name: "Bea" } });
   }, T);
 
   test("a restore keeps an erasure, a STOP, a leave and a ban made after the backup, and the backend replays them at start", async () => {
@@ -163,7 +157,6 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     await joinByText(s, clock, leaving, "friends", "Ed");
     const erased = (await s.accounts.personFor(erasing))!, left = (await s.accounts.personFor(leaving))!, banned = (await s.accounts.personFor(banning))!;
     const stopped = (await s.accounts.personFor(stopping))!, rejoined = (await s.accounts.personFor(rejoining))!;
-    // A connector grant of the person who erases after the backup: the restore brings it back with the dump.
     await sql`insert into oauth.clients (id, redirect_uris, auth_method, app_id, surface, kind, created_at)
       values ('client_privacy', '{https://client.example/callback}', 'none', 'slop', 'full', 'dcr', ${new Date(clock.now())})`;
     await sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at)
@@ -171,7 +164,6 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
         ${new Date(clock.now())}, ${new Date(clock.now() + 30 * 24 * 60 * MINUTE)})`;
     const [stopMember] = await sql`select id from network.members where app_id = 'slop' and person_id = ${stopped.id}::uuid` as { id: string }[];
 
-    // A queued text of the banned number in the backup: the restore must not keep it.
     await sql`insert into platform.pending_texts (phone_hash, kind, app_id, name, at) values (${s.accounts.phoneHash(banning)}, 'share', 'friends', 'Flo', ${new Date(clock.now())})`;
     for (const [id, status] of [["restore_text_sent", "pending"], ["restore_text_gone", "pending"], ["restore_text_waiting", "pending"],
       ["restore_text_parked", "parked_leak_review"], ["restore_text_released", "parked_leak_review"], ["restore_text_doubt", "send_unknown"]] as const) {
@@ -181,7 +173,7 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     }
     const dir = await mkdtemp(join(tmpdir(), "privacy-restore-"));
     try {
-      await backup({ url: urlOf(DB), outDir: dir, roles: false });
+      await backup({ url: TEST_PG_URL, outDir: dir, roles: false });
       await sql`update platform.outbound set status = 'sent', attempts = 1, sent_at = ${new Date(clock.now())}, updated_at = ${new Date(clock.now())},
         provider_message_id = 'restore_fixture_provider_id' where id = 'restore_text_sent'`;
       await sql`delete from platform.outbound where id = 'restore_text_gone'`;
@@ -191,11 +183,9 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
         provider_message_id = 'restore_fixture_doubt_id' where id = 'restore_text_doubt'`;
 
       expect(await s.accounts.deleteAll({ e164: erasing, personId: erased.id })).toBe(true);
-      // An erasure, then a new join of another app by the same number: the join revives the tombstone.
       expect(await s.accounts.deleteAll({ e164: rejoining, personId: rejoined.id })).toBe(true);
       await joinByText(s, clock, rejoining, "friends", "Ida");
       expect(await s.accounts.personFor(rejoining)).toMatchObject({ id: rejoined.id });
-      // A person who joins after the backup and gets a person ban that carries no phone hash.
       await joinByText(s, clock, late, "slop", "Jo");
       const latePerson = (await s.accounts.personFor(late))!;
       await sql`insert into platform.bans (id, scope, person_id, phone_hash, reason, banned_by, at)
@@ -207,11 +197,9 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       expect((await staff(s, "saf-tok", "/apps/slop/safety/ban", { memberId: bannedMember!.id, by: "person", note: "confirmed by staff" })).body).toEqual({ ok: true });
       await s.close();
 
-      // spec/databaseRestore.md, "Manifest admission refuses source writes and unavailable dump files"
       await expect(restore({ serverUrl: ADMIN_URL, db: RESTORED, dir, keepPrivileges: true })).rejects.toThrow(/--replay/);
-      const restored = await restore({ serverUrl: ADMIN_URL, db: RESTORED, dir, replayFrom: urlOf(DB) });
+      const restored = await restore({ serverUrl: ADMIN_URL, db: RESTORED, dir, replayFrom: TEST_PG_URL });
       expect(restored.mismatches).toEqual([]);
-      // The leave is an opt-out of friends too: its STOP item finds the membership already left.
       expect(restored.privacy).toMatchObject({ erasures: 2, leaves: 1, stops: 2 });
       expect(restored.privacy!.bans).toBeGreaterThan(0);
       expect(restored.privacy!.textsEnded).toBeGreaterThanOrEqual(1);
@@ -226,19 +214,15 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       } finally { await lostSql.close(); }
     } finally { await rm(dir, { recursive: true, force: true }); }
 
-    const { s: back } = service(clock, RESTORED);
+    const { s: back } = service(clock, urlOf(RESTORED));
     const restoredSql = new SQL({ url: urlOf(RESTORED), max: 1 });
     let mcp: Awaited<ReturnType<typeof createServiceMcp>>;
     try {
-      // The copied facts hold before the backend runs anything.
       expect(await back.accounts.optedIn("slop", stopping)).toBe(false);
       expect(await back.people.isSuppressed(back.accounts.phoneHash(erasing))).toBe(true);
       expect(await back.accounts.banned(banning)).toBe(true);
-      // spec/databaseRestore.md, "A source row that the restored database lacks is replayed": the ban of a person
-      // who joined after the backup keeps that person's phone hash.
       expect(await back.accounts.banned(late)).toBe(true);
       expect(await restoredSql`select count(*)::int as n from platform.pending_texts where phone_hash = ${back.accounts.phoneHash(banning)}`).toEqual([{ n: 0 }]);
-      // spec/databaseRestore.md, "A restored text that is not settled takes the source's outcome, or ends"
       expect(await restoredSql`select id, status, provider_message_id, to_address is null as address_dropped from platform.outbound
         where id like 'restore_text_%' order by id`).toEqual([
         { id: "restore_text_doubt", status: "sent", provider_message_id: "restore_fixture_doubt_id", address_dropped: false },
@@ -249,8 +233,6 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
         { id: "restore_text_waiting", status: "pending", provider_message_id: null, address_dropped: false },
       ]);
 
-      // spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"
-      // spec/databaseRestore.md, "The backend runs a queued erasure or leave only after the connector hooks are registered"
       await expect(back.start()).rejects.toThrow(/connector forget hooks/);
       expect(await restoredSql`select count(*)::int as n from oauth.grants where person_id = ${erased.id}`).toEqual([{ n: 1 }]);
       mcp = await createServiceMcp(back, { env: { PLATFORM_ENV: "dev" }, databaseUrl: urlOf(RESTORED), migrate: false, log: () => {} });
@@ -265,14 +247,12 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
         { kind: "stop", app_id: "slop", outcome: "applied", done: true, claimed_until: null },
         { kind: "ban", app_id: null, outcome: "applied", done: true, claimed_until: null },
       ]);
-      // spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers"
       expect(await restoredSql`select opted_out from network.members where app_id = 'slop' and id = ${stopMember!.id}`).toEqual([{ opted_out: true }]);
       expect(await back.people.getMembership(stopped.id, "slop")).toMatchObject({ state: "paused" });
       const slop = back.runtimeFor("slop")!;
       expect(await slop.readState(n => n.eligible(stopMember!.id as never))).toBe(false);
       expect(await back.accounts.personFor(erasing)).toBeUndefined();
       expect(await liveMembers(restoredSql, erased.id)).toEqual([]);
-      // spec/databaseRestore.md, "An erasure after the backup is replayed": the new join did not hide the erasure.
       expect(await back.accounts.personFor(rejoining)).toBeUndefined();
       expect(await liveMembers(restoredSql, rejoined.id)).toEqual([]);
       expect(await back.people.getMembership(rejoined.id, "slop")).toBeUndefined();
@@ -285,7 +265,6 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       const audit = (await back.audit.list({ actions: ["privacy_replay"], limit: 10 })).reverse().map(e => [e.actor, (e.detail as { phase: string }).phase]);
       expect(audit.slice(0, 2)).toEqual([["system:restore-replay", "requested"], ["system:restore-replay", "result"]]);
 
-      // An item that cannot run yet stays open and runs on a later replay; an item that another runner claims is not run.
       const held = newPhone(), claimed = newPhone();
       await joinByText(back, clock, held, "slop", "Gus");
       await joinByText(back, clock, claimed, "slop", "Hal");
@@ -300,12 +279,11 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       expect((await staff(back, "adm-tok", "/privacy/replay", { reason: REASON })).body.items).toEqual([{ kind: "erase", outcome: "applied", done: true }]);
       expect(await back.accounts.personFor(held)).toBeUndefined();
     } finally {
-      await (mcp?.store as unknown as { close?(): Promise<void> } | undefined)?.close?.();
+      if (mcp?.store instanceof PgOAuthStore) await mcp.store.close();
       await restoredSql.close();
     }
   }, T);
 
-  // spec/databaseRestore.md, "The backend runs a queued erasure or leave only after the connector hooks are registered"
   test("the deployed backend entry registers the connector hooks before the start-up replay removes a restored grant", async () => {
     await fresh();
     const clock = new SimClock(START);
@@ -320,10 +298,10 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
         ${new Date(clock.now())}, ${new Date(clock.now() + 30 * 24 * 60 * MINUTE)})`;
     const dir = await mkdtemp(join(tmpdir(), "privacy-boot-"));
     try {
-      await backup({ url: urlOf(DB), outDir: dir, roles: false });
+      await backup({ url: TEST_PG_URL, outDir: dir, roles: false });
       expect(await s.accounts.deleteAll({ e164: erasing, personId: erased.id })).toBe(true);
       await s.close();
-      const restored = await restore({ serverUrl: ADMIN_URL, db: BOOTED, dir, keepPrivileges: true, replayFrom: urlOf(DB) });
+      const restored = await restore({ serverUrl: ADMIN_URL, db: BOOTED, dir, keepPrivileges: true, replayFrom: TEST_PG_URL });
       expect(restored.privacy).toMatchObject({ erasures: 1 });
     } finally { await rm(dir, { recursive: true, force: true }); }
 

@@ -1,8 +1,3 @@
-// Export and erasure requests sent to help@ntwrk.party (Story F24), and the privacy replay after a restore,
-// on the staff port. The decisions are generated; this file reads requests, writes the request record and the
-// audit rows, and calls the member's own export and account erasure.
-// spec/accountPrivacy.md, "Story: Staff carry out an export or erasure request sent to support"
-// spec/databaseRestore.md, "Story: Carry privacy changes made after the backup into the restored database"
 import { randomUUID } from "node:crypto";
 import {
   privacySupportAllowed, privacySupportDecision, privacySupportExportApps, privacySupportOperation, privacySupportScopeAllowed,
@@ -39,14 +34,12 @@ const SCOPES: Record<string, PrivacySupportScope> = { app: "SupportOneApp", all:
 const operationName = (o: PrivacySupportOperation) => (o === "SupportErase" ? "erase" : "export");
 const scopeName = (s: PrivacySupportScope) => (s === "SupportEveryApp" ? "all" : "app");
 
-/** The answer to a confirm that the decision refused. */
 const REFUSALS: Record<Exclude<PrivacySupportDecision, "SupportProceeds" | "SupportAlreadyDone">, [string, number]> = {
   SupportUnavailable: ["request_unavailable", 404],
   SupportTargetChanged: ["target_changed", 409],
   SupportCodeRefused: ["code_refused", 403],
 };
 
-/** The staff privacy routes, or undefined for any other path. `user` is authenticated by the staff port. */
 export async function handlePrivacyStaff(svc: NetworkService, req: Request, path: string, user: StaffUser): Promise<Response | undefined> {
   const confirm = path.match(/^\/privacy\/requests\/([^/]+)\/confirm$/);
   if (path !== REQUESTS && path !== REPLAY && !confirm) return undefined;
@@ -55,7 +48,6 @@ export async function handlePrivacyStaff(svc: NetworkService, req: Request, path
   if (!body) return json({ ok: false, error: "invalid_body" }, 400);
   const reason = typeof body.reason === "string" ? body.reason.trim() : "";
   const roles = globalRolesFor(user);
-  // spec/accountPrivacy.md, "Only a global admin with a stated reason opens or confirms a support request"
   if (!privacySupportAllowed(roles, reason.length)) {
     return roles.includes("admin") ? json({ ok: false, error: "reason_required" }, 400) : json({ ok: false, code: "forbidden", error: "needs role admin@*" }, 403);
   }
@@ -66,7 +58,6 @@ export async function handlePrivacyStaff(svc: NetworkService, req: Request, path
   return startRequest(svc, user, reason, e164, body);
 }
 
-/** One audit row before a step and one after it: an action is never left without its result row. */
 async function audited(svc: NetworkService, user: StaffUser, entry: Pick<AuditEntry, "action" | "targetId" | "reason" | "detail">, run: () => Promise<{ ok: boolean; detail?: Record<string, unknown>; response: Response }>): Promise<Response> {
   const base = { actor: user.id, roles: user.roles, mode: "real" as const, targetType: "person" as const, ...entry };
   await svc.audit.write({ ...base, at: svc.clock.now(), ok: true, detail: { ...entry.detail, phase: "requested" } });
@@ -79,7 +70,6 @@ async function audited(svc: NetworkService, user: StaffUser, entry: Pick<AuditEn
   return result.response;
 }
 
-// spec/accountPrivacy.md, "A support export covers one app or every app, and an erasure covers every app"
 async function startRequest(svc: NetworkService, user: StaffUser, reason: string, e164: string, body: Body): Promise<Response> {
   const operation = typeof body.operation === "string" ? OPERATIONS[body.operation] : undefined;
   const scope = typeof body.scope === "string" ? SCOPES[body.scope] : operation === "SupportErase" ? "SupportEveryApp" : undefined;
@@ -93,15 +83,13 @@ async function startRequest(svc: NetworkService, user: StaffUser, reason: string
     const id = randomUUID();
     await svc.sql`insert into platform.privacy_requests (id, operation, app_id, scope, phone_hash, person_id, requested_by, created_at)
       values (${id}::uuid, ${operationName(operation)}, ${app}, ${scopeName(scope)}, ${phoneHash}, ${person?.id ?? null}::uuid, ${user.id}, ${new Date(svc.clock.now())})`;
-    // The person reads this code back to support: it proves that the writer holds the number.
-    const sent = await svc.publicApi.otp.start(svc.apps[app], e164, `staff:${user.id}`);
+    const sent = await svc.publicApi.otp.start(svc.apps[app], e164, `staff:${user.id}`, await svc.accounts.banned(e164));
     if (!sent.ok) return { ok: false, detail: { request: id, refused: "rate_limited" }, response: json({ ok: false, error: "rate_limited", retryAfterMs: sent.retryAfterMs }, 429) };
     const memberships = person ? (await svc.people.memberships(person.id)).filter(m => m.state !== "removed").map(m => ({ app: m.app, state: m.state })) : [];
     return { ok: true, detail: { request: id }, response: json({ ok: true, requestId: id, personId: person?.id ?? null, phone: maskPhone(e164), memberships, codeSent: true }) };
   });
 }
 
-// spec/accountPrivacy.md, "Staff act only on the confirmed person after a fresh code from the number"
 async function confirmRequest(svc: NetworkService, user: StaffUser, reason: string, id: string, e164: string, body: Body): Promise<Response> {
   if (!UUID.test(id)) return json({ ok: false, error: "request_unavailable" }, 404);
   const echoed = body.personId === null || typeof body.personId === "string" ? body.personId : undefined;
@@ -128,7 +116,6 @@ async function confirmRequest(svc: NetworkService, user: StaffUser, reason: stri
       await svc.sql`update platform.privacy_requests set completed_at = ${new Date(svc.clock.now())}, completed_by = ${user.id}, outcome = ${outcome}
         where id = ${id}::uuid and completed_at is null`;
     };
-    // spec/accountPrivacy.md, "A support request runs the member's own export or account erasure"
     if (privacySupportOperation(OPERATIONS[row!.operation]!) === "DeleteAccount") {
       if (!(await svc.accounts.deleteAll(who))) return { ok: false, detail: { refused: "erasure_refused" }, response: json({ ok: false, error: "erasure_refused" }, 409) };
       await complete("erased");
@@ -142,7 +129,6 @@ async function confirmRequest(svc: NetworkService, user: StaffUser, reason: stri
   });
 }
 
-/** Run the erasures, leaves, STOPs and bans that a restore queued (deploy/backup/privacy-replay.ts) on a staff call. */
 async function replay(svc: NetworkService, user: StaffUser, reason: string): Promise<Response> {
   return audited(svc, user, { action: "privacy_replay", targetId: "restore", reason, detail: {} }, async () => {
     const items = await runPrivacyReplay(svc, user);
@@ -150,17 +136,14 @@ async function replay(svc: NetworkService, user: StaffUser, reason: string): Pro
   });
 }
 
-/** The actor of the replay that the backend runs at start: the operator chose it with `restore.ts --replay`. */
-export const RESTORE_REPLAY_ACTOR: StaffUser = { id: "system:restore-replay", roles: ["admin", "safety"], grants: [{ role: "admin", app: "*" }, { role: "safety", app: "*" }], via: "token" };
+const RESTORE_REPLAY_ACTOR: StaffUser = { id: "system:restore-replay", roles: ["admin", "safety"], grants: [{ role: "admin", app: "*" }, { role: "safety", app: "*" }], via: "token" };
 
-/** At start, before the first tick: run the open replay items with an audit row before and after, and log what stays open. */
 export async function replayPrivacyAtStart(svc: NetworkService): Promise<void> {
   const [open] = await svc.sql<{ n: number; forget: boolean; connector: boolean }[]>`select count(*)::int as n,
     coalesce(bool_or(kind in ('erase', 'leave')), false) as forget, exists (select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'oauth' and c.relname = 'grants') as connector
     from platform.privacy_replay where replayed_at is null`;
   if (!open?.n) return;
-  // spec/databaseRestore.md, "The backend runs a queued erasure or leave only after the connector hooks are registered"
   if (!replayStartAllowed(open.forget, open.connector, svc.eraseHooksRegistered())) {
     throw new Error("refusing to start: the privacy replay has open erasures or leaves and the connector forget hooks are not registered; create the MCP server (createServiceMcp) before start");
   }
@@ -172,13 +155,11 @@ export async function replayPrivacyAtStart(svc: NetworkService): Promise<void> {
   });
 }
 
-/** A claim lasts this long: a runner that dies frees its items for the next start. */
 const CLAIM_MS = 10 * 60_000;
 const OUTCOMES: Record<ReplayOutcome, string> = {
   ReplayApplied: "applied", ReplayAlreadyApplied: "already", ReplayTargetHeld: "held", ReplayTargetWithoutPhone: "no_phone", ReplayRefused: "refused",
 };
 
-// spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"
 async function runPrivacyReplay(svc: NetworkService, user: StaffUser): Promise<{ kind: ReplayRow["kind"]; outcome: string; done: boolean }[]> {
   const ids = await svc.sql<{ id: string }[]>`select id::text from platform.privacy_replay where replayed_at is null
     order by case kind when 'erase' then 0 when 'leave' then 1 when 'stop' then 2 else 3 end, id`;
@@ -206,7 +187,6 @@ async function replayOne(svc: NetworkService, user: StaffUser, row: ReplayRow): 
     const m = await svc.people.getMembership(row.person_id, row.app_id!);
     const live = !!m && m.memberId === row.member_id && m.state !== "removed" && m.state !== "invited";
     if (!live) return ["ReplayAlreadyApplied"];
-    // spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers"
     if (row.kind === "stop") { await svc.replayStop(svc.apps[row.app_id!], row.person_id); return ["ReplayApplied"]; }
   }
   const [phone] = await svc.sql<{ e164: string; hold: string | null }[]>`select e164, hold from platform.phone_identities
@@ -215,9 +195,7 @@ async function replayOne(svc: NetworkService, user: StaffUser, row: ReplayRow): 
     if (!phone) return ["ReplayTargetWithoutPhone"];
     if (phone.hold !== null) return ["ReplayTargetHeld"];
     const who = { e164: phone.e164, personId: row.person_id };
-    // spec/databaseRestore.md, "An erasure after the backup is replayed"
     if (row.kind === "erase") return [(await svc.accounts.deleteAll(who)) ? "ReplayApplied" : "ReplayRefused"];
-    // spec/databaseRestore.md, "A leave after the backup is replayed"
     return [(await svc.accounts.leave(svc.apps[row.app_id!], who, { expectedMemberId: row.member_id! })) ? "ReplayApplied" : "ReplayRefused"];
   }
   const [ban] = await svc.sql<{ scope: "phone" | "person" }[]>`select scope from platform.bans
@@ -226,8 +204,7 @@ async function replayOne(svc: NetworkService, user: StaffUser, row: ReplayRow): 
   if (!ban) return ["ReplayAlreadyApplied"];
   const member = (await svc.people.memberships(row.person_id)).find(m => m.state !== "removed" && m.state !== "invited");
   const rt = member && await svc.runtimeOfMember(member.app, member.memberId);
-  // No live membership: the copied ban row already refuses the number, and nothing is left to project.
   if (!member || !rt) return ["ReplayAlreadyApplied", "no_member"];
   const resumed = await svc.ban(user, rt, member.memberId, ban.scope, "privacy replay after a restore");
-  return resumed.ok ? ["ReplayApplied"] : ["ReplayRefused", (resumed as { reason?: string }).reason ?? "unknown"];
+  return resumed.ok ? ["ReplayApplied"] : ["ReplayRefused", resumed.reason];
 }

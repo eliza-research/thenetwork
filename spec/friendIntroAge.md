@@ -2,7 +2,7 @@
 
 Owner decision 2026-11-22: a person aged 13 to 17 gets a single-player experience and friendship introductions only, never romance. The owner said: "We should only introduce teens to people over 13 and within 2 years of their age, unless they are 18." This module holds the age decisions for such an introduction. Every path that can put two people in touch calls them: the matching engine, the review desk, each send, the relay, the inbox updates and the teen sweep. The [member age](memberAge.md) module gives the birth keys and the age on a day. The [match lane](matchLane.md) module says which app and lane offer teen friendship: friends.help and the Friend lane of The Network on ntwrk.party. The teen introduction stop module (`spec/teenIntroSwitch.md`) holds the staff stop. Teen introductions are on from the start, and the parameter `teenIntros` means that staff have not stopped them. The whole-flow models call this rule `teenFriendAgeRule`.
 
-The safeguards: nobody aged 19 or more is ever introduced to, grouped with, shown to or relayed to a minor. Both people of a teen pair need an exact birth date. The review judge reviews every introduction with the strict rubric, and staff review only an introduction that the judge holds. Romance and work never admit a minor. A minor gets no number relay and no photo relay. A group with a minor is small, keeps every minor within 2 years of everyone in it, and meets at an all-ages public place. While staff have stopped teen introductions, every minor is single-player as before. Changed (owner decision 2026-11-22, D16, "Everything automated"): a person reviewed every introduction; now the review judge does, with the strict rubric for a roster with a minor. Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on at launch with only the normal review, also run in the ntwrk Friend lane, and also come as small groups; the staff age confirmation and the two-admin switch are gone, and one staff stop stays.
+The safeguards: nobody aged 19 or more is ever introduced to, grouped with, shown to or relayed to a minor. Both people of a teen pair need an exact birth date. The review judge reviews every introduction with the strict rubric, and staff review only an introduction that the judge holds. Romance and work never admit a minor. A minor gets no number relay and no photo relay. A group with a minor is small, keeps every minor within 2 years of everyone in it, and meets at an all-ages public place. While staff have stopped teen introductions, every minor is single-player as before. Changed (owner decisions D1 and D16 of 2026-11-22): teen introductions are on at launch, also run in the ntwrk Friend lane and also come as small groups, the review judge replaces staff review, and one staff stop replaces the staff age confirmation and the two-admin switch.
 
 ## Story: Introduce a minor for friendship only to people close in age
 
@@ -10,7 +10,7 @@ The safeguards: nobody aged 19 or more is ever introduced to, grouped with, show
 
 ### A teen partner is 13 to 18 on every day of the introduction
 
-A person in a teen introduction is at least 13 on the earliest day of the check and at most 18 on the latest day. The earliest day is the earliest civil date on Earth now. The latest day is the latest civil date on Earth at the later of now and the end of the meeting. So a person who becomes 19 anywhere on Earth before the meeting ends is not a teen partner.
+A person in a teen introduction is at least 13 on the earliest day of the check and at most 18 on the latest day. The earliest day is the earliest civil date on Earth now. The latest day is the latest civil date on Earth at the later of now and the end of the meeting. So a person who becomes 19 anywhere on Earth before the meeting ends is not a teen partner. Changed (owner decision D1 of 2026-11-22): this rule is new, because the owner allowed friendship introductions to people aged 13 to 18.
 
 ```quint
 import memberAge as Age from "./memberAge"
@@ -18,10 +18,8 @@ import memberAge as Age from "./memberAge"
 pure val teenFriendMinAge: int = 13
 pure val teenFriendMaxAge: int = 18
 
-pure def teenAgesOk(birthKey: int, minDay: int, maxDay: int): bool =
+pure def teenPartnerAge(birthKey: int, minDay: int, maxDay: int): bool =
   Age::ageOnDay(birthKey, minDay) >= teenFriendMinAge and Age::ageOnDay(birthKey, maxDay) <= teenFriendMaxAge
-
-pure def teenPartnerAge(birthKey: int, minDay: int, maxDay: int): bool = teenAgesOk(birthKey, minDay, maxDay)
 
 pure val birthKeyValues = Set(19950101, 20071122, 20071123, 20080301, 20081123, 20091122, 20100315, 20101122, 20120315, 20120316, 20131122, 20131123)
 pure val minDayValues = Set(20261121, 20261122, 20280229)
@@ -30,7 +28,7 @@ pure val maxDayValues = Set(20261122, 20261123, 20280301)
 
 ### Two teen birth dates are at most 2 calendar years apart
 
-The owner's "within 2 years" is read by birth date: the two birth dates are at most 2 calendar years apart. Born 15 March 2010 and 15 March 2012 is allowed. Born 14 March 2010 and 15 March 2012 is not.
+The owner's "within 2 years" is read by birth date: the two birth dates are at most 2 calendar years apart. Born 15 March 2010 and 15 March 2012 is allowed. Born 14 March 2010 and 15 March 2012 is not. Changed (owner decision D1 of 2026-11-22): this rule is new; it reads the owner's "within 2 years of their age" as a gap between birth dates, because a gap between ages would change on each birthday.
 
 ```quint
 pure val teenBirthGap: int = 20000
@@ -61,9 +59,21 @@ pure def lawAnyDoubtMakesUnready(birthExact: bool, ageConflict: bool, minorSigna
     implies not(ageConflict or minorSignalOpen or minorReported or olderReported or barred)
 ```
 
-### A pair with a minor needs the switch, a friendship lane and the age rule
+### A teen-ready person needs no staff verification on friends.help
 
-Two adults pair as before. A pair in which one person is not an adult is allowed only when staff have not stopped teen introductions (`teenIntros`), the item is in a friendship lane, both people are teen ready, both are 13 to 18 on every day of the introduction, at least one of them is under 18 on the earliest day, and their birth dates are at most 2 years apart. So a 15-year-old can meet a 17-year-old and a 16-year-old can meet an 18-year-old, but nobody aged 19 or more meets a minor. While teen introductions are stopped, the rule is the adult rule. Changed (owner decision 2026-11-22, answers A2 to A5): `teenIntros` is now true unless one staff member stopped teen introductions, because the owner chose "On at launch, no extra checks"; the decision itself did not change.
+On friends.help an adult is matched only after the staff liveness and age checks pass. A teen-ready person needs no such check: the exact birth date and the teen-ready state are the check. Changed (owner decision 2026-11-22, D1): the friends pack refused every person without the staff checks, so a teen-ready minor was never matched in production, because only the staff verify step writes those checks and the owner removed the staff confirm-age step.
+
+```quint
+pure def friendsVerifyPasses(teenReady: bool, staffVerified: bool): bool = teenReady or staffVerified
+
+pure def lawTeenReadyNeedsNoStaffVerify(staffVerified: bool): bool = friendsVerifyPasses(true, staffVerified)
+
+pure def lawUnreadyNeedsStaffVerify(staffVerified: bool): bool = friendsVerifyPasses(false, staffVerified) == staffVerified
+```
+
+### A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule
+
+Two adults pair as before. A pair in which one person is not an adult is allowed only when staff have not stopped teen introductions (`teenIntros`), the item is in a friendship lane, both people are teen ready, both are 13 to 18 on every day of the introduction, at least one of them is under 18 on the earliest day, and their birth dates are at most 2 years apart. So a 15-year-old can meet a 17-year-old and a 16-year-old can meet an 18-year-old, but nobody aged 19 or more meets a minor. While teen introductions are stopped, the rule is the adult rule. Changed (owner decision D1 of 2026-11-22, "On at launch, no extra checks"): `teenIntros` is now true unless one staff member stopped teen introductions; before, it was true only after two admins turned it on.
 
 ```quint
 type AgeSide = { adult: bool, ready: bool, birthKey: int }
@@ -71,7 +81,7 @@ type AgeSide = { adult: bool, ready: bool, birthKey: int }
 pure def teenPairAllowed(teenIntros: bool, friendshipLane: bool, minDay: int, maxDay: int,
     firstReady: bool, firstKey: int, secondReady: bool, secondKey: int): bool =
   teenIntros and friendshipLane and firstReady and secondReady
-    and teenAgesOk(firstKey, minDay, maxDay) and teenAgesOk(secondKey, minDay, maxDay)
+    and teenPartnerAge(firstKey, minDay, maxDay) and teenPartnerAge(secondKey, minDay, maxDay)
     and (Age::ageOnDay(firstKey, minDay) < Age::adultAge or Age::ageOnDay(secondKey, minDay) < Age::adultAge)
     and birthKeysWithinTwoYears(firstKey, secondKey)
 
@@ -88,7 +98,7 @@ pure def lawAdultPairUnchanged(teenIntros: bool, friendshipLane: bool, minDay: i
   (firstAdult and secondAdult)
     implies pairAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, firstAdult, firstReady, firstKey, secondAdult, secondReady, secondKey)
 
-pure def lawSwitchOffIsTheAdultRule(friendshipLane: bool, minDay: int, maxDay: int,
+pure def lawStoppedIsTheAdultRule(friendshipLane: bool, minDay: int, maxDay: int,
     firstAdult: bool, firstReady: bool, firstKey: int, secondAdult: bool, secondReady: bool, secondKey: int): bool =
   pairAgeAllowed(false, friendshipLane, minDay, maxDay, firstAdult, firstReady, firstKey, secondAdult, secondReady, secondKey)
     == (firstAdult and secondAdult)
@@ -152,9 +162,9 @@ pure def viaAllowedForRoster(members: List[AgeSide]): bool = not(rosterHasMinor(
 
 pure def lawGroupWithMinorHoldsOnlyTeenAges(teenIntros: bool, friendshipLane: bool, minDay: int, maxDay: int, roster: List[AgeSide]): bool =
   (groupAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, roster) and rosterHasMinor(roster))
-    implies roster.every(side => side.ready and teenAgesOk(side.birthKey, minDay, maxDay))
+    implies roster.every(side => side.ready and teenPartnerAge(side.birthKey, minDay, maxDay))
 
-pure def lawGroupSwitchOffAdultsOnly(friendshipLane: bool, minDay: int, maxDay: int, roster: List[AgeSide]): bool =
+pure def lawGroupStoppedAdultsOnly(friendshipLane: bool, minDay: int, maxDay: int, roster: List[AgeSide]): bool =
   groupAgeAllowed(false, friendshipLane, minDay, maxDay, roster) == roster.every(side => side.adult)
 
 pure def lawViaNeverWithAMinor(roster: List[AgeSide]): bool =
@@ -181,7 +191,7 @@ pure val rosterValues = Set(
 A group plan, table, crew or circle may hold a minor. In such a group, every person is teen ready and aged 13 to 18 on every day of the introduction, so nobody in it is 19 or more on the latest day, and each minor's birth date is at most 2 calendar years from the birth date of every other person in it. Two 18-year-olds in the group pass as an adult pair whatever their gap, because each of them is still within 2 years of each minor. Changed (owner decision 2026-11-22, answers A2 to A5): this rule is new, because the owner allowed small teen groups ("Also small teen groups").
 
 ```quint
-pure def teenSideFits(side: AgeSide, minDay: int, maxDay: int): bool = side.ready and teenAgesOk(side.birthKey, minDay, maxDay)
+pure def teenSideFits(side: AgeSide, minDay: int, maxDay: int): bool = side.ready and teenPartnerAge(side.birthKey, minDay, maxDay)
 
 pure def lawGroupNineteenNeverWithAMinor(teenIntros: bool, friendshipLane: bool, minDay: int, maxDay: int, roster: List[AgeSide]): bool =
   (groupAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, roster) and rosterHasMinor(roster))
@@ -278,7 +288,7 @@ pure val ageMinValues = Set(0, 12, 13, 14, 18, 21)
 
 ### A minor gets moderated text relay only
 
-Two adults keep every relay kind. A minor gets a text item only, and only inside a teen pair that passes the pair rule at that moment. A phone number, a photo or any other item that is not text is never relayed from or to a minor.
+Two adults keep every relay kind. A minor gets a text item only, and only inside a teen pair that passes the pair rule at that moment. A phone number, a photo or any other item that is not text is never relayed from or to a minor. Changed (owner decision D1 of 2026-11-22): this rule is new; before, a minor had no relay of any kind, because a minor had no introductions.
 
 ```quint
 pure def relayKindAllowed(textItem: bool, bothAdults: bool, teenPair: bool): bool = bothAdults or (textItem and teenPair)
@@ -290,15 +300,15 @@ pure def lawAdultRelayUnchanged(textItem: bool, teenPair: bool): bool = relayKin
 
 ### A minor stays single-player unless a teen introduction is open to them
 
-A minor is a teen friend candidate only when staff have not stopped teen introductions, the app offers teen friendship, the minor is teen ready, and the minor is 13 to 17 on the earliest day and at most 18 on the latest day. Every other minor is single-player exactly as before. An adult is never single-player because of age. Changed (owner decision 2026-11-22, answers A2 to A5): `teenIntros` is true unless staff stopped teen introductions, and `teenApp` is true on friends.help and on ntwrk.party; the decision itself did not change.
+A minor is a teen friend candidate only when staff have not stopped teen introductions, the app offers teen friendship, the minor is teen ready, and the minor is 13 to 17 on the earliest day and at most 18 on the latest day. Every other minor is single-player exactly as before. An adult is never single-player because of age. Changed (owner decision D1 of 2026-11-22): `teenIntros` is now true unless staff stopped teen introductions, and `teenApp` is now true on ntwrk.party as well as on friends.help.
 
 ```quint
 pure def teenFriendCandidate(adult: bool, ready: bool, birthKey: int, minDay: int, maxDay: int, teenIntros: bool, teenApp: bool): bool =
-  not(adult) and teenIntros and teenApp and ready and teenAgesOk(birthKey, minDay, maxDay) and Age::ageOnDay(birthKey, minDay) < Age::adultAge
+  not(adult) and teenIntros and teenApp and ready and teenPartnerAge(birthKey, minDay, maxDay) and Age::ageOnDay(birthKey, minDay) < Age::adultAge
 
 pure def singlePlayerMember(adult: bool, teenCandidate: bool): bool = not(adult) and not(teenCandidate)
 
-pure def lawSwitchOffMinorIsSinglePlayer(adult: bool, ready: bool, birthKey: int, minDay: int, maxDay: int, teenApp: bool): bool =
+pure def lawStoppedMinorIsSinglePlayer(adult: bool, ready: bool, birthKey: int, minDay: int, maxDay: int, teenApp: bool): bool =
   not(adult) implies singlePlayerMember(adult, teenFriendCandidate(adult, ready, birthKey, minDay, maxDay, false, teenApp))
 
 pure def lawUnreadyMinorIsSinglePlayer(adult: bool, birthKey: int, minDay: int, maxDay: int, teenIntros: bool, teenApp: bool): bool =
@@ -309,7 +319,7 @@ pure def lawAdultIsNeverSinglePlayerByAge(teenCandidate: bool): bool = not(singl
 
 ### A statement opens a minor signal only on new evidence
 
-A statement opens a person minor signal when the record does not already know that the person is a minor, or when the person says an age lower than the record. A teen who states the age that the record already holds opens nothing, so the statement does not take the teen out of the teen pool. Changed (owner decision 2026-11-22, answers A2 to A5): the staff age confirmation is removed, so an open signal is now what would take a teen out of the pool; the decision itself did not change.
+A statement opens a person minor signal when the record does not already know that the person is a minor, or when the person says an age lower than the record. A teen who states the age that the record already holds opens nothing, so the statement does not take the teen out of the teen pool. Changed (owner decision D1 of 2026-11-22): with the staff age confirmation removed, an open signal takes a ready teen out of the teen pool until staff clear it, so this rule keeps a teen who repeats the age on the record in the pool.
 
 ```quint
 pure def minorSignalOpens(recordKnownMinor: bool, saysYounger: bool): bool = not(recordKnownMinor) or saysYounger

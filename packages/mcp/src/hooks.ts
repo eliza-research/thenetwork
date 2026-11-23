@@ -1,5 +1,6 @@
 import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { canJoinApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
+import { canJoinApp, effectiveAgeAt, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
+import type { PhotoAccessState } from "@thenetwork/platform/src/photo-relay.ts";
 import type { McpAppId } from "./apps.ts";
 import { connectorMembershipStatus, type MemberStatus } from "../../core/src/generated/connectorTools.ts";
 import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
@@ -52,27 +53,25 @@ export interface LookingForView {
   checkWithPerson: { ref: string; summary: string; reason: "said_not_wanted" | "ended_recently" }[];
 }
 
-export type LookingForChange = "pause" | "resume";
+type LookingForChange = "pause" | "resume";
 
 export type LookingForResult =
   | { kind: "applied"; entry: LookingForEntry; notice: string }
   | { kind: "unchanged"; entry: LookingForEntry }
   | { kind: "refused"; reason: "unknown_ref" | "daily_limit" | "closed" | "posting" | "adults_only" | "texts_off" | "not_member" };
 
-export type PhotoShareState = "asked" | "checking" | "ready" | "taken_back";
-
 export interface PhotoHolding {
   number: number;
   name: string | null;
   addedOn: string;
-  sharedWith: { firstName: string; state: PhotoShareState }[];
+  sharedWith: { firstName: string; state: PhotoAccessState }[];
 }
 
 export interface PhotoHoldingsView { text: string; photos: PhotoHolding[] }
 
 export type PhotoRequestStatus = "texted" | "done" | "refused" | "unavailable";
 
-export interface PhotoRequestResult { status: PhotoRequestStatus; text: string }
+interface PhotoRequestResult { status: PhotoRequestStatus; text: string }
 
 export interface PlatformHooks {
   cloudAuthorityRequired?(app: McpAppId): boolean;
@@ -88,11 +87,11 @@ export interface PlatformHooks {
   personForKey(phoneKey: string): Promise<string | null>;
   grantOwner(phoneKey: string): Promise<{ personId: string | null; held: boolean }>;
   grantIsBanned(phoneKey: string, personId: string | null): Promise<boolean>;
-  signupAgeAllowed?(phoneKey: string, app: McpAppId): Promise<boolean>;
+  signupAgeAllowed(phoneKey: string, app: McpAppId, at: number): Promise<boolean>;
   status(personId: string, app: McpAppId, phoneKey: string): Promise<PublicStatus>;
-  minorMember?(personId: string, app: McpAppId, phoneKey: string): Promise<boolean>;
+  minorMember(personId: string, phoneKey: string): Promise<boolean>;
   minorNotice?(personId: string, app: McpAppId, phoneKey: string): Promise<MinorNotice | undefined>;
-  readProfile?(personId: string, app: McpAppId, phoneKey: string): Promise<SavedProfileFields | undefined>;
+  readProfile(personId: string, app: McpAppId, phoneKey: string): Promise<SavedProfileFields | undefined>;
   submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped">;
   lookingFor?(personId: string, app: McpAppId, phoneKey: string): Promise<LookingForView | undefined>;
   changeLookingFor?(personId: string, app: McpAppId, phoneKey: string, grantId: string, ref: string, change: LookingForChange): Promise<LookingForResult>;
@@ -149,6 +148,10 @@ function cookieValue(header: string | null, name: string): string | undefined {
 
 export function platformHooks(p: PlatformParts): PlatformHooks {
   const cookieName = p.cookieName ?? (() => "__Host-sid");
+  const ownerE164 = async (personId: string, key: string): Promise<string | undefined> => {
+    const who = await p.accounts.byPhoneHash(key);
+    return who && who.person.id === personId ? who.e164 : undefined;
+  };
   const siteCookie = (id: McpAppId, token: string) =>
     `${cookieName(id)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${p.sessionMaxAge ?? 30 * 24 * 3600}${p.secureCookie === false ? "" : "; Secure"}`;
   return {
@@ -189,53 +192,49 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     async grantIsBanned(key, personId) {
       return p.store.isBanned(key, personId ?? (await p.accounts.byPhoneHash(key))?.person.id ?? null);
     },
-    async signupAgeAllowed(key, id) {
+    async signupAgeAllowed(key, id, at) {
       const app = p.app(id);
-      const age = lowestAge(await p.store.ageFloor(key), (await p.accounts.byPhoneHash(key))?.person.lowestAge);
+      const owner = await p.accounts.byPhoneHash(key);
+      const age = effectiveAgeAt(await p.store.ageStanding(owner?.person.id ?? null, key), at);
       return !!app && (age === undefined || canJoinApp(age, app));
     },
     ...(p.submitProfile ? {
       profileSubmissionFingerprint: (app: McpAppId, grantId: string, text: string) => p.accounts.profileSubmissionFingerprint(app, grantId, text),
       submitProfile: async (personId: string, id: McpAppId, key: string, text: string) => {
-        const who = await p.accounts.byPhoneHash(key);
-        if (!who || who.person.id !== personId) return "not_member";
-        if (resolveConsent(await p.store.lastConsent(who.e164, id)) === "opted_out") return "stopped";
-        return p.submitProfile!(personId, id, who.e164, text);
+        const e164 = await ownerE164(personId, key);
+        if (!e164) return "not_member";
+        if (resolveConsent(await p.store.lastConsent(e164, id)) === "opted_out") return "stopped";
+        return p.submitProfile!(personId, id, e164, text);
       },
     } : {}),
     ...(p.lookingFor ? {
       lookingFor: async (personId: string, id: McpAppId, key: string) => {
-        const who = await p.accounts.byPhoneHash(key);
-        if (!who || who.person.id !== personId) return undefined;
-        return p.lookingFor!(personId, id, who.e164);
+        const e164 = await ownerE164(personId, key);
+        return e164 ? p.lookingFor!(personId, id, e164) : undefined;
       },
     } : {}),
     ...(p.minorNotice ? {
       minorNotice: async (personId: string, id: McpAppId, key: string) => {
-        const who = await p.accounts.byPhoneHash(key);
-        if (!who || who.person.id !== personId) return undefined;
-        return p.minorNotice!(personId, id, who.e164);
+        const e164 = await ownerE164(personId, key);
+        return e164 ? p.minorNotice!(personId, id, e164) : undefined;
       },
     } : {}),
     ...(p.changeLookingFor ? {
       changeLookingFor: async (personId: string, id: McpAppId, key: string, grantId: string, ref: string, change: LookingForChange): Promise<LookingForResult> => {
-        const who = await p.accounts.byPhoneHash(key);
-        if (!who || who.person.id !== personId) return { kind: "refused", reason: "not_member" };
-        return p.changeLookingFor!(personId, id, who.e164, grantId, ref, change);
+        const e164 = await ownerE164(personId, key);
+        return e164 ? p.changeLookingFor!(personId, id, e164, grantId, ref, change) : { kind: "refused", reason: "not_member" };
       },
     } : {}),
     ...(p.photoHoldings ? {
       photoHoldings: async (personId: string, id: McpAppId, key: string) => {
-        const who = await p.accounts.byPhoneHash(key);
-        if (!who || who.person.id !== personId) return undefined;
-        return p.photoHoldings!(personId, id, who.e164);
+        const e164 = await ownerE164(personId, key);
+        return e164 ? p.photoHoldings!(personId, id, e164) : undefined;
       },
     } : {}),
     ...(p.photoRequest ? {
       photoRequest: async (personId: string, id: McpAppId, key: string, words: string): Promise<PhotoRequestResult> => {
-        const who = await p.accounts.byPhoneHash(key);
-        if (!who || who.person.id !== personId) return { status: "unavailable", text: "" };
-        return p.photoRequest!(personId, id, who.e164, words);
+        const e164 = await ownerE164(personId, key);
+        return e164 ? p.photoRequest!(personId, id, e164, words) : { status: "unavailable", text: "" };
       },
     } : {}),
     ...(p.updates ? { updates: p.updates } : {}),
@@ -243,22 +242,22 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     async status(personId, id, key) {
       const app = p.app(id);
       if (!app) return "not_joined";
-      const who = await p.accounts.byPhoneHash(key);
-      if (!who || who.person.id !== personId) return "on_hold";
+      const e164 = await ownerE164(personId, key);
+      if (!e164) return "on_hold";
       const m = await p.store.getMembership(personId, app.id);
-      const optedOut = resolveConsent(await p.store.lastConsent(who.e164, app.id)) === "opted_out";
+      const optedOut = resolveConsent(await p.store.lastConsent(e164, app.id)) === "opted_out";
       return publicStatus(m?.state, m?.review, optedOut);
     },
-    async minorMember(personId, _id, key) {
+    async minorMember(personId, key) {
       const who = await p.accounts.byPhoneHash(key);
       if (!who || who.person.id !== personId) return true;
       return !canBeMatched(await p.accounts.lowestAge(who.e164, who.person));
     },
     async readProfile(personId, id, key) {
       const app = p.app(id);
-      const who = await p.accounts.byPhoneHash(key);
-      if (!app || !who || who.person.id !== personId) return;
-      const own = await p.accounts.activeMembership(app, { e164: who.e164, personId });
+      const e164 = await ownerE164(personId, key);
+      if (!app || !e164) return;
+      const own = await p.accounts.activeMembership(app, { e164, personId });
       if (!own) return;
       const { firstName, profile } = own.membership;
       return { firstName, about: profile.about, interests: profile.interests, neighborhood: profile.neighborhood, homeCity: profile.homeCity };

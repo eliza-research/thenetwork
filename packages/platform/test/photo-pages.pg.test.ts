@@ -12,6 +12,8 @@ import { LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, PhotoService } from
 import { PgPeopleStore } from "../src/pg-store.ts";
 import { dropDb, migratedDb, pgAvailable } from "./pg.ts";
 
+interface PagePhoto { n: number; shared?: boolean; label?: string | null; addedOn?: string; access?: unknown }
+interface PageAnswer { notice?: string; photos?: PagePhoto[]; [key: string]: unknown }
 const T = 120_000;
 const HOUR = 60 * 60_000;
 const SECRET = /ph_|pdr_|pof_|pri_|member_|[a-f0-9]{64}|sha256|https?:/;
@@ -54,14 +56,14 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     });
     const consents: [string, number][] = [], takeBacks: [number[], string][] = [];
     const pages = new PhotoPages({
-      sql, relay, photos, now: () => now,
+      sql, relay, photos,
       actions: {
         consent: async (_p, _a, draftId, revision) => { consents.push([draftId, revision]); return { state: "offered" }; },
         takeBack: async (_p, _a, numbers, firstName) => { takeBacks.push([numbers, firstName]); return { state: "taken_back" }; },
-        report: async (recipientPersonId, _a, offerId) => (await sql.begin(tx => relay.report(tx as unknown as SQL, offerId, recipientPersonId))) ? { state: "reported" } : undefined,
+        report: async (recipientPersonId, _a, offerId) => (await sql.begin(tx => relay.report(tx, offerId, recipientPersonId))) ? { state: "reported" } : undefined,
       },
     });
-    const draft = (proposed: number[]) => sql.begin(tx => relay.saveDraft(tx as unknown as SQL, {
+    const draft = (proposed: number[]) => sql.begin(tx => relay.saveDraft(tx, {
       personId: sender, app: "slop", purpose: "send", threadId: "thread_pages", recipientMemberId: "member_recipient",
       shownIds: ids, proposedIds: proposed.map(n => ids[n - 1]!), wantsSet: proposed.length > 1, listed: false, prompt: { via: "send" },
     }));
@@ -72,28 +74,29 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
       const setCookie = res.headers.get("set-cookie");
       const type = res.headers.get("content-type") ?? "";
       return { status: res.status, type, cookie: setCookie ? /__Host-photo-page=([A-Za-z0-9_-]{43})/.exec(setCookie)![1]! : undefined, setCookie,
-        body: type.startsWith("application/json") ? await res.json() as any : new Uint8Array(await res.arrayBuffer()) };
+        body: type.startsWith("application/json") ? await res.json() as PageAnswer : undefined,
+        bytes: type.startsWith("application/json") ? undefined : new Uint8Array(await res.arrayBuffer()) };
     };
     const token = (link: string) => link.split("#")[1]!;
     const ask = async (proposed: number[]) => {
       const d = await draft(proposed);
-      return sql.begin(async tx => (await relay.prepareOffer(sender, "slop", d.draftId, d.revision, now))!.commit(tx as unknown as SQL));
+      return sql.begin(async tx => (await relay.prepareOffer(sender, "slop", d.draftId, d.revision, now))!.commit(tx));
     };
     const ready = async (proposed: number[]) => {
       const offer = await ask(proposed);
       expect(offer.phase).toBe("asking");
-      expect((await sql.begin(tx => relay.answer(tx as unknown as SQL, offer.offerId!, recipient, "yes"))).outcome).toBe("taken");
+      expect((await sql.begin(tx => relay.answer(tx, offer.offerId!, recipient, "yes"))).outcome).toBe("taken");
       for (const d of await relay.screensDue("slop", offer.offerId)) expect(await relay.screen(d.itemId)).toBe("ReleasePhoto");
-      const settled = await sql.begin(tx => relay.settle(tx as unknown as SQL, offer.offerId!));
+      const settled = await sql.begin(tx => relay.settle(tx, offer.offerId!));
       expect(settled?.phase).toBe("ready");
       return { offerId: offer.offerId!, link: settled!.viewLink! };
     };
     const access = async () => (await relay.holdings(sender, "slop")).map(h => h.access);
     const sharedWith = async () => (await relay.slots(sender, "slop")).map(s => s.sharedWith);
     const noticesOf = async (offerId: string) => (await relay.notices("slop")).filter(n => n.offerId === offerId).map(n => n.notice);
-    const withdraw = (photoIds: string[] | null) => sql.begin(tx => relay.withdraw(tx as unknown as SQL, "slop", sender, "thread_pages", photoIds));
-    const yes = async (offerId: string) => expect((await sql.begin(tx => relay.answer(tx as unknown as SQL, offerId, recipient, "yes"))).outcome).toBe("taken");
-    const settle = (offerId: string) => sql.begin(tx => relay.settle(tx as unknown as SQL, offerId));
+    const withdraw = (photoIds: string[] | null) => sql.begin(tx => relay.withdraw(tx, "slop", sender, "thread_pages", photoIds));
+    const yes = async (offerId: string) => expect((await sql.begin(tx => relay.answer(tx, offerId, recipient, "yes"))).outcome).toBe("taken");
+    const settle = (offerId: string) => sql.begin(tx => relay.settle(tx, offerId));
     const itemsOf = async (offerId: string) => (await sql`select id, state, screen_attempts, reviewer_id from platform.photo_relay_items where offer_id = ${offerId} order by array_position(${ids}::text[], photo_id)`)
       .map((r: any) => ({ id: r.id as string, state: r.state as string, attempts: r.screen_attempts as number, reviewer: r.reviewer_id as string | null }));
     return {
@@ -110,9 +113,9 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(opened.status).toBe(200);
     expect(opened.setCookie).toMatch(/^__Host-photo-page=[A-Za-z0-9_-]{43}; Path=\/; Secure; HttpOnly; SameSite=Strict$/);
     expect(opened.body).toMatchObject({ purpose: "check", toFirstName: "Your match", revision: 1, proposed: [1] });
-    expect(opened.body.photos.map((p: any) => [p.n, p.shared])).toEqual([[1, false], [2, false], [3, false]]);
-    expect(opened.body.notice).toContain("can view it until you take it back");
-    expect(opened.body.notice).not.toContain("24 hours");
+    expect(opened.body!.photos!.map(p => [p.n, p.shared])).toEqual([[1, false], [2, false], [3, false]]);
+    expect(opened.body!.notice).toContain("can view it until you take it back");
+    expect(opened.body!.notice).not.toContain("24 hours");
     expect(JSON.stringify(opened.body)).not.toMatch(SECRET);
     const phone = opened.cookie!;
     expect(await w.call("open", { token: w.token(first.link!) }, "x".repeat(43))).toMatchObject({ status: 403, body: { error: "other_device" } });
@@ -293,7 +296,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(await w.call("open", { token: w.token(first.link) }, phone)).toMatchObject({ status: 200, body: { purpose: "view", count: 1 } });
     const kept = await w.call("image", { token: w.token(first.link), n: 1 }, phone);
     expect(kept.status).toBe(200);
-    expect(w.numberOf({ bytes: kept.body as Uint8Array, contentType: "image/jpeg" })).toBe(2);
+    expect(w.numberOf({ bytes: kept.bytes!, contentType: "image/jpeg" })).toBe(2);
     expect(await w.call("image", { token: w.token(first.link), n: 2 }, phone)).toMatchObject({ status: 404, body: { error: "not_found" } });
     expect(await w.settle(first.offerId)).toMatchObject({ phase: "ready", changed: false });
     expect(await w.photos.remove(w.sender, "slop", w.ids[1]!)).toBe(true);
@@ -323,7 +326,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(link).toMatch(/^https:\/\/slop\.date\/photos\/mine#[A-Za-z0-9_-]{43}$/);
     const mine = await w.call("open", { token: w.token(link!) });
     expect(mine).toMatchObject({ status: 200, body: { purpose: "mine" } });
-    expect(mine.body.photos.map((p: any) => [p.n, p.label, p.addedOn, p.access])).toEqual([
+    expect(mine.body!.photos!.map(p => [p.n, p.label, p.addedOn, p.access])).toEqual([
       [1, "beach", "2026-11-22", [{ firstName: "Your match", state: "ready" }]], [2, "beach day", "2026-11-22", []], [3, null, "2026-11-22", []],
     ]);
     expect(JSON.stringify(mine.body)).not.toMatch(SECRET);
@@ -336,12 +339,12 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const w = await world();
     const asked = await w.ask([1]);
     expect(asked).toMatchObject({ admission: "OfferAsk", phase: "asking" });
-    expect(await sql.begin(tx => w.relay.answer(tx as unknown as SQL, asked.offerId!, w.recipient, "no"))).toMatchObject({ outcome: "declined" });
+    expect(await sql.begin(tx => w.relay.answer(tx, asked.offerId!, w.recipient, "no"))).toMatchObject({ outcome: "declined" });
     const askedLine = [{ firstName: "Your match", state: "asked" }];
     expect(await w.access()).toEqual([askedLine, [], []]);
     expect(await w.sharedWith()).toEqual([["member_recipient"], [], []]);
     const mine = await w.call("open", { token: w.token((await w.relay.mineLink(w.sender, "slop"))!) });
-    expect(mine.body.photos.map((p: any) => p.access)).toEqual([askedLine, [], []]);
+    expect(mine.body!.photos!.map(p => p.access)).toEqual([askedLine, [], []]);
     expect(await w.noticesOf(asked.offerId!)).toEqual([]);
     w.tick(24 * HOUR);
     expect(await w.access()).toEqual([[], [], []]);
@@ -349,7 +352,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(await w.noticesOf(asked.offerId!)).toEqual(["TellNotTaken"]);
 
     const s = await world();
-    await sql.begin(tx => s.relay.setNever(tx as unknown as SQL, s.recipient, "slop", true));
+    await sql.begin(tx => s.relay.setNever(tx, s.recipient, "slop", true));
     const silent = await s.ask([2]);
     expect(silent).toMatchObject({ admission: "OfferSilentDecline", phase: "declined" });
     expect(await s.access()).toEqual([[], askedLine, []]);
@@ -424,12 +427,12 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const ao = (await a.ask([1])).offerId!, bo = (await b.ask([1])).offerId!;
     const order = async () => { const due = await a.relay.due("slop", 1000); return [due.indexOf(ao), due.indexOf(bo)]; };
     a.tick(HOUR);
-    await sql.begin(tx => a.relay.settle(tx as unknown as SQL, ao));
+    await sql.begin(tx => a.relay.settle(tx, ao));
     const [a1, b1] = await order();
     expect(b1).toBeGreaterThanOrEqual(0);
     expect(b1).toBeLessThan(a1!);
     b.tick(2 * HOUR);
-    await sql.begin(tx => b.relay.settle(tx as unknown as SQL, bo));
+    await sql.begin(tx => b.relay.settle(tx, bo));
     const [a2, b2] = await order();
     expect(a2).toBeGreaterThanOrEqual(0);
     expect(a2).toBeLessThan(b2!);
@@ -452,7 +455,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(await f.relay.prepareOffer(f.sender, "friends", d.draftId, d.revision, Date.UTC(2026, 10, 22, 20))).toBeUndefined();
     expect(await f.relay.mineLink(f.sender, "friends")).toBeUndefined();
     const prepared = (await f.relay.prepareOffer(f.sender, "slop", d.draftId, d.revision, Date.UTC(2026, 10, 22, 20)))!;
-    const both = await Promise.all([sql.begin(tx => prepared.commit(tx as unknown as SQL)), sql.begin(tx => prepared.commit(tx as unknown as SQL))]);
+    const both = await Promise.all([sql.begin(tx => prepared.commit(tx)), sql.begin(tx => prepared.commit(tx))]);
     expect(new Set(both.map(c => c.offerId)).size).toBe(1);
     expect(both.map(c => c.replayed).sort()).toEqual([false, true]);
     expect(Number((await sql`select count(*)::int as n from platform.photo_offers where sender_person_id = ${f.sender}::uuid`)[0].n)).toBe(1);
@@ -460,7 +463,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const offerId = both[0]!.offerId!;
     await sql`insert into platform.photo_relay_requests (sender_person_id, app_id, request_id, request_hash, item_id)
       values (${f.sender}::uuid, 'slop', ${`${offerId}_${f.ids[1]!}`}, ${"a".repeat(64)}, ${`pri_${"b".repeat(32)}`})`;
-    await expect(sql.begin(tx => f.relay.answer(tx as unknown as SQL, offerId, f.recipient, "yes"))).rejects.toThrow("photo_selection_conflict");
+    await expect(sql.begin(tx => f.relay.answer(tx, offerId, f.recipient, "yes"))).rejects.toThrow("photo_selection_conflict");
     expect(await f.relay.offer(offerId)).toMatchObject({ phase: "asking" });
     expect((await f.relay.held("slop")).filter(h => h.offerId === offerId)).toEqual([]);
   }, T);

@@ -107,9 +107,9 @@ export function checkLabels(context: SharedContext, labelsSafe: boolean): Shared
 
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
-export function lawKeptFactsFitTheLimits(rank: number, textSize: number): boolean {
+export function lawFactsPastTheLimitsAreDropped(rank: number, textSize: number): boolean {
   //@ ensures \result === true
-  return !contextFacetKept(rank, textSize) || (rank < contextFacetLimit && textSize <= contextFacetSizeLimit);
+  return !contextFacetKept(contextFacetLimit, textSize) && !contextFacetKept(rank, exact_sharedContext(contextFacetSizeLimit + 1)) && contextFacetKept(0, contextFacetSizeLimit);
 }
 
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
@@ -305,4 +305,10 @@ export function parseState(x: unknown): SharedContext | undefined {
 export function initialHolds(): SharedContext {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_sharedContext(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

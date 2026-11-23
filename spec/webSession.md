@@ -30,7 +30,7 @@ pure def lawCloudDeadlineCapsSession(createdAt: int, startedAt: int, ttl: int, m
 
 ### Only a live token on the requested app can authenticate
 
-A token must be present and at most 128 characters. A missing row, another app's row, or a row at or past expiry or revocation is refused. A current ban of the session's phone or person also refuses the row, even when staff banned the person after the session started. The shell reads the ban at each use of the token. When rotation is requested, a token with no pending revocation rotates at one day by default. A token in the grace period still works without another rotation. The shell schedules old-token revocation for one minute later and persists the replacement before returning it. The revocation and the replacement are one write under the phone's binding lock, and that write reads the old row again first: a row that is gone, expired or already revoked as of now refuses the token, and a row that another request rotated in the meantime stays usable without a second replacement. Changed on 2026-11-21 (audit AE-6): the replacement was written without a re-read, so a request in flight during "delete everything" could create a session for the erased number.
+A token must be present and at most 128 characters. A missing row, another app's row, or a row at or past expiry or revocation is refused. A current ban of the session's phone or person also refuses the row, even when staff banned the person after the session started. The shell reads the ban at each use of the token. When rotation is requested, a token with no pending revocation rotates at one day by default. A token in the grace period still works without another rotation. The shell schedules old-token revocation for one minute later and persists the replacement before returning it. The revocation and the replacement are one write under the phone's binding lock, and that write reads the old row again first: a row that is gone, expired or already revoked as of now refuses the token, and a row that another request rotated in the meantime stays usable without a second replacement. Changed (audit AE-6): the replacement was written without a re-read -> it re-reads first, because a request in flight during "delete everything" could create a session for the erased number. Changed (2026-11-23): the re-read row check (`sessionRowLive`) is a rule here, because the shell computed it by hand.
 
 ```quint
 type SessionPhase = Beginning | LookingUp | Refused | Usable | RevokingOld | IssuingReplacement | Rotated
@@ -48,6 +48,9 @@ pure def readRow(flow: SessionFlow, sameAppRow: bool, expired: bool, hasRevocati
   if (not(sameAppRow) or expired or revocationDue or banned) { ...flow, phase: Refused }
   else if (not(rotationRequested) or hasRevocation or not(oldEnough)) { ...flow, phase: Usable }
   else { phase: RevokingOld, revokeAt: at + sessionGraceMs }
+
+pure def sessionRowLive(sameApp: bool, expiresAt: int, revoked: bool, revokedAt: int, now: int): bool =
+  sameApp and expiresAt > now and not(revoked and revokedAt <= now)
 
 pure def canRecordRevocation(flow: SessionFlow): bool = flow.phase == RevokingOld
 pure def recordRevocation(flow: SessionFlow, rowLive: bool, rotatedMeanwhile: bool): SessionFlow =
@@ -86,7 +89,7 @@ pure def freshSignIn(elapsed: int): bool = elapsed <= sessionStepUpMs
 
 ### A session without a person never outlives its number getting a person
 
-A session that proved a number before the number had a person has no person. A number gets a person by a join on any app (web, text or connector), by a staff or member invitation, or by a number change that moves a person to it. At that moment, in the same transaction, a session of the number without a person that proved the number after that moment takes the person: that is the joining session, or a sign-in that finished while the person arrived. Every other session of the number without a person ends, because the shell cannot tell whether an earlier holder of a recycled number proved it. A rotation copies the person of the row it re-reads. A person-bound session never changes person. New rule on 2026-11-21 (audit AE-3): before, every session of the number without a person took the new person at admission. Changed again on 2026-11-21 (review of AE-3): the rule first covered only a membership admission, so a number change or an invitation left an earlier holder's session live on the person's number.
+A session that proved a number before the number had a person has no person. A number gets a person by a join on any app (web, text or connector), by a staff or member invitation, or by a number change that moves a person to it. At that moment, in the same transaction, a session of the number without a person that proved the number after that moment takes the person: that is the joining session, or a sign-in that finished while the person arrived. Every other session of the number without a person ends, because the shell cannot tell whether an earlier holder of a recycled number proved it. A rotation copies the person of the row it re-reads. A person-bound session never changes person. Changed (audit AE-3): every session of the number without a person took the new person at a membership admission only -> only the joining session takes the person, at every way a number gets a person, and the others end, because an earlier holder of a recycled number kept a live session on the person's number.
 
 ```quint
 pure def unboundSessionTakesNewPerson(numberHasPerson: bool, provedSinceArrival: bool): bool =

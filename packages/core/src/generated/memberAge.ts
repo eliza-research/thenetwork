@@ -232,7 +232,7 @@ export function birthDateLower(birthKey: number): number {
 
 /** Story: Track age from a birth date / Each age statement is a range of possible birth dates (spec/memberAge.md) */
 //@ pure
-export function legacyReading(age: number, createdDay: number, migrationDay: number): BirthReadings {
+export function statedAgeBeforeBirthDates(age: number, createdDay: number, migrationDay: number): BirthReadings {
   return { lower: statedAgeLower(age, createdDay), upper: statedAgeUpper(age, migrationDay), youngest: statedAgeUpper(age, migrationDay) };
 }
 
@@ -290,8 +290,8 @@ export function lawFloorTwelveRefusesAdultBirthDate(adultBirthKey: number): bool
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function effectiveAge(hasReadings: boolean, readings: BirthReadings, legacyAge: number, dayKey: number): number {
-  return hasReadings ? ageOnDay(effectiveBirthKey(readings), dayKey) : legacyAge;
+export function effectiveAge(readings: BirthReadings, dayKey: number): number {
+  return ageOnDay(effectiveBirthKey(readings), dayKey);
 }
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
@@ -320,35 +320,35 @@ export function lawConflictIsPermanent(earlier: BirthReadings, lower: number, up
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function lawMergeKeepsYoungest(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): boolean {
-  //@ ensures \result === true
-  const local_4: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
-  return local_4.youngest >= upper && (!hasEarlier || local_4.youngest >= earlier.youngest);
-}
-
-/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
-//@ pure
 export function lawMergeKeepsWellFormed(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): boolean {
   //@ ensures \result === true
-  const local_5: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
-  return !((!hasEarlier || earlier.youngest > earlier.lower) && lower < upper) || local_5.youngest > local_5.lower;
+  const local_4: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
+  return !((!hasEarlier || earlier.youngest > earlier.lower) && lower < upper) || local_4.youngest > local_4.lower;
 }
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function lawLegacyMinorKeepsMinorAge(adultBirthKey: number): boolean {
+export function lawMinorBeforeBirthDatesKeepsMinorAge(adultBirthKey: number): boolean {
   //@ ensures \result === true
-  const local_6: BirthReadings = legacyReading(15, 20260101, 20261122);
-  return !(adultBirthKey <= local_6.lower) || ageOnDay(effectiveBirthKey(mergeReading(true, local_6, birthDateLower(adultBirthKey), adultBirthKey)), 20261122) === 15;
+  const local_5: BirthReadings = statedAgeBeforeBirthDates(15, 20260101, 20261122);
+  return !(adultBirthKey <= local_5.lower) || ageOnDay(effectiveBirthKey(mergeReading(true, local_5, birthDateLower(adultBirthKey), adultBirthKey)), 20261122) === 15;
 }
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
 export function lawLowerStatedAgeWins(birthKey: number, age: number, dayKey: number): boolean {
   //@ ensures \result === true
-  const local_7: BirthReadings = { lower: birthDateLower(birthKey), upper: birthKey, youngest: birthKey };
-  const local_8: BirthReadings = mergeReading(true, local_7, statedAgeLower(age, dayKey), statedAgeUpper(age, dayKey));
-  return !(dayKey >= birthKey && age >= 0 && age < ageOnDay(birthKey, dayKey)) || ageOnDay(effectiveBirthKey(local_8), dayKey) === age;
+  const local_6: BirthReadings = { lower: birthDateLower(birthKey), upper: birthKey, youngest: birthKey };
+  const local_7: BirthReadings = mergeReading(true, local_6, statedAgeLower(age, dayKey), statedAgeUpper(age, dayKey));
+  return !(dayKey >= birthKey && age >= 0 && age < ageOnDay(birthKey, dayKey)) || ageOnDay(effectiveBirthKey(local_7), dayKey) === age;
+}
+
+/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
+//@ pure
+export function lawMergeKeepsYoungest(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): boolean {
+  //@ ensures \result === true
+  const local_8: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
+  return local_8.youngest >= upper && (!hasEarlier || local_8.youngest >= earlier.youngest);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

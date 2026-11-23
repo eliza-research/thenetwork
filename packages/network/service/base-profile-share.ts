@@ -9,7 +9,7 @@ const SCOPES = new Set(["matchable", "shareable"]);
 
 interface SourceFacet { kind: string; value: string; tags: string[] | null; privacy_scope: string; status: string; sensitive: string | null; valid_from: Date | string | null; valid_to: Date | string | null }
 
-export interface BaseProfileShareDeps {
+interface BaseProfileShareDeps {
   people: Pick<PeopleStore, "shareGrants" | "getMembership">;
   banned(): Promise<boolean>;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
@@ -20,8 +20,8 @@ export async function applyBaseProfileGrants(d: BaseProfileShareDeps, personId: 
   const into = await d.people.getMembership(personId, target.app);
   if (!into || into.memberId !== target.memberId) return 0;
   const banned = await d.banned();
-  const held = new Set(((await target.runtime.scoped(tx => tx`select value from network.facets where app_id=${target.app} and member_id=${target.memberId}
-    and kind='interest' and status<>'rejected'`)) as { value: string }[]).map(r => r.value.trim().toLowerCase()));
+  const held = new Set((await target.runtime.scoped(tx => tx<{ value: string }[]>`select value from network.facets where app_id=${target.app} and member_id=${target.memberId}
+    and kind='interest' and status<>'rejected'`)).map(r => r.value.trim().toLowerCase()));
   let added = 0;
   for (const grant of await d.people.shareGrants(personId)) {
     if (grant.toApp !== target.app) continue;
@@ -29,8 +29,8 @@ export async function applyBaseProfileGrants(d: BaseProfileShareDeps, personId: 
     const usable = baseProfileGrantUsable(true, grant.revokedAt !== null, live(from), live(into), banned);
     const source = d.runtimeFor(grant.fromApp);
     if (!usable || !from || !source) continue;
-    const facets = (await source.scoped(tx => tx`select kind,value,tags,privacy_scope,status,sensitive,valid_from,valid_to from network.facets
-      where app_id=${grant.fromApp} and member_id=${from.memberId} and kind='interest' order by valid_from nulls first, id`)) as SourceFacet[];
+    const facets = await source.scoped(tx => tx<SourceFacet[]>`select kind,value,tags,privacy_scope,status,sensitive,valid_from,valid_to from network.facets
+      where app_id=${grant.fromApp} and member_id=${from.memberId} and kind='interest' order by valid_from nulls first, id`);
     const shareable = facets.filter(f => baseInterestShareable(f.kind === "interest", f.status === "confirmed", !SCOPES.has(f.privacy_scope), f.sensitive !== null,
       (f.valid_from === null || new Date(f.valid_from).getTime() <= d.now) && (f.valid_to === null || new Date(f.valid_to).getTime() > d.now), f.value.trim().length))
       .slice(0, Math.max(0, baseInterestLimit - added));

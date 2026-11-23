@@ -15,7 +15,7 @@ Every earlier quality number for the matching engine comes from our own simulato
 | OkCupid profiles of Kim and Escobedo-Land (JSE 2015) | JSE | Released with OkCupid's permission | Profiles only | No: no decisions |
 | XING RecSys 2017, CareerBuilder Kaggle 2012 (job matching) | challenge sites | Non-redistribution or competition terms | | No |
 
-Download (2026-11-18), kept in the worker's scratch directory (`/Users/nubs/tn-work/w1-real/`), never in the repository:
+Download (2026-11-18), kept in the worker's scratch directory (`<run dir>/w1-real/`), never in the repository:
 
 - Original-format file: `https://media.githubusercontent.com/media/cottrell/notebooks/master/data.world/Speed%20Dating%20Data.csv`, SHA-256 `16fce38047d94ab9f1b8dd3417e3d2071d92160675c96cad8914fd6a0d101e8e` (equal to the git LFS object id). 8,378 rows, 195 columns.
 - Cross-check: `https://openml.org/data/v1/download/13153954/SpeedDating.arff`, MD5 `0c5590a0c81750687ee1b0ee68168a5d` (equal to the MD5 that OpenML publishes). All 8,378 rows agree with the original-format file on wave, decision, partner decision and match (0 disagreements, `out/extract.txt`). The OpenML copy has no participant ids, so the analysis uses the original-format file.

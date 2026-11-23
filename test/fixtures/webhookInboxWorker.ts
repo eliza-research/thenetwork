@@ -2,26 +2,15 @@ import { type Event, type WebhookTurn, webhookAttemptLimit } from "../../package
 import { SimClock } from "../../packages/core/src/clock.ts";
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import type { InboundMessage } from "../../packages/blooio/src/types.ts";
-import { Inbox } from "../../packages/network/service/inbox.ts";
-import { detectKeyword } from "../../packages/platform/src/consent.ts";
-import { withConformanceDatabases } from "./conformanceDatabase.ts";
+import { Inbox, isStopText } from "../../packages/network/service/inbox.ts";
+import { holdInboundRowUntilWaited, type InboundRowHold, withConformanceDatabases } from "./conformanceDatabase.ts";
 import { serveJourney } from "./serveJourney.ts";
-
-// Each key is one handling attempt of one received row, for its own sender on its own database: Inbox.drain, the
-// tick, drains every sender it finds. `startWebhook` makes the row the event describes: the row (STOP or not) is
-// received through Inbox.receive, fails as many times as the event counts through Inbox.drain, and the next drain
-// selects it with the handler held open, so `RunningWebhook` is the shell waiting on the handler. A STOP row arrives
-// after an ordinary row that is still pending, so its completion has a row to cancel. An ordinary row that failed five
-// times is dropped and no drain selects it again; that start is refused. Completion is held by a
-// transaction that locks the row, so `CompleteWebhook` and `CancelEarlier` are a completion write that waits on the
-// lock; a failed completion write is that statement cancelled. The attempt count is read back from the row.
 
 const LANES = 2;
 const START = Date.UTC(2026, 9, 9, 16);
 const EARLIER = "what are you up to this week";
 
 type Held = { resolve(outcome: string): void; reject(error: Error): void };
-type Lock = { pid: number; release(): void; done: Promise<unknown> };
 type Lane = {
   sql: SQL;
   inbox: Inbox;
@@ -35,8 +24,7 @@ type Lane = {
   held?: Held;
   arrived?: () => void;
   attempt?: Promise<unknown>;
-  lock?: Lock;
-  writer?: number;
+  lock?: InboundRowHold;
 };
 
 await withConformanceDatabases("webhook_inbox_conformance", LANES, async databases => {
@@ -49,17 +37,19 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
     const sql = databases[lanes.size];
     if (!sql) throw new Error(`The worker has ${LANES} databases; ${key} needs another`);
     const clock = new SimClock(START);
-    const lane = { sql, clock, from: `+1212555${String(2000 + ++senders).padStart(4, "0")}`, serial: 0, failures: 0 } as Lane;
-    lane.inbox = new Inbox({
-      sql, clock, log: () => {}, senderKey: sender => `key:${sender}`,
-      handle: async (ev: InboundMessage) => {
-        if (ev.messageId !== lane.targetId || lane.failures > 0) {
-          if (ev.messageId === lane.targetId) lane.failures--;
-          throw new Error("conformance handler failure");
-        }
-        return new Promise<string>((resolve, reject) => { lane.held = { resolve, reject }; lane.arrived?.(); });
-      },
-    });
+    const lane: Lane = {
+      sql, clock, from: `+1212555${String(2000 + ++senders).padStart(4, "0")}`, serial: 0, failures: 0,
+      inbox: new Inbox({
+        sql, clock, log: () => {}, senderKey: sender => `key:${sender}`,
+        handle: async (ev: InboundMessage) => {
+          if (ev.messageId !== lane.targetId || lane.failures > 0) {
+            if (ev.messageId === lane.targetId) lane.failures--;
+            throw new Error("conformance handler failure");
+          }
+          return new Promise<string>((resolve, reject) => { lane.held = { resolve, reject }; lane.arrived?.(); });
+        },
+      }),
+    };
     lanes.set(key, lane);
     return lane;
   }
@@ -72,7 +62,6 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
     };
   }
 
-  /** Run `work` until the handler holds the target row open or the work ends; true when the row is held. */
   async function untilHeld(lane: Lane, work: () => Promise<unknown>): Promise<boolean> {
     const arrived = new Promise<true>(resolve => { lane.arrived = () => resolve(true); });
     const attempt = work();
@@ -82,7 +71,6 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
     return held;
   }
 
-  /** Receive the row, fail it `prior` times, and hold its next attempt in the handler; false when no attempt starts. */
   async function start(lane: Lane, stop: boolean, prior: number): Promise<boolean> {
     lane.stop = stop;
     if (stop && await lane.inbox.receive(message(lane, EARLIER)) !== "retry_later") throw new Error("The earlier row was not left pending");
@@ -101,7 +89,6 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
     return untilHeld(lane, () => lane.inbox.drain());
   }
 
-  /** A start the drain refused leaves no attempt: remove the lane's rows so the key is queued again. */
   async function forget(lane: Lane) {
     await lane.attempt;
     const [row] = await lane.sql<{ status: string; attempts: number }[]>`select status, attempts from platform.inbound where id = ${rowId(lane)}`;
@@ -115,36 +102,18 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
     await lane.sql`delete from platform.inbound where id like ${`msg:sim:${lane.from}-%`}`;
   }
 
-  /** Lock the row, let the handler answer, and wait until the completion write waits on the lock. */
   async function holdCompletion(lane: Lane) {
-    let release!: () => void;
-    const released = new Promise<void>(resolve => { release = resolve; });
-    let locked!: (pid: number) => void;
-    const pid = new Promise<number>(resolve => { locked = resolve; });
-    const done = lane.sql.begin(async tx => {
-      const [row] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid from platform.inbound where id = ${rowId(lane)} for update`;
-      if (!row) throw new Error("The target row is missing");
-      locked(row.pid);
-      await released;
+    const held = lane.held!;
+    lane.lock = await holdInboundRowUntilWaited(lane.sql, rowId(lane), () => {
+      lane.held = undefined;
+      held.resolve("handled");
     });
-    lane.lock = { pid: await pid, release, done };
-    lane.held!.resolve("handled");
-    lane.held = undefined;
-    for (let tries = 0; tries < 500; tries++) {
-      const [waiting] = await lane.sql<{ pid: number }[]>`select pid from pg_stat_activity
-        where ${lane.lock.pid}::int = any(pg_blocking_pids(pid)) limit 1`;
-      if (waiting) { lane.writer = waiting.pid; return; }
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    throw new Error("The completion write never waited on the row");
   }
 
   async function finish(lane: Lane) {
     const lock = lane.lock!;
     lane.lock = undefined;
-    lane.writer = undefined;
-    lock.release();
-    await lock.done;
+    await lock.release();
     await lane.attempt;
   }
 
@@ -158,12 +127,12 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
     const target = rows.find(row => row.id === rowId(lane));
     const earlier = rows.find(row => row.id !== rowId(lane));
     if (!target) throw new Error("The target row is missing");
-    if (target.text !== null) lane.storedStop = (keyword => keyword === "stop" || keyword === "stop_all")(detectKeyword(target.text));
+    if (target.text !== null) lane.storedStop = isStopText(target.text);
     const stopCommand = lane.storedStop;
     if (stopCommand === undefined) throw new Error("The target row never stored its text");
     const turn = (phase: WebhookTurn["phase"]): WebhookTurn => ({ phase, attempts: target.attempts, stopCommand });
     if (lane.held) return turn("RunningWebhook");
-    if (lane.writer !== undefined) return turn(stopCommand ? "CancelEarlier" : "CompleteWebhook");
+    if (lane.lock !== undefined) return turn(stopCommand ? "CancelEarlier" : "CompleteWebhook");
     switch (target.status) {
       case "done":
         if (target.outcome !== "handled") throw new Error(`The handled row stored ${target.outcome}`);
@@ -220,7 +189,7 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
             return "accepted";
           }
           if (phase !== "CompleteWebhook" && phase !== "CancelEarlier") return "refused";
-          await lane.sql`select pg_cancel_backend(${lane.writer!}::int)`;
+          await lane.sql`select pg_cancel_backend(${lane.lock!.waiter}::int)`;
           await finish(lane);
           return "accepted";
         }

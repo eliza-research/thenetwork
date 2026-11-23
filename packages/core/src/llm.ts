@@ -426,8 +426,8 @@ export const PROVIDERS: readonly Provider[] = ["surplus", "openai"];
 
 /** Validate a provider name case-insensitively ("Surplus" -> "surplus"). Throws on anything unknown. */
 export function parseProvider(name: string | undefined | null): Provider {
-  const p = String(name ?? "").trim().toLowerCase();
-  if ((PROVIDERS as readonly string[]).includes(p)) return p as Provider;
+  const p = providerOf(name);
+  if (p) return p;
   throw new Error(`Unknown LLM provider ${JSON.stringify(name)} (expected one of: ${PROVIDERS.join(", ")})`);
 }
 
@@ -445,20 +445,23 @@ export const DEFAULT_MODEL = "gpt-6-luna";
  * Provider names are
  * validated case-insensitively; unknown names throw.
  */
-export function endpointsFor(providerName: Provider | string): Endpoint[] {
+export function endpointsFor(providerName: Provider | string, env: Record<string, string | undefined> = process.env): Endpoint[] {
   const provider = parseProvider(providerName);
-  const env = process.env;
   const surplus = { baseUrl: env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1", apiKey: env.SURPLUS_API_KEY ?? "" };
   const openai = { baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", apiKey: env.OPENAI_API_KEY ?? "" };
   const order = provider === "surplus" ? [surplus, openai] : [openai];
   return order.filter(e => e.apiKey);
 }
 
+function providerOf(name: string | undefined | null): Provider | undefined {
+  const p = String(name ?? "").trim().toLowerCase();
+  return PROVIDERS.find(provider => provider === p);
+}
+
 export function providerKeyPresent(env: Record<string, string | undefined>, name: string | undefined): "present" | "missing" | "unknown" {
-  const provider = String(name || DEFAULT_PROVIDER).trim().toLowerCase();
-  if (!(PROVIDERS as readonly string[]).includes(provider)) return "unknown";
-  const keys = provider === "surplus" ? [env.SURPLUS_API_KEY, env.OPENAI_API_KEY] : [env.OPENAI_API_KEY];
-  return keys.some(Boolean) ? "present" : "missing";
+  const provider = providerOf(name || DEFAULT_PROVIDER);
+  if (!provider) return "unknown";
+  return endpointsFor(provider, env).length > 0 ? "present" : "missing";
 }
 
 /** Any OpenAI-compatible provider by name. `hooks` are optional (extra body params, usage/cost callback, transport). */
@@ -478,9 +481,11 @@ export function defaultLLM(hooks: ClientOptions = {}): LLM {
   return llmFor(parseProvider(process.env.DEFAULT_LLM_PROVIDER || DEFAULT_PROVIDER), process.env.DEFAULT_LLM_MODEL ?? DEFAULT_MODEL, hooks);
 }
 
+export const judgeModelOf = (env: Record<string, string | undefined>): string => env.JUDGE_MODEL ?? DEFAULT_MODEL;
+
 /** Judge LLM per .env (JUDGE_PROVIDER / JUDGE_MODEL), default Surplus gpt-6-luna. */
 export function judgeLLM(hooks: ClientOptions = {}): LLM {
-  return llmFor(parseProvider(process.env.JUDGE_PROVIDER || DEFAULT_PROVIDER), process.env.JUDGE_MODEL ?? DEFAULT_MODEL, hooks);
+  return llmFor(parseProvider(process.env.JUDGE_PROVIDER || DEFAULT_PROVIDER), judgeModelOf(process.env), hooks);
 }
 
 /** Recommender LLM (engine judge for top-K configurations) per .env (RECOMMENDER_PROVIDER / RECOMMENDER_MODEL), default Surplus gpt-6-luna. */

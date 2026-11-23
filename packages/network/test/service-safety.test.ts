@@ -626,14 +626,14 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
 
     expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
     const person = ((await sql`select person_id::text from network.members where app_id = 'friends' and id = ${hf}`) as { person_id: string }[])[0]!.person_id;
-    expect((await sql`select person_id::text from platform.person_minor_signals`).map((r: any) => r.person_id)).toEqual([person]);
+    expect((await sql`select person_id::text from platform.person_minor_signals` as { person_id: string }[]).map(r => r.person_id)).toEqual([person]);
     await friends.tick();
     expect(await onFriends()).toEqual({ known: true, minor: true, minorSignal: true });
 
     const res = await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: (await memberOf("slop", hal))!.id, note: "record says 34; wrong report" });
-    const out = await res.json() as any;
+    const out = await res.json() as { ok: boolean; apps: { app: string; result: string }[] };
     expect([res.status, out.ok]).toEqual([200, true]);
-    expect(Object.fromEntries((out.apps as { app: string; result: string }[]).map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "cleared" });
+    expect(Object.fromEntries(out.apps.map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "cleared" });
     expect(await sql`select person_id from platform.person_minor_signals`).toEqual([]);
     await friends.tick();
     expect(await onFriends()).toEqual({ known: true, minor: false, minorSignal: false });
@@ -653,11 +653,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const signals = async () => (await sql`select person_id::text from platform.person_minor_signals`).length;
     expect(await signals()).toBe(1);
 
-    const onFriends = await (await staff(s, "friends-safety-tok", "POST", "/apps/friends/safety/clear-minor", { memberId: hf, note: "record says 34" })).json() as any;
+    const onFriends = await (await staff(s, "friends-safety-tok", "POST", "/apps/friends/safety/clear-minor", { memberId: hf, note: "record says 34" })).json() as { ok: boolean; reach: string; apps: { app: string; result: string }[] };
     expect([onFriends.ok, onFriends.reach, onFriends.apps]).toEqual([true, "app", [{ app: "friends", result: "cleared" }]]);
     expect(await signals()).toBe(1);
 
-    const onSlop = await (await staff(s, "slop-safety-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: hs, note: "record says 34; wrong report" })).json() as any;
+    const onSlop = await (await staff(s, "slop-safety-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: hs, note: "record says 34; wrong report" })).json() as { ok: boolean; reach: string; apps: { app: string; result: string }[] };
     expect([onSlop.ok, onSlop.reach, onSlop.apps]).toEqual([true, "app", [{ app: "slop", result: "cleared" }]]);
     expect(await signals()).toBe(0);
 
@@ -712,7 +712,6 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await staff(s, "rev-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).status).toBe(403);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).json()).toEqual({ ok: true });
     expect(await (await upload()).json()).toEqual({ ok: false, error: "not_verified" });
-    // spec/photoRetention.md, "Only a live adult member keeps photos and a rating": the failed check also erases the photos.
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "pass", note: "staff review" })).json()).toEqual({ ok: true });
@@ -757,7 +756,6 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
   }, T);
-  // spec/photoRetention.md, "Only a live adult member keeps photos and a rating"
   test("DELETE PHOTOS by text erases the photos and the rating; a crash after a lower age or a failed age check is finished by the retention tick", async () => {
     await fresh();
     const dir = mkdtempSync(join(tmpdir(), "svc-photo-sweep-")); dirs.push(dir);
@@ -805,7 +803,6 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(readdirSync(dir)).toHaveLength(0);
   }, T);
 
-  // spec/photoRetention.md, "Only a live adult member keeps photos and a rating"
   test("an upload that lands between the photo erasure of a leave and the end of the membership is erased by the next retention tick", async () => {
     await fresh();
     const dir = mkdtempSync(join(tmpdir(), "svc-photo-leave-")); dirs.push(dir);

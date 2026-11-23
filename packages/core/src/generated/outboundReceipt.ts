@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
-export type ReceiptPhase = "Sending" | "LegacyQueued" | "ProviderAccepted" | "ProviderSent" | "ProviderDelivered" | "ProviderRead" | "ProviderFailed" | "AcceptanceUnknown" | "AcceptanceExpired" | "RetryScheduled" | "WaitingForReply" | "ProviderBlocked" | "OutsideReceipt";
+export type ReceiptPhase = "Sending" | "QueuedBeforeAcceptance" | "ProviderAccepted" | "ProviderSent" | "ProviderDelivered" | "ProviderRead" | "ProviderFailed" | "AcceptanceUnknown" | "AcceptanceExpired" | "RetryScheduled" | "WaitingForReply" | "ProviderBlocked" | "OutsideReceipt";
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export interface ReceiptLifecycle { phase: ReceiptPhase }
 /** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) */
@@ -29,7 +29,7 @@ export function inv(current: ReceiptLifecycle): boolean {
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function receiptRank(phase: ReceiptPhase): number {
-  return phase === "ProviderAccepted" || phase === "LegacyQueued" ? 1 : (phase === "ProviderSent" ? 2 : (phase === "ProviderDelivered" ? 3 : (phase === "ProviderRead" ? 4 : 0)));
+  return phase === "ProviderAccepted" || phase === "QueuedBeforeAcceptance" ? 1 : (phase === "ProviderSent" ? 2 : (phase === "ProviderDelivered" ? 3 : (phase === "ProviderRead" ? 4 : 0)));
 }
 
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
@@ -51,7 +51,7 @@ export function applyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptP
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function canRecordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean {
-  return (outbound.phase === "Sending" || outbound.phase === "AcceptanceUnknown") && ((receiptRank(providerPhase) > 0 && providerPhase !== "LegacyQueued") || providerPhase === "ProviderFailed");
+  return (outbound.phase === "Sending" || outbound.phase === "AcceptanceUnknown") && ((receiptRank(providerPhase) > 0 && providerPhase !== "QueuedBeforeAcceptance") || providerPhase === "ProviderFailed");
 }
 
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
@@ -235,16 +235,16 @@ export function lawLateUnknownReceiptKeepsExpiredReply(replyStatus: string): boo
 
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 //@ pure
-export function lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus: string, delivery: string): boolean {
+export function lawGatewayReceiptNeverChangesAFinalReply(delivery: string): boolean {
   //@ ensures \result === true
-  return !gatewayReceiptApplies(replyStatus, delivery) || (replyStatus === "collected" || replyStatus === "send_unknown" || replyStatus === "failed_unknown");
+  return !gatewayReceiptApplies("sent", delivery) && !gatewayReceiptApplies("accepted", delivery);
 }
 
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 //@ pure
-export function lawGatewayReplyEndsOnlyPastLimit(pastLimit: boolean): boolean {
+export function lawLateFinalReceiptEndsAnExpiredReply(delivery: string): boolean {
   //@ ensures \result === true
-  return (gatewayReplyPhase(pastLimit) === "AcceptanceExpired") === pastLimit;
+  return !(delivery !== "unknown") || gatewayReceiptApplies("failed_unknown", delivery);
 }
 
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
@@ -294,8 +294,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "recordAcceptance" && (raw.providerPhase === "Sending" || raw.providerPhase === "LegacyQueued" || raw.providerPhase === "ProviderAccepted" || raw.providerPhase === "ProviderSent" || raw.providerPhase === "ProviderDelivered" || raw.providerPhase === "ProviderRead" || raw.providerPhase === "ProviderFailed" || raw.providerPhase === "AcceptanceUnknown" || raw.providerPhase === "AcceptanceExpired" || raw.providerPhase === "RetryScheduled" || raw.providerPhase === "WaitingForReply" || raw.providerPhase === "ProviderBlocked" || raw.providerPhase === "OutsideReceipt")) return { type: "recordAcceptance", providerPhase: raw.providerPhase };
-  if (raw.type === "applyReceipt" && (raw.providerPhase === "Sending" || raw.providerPhase === "LegacyQueued" || raw.providerPhase === "ProviderAccepted" || raw.providerPhase === "ProviderSent" || raw.providerPhase === "ProviderDelivered" || raw.providerPhase === "ProviderRead" || raw.providerPhase === "ProviderFailed" || raw.providerPhase === "AcceptanceUnknown" || raw.providerPhase === "AcceptanceExpired" || raw.providerPhase === "RetryScheduled" || raw.providerPhase === "WaitingForReply" || raw.providerPhase === "ProviderBlocked" || raw.providerPhase === "OutsideReceipt")) return { type: "applyReceipt", providerPhase: raw.providerPhase };
+  if (raw.type === "recordAcceptance" && (raw.providerPhase === "Sending" || raw.providerPhase === "QueuedBeforeAcceptance" || raw.providerPhase === "ProviderAccepted" || raw.providerPhase === "ProviderSent" || raw.providerPhase === "ProviderDelivered" || raw.providerPhase === "ProviderRead" || raw.providerPhase === "ProviderFailed" || raw.providerPhase === "AcceptanceUnknown" || raw.providerPhase === "AcceptanceExpired" || raw.providerPhase === "RetryScheduled" || raw.providerPhase === "WaitingForReply" || raw.providerPhase === "ProviderBlocked" || raw.providerPhase === "OutsideReceipt")) return { type: "recordAcceptance", providerPhase: raw.providerPhase };
+  if (raw.type === "applyReceipt" && (raw.providerPhase === "Sending" || raw.providerPhase === "QueuedBeforeAcceptance" || raw.providerPhase === "ProviderAccepted" || raw.providerPhase === "ProviderSent" || raw.providerPhase === "ProviderDelivered" || raw.providerPhase === "ProviderRead" || raw.providerPhase === "ProviderFailed" || raw.providerPhase === "AcceptanceUnknown" || raw.providerPhase === "AcceptanceExpired" || raw.providerPhase === "RetryScheduled" || raw.providerPhase === "WaitingForReply" || raw.providerPhase === "ProviderBlocked" || raw.providerPhase === "OutsideReceipt")) return { type: "applyReceipt", providerPhase: raw.providerPhase };
   if (raw.type === "holdUnrecordedReceipt") return { type: "holdUnrecordedReceipt" };
   if (raw.type === "confirmNeverAdmitted" && typeof raw.neverAdmitted === "boolean") return { type: "confirmNeverAdmitted", neverAdmitted: raw.neverAdmitted };
   if (raw.type === "expireUnknown" && typeof raw.pastLimit === "boolean") return { type: "expireUnknown", pastLimit: raw.pastLimit };
@@ -317,7 +317,7 @@ export function parseState(x: unknown): ReceiptLifecycle | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Sending" || raw.phase === "LegacyQueued" || raw.phase === "ProviderAccepted" || raw.phase === "ProviderSent" || raw.phase === "ProviderDelivered" || raw.phase === "ProviderRead" || raw.phase === "ProviderFailed" || raw.phase === "AcceptanceUnknown" || raw.phase === "AcceptanceExpired" || raw.phase === "RetryScheduled" || raw.phase === "WaitingForReply" || raw.phase === "ProviderBlocked" || raw.phase === "OutsideReceipt") && Object.keys(raw).length === 1)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Sending" || raw.phase === "QueuedBeforeAcceptance" || raw.phase === "ProviderAccepted" || raw.phase === "ProviderSent" || raw.phase === "ProviderDelivered" || raw.phase === "ProviderRead" || raw.phase === "ProviderFailed" || raw.phase === "AcceptanceUnknown" || raw.phase === "AcceptanceExpired" || raw.phase === "RetryScheduled" || raw.phase === "WaitingForReply" || raw.phase === "ProviderBlocked" || raw.phase === "OutsideReceipt") && Object.keys(raw).length === 1)) return undefined;
   const parsed: ReceiptLifecycle = ({ phase: raw.phase });
   return inv(parsed) ? parsed : undefined;
 }

@@ -20,8 +20,10 @@ import type { PlansConfig } from "@thenetwork/engine/src/config.ts";
 import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { World } from "@thenetwork/engine/src/world.ts";
 import { FRIEND_ACTIVITIES, SLOTS } from "./persona.ts";
-import { NYC_TZ, slotTime, type FriendsSnapshot } from "./snapshot.ts";
-import { VENUES, rosterAge, teenLaneOf, teenSlotAllowed, type FriendsMatcher, type FriendsProposal } from "./world.ts";
+import { slotTime, type FriendsSnapshot } from "./snapshot.ts";
+import { NYC_TZ } from "./persona.ts";
+import { VENUES, rosterAge, teenSlotAllowed, type FriendsMatcher, type FriendsProposal } from "./world.ts";
+import { teenShape } from "../../teen.ts";
 
 /** Weekly slot index of an instant (local weekday and hour; nearest template hour). */
 export function slotIndexOf(t: number): number {
@@ -67,7 +69,7 @@ export function teenProposalOf(p: EngineProposal, s: FriendsSnapshot): FriendsPr
   const venue = activity ? teenVenueOf(activity.id, s.presence.find(x => x.memberId === first && x.type === "home")?.areas[0]) : undefined;
   const venueHood = venue ? hood(venue.area) : undefined;
   if (activity && options.length && venue && venueHood) return { ...shape, activity: activity.id, venueHood: venueHood.id, venueId: venue.id, options };
-  return teenLaneOf([...p.participants, ...p.alternates], shape).laneOk ? null : { ...shape, activity: p.anchor?.id ?? "", venueHood: "", options: [] };
+  return teenShape("friends", [...p.participants, ...p.alternates], shape).laneOk ? null : { ...shape, activity: p.anchor?.id ?? "", venueHood: "", options: [] };
 }
 
 export function friendsTeenMatcher(base: FriendsMatcher = friendsPackMatcher()): FriendsMatcher {

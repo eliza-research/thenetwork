@@ -918,15 +918,6 @@ function shareableAttribute(w: World, other: MemberId, recipient: MemberId): str
   return cands[0]?.value;
 }
 
-/**
- * Build an anonymous consent-first probe (1.8, D5). It reveals only the activity, the time, an
- * area and at most one `shareable` attribute of the other person; never a name, photo, employer,
- * or anything `matchable` / `agent_private`. Every candidate text must pass the existing leak gate
- * (judgeCommon.ts checkMemberFacing with explain.ts privateVocabulary of the other people), plus a
- * name-token check and the others' employer-like values; if the richest text fails, the attribute
- * and then the area are dropped; if nothing passes, null (do not send).
- * Romance probes say plainly that it is a romance intro, and only go between adults.
- */
 export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, others: MemberId[], now: number): Probe | null {
   const ids = [recipient, ...others];
   if (ids.some(id => !w.get(id))) return null;
@@ -934,7 +925,7 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
   const meetingEnd = Math.max(now, spec.window?.end ?? now, ...(spec.options ?? []).map(o => o.end));
   if (teenRoster && (spec.mutual !== undefined || candidateAgeReason(w, {
     participants: ids, alternates: [], category: spec.category, window: { start: now, end: meetingEnd },
-    roles: spec.roles ?? {}, format: spec.format ?? "event", generator: spec.generator ?? "", anchor: spec.anchor,
+    roles: spec.roles, format: spec.format, generator: spec.generator, anchor: spec.anchor,
   }) !== null)) return null;
   const AP = w.pack.attention;
   if (AP.probeAllowed && !AP.probeAllowed(spec.category, others.length)) return null;

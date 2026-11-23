@@ -49,15 +49,12 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
     const update = (id: string, i: number) => ({ id, memberId: members[i]!.id, to: phones[i], kind: "transactional" as const,
       body: "Your activity update is ready.", type: "reminder", oppId, proactive: false, system: false, ts: clock.now() });
 
-    // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
-    // Replica A queues an update about the open opportunity; the line's review pause holds it.
     await a.adapter.queue.setLineSafety("review");
     await rtA.unitOfWork(net => {
       net.importState({ ...net.exportState(), members: w.net.exportState().members, opps: w.net.exportState().opps });
       rtA.unit.sends.push(update("sd020-update", 0));
     });
     expect(await a.adapter.queue.statusOf("sd020-update")).toBe("retry_scheduled");
-    // Replica B closes the opportunity. Replica A's copy still has it open.
     await rtB.unitOfWork(net => {
       const state = net.exportState();
       net.importState({ ...state, opps: state.opps.map(o => o.id === oppId ? { ...o, stage: "closed" } : o) });
@@ -71,13 +68,10 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
     const message = async (id: string) => (await sql`select status from network.messages where app_id=${app.id} and id=${id}`)[0]?.status;
     expect(await message("sd020-update")).toBe("expired");
 
-    // A message whose change a drain lost (its process stopped after the queue commit) takes its row's status
-    // at the next runtime drain.
     await sql`update network.messages set status='retry_scheduled' where app_id=${app.id} and id='sd020-update'`;
     await rtA.deliver();
     expect(await message("sd020-update")).toBe("expired");
 
-    // A direct send drains the other due rows of the line: their changes reach network.messages too.
     await a.adapter.queue.setLineSafety("review");
     await rtA.unitOfWork(net => { rtA.unit.sends.push({ ...update("sd136-update", 1), oppId: undefined }); });
     expect(await message("sd136-update")).toBe("retry_scheduled");
@@ -87,7 +81,6 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
     expect(await a.adapter.queue.statusOf("sd136-update")).toBe("sent");
     expect(await message("sd136-update")).toBe("sent");
 
-    // A drain's change that a delivery receipt overtook does not move the message back.
     await a.adapter.status({ kind: "status", channel: "sim", providerMessageId: "sim:tn:sd136-update", status: "delivered", at: clock.now() });
     expect(await a.adapter.queue.statusOf("sd136-update")).toBe("delivered");
     await rtA.storeStatuses([{ id: "sd136-update", memberId: second!, status: "sent" }]);

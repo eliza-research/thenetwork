@@ -2,17 +2,17 @@
 //@ backend dafny
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
-export type DraftPreparationPhase = "ReadConnection" | "CheckAge" | "CheckOwner" | "CheckMembership" | "WriteDraft" | "RecheckAge" | "Prepared" | "GrantRefused" | "UseJoinForm" | "AgeRefused" | "ExistingProfile" | "WriteRefused";
+export type DraftPreparationPhase = "ReadConnection" | "CheckAge" | "CheckOwner" | "CheckMembership" | "WriteDraft" | "RecheckAge" | "Prepared" | "GrantRefused" | "AgeRefused" | "ExistingProfile" | "WriteRefused";
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 export interface DraftPreparation { phase: DraftPreparationPhase }
-/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 export type DraftClaimRoute = "RefuseClaim" | "ReadDraft" | "DiscardDraft";
-/** Story: Review the draft when I finish signup on the connection page / The signup result settles the draft (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The signup result settles the draft (spec/mcpSignupDraft.md) */
 export type DraftSettlement = "DeleteDraft" | "KeepDraft";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "observeConnection"; grantReady: boolean; guardReady: boolean }
+  | { type: "observeConnection"; grantReady: boolean }
   | { type: "observeAge"; allowed: boolean }
   | { type: "observeOwner"; ownerMatches: boolean }
   | { type: "observeMembership"; status: string }
@@ -62,9 +62,9 @@ export function canObserveConnection(s: DraftPreparation): boolean {
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 //@ pure
-export function observeConnection(s: DraftPreparation, grantReady: boolean, guardReady: boolean): DraftPreparation {
+export function observeConnection(s: DraftPreparation, grantReady: boolean): DraftPreparation {
   //@ ensures (inv(s) && canObserveConnection(s)) ==> stepPreparedRequiresAgeAfterWrite(s, \result)
-  return { phase: !grantReady ? "GrantRefused" : (guardReady ? "CheckAge" : "UseJoinForm") };
+  return { phase: grantReady ? "CheckAge" : "GrantRefused" };
 }
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
@@ -144,97 +144,91 @@ export function sometimesPrepared(s: DraftPreparation): boolean {
   return s.phase === "Prepared";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftClaimRoute(status: string, ageAllowed: boolean, banned: boolean): DraftClaimRoute {
   return banned ? "DiscardDraft" : (!signupMembershipCanDraft(status) ? "RefuseClaim" : (ageAllowed ? "ReadDraft" : "DiscardDraft"));
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftRefusedRoute(banned: boolean): DraftClaimRoute {
   return banned ? "DiscardDraft" : "RefuseClaim";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
 export function lawBannedNumberNeverReadsDraft(status: string, ageAllowed: boolean): boolean {
   //@ ensures \result === true
   return signupDraftClaimRoute(status, ageAllowed, true) === "DiscardDraft";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
 export function lawDraftReadNeedsJoinableAge(status: string, ageAllowed: boolean, banned: boolean): boolean {
   //@ ensures \result === true
   return !(signupDraftClaimRoute(status, ageAllowed, banned) === "ReadDraft") || (ageAllowed && !banned && signupMembershipCanDraft(status));
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
 export function lawRefusedSessionReadsNoDraft(banned: boolean): boolean {
   //@ ensures \result === true
   return signupDraftRefusedRoute(banned) !== "ReadDraft";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
 export function lawRefusedBannedSessionDeletesDraft(banned: boolean): boolean {
   //@ ensures \result === true
   return !banned || signupDraftRefusedRoute(banned) === "DiscardDraft";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / A draft is read only by the phone, app and person that saved it (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and nothing reads it (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftGrantAllowed(bindingMatches: boolean, grantCurrent: boolean, unrevoked: boolean, writeScope: boolean): boolean {
   return bindingMatches && grantCurrent && unrevoked && writeScope;
 }
 
-/** Story: Review the draft when I finish signup on the connection page / A draft is read only by the phone, app and person that saved it (spec/mcpSignupDraft.md) */
-//@ pure
-export function signupDraftRowReadable(bindingMatches: boolean, expiresAt: number, asOf: number): boolean {
-  return bindingMatches && expiresAt > asOf;
-}
-
-/** Story: Review the draft when I finish signup on the connection page / A draft is read only by the phone, app and person that saved it (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and nothing reads it (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftUnique(matches: number): boolean {
   return matches === 1;
 }
 
-/** Story: Review the draft when I finish signup on the connection page / A draft is read only by the phone, app and person that saved it (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and nothing reads it (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftExpired(expiresAt: number, asOf: number): boolean {
   return expiresAt <= asOf;
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The signup result settles the draft (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The signup result settles the draft (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftAfterSignup(signupResult: string): DraftSettlement {
-  return signupResult === "invite_only" || signupResult === "invalid_invitation" || signupResult === "invalid" || signupResult === "consent_wording" ? "KeepDraft" : "DeleteDraft";
+  return signupResult === "invite_only" || signupResult === "invalid_invitation" || signupResult === "invalid" || signupResult === "invalid_birthdate" || signupResult === "consent_wording" ? "KeepDraft" : "DeleteDraft";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / The signup result settles the draft (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / The signup result settles the draft (spec/mcpSignupDraft.md) */
 //@ pure
 export function lawUsedOrRefusedForAgeDraftIsDeleted(signupResult: string): boolean {
   //@ ensures \result === true
   return !(signupResult === "joined" || signupResult === "under_age" || signupResult === "review") || signupDraftAfterSignup(signupResult) === "DeleteDraft";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftAfterAgeRecorded(ageAllowed: boolean): DraftSettlement {
   return ageAllowed ? "KeepDraft" : "DeleteDraft";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
 //@ pure
 export function lawRefusedRecordedAgeDeletesDraft(ageAllowed: boolean): boolean {
   //@ ensures \result === true
   return !(!ageAllowed) || signupDraftAfterAgeRecorded(ageAllowed) === "DeleteDraft";
 }
 
-/** Story: Review the draft when I finish signup on the connection page / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
 //@ pure
 export function lawAllowedRecordedAgeKeepsDraft(ageAllowed: boolean): boolean {
   //@ ensures \result === true
@@ -258,7 +252,7 @@ export function enabled(current: DraftPreparation, event: Event): boolean {
 export function step(current: DraftPreparation, event: Event): DraftPreparation {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "observeConnection") return canObserveConnection(current) ? observeConnection(current, event.grantReady, event.guardReady) : current;
+  if (event.type === "observeConnection") return canObserveConnection(current) ? observeConnection(current, event.grantReady) : current;
   if (event.type === "observeAge") return canObserveAge(current) ? observeAge(current, event.allowed) : current;
   if (event.type === "observeOwner") return canObserveOwner(current) ? observeOwner(current, event.ownerMatches) : current;
   if (event.type === "observeMembership") return canObserveMembership(current) ? observeMembership(current, event.status) : current;
@@ -281,7 +275,7 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "observeConnection" && typeof raw.grantReady === "boolean" && typeof raw.guardReady === "boolean") return { type: "observeConnection", grantReady: raw.grantReady, guardReady: raw.guardReady };
+  if (raw.type === "observeConnection" && typeof raw.grantReady === "boolean") return { type: "observeConnection", grantReady: raw.grantReady };
   if (raw.type === "observeAge" && typeof raw.allowed === "boolean") return { type: "observeAge", allowed: raw.allowed };
   if (raw.type === "observeOwner" && typeof raw.ownerMatches === "boolean") return { type: "observeOwner", ownerMatches: raw.ownerMatches };
   if (raw.type === "observeMembership" && typeof raw.status === "string") return { type: "observeMembership", status: raw.status };
@@ -304,7 +298,7 @@ export function parseState(x: unknown): DraftPreparation | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "ReadConnection" || raw.phase === "CheckAge" || raw.phase === "CheckOwner" || raw.phase === "CheckMembership" || raw.phase === "WriteDraft" || raw.phase === "RecheckAge" || raw.phase === "Prepared" || raw.phase === "GrantRefused" || raw.phase === "UseJoinForm" || raw.phase === "AgeRefused" || raw.phase === "ExistingProfile" || raw.phase === "WriteRefused") && Object.keys(raw).length === 1)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "ReadConnection" || raw.phase === "CheckAge" || raw.phase === "CheckOwner" || raw.phase === "CheckMembership" || raw.phase === "WriteDraft" || raw.phase === "RecheckAge" || raw.phase === "Prepared" || raw.phase === "GrantRefused" || raw.phase === "AgeRefused" || raw.phase === "ExistingProfile" || raw.phase === "WriteRefused") && Object.keys(raw).length === 1)) return undefined;
   const parsed: DraftPreparation = ({ phase: raw.phase });
   return inv(parsed) ? parsed : undefined;
 }

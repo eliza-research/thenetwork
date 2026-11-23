@@ -13,8 +13,8 @@ export function gatheringRepeatSourceMatches(sameGathering: boolean, sameRevisio
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / A current exact mutual choice can enter review once per gathering pair (spec/gatheringRepeat.md) */
 //@ pure
-export function gatheringRepeatMayStage(rolloutEnabled: boolean, currentSource: boolean, pairPermitted: boolean, alreadyOffered: boolean): boolean {
-  return rolloutEnabled && currentSource && pairPermitted && !alreadyOffered;
+export function gatheringRepeatMayStage(currentSource: boolean, pairPermitted: boolean, alreadyOffered: boolean): boolean {
+  return currentSource && pairPermitted && !alreadyOffered;
 }
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / A current exact mutual choice can enter review once per gathering pair (spec/gatheringRepeat.md) */
@@ -26,9 +26,9 @@ export function lawGatheringRepeatRejectsChangedConsent(sameGathering: boolean, 
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / A current exact mutual choice can enter review once per gathering pair (spec/gatheringRepeat.md) */
 //@ pure
-export function lawGatheringRepeatStagesOnce(rolloutEnabled: boolean, currentSource: boolean, pairPermitted: boolean): boolean {
+export function lawGatheringRepeatStagesOnce(currentSource: boolean, pairPermitted: boolean): boolean {
   //@ ensures \result === true
-  return !gatheringRepeatMayStage(rolloutEnabled, currentSource, pairPermitted, true);
+  return !gatheringRepeatMayStage(currentSource, pairPermitted, true);
 }
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice (spec/gatheringRepeat.md) */

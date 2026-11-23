@@ -1,8 +1,3 @@
--- The erasure ledger (spec/databaseRestore.md, "An erasure after the backup is replayed"). Each account erasure
--- (people.deleted_at changes from null to a time) appends one row. A new join by the same number revives the
--- tombstone (deleted_at back to null) but keeps the row, so a restore finds every erasure after its backup:
--- a source row that the restored database lacks. The table holds no phone and no number, and nothing
--- updates or deletes it; only the trigger writes it.
 create table if not exists platform.erasure_ledger (
   id        bigserial primary key,
   person_id uuid not null references platform.people (id),

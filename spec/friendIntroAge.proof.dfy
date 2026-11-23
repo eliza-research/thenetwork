@@ -4,7 +4,7 @@ lemma lawGroupWithMinorHoldsOnlyTeenAges_ensures(teenIntros: bool, friendshipLan
   if groupAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, roster) && rosterHasMinor(roster) {
     var minor :| minor in roster && !minor.adult;
     forall side | side in roster
-      ensures side.ready && teenAgesOk(side.birthKey, minDay, maxDay)
+      ensures side.ready && teenPartnerAge(side.birthKey, minDay, maxDay)
     {
       assert sideAllowedWithAll(teenIntros, friendshipLane, minDay, maxDay, side, roster);
       assert sidesAllowed(teenIntros, friendshipLane, minDay, maxDay, side, minor);
@@ -14,8 +14,8 @@ lemma lawGroupWithMinorHoldsOnlyTeenAges_ensures(teenIntros: bool, friendshipLan
   }
 }
 
-lemma lawGroupSwitchOffAdultsOnly_ensures(friendshipLane: bool, minDay: int, maxDay: int, roster: seq<AgeSide>)
-  ensures (lawGroupSwitchOffAdultsOnly(friendshipLane, minDay, maxDay, roster) == true)
+lemma lawGroupStoppedAdultsOnly_ensures(friendshipLane: bool, minDay: int, maxDay: int, roster: seq<AgeSide>)
+  ensures (lawGroupStoppedAdultsOnly(friendshipLane, minDay, maxDay, roster) == true)
 {
   if groupAgeAllowed(false, friendshipLane, minDay, maxDay, roster) {
     forall side | side in roster
@@ -43,7 +43,7 @@ lemma lawGroupNineteenNeverWithAMinor_ensures(teenIntros: bool, friendshipLane: 
   if groupAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, roster) && rosterHasMinor(roster) {
     var minor :| minor in roster && !minor.adult;
     forall side | side in roster
-      ensures teenAgesOk(side.birthKey, minDay, maxDay)
+      ensures teenPartnerAge(side.birthKey, minDay, maxDay)
     {
       assert sideAllowedWithAll(teenIntros, friendshipLane, minDay, maxDay, side, roster);
       assert sidesAllowed(teenIntros, friendshipLane, minDay, maxDay, side, minor);

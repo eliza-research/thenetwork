@@ -175,20 +175,22 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     }
   });
   await b.run("world: a check-in report holds the offender (no new harassment victim after the first report)", () => {
-    const r = runSlopWorld({ seed: 7, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
-    const firstReport = new Map<string, number>();
     let viaCheckin = 0;
-    r.flows.forEach((f, i) => {
-      for (const h of f.harms) {
-        if (h.kind !== "harassment") continue;
-        const fr = firstReport.get(h.offender);
-        if (fr !== undefined && i > fr) throw new Error(`victim after report: ${h.offender}`);
-        if (h.reported && fr === undefined) firstReport.set(h.offender, i);
-        if (h.via === "checkin") viaCheckin++;
-      }
-    });
+    for (let seed = 5; seed <= 12 && viaCheckin === 0; seed++) {
+      const r = runSlopWorld({ seed, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
+      const firstReport = new Map<string, number>();
+      r.flows.forEach((f, i) => {
+        for (const h of f.harms) {
+          if (h.kind !== "harassment") continue;
+          const fr = firstReport.get(h.offender);
+          if (fr !== undefined && i > fr) throw new Error(`seed ${seed}: victim after report: ${h.offender}`);
+          if (h.reported && fr === undefined) firstReport.set(h.offender, i);
+          if (h.via === "checkin") viaCheckin++;
+        }
+      });
+      for (const id of firstReport.keys()) expect([seed, id, r.world.state.safetyHolds.some(x => x.memberId === id)]).toEqual([seed, id, true]);
+    }
     expect(viaCheckin).toBeGreaterThan(0);
-    for (const id of firstReport.keys()) expect(r.world.state.safetyHolds.some(x => x.memberId === id)).toBe(true);
   });
   await b.run("world: common random numbers: the same proposals in reverse order meet the same member coins and outcomes", () => {
     const reversed = (): SlopMatcher => {

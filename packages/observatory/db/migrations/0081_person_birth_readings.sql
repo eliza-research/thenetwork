@@ -1,6 +1,6 @@
 alter table platform.people
   add column birth_date int check (birth_date is null or birth_date between 19000101 and 99991231),
-  add column birth_lower int,
+  add column birth_lower int check (birth_lower is null or birth_lower between 0 and 99991231),
   add column birth_upper int check (birth_upper is null or birth_upper between 0 and 99991231),
   add column birth_youngest int check (birth_youngest is null or birth_youngest between 0 and 99991231),
   add column birth_first_exact boolean,
@@ -8,9 +8,9 @@ alter table platform.people
   add check (birth_date is null or birth_upper is not null);
 
 alter table platform.age_floor
-  add column birth_lower int,
-  add column birth_upper int,
-  add column birth_youngest int,
+  add column birth_lower int check (birth_lower is null or birth_lower between 0 and 99991231),
+  add column birth_upper int check (birth_upper is null or birth_upper between 0 and 99991231),
+  add column birth_youngest int check (birth_youngest is null or birth_youngest between 0 and 99991231),
   add column birth_first_exact boolean,
   add check ((birth_upper is null) = (birth_youngest is null) and (birth_upper is null) = (birth_lower is null));
 

@@ -5,7 +5,7 @@ import { groupAgeAllowed, rosterHasMinor, teenReady, teenRosterSizeAllowed } fro
 import { teenFriendApp, teenFriendCategory } from "../../core/src/generated/matchLane.ts";
 import { personMinorSignalOpen } from "../../core/src/generated/safetyCase.ts";
 import { storedTeenStop, teenMeetingEndOf, teenRosterWithHost, teenStoredItemShape, type NetworkState } from "../src/network.ts";
-import { birthFieldsOf } from "./snapshot.ts";
+import { birthColumns, birthFieldsOf, effectiveAgeOf, type AgeRow } from "./snapshot.ts";
 
 const OPEN = new Set(["review", "probing", "scheduled"]);
 
@@ -15,39 +15,54 @@ type RosterSide = AgeSide & { minor: boolean };
 
 export type StoredTeenStatus = "unmarked" | "adult" | "current" | "failed";
 
+interface TeenReadings { birthKey?: number; birthExact: boolean; ageConflict: boolean; barred: boolean; minorSignalAt?: number }
+
+export type StoredAgeFlags = Partial<Pick<StoredMember, "minor" | "minorSignal" | "minorReported" | "ageConflict" | "ageUnknown" | "minorClearedAt">>;
+
+export function storedAgeReading(age: number | undefined, flags: StoredAgeFlags, birthConflict: boolean, minorSignalAt: number | undefined) {
+  const signal = personMinorSignalOpen(minorSignalAt !== undefined, minorSignalAt ?? 0, flags.minorClearedAt !== undefined, flags.minorClearedAt ?? 0)
+    || flags.minorSignal === true;
+  const doubt = birthConflict || flags.ageConflict === true || flags.ageUnknown === true;
+  return { signal, doubt, adult: canBeMatched(age) && flags.minor !== true && !signal && !doubt && flags.minorReported !== true };
+}
+
+function storedAgeSideOf(st: NetworkState, member: StoredMember, age: number | undefined, r: TeenReadings): AgeSide {
+  const { signal, doubt, adult } = storedAgeReading(age, member, r.ageConflict, r.minorSignalAt);
+  const held = (st.reports ?? []).some(x => x.subjectId === member.id && (x.status === "open" || x.status === "held"))
+    || (st.trust ?? []).some(t => t.id === member.id && t.level === "hold");
+  return {
+    adult,
+    ready: r.birthKey !== undefined
+      && teenReady(r.birthExact, doubt, signal, member.minorReported === true, member.olderReported === true, r.barred || held),
+    birthKey: r.birthKey ?? 0,
+  };
+}
+
 async function rosterSides(tx: SQL, app: string, st: NetworkState | undefined, ids: readonly string[], now: number): Promise<RosterSide[]> {
-  const rows = await tx`select m.id, a.age as matching_age, a.minor_signal_at,
-      a.birth_date as ab_birth_date, a.birth_lower as ab_birth_lower, a.birth_upper as ab_birth_upper, a.birth_youngest as ab_birth_youngest,
-      a.floor_birth_lower as ab_floor_birth_lower, a.floor_birth_upper as ab_floor_birth_upper, a.floor_birth_youngest as ab_floor_birth_youngest,
-      a.teen_pool_barred as ab_teen_pool_barred,
-      exists (select 1 from platform.teen_pool_holds h join platform.people hp on hp.phone_hash=h.phone_hash
-        where hp.id=m.person_id and h.app_id<>m.app_id) as ab_teen_pool_held
+  const rows = await tx<(AgeRow & { id: string; minor_signal_at: Date | null })[]>`select m.id, a.age as matching_age, a.minor_signal_at,
+      ${birthColumns(tx)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held
     from network.members m left join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
     where m.app_id=${app} and m.id in ${tx([...ids])} order by m.id`;
   return ids.map(id => {
     const row = rows.find(r => r.id === id);
-    const member: StoredMember | undefined = st?.members.find(x => x.id === id);
-    if (!row) return { adult: false, ready: false, birthKey: 0, minor: false };
+    const member = st?.members.find(x => x.id === id);
+    const age = row ? effectiveAgeOf(row, now) : undefined;
+    const minor = !row || !canBeMatched(age) || (member ? member.minor === true : row.minor_signal_at !== null);
+    if (!row || !st || !member || st.declinedIds.includes(id)) return { adult: false, ready: false, birthKey: 0, minor };
     const fields = birthFieldsOf(row, now);
-    const age = fields.age ?? (row.matching_age === null ? undefined : Number(row.matching_age));
-    const minor = member?.minor === true || (age !== undefined && !canBeMatched(age));
-    if (!st || !member || st.declinedIds.includes(id)) return { adult: false, ready: false, birthKey: 0, minor };
-    const signalAt = row.minor_signal_at ? new Date(row.minor_signal_at).getTime() : undefined;
-    const signal = personMinorSignalOpen(signalAt !== undefined, signalAt ?? 0, member.minorClearedAt !== undefined, member.minorClearedAt ?? 0) || member.minorSignal;
-    const doubt = member.ageConflict === true || member.ageUnknown === true;
-    const adult = canBeMatched(age) && !member.minor && !member.minorSignal && !doubt && !member.minorReported;
-    const held = (st.reports ?? []).some(r => r.subjectId === id && (r.status === "open" || r.status === "held"))
-      || (st.trust ?? []).some(t => t.id === id && t.level === "hold");
-    const ready = teenReady(fields.birthExact === true, fields.ageConflict === true || doubt, signal, member.minorReported === true,
-      member.olderReported === true, fields.teenBarred === true || fields.teenHeld === true || held);
-    return { adult, ready, birthKey: fields.birthKey ?? 0, minor };
+    const side = storedAgeSideOf(st, member, age, {
+      birthKey: fields.birthKey, birthExact: fields.birthExact === true, ageConflict: fields.ageConflict === true,
+      barred: fields.teenBarred === true || fields.teenHeld === true,
+      ...(row.minor_signal_at ? { minorSignalAt: new Date(row.minor_signal_at).getTime() } : {}),
+    });
+    return { ...side, minor };
   });
 }
 
 export async function storedTeenStatus(tx: SQL, app: string, oppId: string, now: number, roster: readonly string[] = []): Promise<{ status: StoredTeenStatus; minor: boolean }> {
-  const [saved] = await tx<{ state: NetworkState | string }[]>`select state from network.network_state
+  const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state
     where app_id=${app} and state->'opps' @> ${JSON.stringify([{ id: oppId }])}::jsonb order by id limit 1`;
-  const st = saved ? (typeof saved.state === "string" ? JSON.parse(saved.state) : saved.state) as NetworkState : undefined;
+  const st = saved?.state;
   const opp: StoredOpp | undefined = st?.opps.find(o => o.id === oppId);
   const marked = !!st && !!opp && opp.teenRuleAt !== undefined;
   if (!marked && !roster.length) return { status: "unmarked", minor: false };

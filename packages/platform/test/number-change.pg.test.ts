@@ -148,7 +148,6 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(await store.pendingPhoneChange(owner.personId)).toMatchObject({ newE164: targets[2] });
   }, T);
 
-  // spec/phoneChange.md, "A challenge needs a send slot and a persisted request"
   test("a refused change start says when to try again: the OTP service's wait, or the end of the day window", async () => {
     const t = setup();
     const oldNumber = "+12125550281";
@@ -162,11 +161,9 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
       return { status: res.status, retryAfter: res.headers.get("retry-after"), body: await res.json() };
     };
     expect(await start("+12125550282")).toEqual({ status: 200, retryAfter: null, body: { ok: true } });
-    // The same new number again at once: the OTP service keeps 30 seconds between codes to one phone.
     expect(await start("+12125550282")).toEqual({ status: 429, retryAfter: "30", body: { ok: false, error: "rate_limited" } });
     t.tick(31_000);
     expect(await start("+12125550283")).toEqual({ status: 200, retryAfter: null, body: { ok: true } });
-    // The fourth start of the day at 15:00:31 UTC: the slot opens at the next UTC midnight, 32369 seconds later.
     expect(await start("+12125550284")).toEqual({ status: 429, retryAfter: "32369", body: { ok: false, error: "rate_limited" } });
   }, T);
 
@@ -379,18 +376,17 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     const t = setup();
     const [A, B] = ["+12125550192", "+12125550193"];
     // Someone once stated 15 from the new number (the phone's age floor).
-    await store.noteAgeFloor(t.api.accounts.phoneHash(B), 15, t.now());
+    await store.recordAgeReading(null, t.api.accounts.phoneHash(B), { kind: "age", age: 15 }, t.now());
     const b = t.browser(); await b.login(A); await t.join(b, 29);
     const personId = (await store.findPhone(A))!.personId;
     expect((await b.call("POST", "/api/me/phone/start", { phone: B })).status).toBe(200);
     expect((await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).status).toBe(200);
     expect((await store.getPerson(personId))!.lowestAge).toBe(15);
     expect(t.lowered).toContainEqual({ personId, age: 15 });
-    expect(await store.ageFloor(t.api.accounts.phoneHash(B))).toBe(15);
-    expect(await store.ageFloor(t.api.accounts.phoneHash(A))).toBeUndefined();
+    expect((await store.ageFloorRecord(t.api.accounts.phoneHash(B)))?.age).toBe(15);
+    expect(await store.ageFloorRecord(t.api.accounts.phoneHash(A))).toBeUndefined();
   }, T);
 
-  // spec/phoneChange.md, "The request uses the existing account"; spec/phoneChange.md, "After a move the browser signs in on the new number in its own sign-in mode"
   test("a Cloud sign-in site: a fresh Cloud proof on the old number starts the change, the platform code moves the person, and Cloud sign-in on the new number reaches the same person", async () => {
     const ip = `203.0.113.${++tests}`;
     let now = Date.UTC(2026, 9, 9, 15);
@@ -398,7 +394,6 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     const codes = new Map<string, string>();
     const sends: string[] = [];
     let cloudPhone = A, challenge = "", exchanges = 0;
-    // Eliza Cloud's exchange and validation endpoints at their HTTP boundary: Cloud proves the phone it is told to.
     const cloudAuthFetch = (async (input: RequestInfo | URL) => {
       const req = input as Request;
       if (new URL(req.url).pathname.endsWith("network-validate")) return Response.json({ ok: true });
@@ -426,13 +421,13 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
         const pair = c.split(";")[0]!, i = pair.indexOf("=");
         if (/max-age=0\b/i.test(c)) jar.delete(pair.slice(0, i)); else jar.set(pair.slice(0, i), pair.slice(i + 1));
       }
-      return { status: res.status, location: res.headers.get("location"), body: await res.json().catch(() => null) as any };
+      return { status: res.status, location: res.headers.get("location"), body: await res.json().catch(() => null) as unknown };
     };
     const cloudSignIn = async (phone: string) => {
       cloudPhone = phone;
       const start = await call("POST", "/api/auth/cloud/start", { returnPath: "/phone" });
       expect(start.status).toBe(200);
-      const authorize = new URL(start.body.url);
+      const authorize = new URL((start.body as { url: string }).url);
       challenge = authorize.searchParams.get("challenge")!;
       const code = `enso_${(++exchanges).toString(16).padStart(64, "0")}`;
       const back = await call("GET", `/api/auth/cloud/callback?code=${code}&state=${authorize.searchParams.get("state")}`);
@@ -442,7 +437,6 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     await cloudSignIn(A);
     expect((await call("POST", "/api/join", { firstName: "Ana", age: 31, consent: { sms: true, version: APPS.slop.consent.version } })).status).toBe(200);
     const personId = (await store.findPhone(A))!.personId;
-    // An old Cloud proof is not the confirmation from the old number.
     now += 11 * MIN;
     expect(await call("POST", "/api/me/phone/start", { phone: B })).toMatchObject({ status: 403, body: { ok: false, error: "reauth" } });
     expect(sends).toEqual([]);
@@ -452,14 +446,12 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(sends).toEqual([B]);
     expect((await call("POST", "/api/me/phone/confirm", { code: "000000" })).body).toEqual({ ok: false, error: "invalid_code" });
     expect(await call("POST", "/api/me/phone/confirm", { code: codes.get(B) })).toMatchObject({ status: 200, body: { ok: true, phoneMasked: "+1 •••-•••-0195" } });
-    // The browser keeps no session and no Cloud identity that names the released number.
     expect([...jar.keys()]).toEqual([]);
     for (const [k, v] of oldCookies) jar.set(k, v);
     expect((await call("GET", "/api/me")).status).toBe(401);
     jar.clear();
     expect(await store.findPhone(A)).toBeUndefined();
     expect((await store.findPhone(B))!.personId).toBe(personId);
-    // A Cloud sign-in on the new number reaches the same person and membership.
     await cloudSignIn(B);
     expect((await call("GET", "/api/me")).body).toMatchObject({ phoneMasked: "+1 •••-•••-0195", membership: { state: "active", firstName: "Ana" } });
     expect((await store.findPhone(B))!.personId).toBe(personId);

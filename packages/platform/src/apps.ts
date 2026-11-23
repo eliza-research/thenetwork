@@ -92,26 +92,16 @@ export function keywordApp(text: string, apps: Record<AppId, Pick<AppInfo, "id" 
   return undefined;
 }
 
-/**
- * How an answer to The Network's "what are you looking for?" mentions friends, dating and work
- * (founder decision 2). A negated word ("not dating") is a refusal; the decision is lookingForApps.
- */
 export function lookingForReading(text: string): LookingForReading {
   // "I work at a bank" describes the person, not what they want.
   const t = ` ${text.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/[,;.!?]+/g, " , ").replace(/[^\p{L}', ]+/gu, " ").replace(/\s+/g, " ")} `
     .replace(/ (i|i'm|im|i am) (work|working|worked|date|dating|dated) /g, " ");
   const friends = "friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew";
-  // "love" alone is not dating ("I'd love to make friends"); "looking for love" is.
   const dating = "dating|date|dates|for love|find love|in love|romance|romantic|relationship|partner|boyfriend|girlfriend";
   const work = "work|job|jobs|hiring|hire|career|employment|recruiting|clients|gigs?";
-  // A refusal covers its whole clause: it reaches every later word ("not looking for a date", "not really into
-  // the dating scene") up to a comma or full stop or a word that opens a new clause ("not dating but friends").
-  // A false refusal only leaves an app out; a false want would enroll a refused app.
   const neg = "not|no|never|nothing|none|neither|nor|without|except|don't want|dont want|do not want|don't need|dont need|anything but|everything but|all but";
   const clause = `(?: (?!(?:,|but|just|only|though|however|instead|rather|yes|yeah|yep|maybe|so|also) )\\S+)*`;
-  // "no dating, or work" refuses both: a refusal carries over a list joined by "or" or "nor", also after a comma.
   const list = `(?: , (?:or|nor)${clause})*`;
-  // "dating? no" refuses the word before it when the "no" ends its clause ("friends, no dating" does not refuse friends).
   const after = "no|nope|nah|never|not really|no thanks|not for me";
   const mention = (words: string): LookingForMention =>
     new RegExp(` (?:${neg})${clause}${list} (?:${words}) `).test(t) || new RegExp(` (?:${words}) (?:, )?(?:${after}) (?:,|$)`).test(t)
@@ -124,8 +114,6 @@ export function lookingForReading(text: string): LookingForReading {
   };
 }
 
-/** The apps an answer to "what are you looking for?" asks for. */
-// spec/lineRouting.md, "A refused app is never enrolled, even with "all of them""
 export const lookingFor = (text: string): AppId[] => lookingForApps(lookingForReading(text)).filter(isAppId);
 
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */

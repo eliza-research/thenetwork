@@ -5,14 +5,6 @@
 // always an anonymous probe first, carrying the time (D5, founder decision 2), then the booked-plan
 // reveal once quorum is reached (attention v1.2, iteration 4 "(c)").
 //
-// MVP scope (growth doc section 3): public venues and events only, never a member's home; no money
-// through the Network (everyone pays their own way, PRD 32.12); volunteer shifts at existing
-// organizations are activities. Hard rules: a member under 18 is in a plan only on friends.help, as a
-// guest of a small teen group that passes the teen rule (teenPlanReason); plans are never romance (category "social", no romance framing,
-// D15); blocks, opt-ins, dealbreakers and safety holds come from filters.ts; the cap, quiet hours and
-// review are applied by the attention layer and the Network (every plan item involves other members,
-// so it waits for review before its first probe).
-//
 // Engine-visible inputs only. Nothing here reads hidden truth.
 import type { Category, City, MemberId, ScoreComponents } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE } from "@thenetwork/core";
@@ -133,8 +125,6 @@ export function planAllowanceEligible(ev: PlanEvidence | undefined, checkInOptIn
  * ledger are untouched). Quiet hours, the conversation streak (Blooio) and the two-unanswered
  * pause are checked by composeMessage as usual; the caller also passes the member's full
  * only-when-asked state in the MemberAttention view, so unanswered intros still pause plan invites.
- * Paused stays 0. A member aged 13 to 17 gets a plan item only on friends.help, for a teen group that
- * passes `teenPlanReason`; itemGate admits it only when the network sets `teenFriendAllowed`.
  */
 export function planAllowanceConfig(att: AttentionConfig = DEFAULT_ATTENTION, pcfg: PlansConfig = DEFAULT_PLANS): AttentionConfig {
   const cap = { limit: pcfg.allowance.limit, periodDays: pcfg.allowance.periodDays };
@@ -183,12 +173,18 @@ export const teenPlanSeat = (w: World, id: MemberId): boolean => teenGroupPlanAp
 export const planActivityOffered = (rosterHasMinor: boolean, a: ActivityType): boolean =>
   teenActivityOffered(rosterHasMinor, activityAllAges(a), a.adultPlans);
 
-export const planPlaceOffered = (rosterHasMinor: boolean, a: ActivityType, v: Venue): boolean =>
+export type PlaceAges = Pick<Venue, "allAges" | "ageMin" | "adultPlans">;
+
+export type VenueAges = (venueId: string) => PlaceAges | undefined;
+
+export const venueAgesIn = (venues: readonly Venue[]): VenueAges => id => venues.find(v => v.id === id);
+
+export const planPlaceOffered = (rosterHasMinor: boolean, a: ActivityType, v: PlaceAges): boolean =>
   planActivityOffered(rosterHasMinor, a) && teenActivityOffered(rosterHasMinor, venueAllAges(v), v.adultPlans)
     && teenPlaceAllowed(rosterHasMinor, true, activityAllAges(a), venueAllAges(v));
 
-export function teenPlanWindowAllowed(slot: TimeSlot): boolean {
-  const lp = localParts(slot.start, CITY_TZ.nyc);
+export function teenPlanWindowAllowed(slot: TimeSlot, tz: string): boolean {
+  const lp = localParts(slot.start, tz);
   const startMinute = lp.hour * 60 + lp.minute;
   return slot.end > slot.start && teenMeetingAllowed(true, false, startMinute, startMinute + Math.ceil((slot.end - slot.start) / MINUTE), false);
 }
@@ -196,12 +192,15 @@ export function teenPlanWindowAllowed(slot: TimeSlot): boolean {
 export const planRoster = (plan: Pick<Plan, "invited" | "alternates" | "hostId">): MemberId[] =>
   [...new Set([...plan.invited, ...plan.alternates, ...(plan.hostId ? [plan.hostId] : [])])];
 
-export function teenPlanReason(w: World, plan: Pick<Plan, "invited" | "alternates" | "hostId" | "activityId" | "eventId" | "category" | "window">, windows: readonly TimeSlot[] = [plan.window]): "underage" | null {
+export function teenPlanReason(w: World, plan: Pick<Plan, "invited" | "alternates" | "hostId" | "activityId" | "eventId" | "category" | "window" | "city" | "venueId">, venueOf: VenueAges, windows: readonly TimeSlot[] = []): "underage" | null {
   const roster = planRoster(plan);
   if (!roster.some(id => isMinor(w, id))) return null;
   const a = activityById.get(plan.activityId);
   const all = [plan.window, ...windows];
-  if (!a || plan.hostId !== undefined || plan.eventId !== undefined || !planActivityOffered(true, a) || !all.every(teenPlanWindowAllowed)) return "underage";
+  const tz = CITY_TZ[plan.city];
+  const ages = plan.venueId === undefined ? undefined : venueOf(plan.venueId);
+  if (!a || plan.hostId !== undefined || plan.eventId !== undefined || !ages || !planPlaceOffered(true, a, ages)
+    || !all.every(slot => teenPlanWindowAllowed(slot, tz))) return "underage";
   return teenGroupReason(w, roster, plan.category, Math.max(...all.map(slot => slot.end)));
 }
 
@@ -590,12 +589,12 @@ export const PLAN_COPY_PUBLIC: ReadonlySet<string> = new Set(tokenize([...COST, 
  * vocabulary) and a name-token check; richer variants are dropped first; null if none passes.
  * Null for any minor involved and for anything romance (plans never are).
  */
-export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: string, choices?: readonly { key: string; label: string }[]): string | null {
+export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: string, venueOf: VenueAges, choices?: readonly { key: string; label: string }[]): string | null {
   const others = plan.invited.filter(x => x !== recipient);
   if (!plan.invited.includes(recipient) || w.pack.ontology.lanes.some(l => l.neverInPlans && l.id === plan.category)) return null;
   if ([recipient, ...others].some(id => !w.get(id))) return null;
   const teen = planRoster(plan).some(id => isMinor(w, id));
-  if (teen && teenPlanReason(w, plan, plan.reviewedOptions ?? [plan.window]) !== null) return null;
+  if (teen && teenPlanReason(w, plan, venueOf, plan.reviewedOptions ?? [plan.window]) !== null) return null;
   const a = activityById.get(plan.activityId);
   if (!a) return null;
   const when = timeOptionsPhrase([plan.window], tz);
@@ -643,11 +642,6 @@ export type PlanAction =
   | { kind: "none" } | { kind: "book"; going: MemberId[] } | { kind: "join"; member: MemberId }
   | { kind: "probe_partner"; member: MemberId } | { kind: "backfill"; member: MemberId } | { kind: "fallback" };
 
-/**
- * Age gate for the bench (backfills and the partner of a partner plan). `canMatch(id)` false means
- * the member may never be probed: the caller gives the age rule of its plan, which is checked again
- * when the member is probed. Without it the run acts on ids only (the planner screens every roster).
- */
 export interface PlanRunOpts { canMatch?: (id: MemberId) => boolean }
 
 export function startPlanRun(plan: Plan, opts: PlanRunOpts = {}): PlanRun {
@@ -839,13 +833,6 @@ export function crewOptIn(crew: Crew, optedIn: readonly MemberId[], pcfg: PlansC
   return { ...crew, members, hostRotation: crewHostOrder(members, crew.hostRotation) };
 }
 
-/**
- * The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each
- * session is opt-in. Hosts rotate. Null when the crew is handed off, or when a pair of its members
- * has no pair value in the plans lane today (a block, a minor, a hold, or a pair below the lane's
- * rules): a crew session passes the same pair gate as every other configuration. `venue` is the
- * crew's venue; a crew with a minor also needs it, and it must pass `planPlaceOffered`.
- */
 export function crewSessionPlan(w: World, crew: Crew, now: number, venue: Venue | undefined, pcfg: PlansConfig = DEFAULT_PLANS): Plan | null {
   if (crew.handedOff) return null;
   const category = plansOf(w).lane;
@@ -875,7 +862,7 @@ export function crewSessionPlan(w: World, crew: Crew, now: number, venue: Venue 
     partner: false, size: { min: Math.min(3, n), target: n, max: Math.max(n, 3) }, quorum: Math.min(pcfg.quorum.group, n),
     probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category,
   };
-  return teen && teenPlanReason(w, plan) !== null ? null : plan;
+  return teen && teenPlanReason(w, plan, venueAgesIn(venue ? [venue] : [])) !== null ? null : plan;
 }
 
 /** A recurring want ("weekly run club", "regular dinner group"): seeds a crew after one positive plan. */

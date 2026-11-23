@@ -1,18 +1,17 @@
 import type { ContactReview, Event, ReviewContactJourney, ReviewReply } from "../../packages/core/src/generated/reviewContactJourney.ts";
-import { REVIEW_JUDGE_PROMPT_VERSION, SIM_REVIEW_JUDGE, type ReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
+import { holdEveryItem, SIM_REVIEW_JUDGE, simulatedServiceJudge, type ReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { startClimbingRequestFixture } from "./climbingRequestFixture.ts";
 import { serveJourney } from "./serveJourney.ts";
 
 type StoredDecision = "approve" | "reject" | "expired";
 let fixture: ReturnType<typeof startClimbingRequestFixture> | undefined;
 let output: ReviewReply[] = [];
-const verdict: { next: "approve" | "flag" } = { next: "flag" };
+let next: "approve" | "flag" = "flag";
+let lastReview: ContactReview = "AwaitingJudge";
+const approving = simulatedServiceJudge({ exceptions: false });
 const judge: ReviewJudge = {
   reviewer: SIM_REVIEW_JUDGE,
-  judge: async () => ({
-    verdict: verdict.next, reason: verdict.next === "approve" ? "none" : "other_concern", explanation: "journey judgment",
-    model: "simulated", promptVersion: REVIEW_JUDGE_PROMPT_VERSION,
-  }),
+  judge: (packet, options) => (next === "approve" ? approving : holdEveryItem.judge).judge(packet, options),
 };
 
 async function current() {
@@ -29,7 +28,8 @@ async function reviewOf(): Promise<{ review: ContactReview; state: string; revie
   const review: ContactReview = row.decision === null ? (row.exception_reason === null ? "AwaitingJudge" : "HeldForStaff")
     : row.decision === "approve" ? (row.approver === "judge" ? "JudgeApproved" : "StaffApproved")
     : row.decision === "reject" ? "ReviewerRejected"
-    : row.exception_reason !== null && row.exception_reason !== "judge_overdue" ? "HeldExpired" : "ReviewExpired";
+    : lastReview === "HeldForStaff" || lastReview === "HeldExpired" ? "HeldExpired" : "ReviewExpired";
+  lastReview = review;
   return { review, state: row.state, reviewer: row.reviewer };
 }
 
@@ -40,6 +40,7 @@ try {
       fixture = startClimbingRequestFixture(judge);
       await fixture.ready;
       output = [];
+      lastReview = "AwaitingJudge";
       return null;
     },
     async dispatch(_key, event): Promise<"accepted"> {
@@ -60,7 +61,7 @@ try {
           output = ["NoLongerPending"];
         } else {
           if (event.atDeadline) clock.set(item.deadline);
-          verdict.next = event.approve ? "approve" : "flag";
+          next = event.approve ? "approve" : "flag";
           if (!await service.tick()) throw new Error("The service did not take its tick");
           const after = await reviewOf();
           if (after.review === "ReviewExpired") output = ["DeadlinePassed"];

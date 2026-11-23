@@ -10,9 +10,6 @@ watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "pnpm-lock.
 
 [deploy]
 startCommand = "node --import tsx deploy/backend/server.ts"
-# startCommand is the Dockerfile CMD and has no --dry-run: with NETWORK_CHANNEL and its credentials, sends are real from the first deploy (owner decision 2026-11-22; docs/deploy.md section 6).
-# It repeats the CMD on purpose: config as code overrides a start command left in the Railway dashboard (for example an old one with --dry-run). backend.test.ts keeps the two equal.
-# Migrations run on boot under the advisory lock.
 healthcheckPath = "/healthz"
 # The first boot applies every migration before it listens.
 healthcheckTimeout = 120

@@ -2,8 +2,7 @@
 // of platform.networks). What a runtime does:
 //  - Every unit of work (a tick, an inbound message, a staff action) runs under this network's own
 //    PgStore advisory lock (key network-tick-<app>:<city>), loads the newest stored state and a fresh
-//    snapshot of this app's rows, and saves after. A slow network never blocks another one. A tick's
-//    engine run (with the model judge) computes between two tick units, without the lock (store.ts runTick).
+//    snapshot of this app's rows, and saves after. A slow network never blocks another one.
 //  - Every query on a network table runs in a transaction with `set_config('app.app_id', <app>, true)`
 //    (scoped()), so the service works under the network_service role, whose row-level security shows
 //    one app per transaction (audit network-service-M1). Every row also names its app explicitly.
@@ -18,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { DAY, LeakGuard } from "@thenetwork/core";
+import { CITY_TZ, DAY, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
@@ -41,7 +40,7 @@ import { isLateArrivalPairBooking, parseLateArrivalDeliveryId } from "../src/gro
 import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
-import { buildWorld, localEmbed, resolveConfig } from "@thenetwork/engine";
+import { buildWorld, localEmbed, resolveConfig, type EngineConfigInput } from "@thenetwork/engine";
 import type { DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
 import {
@@ -59,7 +58,7 @@ import { RELAY_SWAP_TTL_MS, SWAP_WITHDRAWN, type RelayCanonical } from "../src/r
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
-import { automatedFacetPredicate, birthFieldsOf, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
+import { automatedFacetPredicate, birthColumns, effectiveAgeOf, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf, type AgeRow } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { collectedReplyGuard, currentBookingReceipt, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
@@ -148,12 +147,12 @@ export interface Unit {
   postings: JobPosting[];
   ages: StatedAge[];
   minorSignals: { memberId: MemberId; at: number }[];
-  teenBars?: { memberId: MemberId; reason: "older_than_stated"; at: number }[];
-  teenPairs?: [MemberId, MemberId][];
+  teenBars: { memberId: MemberId; reason: "older_than_stated"; at: number }[];
+  teenPairs: [MemberId, MemberId][];
   recordedAges?: (RecordedMemberAge & { memberId: MemberId })[];
 }
 type StatedAge = { memberId: MemberId; age: number; birthDate?: number };
-const newUnit = (): Unit => ({ standingIntents: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [] });
+const newUnit = (): Unit => ({ standingIntents: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [], teenBars: [], teenPairs: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -213,7 +212,6 @@ export class NetworkRuntime {
   readonly net: ConsentNetwork;
   readonly pg: PgStore;
   readonly store: NetworkStore;
-  /** The stored version of the Network state in `net` (the queue's checks read it). */
   readonly view: StateView;
   readonly adapter: ChannelAdapter;
   /** The network capital ledger (packages/capital): every event the Network emits is recorded here and stored in network.capital_events. Its levers are not read yet. */
@@ -221,6 +219,7 @@ export class NetworkRuntime {
   matchingAllowed: boolean;
   /** This app's engine pack, its engine config and its hooks (packs.ts). */
   readonly wiring: AppWiring;
+  private readonly engineConfig: EngineConfigInput;
   private readonly calendarScheduling?: CalendarSchedulingBridge;
   private readonly calendarViews = new AsyncLocalStorage<ReadonlyMap<MemberId, CalendarSchedulingObservation>>();
   private snap?: WorldSnapshot;
@@ -264,20 +263,19 @@ export class NetworkRuntime {
     this.wiring = appWiring(o.app.id);
     this.calendarScheduling = o.network?.calendarFreeBusy ? undefined : o.calendarScheduling;
     const w = this.wiring;
+    this.engineConfig = { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine };
     this.net = new ConsentNetwork({
       matchingEnabled: false,
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
       ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
-      engine: { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine },
+      engine: this.engineConfig,
       app: o.app, inlineJudge: undefined, store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      // The in-memory ledger takes an event when its unit saves (writeUnit): a tick unit that ends unsaved to
-      // compute its engine run outside the lock records nothing (spec/runtimeUnit.md).
       onLedger: e => { this.unit.capital.push(e); },
       onAgeStated: (memberId, age, o) => {
         if (profileAgeCounts(o.explicit, o.declined, canBeMatched(age))) {
@@ -285,8 +283,8 @@ export class NetworkRuntime {
         }
       },
       onMinorSignal: memberId => { this.unit.minorSignals.push({ memberId, at: this.clock.now() }); },
-      onTeenBar: (memberId, reason) => { (this.unit.teenBars ??= []).push({ memberId, reason, at: this.clock.now() }); },
-      onTeenPairAvoid: pairs => { (this.unit.teenPairs ??= []).push(...pairs); },
+      onTeenBar: (memberId, reason) => { this.unit.teenBars.push({ memberId, reason, at: this.clock.now() }); },
+      onTeenPairAvoid: pairs => { this.unit.teenPairs.push(...pairs); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
       memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
@@ -312,7 +310,6 @@ export class NetworkRuntime {
   }
 
   private get sql() { return this.host.sql; }
-  /** The service clock (the dry-run line queue reads it too). */
   get clock() { return this.host.clock; }
   /** The service's connection pool (the persisted queue writes platform.outbound with it). */
   get db(): SQL { return this.host.sql; }
@@ -349,38 +346,39 @@ export class NetworkRuntime {
   async capRelease(id: string): Promise<void> { await this.host.capRelease?.([id]); }
 
   // ------------------------------------------------------------------ relay (packages/network/src/relay.ts)
-  /**
-   * The canonical owners' view of relay members: the member row (active account, not opted out), and on the
-   * platform the membership bound to the member's address with its consent ledger (STOP), bans, phone hold
-   * and suppression (accounts.activeMembership), and the lowest known age (an adult only). Fails closed: a
-   * member with no row, no address or no binding is not eligible. `tx` reads the member rows in that transaction.
-   */
-  async relayParties(ids: MemberId[], tx?: SQL, stored?: NetworkState): Promise<Map<MemberId, RelayCanonical>> {
+  async relayParties(ids: MemberId[], tx?: SQL, stored?: readonly NetworkState[]): Promise<Map<MemberId, RelayCanonical>> {
     const out = new Map<MemberId, RelayCanonical>();
     if (!ids.length) return out;
-    const read = (t: SQL) => t`select m.id,m.person_id,m.account_status,m.opted_out,(authority.staff_held or authority.report_held) as safety_held,authority.minor_signal_at,
-      (select p.e164 from platform.phone_identities p where p.person_id=m.person_id order by p.e164 limit 1) as e164,
-      exists (select 1 from platform.teen_pool_holds h join platform.people pp on pp.phone_hash=h.phone_hash where pp.id=m.person_id and h.app_id<>m.app_id) as teen_held
-      from network.members m left join platform.matching_ages authority on authority.app_id=m.app_id and authority.member_id=m.id
-      where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
-    const rows = (tx ? await read(tx) : await this.scoped(read)) as Row[];
+    const read = async (t: SQL) => {
+      const rows = await t`select m.id,m.person_id,m.account_status,m.opted_out,(authority.staff_held or authority.report_held) as safety_held,authority.minor_signal_at,
+        (select p.e164 from platform.phone_identities p where p.person_id=m.person_id order by p.e164 limit 1) as e164,
+        authority.teen_pool_held as teen_held
+        from network.members m left join platform.matching_ages authority on authority.app_id=m.app_id and authority.member_id=m.id
+        where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
+      const states = stored ?? (await t<{ state: NetworkState | string }[]>`select state from network.network_state where id=${this.pg.id}`)
+        .map(s => (typeof s.state === "string" ? JSON.parse(s.state) : s.state) as NetworkState);
+      return { rows: rows as Row[], states };
+    };
+    const { rows, states } = tx ? await read(tx) : await this.scoped(read);
     const accounts = tx ? this.host.accountsFor?.(tx) ?? this.host.accounts : this.host.accounts;
+    const now = this.clock.now();
     for (const id of ids) {
       const r = rows.find(x => x.id === id), e164 = r?.e164 as string | undefined;
+      const state = states.find(s => s.members.some(x => x.id === id));
+      const sm = state?.members.find(x => x.id === id);
       let bound = false, adult = false, teen = false, birthKey = 0;
-      if (accounts && r?.person_id && e164) {
+      if (accounts && r?.person_id && e164 && state && sm && !state.declinedIds.includes(id)) {
         const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
         if (binding?.membership.memberId === id) {
-          bound = true; adult = canBeMatched(await accounts.lowestAge(e164, binding.person));
+          bound = true;
           const record = await accounts.ageRecord(e164, binding.person);
-          const now = this.clock.now();
           birthKey = record.birthKey ?? 0;
-          const sm = stored?.members.find(x => x.id === id);
           const signalAt = r.minor_signal_at !== null && r.minor_signal_at !== undefined ? new Date(r.minor_signal_at as string | Date).getTime() : undefined;
-          teen = record.birthKey !== undefined && teenReady(record.birthExact, record.ageConflict || sm?.ageConflict === true || sm?.ageUnknown === true,
-            personMinorSignalOpen(signalAt !== undefined, signalAt ?? 0, sm?.minorClearedAt !== undefined, sm?.minorClearedAt ?? 0) || sm?.minorSignal === true,
-            sm?.minorReported === true, sm?.olderReported === true,
-            record.teenBarred || r.teen_held === true)
+          const signalOpen = personMinorSignalOpen(signalAt !== undefined, signalAt ?? 0, sm.minorClearedAt !== undefined, sm.minorClearedAt ?? 0) || sm.minorSignal === true;
+          const doubt = record.ageConflict || sm.ageConflict === true || sm.ageUnknown === true;
+          adult = canBeMatched(await accounts.lowestAge(e164, binding.person)) && sm.minor !== true && !signalOpen && !doubt && sm.minorReported !== true;
+          teen = record.birthKey !== undefined
+            && teenReady(record.birthExact, doubt, signalOpen, sm.minorReported === true, sm.olderReported === true, record.teenBarred || r.teen_held === true)
             && teenPartnerAge(record.birthKey, earliestDayKeyOf(now), latestDayKeyOf(now));
         }
       }
@@ -408,7 +406,7 @@ export class NetworkRuntime {
     const [message] = await tx`select id from network.messages where app_id=${app} and id=${row.id}
       and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${notice}`;
     if (!message || await this.canonicalPairBlocked(tx, delivery.from, delivery.to)) return refused;
-    const parties = await this.relayParties([delivery.from, delivery.to], tx);
+    const parties = await this.relayParties([delivery.from, delivery.to], tx, [saved.state]);
     if (![delivery.from, delivery.to].every(id => {
       const party = parties.get(id);
       return party?.adult && !party.optedOut && !party.held;
@@ -453,17 +451,17 @@ export class NetworkRuntime {
     if (!current(first) || !current(second) || await this.canonicalPairBlocked(tx, first, second)) return refused;
     const members = await tx`select id, prefs, participation_state, participation_window, opted_out from network.members
       where app_id=${app} and id in ${tx(opp.participants)} order by id for share`;
-    const parties = await this.relayParties(opp.participants, tx);
+    const parties = await this.relayParties(opp.participants, tx, [saved!.state]);
     const eligible = members.length === 2 && members.every(member => {
       const party = parties.get(member.id);
       const trust = saved!.state.trust?.find(record => record.id === member.id)?.level ?? "ok";
-      return party?.adult === true && !party.held && !party.optedOut && trust === "ok" && storedInviteNoticePartyCurrent(saved!.state, member.id)
+      return party?.adult === true && !party.held && !party.optedOut && trust === "ok" && storedInviteNoticePartyCurrent(saved!.state, member.id, now)
         && member.prefs?.categoriesOptIn?.includes("professional") && member.prefs?.formats?.includes("one_to_one")
         && !member.prefs?.onlyWhenAsked && effectiveParticipation(member as Parameters<typeof effectiveParticipation>[0], now).state !== "paused";
     });
     const active = cofounderPairCurrent(first !== second, true, true, eligible);
     const bothAccepted = opp.participants.every(id => opp.status.some(([key, status]) => key === id && status === "yes") && opp.contacted.includes(id));
-    return cofounderDeliveryAllowed(active, opp.review?.decision === "approve", revealing, bothAccepted) ? { ok: true } : refused;
+    return cofounderDeliveryAllowed(active, reviewApproved(opp.review), revealing, bothAccepted) ? { ok: true } : refused;
   }
 
   private peonHireContacts(tx: SQL, memberId: MemberId, ids: readonly string[]) {
@@ -489,10 +487,10 @@ export class NetworkRuntime {
     const approved = reviewApproved(review);
     if (!hireContactAllowed(true, approved, phase, memberId === seat.manager, reveal, accepted(candidate), accepted(seat.manager))) return false;
     if (await this.canonicalPairBlocked(tx, candidate, seat.manager)) return false;
-    const parties = await this.relayParties(participants, tx);
+    const parties = await this.relayParties(participants, tx, [saved.state]);
     if (!participants.every(id => {
       const party = parties.get(id);
-      return party?.adult === true && !party.held && !party.optedOut && storedInviteNoticePartyCurrent(saved.state, id);
+      return party?.adult === true && !party.held && !party.optedOut && storedInviteNoticePartyCurrent(saved.state, id, now);
     })) return false;
     const [intents, facets] = await Promise.all([
       tx`select * from network.intents where app_id='peon' and member_id in ${tx(participants)} order by member_id,id`,
@@ -554,13 +552,13 @@ export class NetworkRuntime {
     const now = this.clock.now();
     const stageCurrent = reveal ? opp.stage === "scheduled" : opp.stage === "probing" && opp.contacted.includes(row.memberId!)
       && opp.status.some(([memberId, status]) => memberId === row.memberId && status === "probing");
-    const approved = stageCurrent && opp.review?.decision === "approve" && !opp.review.invalidated;
+    const approved = stageCurrent && reviewApproved(opp.review);
     const accepted = opp.participants.every(id => opp.status.some(([memberId, status]) => memberId === id && status === "yes"));
     if (!slopPairContactAllowed(approved, first !== second, reveal, accepted)) return refused;
-    if (!opp.participants.every(id => storedInviteNoticePartyCurrent(state, id) && !state.trust?.some(t => t.id === id && t.level !== "ok"))) return refused;
+    if (!opp.participants.every(id => storedInviteNoticePartyCurrent(state, id, now) && !state.trust?.some(t => t.id === id && t.level !== "ok"))) return refused;
     const pair = [first, second].sort().join("|");
     if (state.blocks.includes(pair) || state.avoid.includes(pair) || await this.canonicalPairBlocked(tx, first, second)) return refused;
-    for (const party of (await this.relayParties(opp.participants, tx)).values()) if (!party.adult || party.held || party.optedOut) return refused;
+    for (const party of (await this.relayParties(opp.participants, tx, [state])).values()) if (!party.adult || party.held || party.optedOut) return refused;
 
     const [members, facets, presence, blocks] = await Promise.all([
       tx`select m.id,m.name,m.home_city,m.prefs,m.participation_state,m.participation_window,m.joined_at,m.unanswered_proactive,a.age
@@ -593,16 +591,6 @@ export class NetworkRuntime {
     return check(prepared, opp.participants) ? { ok: true } : refused;
   }
 
-  /**
-   * Final dispatch admission of a relayed row, inside the outbound queue's admission transaction after
-   * every asynchronous gate (outbound ids "relay:<item>", and "relay:<item>:ask" for the swap question).
-   * The item must be one the relay desk passed (network.relay_records, written with the queued row) for
-   * exactly this recipient; the newest stored state must still hold the open
-   * two-person match of these members with both of them eligible (relayDispatchCheck); no block between
-   * them in the canonical edges or person blocks; and both members pass the canonical checks (relayParties).
-   * The stored state is read FOR SHARE, so a unit that closes the match either commits first (and is seen
-   * here) or waits for this admission.
-   */
   async relayAdmission(tx: SQL, row: { id: string; memberId?: string | null; oppId?: string }): Promise<RecipientCheck> {
     const no = (reason: string): RecipientCheck => ({ ok: false, reason });
     const id = /^relay:([^:]+)(:ask)?$/.exec(row.id);
@@ -639,7 +627,7 @@ export class NetworkRuntime {
     const why = relayDispatchCheck(state, { matchId, from, to, now, teenText: textOnly });
     if (why) return no(why);
     if (await this.canonicalPairBlocked(tx, from, to)) return no("party:blocked");
-    const parties = await this.relayParties([from, to], tx, state);
+    const parties = await this.relayParties([from, to], tx, [state]);
     const opp = state.opps.find(x => x.id === matchId);
     const teen = textOnly && !!opp && opp.teenRuleAt !== undefined && teenFriendApp(this.app.id) && !storedTeenStop(state) && teenFriendCategory(this.app.id, opp.category)
       && groupAgeAllowed(true, true, earliestDayKeyOf(now), latestDayKeyOf(now),
@@ -721,11 +709,11 @@ export class NetworkRuntime {
       ? opportunity.stage === "probing" && statuses.get(memberId) === "probing" && message.id === gatheringRepeatProbeKey(opportunity.id, memberId, message.type === "scheduling")
       : opportunity.stage === "scheduled" && participants.every(id => statuses.get(id) === "yes" && opportunity.contacted.includes(id))
         && opportunity.bookedTold?.includes(memberId) === true;
-    const rollout = this.matchingAllowed && state.matchingEnabled;
+    const matchingOn = this.matchingAllowed && state.matchingEnabled;
     const accounts = this.host.accountsFor?.(tx);
-    const current = !!accounts && !!source && rollout && exactPair && approved && lifecycle && exactMessage
+    const current = !!accounts && !!source && matchingOn && exactPair && approved && lifecycle && exactMessage
       && await gatheringMatchSourceCurrent(tx, accounts, this.app, source, this.clock.now(), { memberId, e164: address }, state);
-    return gatheringRepeatContactAllowed(rollout, exactPair, approved, lifecycle, exactMessage, current);
+    return gatheringRepeatContactAllowed(matchingOn, exactPair, approved, lifecycle, exactMessage, current);
   }
 
   async gatheringRepeatClaim(tx: SQL, row: QueueRow): Promise<boolean> {
@@ -784,9 +772,9 @@ export class NetworkRuntime {
     const states = new Map(stateRows.map(row => [row.id as string, (typeof row.state === "string" ? JSON.parse(row.state) : row.state) as NetworkState]));
     if (![...members].every(([member, network]) => {
       const state = states.get(network);
-      return state && storedInviteNoticePartyCurrent(state, member);
+      return state && storedInviteNoticePartyCurrent(state, member, this.clock.now());
     })) return false;
-    const parties = await this.relayParties([...members.keys()], tx);
+    const parties = await this.relayParties([...members.keys()], tx, [...states.values()]);
     return [...parties.values()].every(party => party.adult && !party.optedOut && !party.held);
   }
 
@@ -843,7 +831,7 @@ export class NetworkRuntime {
    */
   async start() {
     // The ledger starts from what is stored (events this process did not emit), oldest first.
-    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by seq`) as any[]) {
+    for (const r of await this.scoped(tx => tx<{ event: CapitalEvent | string }[]>`select event from network.capital_events where app_id = ${this.app.id} order by seq`)) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
     // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"
@@ -1043,17 +1031,17 @@ export class NetworkRuntime {
     await this.scoped(async tx => {
       const [snapshot, names] = await Promise.all([
         loadSnapshot(tx, now, { app, city: this.city, homeCities: homes }),
-        tx`select i.id,i.invited_by,i.name,a.age as matching_age,
-            a.birth_date as ab_birth_date, a.birth_lower as ab_birth_lower, a.birth_upper as ab_birth_upper, a.birth_youngest as ab_birth_youngest,
-            a.floor_birth_lower as ab_floor_birth_lower, a.floor_birth_upper as ab_floor_birth_upper, a.floor_birth_youngest as ab_floor_birth_youngest
+        tx<(AgeRow & { id: string; invited_by: string; name: string | null })[]>`select i.id,i.invited_by,i.name,a.age as matching_age,
+            (i.age is null or p.id is null or p.lowest_age is null) as age_missing, ${birthColumns(tx)}
           from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
           join platform.matching_ages a on a.app_id=i.app_id and a.member_id=i.id
+          left join platform.people p on p.id=i.person_id
           where i.app_id=${app} and v.home_city in ${tx([...homes])} and i.home_city not in ${tx([...homes])}
             and i.joined_at>${new Date(now - inviteJoinNoticeLifetimeMs)} and i.account_status='active' and not i.opted_out order by i.id`,
       ]);
       this.snap = snapshot;
-      this.joinedInviteeNames = new Map(names.filter(row => canBeMatched(birthFieldsOf(row, now).age ?? row.matching_age ?? undefined)).flatMap(row => {
-        const first = (row.name as string | null)?.trim().split(/\s+/)[0];
+      this.joinedInviteeNames = new Map(names.filter(row => canBeMatched(effectiveAgeOf(row, now))).flatMap(row => {
+        const first = row.name?.trim().split(/\s+/)[0];
         return first ? [[`${row.invited_by}\0${row.id}`, first] as const] : [];
       }));
     });
@@ -1158,6 +1146,10 @@ export class NetworkRuntime {
     this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, ...(mediaUrls?.length ? { mediaUrls } : {}), kind, type, proactive: false, system: true, ts: this.clock.now() });
   }
 
+  uniqueId(key: string): string {
+    return `${key}:${this.nonce}${++this.seq}`;
+  }
+
   guardedSystemReply(memberId: MemberId, id: string, body: string, type: string): boolean {
     if (new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body).length) {
       this.host.log(`[alert] a ${type} text failed the leak guard (${this.id}, ${id})`);
@@ -1245,21 +1237,24 @@ export class NetworkRuntime {
       }
     }
     const barAccounts = this.host.accountsFor?.(tx);
-    for (const bar of u.teenBars ?? []) {
+    for (const bar of u.teenBars) {
       const e164 = this.addressOf(bar.memberId);
       if (barAccounts && e164) await barAccounts.barTeenPool(e164, bar.reason, bar.at);
     }
     const hashOf = (id: MemberId) => { const e164 = this.addressOf(id); return e164 && this.host.accounts ? this.host.accounts.phoneHash(e164) : undefined; };
-    if (teenFriendApp(app) && this.host.accounts) {
+    const accounts = this.host.accounts;
+    if (teenFriendApp(app) && accounts) {
       const held = this.net.teenPoolHolds().map(hashOf).filter((h): h is string => !!h);
+      const own = [...this.memberToAddr.values()].map(e164 => accounts.phoneHash(e164));
       if (held.length) {
         await tx`insert into platform.teen_pool_holds (phone_hash, app_id, at)
           select h, ${app}, ${new Date(this.clock.now())}::timestamptz from unnest(${tx.array(held, "TEXT")}) as h
           on conflict (phone_hash, app_id) do nothing`;
       }
-      await tx`delete from platform.teen_pool_holds where app_id=${app} and not (phone_hash = any(${tx.array(held, "TEXT")}))`;
+      await tx`delete from platform.teen_pool_holds where app_id=${app} and phone_hash = any(${tx.array(own, "TEXT")})
+        and not (phone_hash = any(${tx.array(held, "TEXT")}))`;
     }
-    for (const [a, b] of u.teenPairs ?? []) {
+    for (const [a, b] of u.teenPairs) {
       const first = hashOf(a), second = hashOf(b);
       if (!first || !second || first === second) continue;
       const [low, high] = first < second ? [first, second] : [second, first];
@@ -1325,7 +1320,6 @@ export class NetworkRuntime {
       const approvedContact = bookedLink ?? reviewToken;
       const contactAllow = u.collectedPublicLinks?.get(s.id) ?? (approvedContact ? [approvedContact] : undefined);
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
-      // spec/signedInbox.md, "Every collected reply passes the line's leak guard"
       if (!collectedReplyMayLeave(reasons.length)) {
         u.collected.delete(s.id);
         if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls"
@@ -1384,9 +1378,6 @@ export class NetworkRuntime {
     }
     const events = u.events.filter(e => !membersOf(e).some(id => u.forget.has(id))).map(e => ({ ...e, app_id: app, at: new Date(e.at) }));
     for (let i = 0; i < events.length; i += 500) await tx`insert into network.events ${tx(events.slice(i, i + 500))}`;
-    // spec/capitalLedger.md: the live ledger records the unit's events here, and only the events it accepted are
-    // stored, in emit order (seq), so a restart replays the same ledger. A commit that fails after this point
-    // leaves the live ledger ahead of the store until the next restart.
     const capital = u.capital.filter(e => this.capital.onLedger(e)).filter(e => !u.forget.has((e as { member?: string }).member ?? "")).map(e => ({
       app_id: app, id: e.id, type: e.type, member_id: (e as { member?: string }).member ?? null, t: new Date(e.t), event: e,
     }));
@@ -1421,6 +1412,8 @@ export class NetworkRuntime {
         sender=null,event=null,sender_hash=null,member_id=null,app_id=null
         where request_hash is not null and app_id=${app} and (member_id=${id} or sender_hash=${senderHash ?? null})
         and id<>${turn?.id ?? ""}`;
+      await tx`delete from platform.teen_pool_holds where app_id = ${app}
+        and (phone_hash = ${senderHash ?? null} or phone_hash in (select phone_hash from platform.people where id = ${personIds.get(id) ?? null}))`;
       await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id})`;
       // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
@@ -1431,7 +1424,6 @@ export class NetworkRuntime {
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.review_judgments where app_id = ${app} and ${id} = any(member_ids)`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
-      // Private source suggestions and their review batches go with the member, not at the later membership removal.
       await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
@@ -1529,13 +1521,10 @@ export class NetworkRuntime {
     let ds: Delivery[];
     const current = () => this.scoped(tx => this.view.isCurrent(tx));
     const reload = () => this.store.withLock(async () => {
-      const s = await this.store.load();
-      if (s) this.net.importState(s);
-      this.unit = newUnit();
+      await this.importStored();
       this.view.imported();
     });
     try {
-      // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
       if (!await current()) await reload();
       ds = await this.adapter.deliver([]);
       if (!await current()) {
@@ -1547,11 +1536,6 @@ export class NetworkRuntime {
     await this.projectNotifications();
   }
 
-  /**
-   * Store the status changes of a queue drain (the runtime's or a direct send's) in network.messages. Then a
-   * message that still shows a waiting status takes the status of its queue row once that row stopped waiting:
-   * a drain whose process stopped after the queue commit lost its changes in memory.
-   */
   async drained(ds: Delivery[]) {
     await this.storeStatuses(ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id));
     await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
@@ -1592,8 +1576,6 @@ export class NetworkRuntime {
     const rows = ds.filter(d => d.status !== this.adapter.storedStatus && (!only || only.has(d.id)));
     if (!rows.length) return;
     await this.scoped(async tx => {
-      // A queued message takes its queue row's status at the time of this write, not the drain's older change
-      // (a delivery receipt may have moved the row since).
       for (const d of rows) await tx`update network.messages m set status = coalesce((select o.status from platform.outbound o
         where o.app_id = m.app_id and o.id = m.id and o.member_id = m.member_id), ${d.status})
         where m.app_id = ${this.app.id} and m.id = ${d.id} and m.direction = 'outbound'`;
@@ -1615,7 +1597,7 @@ export class NetworkRuntime {
 
   async calendarSchedulingOwner(e164: string, memberId: MemberId): Promise<CalendarSchedulingOwner | undefined> {
     const state = await this.pg.load();
-    return this.scoped(tx => this.currentCalendarOwner(tx, e164, memberId, storedCalendarOwnerOptedIn(state, memberId)));
+    return this.scoped(tx => this.currentCalendarOwner(tx, e164, memberId, storedCalendarOwnerOptedIn(state, memberId, this.clock.now())));
   }
 
   private async withSchedulingCalendar<T>(target: CalendarSchedulingTarget | undefined, operation: () => Promise<T>): Promise<T> {
@@ -1668,13 +1650,17 @@ export class NetworkRuntime {
     return out;
   }
 
+  private async importStored(): Promise<void> {
+    const s = await this.store.load();
+    if (s) this.net.importState(s);
+    this.unit = newUnit();
+  }
+
   /** The review queue, oldest first, from the newest stored state. Read-only: nothing is saved (audit network-service-19). */
   reviewQueue() {
     return this.store.withLock(async () => {
-      const s = await this.store.load();
-      if (s) this.net.importState(s);
-      this.unit = newUnit();
-      return this.net.reviewQueue();
+      await this.importStored();
+      return this.net.reviewQueue().map(item => ({ ...item, judged: this.net.opps.get(item.oppId)?.review?.judged }));
     });
   }
 
@@ -1683,19 +1669,15 @@ export class NetworkRuntime {
     if (!of) return Promise.resolve(undefined);
     return this.store.withLock(async () => {
       await this.refresh();
-      const s = await this.store.load();
-      if (s) this.net.importState(s);
-      this.unit = newUnit();
-      return of(buildWorld(this.net.packInput(this.clock.now()), resolveConfig(this.wiring.engine), localEmbed));
+      await this.importStored();
+      return of(buildWorld(this.net.packInput(this.clock.now()), resolveConfig(this.engineConfig), localEmbed));
     });
   }
 
   /** Read the newest stored state without saving anything (like reviewQueue). */
   readState<T>(fn: (n: ConsentNetwork) => T): Promise<T> {
     return this.store.withLock(async () => {
-      const s = await this.store.load();
-      if (s) this.net.importState(s);
-      this.unit = newUnit();
+      await this.importStored();
       return fn(this.net);
     });
   }
@@ -1748,19 +1730,14 @@ export class NetworkRuntime {
       if (ready.phase !== "ContextReady") return null;
       const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
       const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
-      // spec/sharedContext.md, "Active items list only the member's live matches with a safe summary"
-      const stored = await this.store.load();
-      if (stored) this.net.importState(stored);
-      this.unit = newUnit();
+      await this.importStored();
       const live = this.net.relayLiveMatches(memberId as MemberId).map(x => ({ ...x,
-        day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(x.match.at)}` }));
+        day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: CITY_TZ[this.city as City], month: "short", day: "numeric" }).format(x.match.at)}` }));
       const shown = live.flatMap(({ match, otherFirstName, day }) => {
-        // spec/sharedContext.md, "Active item summaries are distinct"
         const sameName = live.filter(x => x.otherFirstName.toLowerCase() === otherFirstName.toLowerCase());
         const label = contextItemLabel(sameName.length, sameName.filter(x => x.day === day).length);
         if (label === "ItemLabelLeftOut") return [];
         const summary = label === "ItemLabelName" ? `Match with ${otherFirstName}` : `Match with ${otherFirstName} (${day})`;
-        // The other member's first name is the one name this item may carry; everything else stays forbidden.
         const itemSafe = (text: string) => outputLeaks(text, { forbidden: forbidden.filter(x => x.toLowerCase() !== otherFirstName.toLowerCase()), facts, contacts: true }).length === 0;
         return contextMatchItemShown(true, this.net.teenItemListed(match.id, ageEligible), !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
       });

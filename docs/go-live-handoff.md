@@ -16,7 +16,7 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 - **Bans:** a banned person cannot rejoin, because the ban is on the phone number. Every join, login and inbound path must refuse a banned number.
 - **Ratings:** Clef photo ratings are on, and the scores are never shown to anyone. The placeholder weights ship until fitted weights pass the P2 decision rule. They are on whenever `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are set (owner decision 2026-11-22 removed `CLEF_RATINGS`). Clef is also the scam and harassment classifier for relayed messages.
 - **STOP and HELP** on the shared line are answered by the service inside the gateway's signed `/internal/turn`. Only one system ever answers STOP. The service parses STOP inside `/internal/turn` and reports it as `consent` in the handled response; the gateway copies it into its send fence.
-- **Review and model:** a person reviews every proactive proposal before any member hears of it. Every LLM use is gpt-6-luna on Surplus.
+- **Review and model:** every introduction gets one recorded approval before any member hears of it. The review judge gives it (the strict rubric when the roster has a minor); staff decide only the items it holds, and a held item expires unsent (owner decisions D15 to D17 of 2026-11-22). Every LLM use is gpt-6-luna on Surplus.
 - **Testing:** sims (`pnpm run sim`), integration tests and e2e tests. Do not add unit tests or smoke tests.
 
 ## 1. Hard rules for you
@@ -131,7 +131,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 
 | Where | Variable | Value |
 |---|---|---|
-| Gateway (Railway) | `NETWORK_TAKEOVER` | `1` turns it on; unset or `0` is the legacy path |
+| Gateway (Railway) | `NETWORK_TAKEOVER` | `1` turns it on; unset or `0` keeps the gateway's own path |
 | Gateway | `NETWORK_SERVICE_URL` | the service origin (Railway) |
 | Gateway | `SERVICE_TURN_SECRET` | 32+ random bytes; the same value on all three |
 | Gateway | `NETWORK_TAKEOVER_ALLOWLIST` | optional, comma-separated E.164 numbers; set only for the test-number step (section 7, step 2) |
@@ -171,7 +171,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
    - a banned number refused;
    - a minor joining but never matched while teen introductions are stopped, and never matched on slop.date or peon.biz;
    - slop onboarding to a confirmed read-back;
-   - a relay that goes through, and a scam that's held;
+   - a relay that goes through, and a scam that is blocked, with its sender told;
    - a service outage. The webhook should reopen with nothing sent, then succeed on Blooio's retry.
 2. ★ **Production takeover for test numbers.** Set `NETWORK_TAKEOVER=1` and `NETWORK_TAKEOVER_ALLOWLIST=<founder test numbers>` on the production gateway. Everyone else stays on today's path. The backend sends real queued texts for every app from its first deploy (owner decision 2026-11-22, "Live from first deploy"): `deploy/backend/railway.toml` starts it without `--dry-run`, and `NETWORK_CHANNEL=eliza_cloud` with its credentials is the send channel. There is no shadow period.
 3. ★ **Production takeover for everyone.** Remove `NETWORK_TAKEOVER_ALLOWLIST`, then watch for one hour:
@@ -181,7 +181,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
    - Blooio delivery failures under 2%.
 
 **Rollback:**
-- Set `NETWORK_TAKEOVER=0` on the **gateway**. It's a gateway variable, not a Cloud one. Traffic returns to the legacy path, where the gateway handles STOP itself. The Cloud needs no change; without the gateway's turn context it uses its own store and gates.
+- Set `NETWORK_TAKEOVER=0` on the **gateway**. It's a gateway variable, not a Cloud one. Traffic returns to the gateway's own path, where the gateway handles STOP itself. The Cloud needs no change; without the gateway's turn context it uses its own store and gates.
 - Stop new proposals in the service: switch matching off for each app (`POST /apps/<app>/matching {"on":false}` on the staff API). Queued sends stay real; the production start command has no dry-run option.
 - Roll back Railway or Workers deployments from their dashboards, or redeploy the previous SHA with the same workflows.
 
@@ -196,9 +196,9 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 - [ ] The founder has read docs/deploy.md section 6 and knows its two facts (owner decision 2026-11-22, which closes audit PER34 and SHA41): every app is approved and the production start command has no `--dry-run`, so `NETWORK_CHANNEL=eliza_cloud` makes the queued sends of all four apps real from the first deploy (owner decision 2026-11-22, "Live from first deploy"), and replies to signed turns are sent by the gateway for every app (so friends and peon answer on the shared line once the gateway takes over). The boot log's `sends` line shows the intended channel.
 - [ ] The staff API is reachable from the console (`NETWORK_SERVICE_URL` on the private network; reviews and safety work).
 - [ ] Banned number refused on site join, OTP, inbound and eliza.app.
-- [ ] Minors: join allowed, never rated, no number or photo relay; never matched on slop.date or peon.biz; while teen introductions are stopped, never matched and never relayed (sims plus one live check with a test number). Teen introductions are on at launch, and a named reviewer approves each one (spec/product/pilot.md, owner decision 2026-11-22, answers A2 to A5).
+- [ ] Minors: join allowed, never rated, no number or photo relay; never matched on slop.date or peon.biz; while teen introductions are stopped, never matched and never relayed (sims plus one live check with a test number). Teen introductions are on at launch. The review judge approves each one with the strict rubric; staff approve only an item that the judge holds (spec/product/pilot.md, owner decision 2026-11-22, answers A2 to A5; owner decisions D15 to D17).
 - [ ] Clef ratings on; scores never visible (check the console, probes, reveals and relay output).
-- [ ] Relay: Clef classifier wired; a scam test message is held; an honest message passes.
+- [ ] Relay: Clef classifier wired; a scam test message is blocked and the sender is told; an honest message passes.
 - [ ] Monitoring and alerts on (uptime, heartbeat, send failures, review SLA, safety queue); cost alerts on.
 - [ ] Existing eliza.app users get the one-time notice; nobody is enrolled in matching without consent.
 - [ ] The founder has approved each starred step in section 7.

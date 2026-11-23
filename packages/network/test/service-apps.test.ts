@@ -1,7 +1,3 @@
-// The service with several apps (platform plan 4.4, 6.1): text joins, keywords per app, the person
-// cap, sends for every app without a live approval, per-app staff roles, and the public API mounted on the service. Postgres in
-// a database of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is
-// sent: the adapters are dry-run (or Blooio with a fake provider), and OTP codes come from a fake.
 import { setTimeout as sleep } from "node:timers/promises";
 import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
@@ -19,7 +15,7 @@ import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, type Outbound } from "../service/channel.ts";
 import { CloudChannelAdapter } from "../service/cloud-channel.ts";
-import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
+import { NetworkService, WEBHOOK_PATH, type NetworkRuntime, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor, styleViolations } from "../src/copy.ts";
 import type { NetworkState } from "../src/network.ts";
 import { SLOP_ONBOARD_QUESTIONS } from "../../engine/src/packs/slop/index.ts";
@@ -238,23 +234,19 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(directs.length).toBe(answered + 1);
   }, T);
 
-  // spec/baseProfileShare.md, "Story: Reuse my approved basics in a second app"
-  test("one person in two apps: the link notice names no app, SHARE grants and reuses only shareable interests, STOP is per app, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
+  test("one person in two apps: the link notice names no app, SHARE grants and reuses only shareable interests, STOP on one app's line stops every app and START restarts that app only, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
     const p = newPhone();
     expect(await text(s, clock, p, "Sam 29", { app: FR })).toBe("joined");
     // A known person on a new app (slop by keyword on the shared line): the age check again, then the link notice.
     expect(await text(s, clock, p, "slop")).toBe("join_asked");
-    // A different first name in the second app, so a grant that replaced it would show.
     expect(await text(s, clock, p, "Kit 29")).toBe("joined");
     const fr = (await memberOf(FR, p))!, sl = (await memberOf("slop", p))!;
     const slopOut = await outbound(sl.id);
     expect(slopOut.map(x => x.type).sort()).toEqual(["info", "onboarding"]);
     expect(slopOut.find(x => x.type === "info").body).toBe(copyFor(brandOf(APPS.slop)).linkNotice);
     for (const x of slopOut) for (const word of [FR, APPS[FR].domain, APPS[FR].name]) expect(x.body.toLowerCase()).not.toContain(word.toLowerCase());
-    // The friends member's facts: one confirmed interest is shareable; a private, a sensitive, an unconfirmed
-    // interest, one bound to an opportunity and a plain fact are not.
     const fact = (id: string, kind: string, value: string, scope: string, status: string, sensitive: string | null) =>
       sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, sensitive, valid_from)
         values (${FR}, ${`${fr.id}:${id}`}, ${fr.id}, ${kind}, ${value}, ${sql.array(["climbing"], "TEXT")}, ${scope}, 'said', ${status}, ${sensitive}, ${new Date(clock.now() - HOUR)})`;
@@ -264,21 +256,16 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await fact("i4", "interest", "salsa", "matchable", "proposed", null);
     await fact("i5", "interest", "a one-off picnic", "opportunity_specific", "confirmed", null);
     await fact("f1", "fact", "works nights", "shareable", "confirmed", null);
-    // SHARE answers the notice (the last app that wrote to them is slop): a grant, then slop reads it.
     expect(await text(s, clock, p, "SHARE")).toBe("handled");
     expect((await sql`select from_app, to_app, fields from platform.share_grants`)[0]).toEqual({ from_app: FR, to_app: "slop", fields: ["interests"] });
-    const copies = await sql`select id, kind, value, privacy_scope, source, status from network.facets where app_id = 'slop' and member_id = ${sl.id} and source = 'share_grant'`;
-    expect(copies.map(({ id: _id, ...r }: any) => r))
+    const copies = await sql`select id, kind, value, privacy_scope, source, status from network.facets where app_id = 'slop' and member_id = ${sl.id} and source = 'share_grant'` as { id: string; kind: string; value: string; privacy_scope: string; source: string; status: string }[];
+    expect(copies.map(({ id: _id, ...r }) => r))
       .toEqual([{ kind: "interest", value: "rock climbing", privacy_scope: "matchable", source: "share_grant", status: "confirmed" }]);
-    // The copy never names the app it came from.
     for (const word of [FR, APPS[FR].domain, APPS[FR].name]) expect(String(copies[0]!.id).toLowerCase()).not.toContain(word.toLowerCase());
-    // Nor can a reader of slop's facts find the source app by hashing the value with each app id.
     for (const app of APP_IDS) expect(String(copies[0]!.id)).not.toContain(createHash("sha256").update(`${app}\nrock climbing`).digest("hex").slice(0, 16));
-    // The joined app keeps the first name and city it was told.
     expect((await sql`select name from network.members where app_id = 'slop' and id = ${sl.id}`)[0]).toEqual({ name: "Kit" });
 
-    // STOP on the friends app's own line stops every app, even with the removed PLATFORM_STOP_SCOPE=app set (owner decision 2026-11-22).
-    const { s: own } = service(clock, { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } });
+    const { s: own } = service(clock);
     expect(await text(own, clock, p, "STOP", { app: FR })).toBe("handled");
     expect((await outbound(fr.id)).at(-1)).toMatchObject({ system: true, body: APPS[FR].brand.stop });
     expect((await memberOf(FR, p))!.opted_out).toBe(true);
@@ -287,7 +274,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await consentOf(p, "slop")).toBe("opted_out");
     const states = async () => (await sql`select m.app_id, m.state from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id where ph.e164 = ${p} order by app_id`).map((r: any) => `${r.app_id}:${r.state}`);
     expect(await states()).toEqual([`${FR}:paused`, "slop:paused"].sort());
-    // START on that line: that app only.
     expect(await text(own, clock, p, "START", { app: FR })).toBe("handled");
     expect((await memberOf(FR, p))!.opted_out).toBe(false);
     expect((await memberOf("slop", p))!.opted_out).toBe(true);
@@ -352,7 +338,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       const clock = new SimClock(START);
       const sent: SendRequest[] = [];
       const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-      const { s } = service(clock, { adapter: (net, rt) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env: {}, app: rt.app.id, log: () => {} }) });
+      const { s } = service(clock, { adapter: (_net, rt) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) });
       await text(s, clock, newPhone(), "hi", { app: FR });
       expect(sent.length).toBe(1);
     }
@@ -450,9 +436,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const clock = new SimClock(START);
     const sent: SendRequest[] = [];
     const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env: {}, app: rt.app.id, log: () => {} }) };
-    const removedScope = { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } };
-    const { s } = service(clock, { ...live, ...removedScope });
+    const live = { adapter: (_net: NetworkRuntime["net"], rt: NetworkRuntime) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) };
+    const { s } = service(clock, live);
     clock.set(START + 14 * HOUR); // inside the send window (quiet hours hold proactive sends only)
     const p = newPhone();
     expect(await text(s, clock, p, "Sam 29", { app: FR })).toBe("joined");
@@ -465,7 +450,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(sent.length).toBeGreaterThan(n);
     expect(sent.at(-1)!.to).toBe(p);
     // A new process (fresh adapters, no memory of the STOP): the ledger still refuses slop sends.
-    const { s: s2 } = service(clock, { ...live, ...removedScope });
+    const { s: s2 } = service(clock, live);
     const slop = s2.runtimeFor("slop")!, fr = s2.runtimeFor(FR)!;
     await slop.identities(); await fr.identities();
     const sl = (await memberOf("slop", p))!, frm = (await memberOf(FR, p))!;
@@ -739,8 +724,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(successor).not.toBe(owner.personId);
     expect(await s.accounts.personFor(newNumber)).toMatchObject({ id: owner.personId, lowestAge: 15 });
     expect(await s.accounts.personFor(oldNumber)).toMatchObject({ id: successor, lowestAge: 30 });
-    expect(await s.people.ageFloor(s.accounts.phoneHash(oldNumber))).toBe(30);
-    expect(await s.people.ageFloor(s.accounts.phoneHash(newNumber))).toBe(15);
+    expect((await s.people.ageFloorRecord(s.accounts.phoneHash(oldNumber)))?.age).toBe(30);
+    expect((await s.people.ageFloorRecord(s.accounts.phoneHash(newNumber)))?.age).toBe(15);
   }, T);
 
   test.each([{ before: 25, after: 15 }, { before: 15, after: 12 }])("a signed age correction from $before to $after survives interrupted projection", async ({ before, after }) => {
@@ -1791,10 +1776,10 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(new Set(bodies).size).toBe(bodies.length);
     // The stored state: the pack's tags (the stated label is kept agent_private, never read back), the confirmed onboarding, and never the member's own words.
     const state = (await sql`select state from network.network_state where id = 'slop:nyc'`)[0].state;
-    const st = typeof state === "string" ? JSON.parse(state) : state;
-    const me = st.members.find((x: any) => x.id === m.id);
-    expect(me.appTags.map((t: any) => t.tag).sort()).toEqual(["romance:age:28-38", "romance:is:woman", "romance:open_trans:declined", "romance:seeks:man", "romance:seeks:woman", "slop:max_miles:5", "slop:orientation:bisexual", "slop:scope:radius:5", "slop:zip:11211"]);
-    expect(me.onboarding.confirmed).toBe(true);
+    const st = (typeof state === "string" ? JSON.parse(state) : state) as NetworkState;
+    const me = st.members.find(x => x.id === m.id)!;
+    expect((me.appTags ?? []).map(t => t.tag).sort()).toEqual(["romance:age:28-38", "romance:is:woman", "romance:open_trans:declined", "romance:seeks:man", "romance:seeks:woman", "slop:max_miles:5", "slop:orientation:bisexual", "slop:scope:radius:5", "slop:zip:11211"]);
+    expect(me.onboarding).toMatchObject({ confirmed: true });
     for (const words of ["I'm bi", "women and men", "within 5 miles", "more fun", "rather not say"]) expect(JSON.stringify(me.onboarding)).not.toContain(words);
   }, T);
 

@@ -14,6 +14,7 @@ import { buttonPageLink, Notifier, queuePolicy, queueSink, threadHooks, type Rec
 import { deliveryIdFor } from "../src/scheduler.ts";
 
 import { PgNotifyStore } from "../src/pg-store.ts";
+import { WEEK_MS } from "../src/store.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 
 const user = process.env.USER ?? "postgres";
@@ -196,7 +197,7 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     const b = await runB;
     expect(a.sent.map(plan => plan.itemIds)).toEqual([[first.id]]);
     expect(b.sent).toEqual([]);
-    expect(await store.capSendsSince(r.personId, now() - 7 * 24 * 3600_000 + 1)).toEqual([now()]);
+    expect(await store.capSendsSince(r.personId, now() - WEEK_MS + 1)).toEqual([now()]);
     await queue.drain();
     expect(calls.map(call => call.text)).toEqual(["Update first."]);
   });

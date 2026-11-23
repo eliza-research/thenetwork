@@ -1,18 +1,17 @@
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import {
-  cachedOpsMetricsFresh, catalogScanOverdue, opsRoundDue, roundReport, turnWatchAlertKey, turnWatchLeads, turnWatchLevel, turnWatchRaises, type TurnWatchCondition,
+  cachedOpsMetricsFresh, catalogScanOverdue, judgeDownRaises, judgeRateRaises, opsRoundDue, roundReport, turnWatchAlertKey, turnWatchLeads, turnWatchLevel, turnWatchRaises, type TurnWatchCondition,
 } from "../../packages/core/src/generated/opsAlertDispatch.ts";
 import {
   dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
 } from "../../packages/core/src/vibe/opsAlertShell.js";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { splitNetworkId } from "../../packages/network/src/store.ts";
-import { DEFAULT_MODEL } from "../../packages/core/src/llm.ts";
+import { judgeModelOf } from "../../packages/core/src/llm.ts";
 import { qualifiedJudge, readJudgeQualifications } from "../../packages/network/service/review-qualified.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import type { TurnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
-export { turnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 export const utcDayStart = (ms: number) => Math.floor(ms / DAY) * DAY;
@@ -40,7 +39,7 @@ export interface OpsConfig {
 
 const TOKEN_MIN = 32;
 
-export function opsConfigFromEnv(e: Env, base: { env: string; build: string; deployed: boolean }): OpsConfig {
+export function opsConfigFromEnv(e: Env, base: { env: string; build: string; deployed: boolean; warn?: (line: string) => void }): OpsConfig {
   const n = (k: string, dflt: number, o: { min?: number; max?: number } = {}) => {
     const v = e[k];
     if (v === undefined || v.trim() === "") return dflt;
@@ -72,7 +71,7 @@ export function opsConfigFromEnv(e: Env, base: { env: string; build: string; dep
     everyMs: n("OPS_EVERY_MS", MIN, { min: 10_000 }),
     budgets: costBudgetsFromEnv(e),
     budgetWarnShare: n("COST_BUDGET_WARN_SHARE", 0.8, { max: 1 }),
-    judgeMayApproveRate: qualifiedJudge(readJudgeQualifications(line => console.warn(line)), e.JUDGE_MODEL ?? DEFAULT_MODEL)?.mayApproveRate ?? null,
+    judgeMayApproveRate: qualifiedJudge(readJudgeQualifications(base.warn ?? (line => { throw new Error(line); })), judgeModelOf(e))?.mayApproveRate ?? null,
   };
 }
 
@@ -107,7 +106,7 @@ export async function lineMetrics(sql: SQL): Promise<LineMetrics> {
   return { restricted, leakReview: Object.fromEntries(leak.map(r => [r.app_id, r.n])) };
 }
 
-export interface CatalogMetrics { lastScanAgeMs: number | null }
+interface CatalogMetrics { lastScanAgeMs: number | null }
 
 export async function catalogMetrics(sql: SQL, now: number): Promise<CatalogMetrics> {
   const [row] = await sql<{ checked_at: Date | null }[]>`select max(checked_at) as checked_at from network.public_event_imports`;
@@ -137,9 +136,6 @@ export interface NetworkProbe {
 
 export const PRECISION_MIN_DECIDED = 20;
 export const PRECISION_TARGET = 0.8;
-export const JUDGE_CANNOT_RUN_ALERT = 10;
-export const JUDGE_RATE_MIN_DECISIONS = 20;
-export const JUDGE_RATE_MARGIN = 0.1;
 
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
@@ -268,9 +264,9 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
       out.push({ key: `precision:${id}`, level: "warn", count: pct, text: `${id}: shadow precision ${pct}% over 7 days (${p.clean} of ${p.decided} person decisions approved without edits; the gate is ${Math.round(PRECISION_TARGET * 100)}%)` });
     }
     const j = n.judge24h;
-    if (j && j.cannotRun > JUDGE_CANNOT_RUN_ALERT) out.push({ key: `review_judge_down:${id}`, level: "bad", count: j.cannotRun, bump: true, text: `review judge ${id}: ${j.held} held, ${j.cannotRun} cannot run in 24 h` });
+    if (j && judgeDownRaises(j.cannotRun)) out.push({ key: `review_judge_down:${id}`, level: "bad", count: j.cannotRun, bump: true, text: `review judge ${id}: ${j.held} held, ${j.cannotRun} cannot run in 24 h` });
     const q = c.judgeMayApproveRate ?? null;
-    if (j && q !== null && j.approved + j.held >= JUDGE_RATE_MIN_DECISIONS && j.approved / (j.approved + j.held) > q + JUDGE_RATE_MARGIN) {
+    if (j && q !== null && judgeRateRaises(j.approved, j.held, true, Math.round(q * 10_000))) {
       const r = j.approved / (j.approved + j.held);
       out.push({ key: `review_judge_rate:${id}`, level: "warn", count: Math.round(100 * r), text: `review judge ${id}: approval rate ${r.toFixed(2)} above qualified ${q.toFixed(2)}` });
     }

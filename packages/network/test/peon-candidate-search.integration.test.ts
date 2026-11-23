@@ -213,6 +213,8 @@ test.skipIf(!pgAvailable)("a signed Peon candidate read-back becomes a Hire prof
   const searchLine = listed.body.replies.join("\n").split("\n").find((line: string) => line.includes("Find work as a data analyst"));
   expect(searchLine).toMatch(/^\d+\. .* · active( · introduction in progress)?( · ends [^·]+)? · INT-[A-P]{12}$/);
   expect(searchLine!.endsWith(` · ${reference}`)).toBe(true);
+  const summary = searchLine!.replace(/^\d+\. /, "").split(" · ")[0]!;
+  const inProgress = searchLine!.includes(" · introduction in progress");
   const status = async () => (await db`select status from network.intents where app_id='peon' and member_id=${memberId} and details='peon:search'`)[0]?.status;
   for (const [id, otherReference] of [["new", reference], ["legacy", legacyReference]]) {
     const denied = await turn(`pause-other-member-search-${id}`, manager, `PAUSE INTENT ${otherReference}`);
@@ -220,15 +222,13 @@ test.skipIf(!pgAvailable)("a signed Peon candidate read-back becomes a Hire prof
     expect(await status()).toBe("active");
   }
   const pausedReply = (await turn("pause-search", pausedPhone, `PAUSE INTENT ${reference}`)).body.replies;
-  expect(pausedReply).toHaveLength(1);
-  expect(pausedReply[0]).toMatch(/^Paused: “[^”]*Find work as a data analyst[^”]*”\. No new searches for it\./);
+  expect(pausedReply).toEqual([STANDING_COPY.paused([summary], inProgress)]);
   expect(await status()).toBe("paused");
   holdPeonQueue = false;
   await runtime.deliver();
   expect(accepted.has(`tn:${pausedProbe.id}`)).toBe(false);
   expect((await queuedProbe(pausedItem.oppId, memberId))?.status).toMatch(/^(suppressed_ineligible|expired)$/);
   const closedReply = (await turn("close-search-legacy", pausedPhone, `CLOSE INTENT ${legacyReference.toLowerCase()}`)).body.replies;
-  expect(closedReply).toHaveLength(1);
-  expect(closedReply[0]).toMatch(/^Closed: “[^”]*Find work as a data analyst[^”]*”/);
+  expect(closedReply).toEqual([STANDING_COPY.closed([summary])]);
   expect(await status()).toBe("closed");
 });

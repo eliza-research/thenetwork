@@ -21,8 +21,7 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 // rotation, the edge and the svc-auth hop). Module plan: docs/research/2026-11-07-state-machines.md
 // section 9.6.2 (`cloud_auth`, items W3-125, W3-126, W3-127, W3-134, W3-373, W3-671).
 //
-// Compared with the code on branch vibestack-matching on 2026-11-18 (locations are by function name; the
-// line numbers of the source branch are gone):
+// Compared with the code on branch vibestack-matching on 2026-11-18 (locations are by function name):
 //   packages/platform/src/api.ts                cloudFor (per-app mode), "GET /api/auth/cloud/callback" with
 //                                               completeCloudSignIn (spec/cloudSignIn.md), cloudSessionStatus
 //                                               with its `validated` cache and `validationRounds`, auth(),
@@ -199,7 +198,7 @@ module cloud_auth {
 
   pure def lookup(m: int -> int, k: int, d: int): int = if (m.keys().contains(k)) m.get(k) else d
 
-  // sessions.ts authenticate: the row is live (decisions.ts sessionLive). A Cloud row never rotates.
+  // SessionService.authenticate: the row is live (spec/webSession.md readRow). A Cloud row never rotates.
   def rowLive(s: Session, at: int): bool = not(s.revoked) and s.expires > at
 
   def proofExpired(w: World, pid: int, at: int): bool = w.proofs.get(pid).expiresAt <= at

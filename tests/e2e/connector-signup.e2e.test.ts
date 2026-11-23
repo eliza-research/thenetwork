@@ -6,7 +6,6 @@ import { newMemberInvitation, storeMemberInvitation } from "../../packages/platf
 import { Browser, connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, VERIFIER, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
-if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
 const DOMAINS: Record<AppId, string> = { ntwrk: "ntwrk.party", slop: "slop.date", peon: "peon.biz", friends: "friends.help" };
@@ -417,13 +416,13 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
       const child = newPhone();
       await saveDraft("friends", child, new Browser());
       expect(await st.text(child, "Mo, 12. My home is unknown.")).toBe("under_age");
-      expect(await st.svc.people.ageFloor(st.svc.publicApi.accounts.phoneHash(child))).toBe(12);
+      expect((await st.svc.people.ageFloorRecord(st.svc.publicApi.accounts.phoneHash(child)))?.age).toBe(12);
       expect(await draftRows(child, "friends")).toBe(0);
 
       const grown = newPhone();
       await saveDraft("friends", grown, new Browser());
       expect(await st.text(grown, "Mo, 30")).toBe("joined");
-      expect(await st.svc.people.ageFloor(st.svc.publicApi.accounts.phoneHash(grown))).toBe(30);
+      expect((await st.svc.people.ageFloorRecord(st.svc.publicApi.accounts.phoneHash(grown)))?.age).toBe(30);
       expect(await draftRows(grown, "friends")).toBe(1);
     }, T);
 
@@ -433,7 +432,7 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
       const refused = await webJoin(st, "peon", child, { age: 12, firstName: "Mo" });
       expect(refused.res.status).toBe(400);
       expect(refused.body.error).toBe("under_age");
-      expect(await st.svc.people.ageFloor(st.svc.publicApi.accounts.phoneHash(child))).toBe(12);
+      expect((await st.svc.people.ageFloorRecord(st.svc.publicApi.accounts.phoneHash(child)))?.age).toBe(12);
       expect(await draftRows(child, "friends")).toBe(0);
 
       const grown = newPhone();

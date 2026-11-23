@@ -33,11 +33,11 @@ pure def lawJoiningNeedsUsableAge(age: int): bool =
 
 ## Story: Take part in adult matching
 
-> As a member, I want only adults to take part in introductions and matches, except the friendship introductions for minors that staff turn on.
+> As a member, I want only adults to take part in introductions and matches, except the friendship introductions for minors, which are on unless staff stop them.
 
 ### Matching requires a usable age of at least 18
 
-Members aged 13 through 17 can use Eliza for themselves. A known adult age is necessary for matching. App and opportunity rules can require more. The romance item gates of the ntwrk and slop packs and the peon job seat gate now call this rule through `canBeMatched`; before, they compared the age with 18 and let an age above 120 through. Changed (owner decision 2026-11-22): a person aged 13 to 17 can also get a friendship introduction, but only when every rule of [friend introductions with a minor](friendIntroAge.md) holds; this rule still decides every other match, and its definition did not change.
+Members aged 13 through 17 can use Eliza for themselves. A known adult age is necessary for matching. App and opportunity rules can require more. The romance item gates of the ntwrk and slop packs and the peon job seat gate call this rule through `canBeMatched`. A person aged 13 to 17 can also get a friendship introduction, but only when every rule of [friend introductions with a minor](friendIntroAge.md) holds; this rule decides every other match. Changed (owner decision D1 of 2026-11-22): the friendship exception for minors is new, and the pack gates now call this rule because they compared the age with 18 and let an age above 120 through.
 
 ```quint
 pure val adultAge: int = 18
@@ -51,7 +51,7 @@ pure def lawMatchingNeedsAdultAge(age: int): bool =
 
 ### Commit a stated age before projecting it across apps
 
-Commit the age to the verified person's record and phone age floor in the same transaction as the conversation that read it. An under-age statement that leads to staff review keeps the app's minimum join age. A confirmed refusal keeps the stated age. Another app uses the lower age even when later cleanup fails. Project the committed age across apps for the person that the write transaction identified, so a later change of phone number does not move the projection to another person. Moving a number carries its floor to the new binding. Projection never writes either age. Changed: this rule now holds the projection sentences of the removed rule "Project a committed age using its original owner"; that rule's phone-scoped cleanup had no consumer after the signup draft store was removed (audit MCP16 review), so its decision `recordedAgeFloorApplies` is gone with it.
+Commit the age to the verified person's record and phone age floor in the same transaction as the conversation that read it. An under-age statement that leads to staff review keeps the app's minimum join age. A confirmed refusal keeps the stated age. Another app uses the lower age even when later cleanup fails. Project the committed age across apps for the person that the write transaction identified, so a later change of phone number does not move the projection to another person. Moving a number carries its floor to the new binding. Projection never writes either age. Changed: this rule now holds the projection sentences of the removed rule "Project a committed age using its original owner", and its decision `recordedAgeFloorApplies` is removed, because the signup draft applies its own age check ("A recorded age that the app does not allow deletes the draft at once" in [the signup draft](mcpSignupDraft.md)) and the phone-scoped cleanup had no other consumer.
 
 If the signed relay action extracts the member's text from an open turn, check that text for the sender's own direct minor age. Commit that age in the same transaction as the relay refusal. Stop participation through the ordinary minor transition. Other people's ages, quoted words, school estimates and moderation flags cannot lower the sender's durable age.
 
@@ -188,7 +188,7 @@ pure val yearValues = Set(2025, 2026, 2028)
 
 ### Each age statement is a range of possible birth dates
 
-A reading is a range of possible birth keys: above the lower key, and at or below the upper key. A stated birth date `B` is the range from `B - 1` (not included) to `B`. A typed age `a` on day `T` is the range from `T - (a + 1)` years (not included) to `T - a` years, so every birth key in it gives the age `a` on day `T`. For an age that a person stated before birth dates were kept, the range starts from the day the person record was made and ends at the day of the migration, because the person could have typed the age on any day between the two.
+A reading is a range of possible birth keys: above the lower key, and at or below the upper key. A stated birth date `B` is the range from `B - 1` (not included) to `B`. A typed age `a` on day `T` is the range from `T - (a + 1)` years (not included) to `T - a` years, so every birth key in it gives the age `a` on day `T`. For an age that a person stated before birth dates were kept (`statedAgeBeforeBirthDates`), the range starts from the day the person record was made and ends at the day of the migration, because the person could have typed the age on any day between the two.
 
 ```quint
 type BirthReadings = { lower: int, upper: int, youngest: int }
@@ -199,7 +199,7 @@ pure def statedAgeUpper(age: int, dayKey: int): int = dayKey - age * dayKeyYear
 
 pure def birthDateLower(birthKey: int): int = birthKey - 1
 
-pure def legacyReading(age: int, createdDay: int, migrationDay: int): BirthReadings =
+pure def statedAgeBeforeBirthDates(age: int, createdDay: int, migrationDay: int): BirthReadings =
   { lower: statedAgeLower(age, createdDay), upper: statedAgeUpper(age, migrationDay), youngest: statedAgeUpper(age, migrationDay) }
 
 pure def lawStatedAgeReadsBack(age: int, dayKey: int): bool =
@@ -213,7 +213,7 @@ pure val ageValues = Set(-1, 0, 12, 13, 15, 16, 17, 18, 19)
 
 ### The youngest reading wins and an older claim never unlocks more
 
-A person keeps the merged readings: the largest lower key, the smallest upper key, and the youngest key, which is the latest upper key ever stated. The readings conflict when the lower key is not below the upper key. Then no single birth date agrees with every statement. The effective birth key is the upper key when the readings agree, and the youngest key when they conflict. So a lower stated age wins over a birth date, a later birth date wins over an earlier one, and a conflict never clears by itself. A new reading never makes the effective birth key earlier than the key just after the lower key that the person had before, so a later claim to be older never makes a person an adult. The birth date is exact only when a birth date was stated, the readings agree, and the upper key is that birth date. A typed age that agrees with the birth date keeps the birth date exact. A minor recorded before birth dates were kept, and a phone with an age floor of 12, stay at their age when they later type an adult birth date. When a person has no readings, the integer age stored before this change decides. Changed (owner decision 2026-11-22): this rule adds birth dates to "An older age cannot raise the effective age", which still holds for the integer ages.
+A person keeps the merged readings: the largest lower key, the smallest upper key, and the youngest key, which is the latest upper key ever stated. The readings conflict when the lower key is not below the upper key. Then no single birth date agrees with every statement. The effective birth key is the upper key when the readings agree, and the youngest key when they conflict. So a lower stated age wins over a birth date, a later birth date wins over an earlier one, and a conflict never clears by itself. A new reading never makes the effective birth key earlier than the key just after the lower key that the person had before, so a later claim to be older never makes a person an adult. The birth date is exact only when a birth date was stated, the readings agree, and the upper key is that birth date. A typed age that agrees with the birth date keeps the birth date exact. A minor recorded before birth dates were kept, and a phone with an age floor of 12, stay at their age when they later type an adult birth date. When a person has no readings, the lowest stored integer age decides, by the rule "An older age cannot raise the effective age"; the shell does not call `effectiveAge` then. Changed (owner decision 2026-11-22): this rule adds birth dates to "An older age cannot raise the effective age", which still holds for the integer ages.
 
 ```quint
 pure def laterBirthKey(firstKey: int, secondKey: int): int = if (firstKey >= secondKey) firstKey else secondKey
@@ -234,8 +234,8 @@ pure def effectiveBirthKey(readings: BirthReadings): int =
 pure def birthDateExact(hasBirthDate: bool, birthDate: int, readings: BirthReadings): bool =
   hasBirthDate and not(readingsConflict(readings)) and readings.upper == birthDate
 
-pure def effectiveAge(hasReadings: bool, readings: BirthReadings, legacyAge: int, dayKey: int): int =
-  if (hasReadings) ageOnDay(effectiveBirthKey(readings), dayKey) else legacyAge
+pure def effectiveAge(readings: BirthReadings, dayKey: int): int =
+  ageOnDay(effectiveBirthKey(readings), dayKey)
 
 pure def lawLowerStatedAgeWins(birthKey: int, age: int, dayKey: int): bool =
   val known = { lower: birthDateLower(birthKey), upper: birthKey, youngest: birthKey }
@@ -266,10 +266,10 @@ pure def lawOlderClaimNeverUnlocksAdult(earlier: BirthReadings, lower: int, uppe
   (earlier.youngest > earlier.lower and lower < upper) implies
     ageOnDay(effectiveBirthKey(mergeReading(true, earlier, lower, upper)), dayKey) <= ageOnDay(earlier.lower + 1, dayKey)
 
-pure def lawLegacyMinorKeepsMinorAge(adultBirthKey: int): bool =
-  val legacy = legacyReading(15, 20260101, 20261122)
-  (adultBirthKey <= legacy.lower) implies
-    ageOnDay(effectiveBirthKey(mergeReading(true, legacy, birthDateLower(adultBirthKey), adultBirthKey)), 20261122) == 15
+pure def lawMinorBeforeBirthDatesKeepsMinorAge(adultBirthKey: int): bool =
+  val before = statedAgeBeforeBirthDates(15, 20260101, 20261122)
+  (adultBirthKey <= before.lower) implies
+    ageOnDay(effectiveBirthKey(mergeReading(true, before, birthDateLower(adultBirthKey), adultBirthKey)), 20261122) == 15
 
 pure def lawFloorTwelveRefusesAdultBirthDate(adultBirthKey: int): bool =
   val floor = { lower: statedAgeLower(12, 20260601), upper: statedAgeUpper(12, 20260601), youngest: statedAgeUpper(12, 20260601) }

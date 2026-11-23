@@ -37,5 +37,5 @@ export async function testDb(): Promise<string> {
 /** Drop this process's test database (open connections are closed by force). */
 export async function dropTestDb(): Promise<void> {
   if (!pgAvailable) return;
-  await admin(sql => sql.unsafe(`drop database if exists ${DB} with (force)`)).catch(() => {});
+  await admin(sql => sql.unsafe(`drop database if exists ${DB} with (force)`));
 }

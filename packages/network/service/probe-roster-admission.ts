@@ -2,13 +2,6 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { QueueRow, RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { queuedProbeCurrent } from "../../core/src/generated/probeDispatch.ts";
 
-/**
- * A queued one-to-one probe, or a time question about one, goes out only for the roster that it describes:
- * after an alternate joined, only the probe or time question that the Network sent for the member's current
- * turn is current. This holds for every kind of row: an invite, a requester's own confirmation and a requester's
- * time question all describe the other person. Called by the queue's probe admission under the runtime row lock.
- * spec/probeDispatch.md, "A queued probe goes out only for the roster that it describes"
- */
 export async function queuedProbeRosterAdmission(tx: SQL, row: QueueRow, runtimeId: string): Promise<RecipientCheck> {
   if (!row.memberId || !row.oppId) return { ok: true };
   const [opp] = await tx<{ roster: number | null; delivery: string | null; awaited: string | null }[]>`select opp.roster,

@@ -236,7 +236,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     await w.photos.remove(a.personId, "slop", (two as { value: { id: string } }).value.id);
     expect([w.ratings.has(a.personId), await w.rows(a.personId)]).toEqual([false, 0]);
     // The person states 17: the lowest age wins, and nothing is rated or stored again.
-    await w.people.noteAge(a.personId, 17, w.at());
+    await w.people.recordAgeReading(a.personId, (await w.people.phoneHashesOf(a.personId))[0]!, { kind: "age", age: 17 }, w.at());
     const before = w.ai.calls;
     expect((await w.photos.upload(a.personId, "slop", jpegWithExif(), PHOTO_CONSENT.version)).ok).toBe(false);
     expect(await w.photos.rate(a.personId, "slop")).toEqual({ rated: false, refused: "adults_only" });
@@ -244,7 +244,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(calls).toBeGreaterThan(0);
   });
 
-  await b.run("rater env: ratings are on whenever the token and account are set, and a left-over CLEF_RATINGS=off changes nothing (owner decision 2026-11-22); no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
+  await b.run("rater env: ratings are on whenever the token and account are set; no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
     const env = { CLOUDFLARE_AI_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account" };
     const placeholder = JSON.stringify(DEFAULT_CLEF_WEIGHTS);
     const fitted = JSON.stringify({ ...DEFAULT_CLEF_WEIGHTS, version: "fit-sim-1", placeholder: false, provenance: { fitter: "sim", fittedAt: "2026-10-09T00:00:00Z", photos: 0, labels: 0, raters: 0 } });
@@ -255,11 +255,8 @@ export async function safetyBlock(b: Block): Promise<void> {
     const build = (e: Record<string, string | undefined>) => photoRaterFromEnv(e, { fetch: ai.fetch, sleep: async () => {}, readFile: async p => { const f = files[p]; if (f === undefined) throw new Error(`no file ${p}`); return f; } });
     expect((await build({ CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
     expect((await build({ CLOUDFLARE_AI_TOKEN: "fake-token", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
-    for (const extra of [{}, { CLEF_RATINGS: "off" }, { CLEF_RATINGS: "of" }]) {
-      const r = await build({ ...env, ...extra });
-      expect([r.status, r.weights, typeof r.rater?.rate]).toEqual(["on_placeholder", DEFAULT_CLEF_WEIGHTS.version, "function"]);
-    }
-    expect((await build({ ...env, CLEF_RATINGS: "off", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("on");
+    const placeholderOn = await build(env);
+    expect([placeholderOn.status, placeholderOn.weights, typeof placeholderOn.rater?.rate]).toEqual(["on_placeholder", DEFAULT_CLEF_WEIGHTS.version, "function"]);
     for (const p of ["/w/placeholder.json", "/w/noprov.json", "/w/nover.json", "/w/missing.json"]) {
       const r = await build({ ...env, CLEF_WEIGHTS_PATH: p });
       expect([r.status, r.rater]).toEqual(["refused_weights", undefined]);
@@ -353,7 +350,7 @@ export async function safetyBlock(b: Block): Promise<void> {
   });
 
   // ------------------------------------------------------------------ review
-  await b.run("review: the reviewer of record is the signed-in person only with the console token; slop may match in production and peon may not before its live decision; slop SLA alerts at 6 h, once", () => {
+  await b.run("review: the reviewer of record is the signed-in person only with the console token; slop SLA alerts at 6 h, once", () => {
     const user: StaffUser = { id: "token:admin#0badc0de", roles: ["admin"], via: "token" } as StaffUser;
     const req = (token: string) => new Request("http://staff/review/x", { headers: { authorization: `Bearer ${token}`, "x-network-staff-id": "pat@example.com" } });
     expect(reviewerOfRecord(req("console-token-0123456789"), user, "console-token-0123456789").user.id).toBe("pat@example.com");

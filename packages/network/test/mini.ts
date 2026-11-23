@@ -95,6 +95,15 @@ export class Mini {
     for (const id of ids) for (const a of ["hi!", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."]) await this.say(id, a);
   }
 
+  async onboardStatingThirty(...ids: MemberId[]) {
+    for (const id of ids) for (const a of ["hi!", "I'm 30.", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."]) await this.say(id, a);
+  }
+
+  verify(...ids: MemberId[]) {
+    for (const id of ids) this.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+      tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  }
+
   /** Advance time in hourly ticks (the world's job tick). */
   async run(ms: number) {
     const end = this.clock.now() + ms;

@@ -1,6 +1,6 @@
 # Exact candidate search: settled close, pair memo, pack hooks (2026-11-22)
 
-This report is hand-written from saved command output. Every number names its file. The files are in the scratch directory `/Users/nubs/tn-work/w1-core/` (abbreviated `w1/`) and the baseline directory `/Users/nubs/tn-work/base/` (abbreviated `base/`). The worlds are the planted worlds of `packages/sim/src/planted.ts`, seed 1. No model is called and no real member data is read. The runs are deterministic for a seed, so no confidence interval is given.
+This report is hand-written from saved command output. Every number names its file. The files are in the scratch directory `<run dir>/w1-core/` (abbreviated `w1/`) and the baseline directory `<run dir>/base/` (abbreviated `base/`). The worlds are the planted worlds of `packages/sim/src/planted.ts`, seed 1. No model is called and no real member data is read. The runs are deterministic for a seed, so no confidence interval is given.
 
 ## What changed
 
@@ -52,7 +52,7 @@ The saved outputs above come from the code before the two deletions below. In ev
 ## Not verified
 
 - The integration suite has no clean run in this worktree: 751 passed, 9 failed (`w1/integration-4.txt`). Eight failures need asset builds that the worktree does not have; `peon-candidate-search` fails the same way on the baseline code (`w1/peon-search-5.txt`, `w1/peon-search-old-5.txt`).
-- No pack supplies `packBound` or `masks` yet. The monitor `maskRefusesAdmitted` is not counted by any gate.
+- No pack supplies `packBound` or `masks` yet. The monitor `maskRefusesAdmitted` is removed from production; `packages/engine/test/candidate-search.integration.test.ts` now asserts `eligiblePair` `"mask_refused"` with `pairReason` null.
 
 ## To verify
 

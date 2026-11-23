@@ -64,7 +64,8 @@ The reminder claim requires a positive provider or signed gateway receipt for th
 type ReminderClaim = SendReminder | WaitForBookingNotice | RefuseReminder
 pure val bookingNoticeRetryMs = 5 * 60000
 
-pure val receiptStatusValues = Set("pending", "parked_leak_review", "collected", "unknown_acceptance", "failed_unknown", "accepted", "refused_gateway")
+pure val receiptStatusValues = Set("pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "parked_leak_review", "collected",
+  "send_unknown", "sending", "unknown_acceptance", "failed_unknown", "accepted", "sent", "delivered", "read", "refused_gateway")
 
 pure def bookingNoticeReceived(receiptStatus: str, sentAt: int, checkedAt: int): bool =
   (receiptStatus == "accepted" or receiptStatus == "sent" or receiptStatus == "delivered" or receiptStatus == "read")
@@ -332,7 +333,7 @@ pure def lawMeetingValueCannotConfirmItself(attended: bool, worthwhile: bool): b
 
 ### A check-in answer that describes a problem asks once whether to report or block
 
-Read the member's answer to the feedback prompt with the existing readers only: the check-in report reader gives a report kind (a cue), and the urgent kinds are harassment, unsafe, scam and minor; the no-show reader gives a no-show cue; the concern reader finds a problem said without a report kind, such as "he made me uncomfortable" or "something felt off", and ignores a denied concern ("I wasn't uncomfortable at all"). A positive or neutral answer, and a negative answer about chemistry only ("we didn't click", "not my type"), is fine and asks nothing. An app that files every cue at once (slop.date and peon.biz, the `postDateReports` hook, for a meeting that is not a group plan) keeps that path. An urgent cue files the report at once in every app, without a question, when the meeting was an adult pair. Otherwise a cue or a concern about the one other attendee of an adult pair gets one question in the member's own thread: whether to report that person to the safety team, block them, or neither. An adult pair is a meeting that is not a group plan, with exactly one other booked attendee, where both people are known adults by the existing age decisions; a minor, an age doubt, or a group plan gets no question and no new urgent path. The question names only the first name that the feedback prompt already named, offers report, block or no, and goes through the leak guard as a direct reply (no pause path, no proactive cap). If the leak guard refuses it, the member gets the ordinary thanks and nothing waits. The Network stores ids and the report kind, never the member's words: the member, the meeting, the person asked about, the kind (the cue, else "other"), and the time of the question. The feedback is kept as feedback whatever the member answers later. Changed (owner decision 2026-11-22): before, a problem said without the word "report" or "block" was kept only as feedback and opened no case in ntwrk.party and friends.help, and a concern without a report kind opened no case in any app; now the member is asked once, and an urgent cue opens the case at once in every app. Changed (owner decision 2026-11-22, answers A2 to A5): a teen pair gets the same steps as an adult pair. A teen pair is a meeting that is not a group plan, with exactly one other booked attendee, of a done teen friendship item whose roster still passes the teen friendship rule at the time of the answer and holds both people. An urgent cue files the report at once, and a cue or a concern gets the one question. The question to a member of a teen pair names nobody: it says "them" in place of the first name. Before, a teen who told the check-in that something went wrong got only the thanks, and no case opened.
+Read the member's answer to the feedback prompt with the existing readers only: the check-in report reader gives a report kind (a cue), and the urgent kinds are harassment, unsafe, scam and minor; the no-show reader gives a no-show cue; the concern reader finds a problem said without a report kind, such as "he made me uncomfortable" or "something felt off", and ignores a denied concern ("I wasn't uncomfortable at all"). A positive or neutral answer, and a negative answer about chemistry only ("we didn't click", "not my type"), is fine and asks nothing. An urgent cue files the report at once, without a question, for every meeting that is not a group plan, in every app, whatever the ages and the number of other attendees. Any other cue, and a concern, about the one other attendee of such a pair gets one question in the member's own thread: whether to report that person to the safety team, block them, or neither. The same steps apply in every app. An adult pair is a meeting that is not a group plan, with exactly one other booked attendee, where both people are known adults by the existing age decisions. A teen pair is a meeting that is not a group plan, with exactly one other booked attendee, of a done teen friendship item whose roster still passes the teen friendship rule at the time of the answer and holds both people. Any other meeting (an age doubt, more than one other attendee, a group plan) gets no question; a group plan also gets no urgent path. The question names only the first name that the feedback prompt already named; to a member of a teen pair it names nobody and says "them". It offers report, block or no, and goes through the leak guard as a direct reply (no pause path, no proactive cap). If the leak guard refuses it, the member gets the ordinary thanks and nothing waits. The Network stores ids and the report kind, never the member's words: the member, the meeting, the person asked about, the kind (the cue, else "other"), and the time of the question. The feedback is kept as feedback whatever the member answers later. Changed (owner decisions D1 and D7 of 2026-11-22): before, slop.date and peon.biz filed every cue at once, ntwrk.party and friends.help kept a problem said without the word "report" or "block" only as feedback, and a teen got only the thanks; now every app asks the one question for a non-urgent cue or a concern in an adult or teen pair, and an urgent cue opens the case at once for every meeting that is not a group plan in every app, so that no app loses the urgent path that slop.date and peon.biz had.
 
 ```quint
 type CheckInReading = CheckInFine | CheckInConcern | CheckInCue | CheckInUrgent
@@ -344,41 +345,43 @@ pure def checkInReading(cueRead: bool, urgentCue: bool, concernRead: bool): Chec
   else if (concernRead) CheckInConcern
   else CheckInFine
 
-pure def checkInSafetyStep(reading: CheckInReading, appFilesEveryCue: bool, adultPair: bool, teenPair: bool): CheckInSafetyStep =
-  if (reading == CheckInFine) CheckInNoStep
-  else if (appFilesEveryCue and reading != CheckInConcern) CheckInFileNow
-  else if (not(adultPair or teenPair)) CheckInNoStep
+pure def checkInSafetyStep(reading: CheckInReading, groupPlan: bool, adultPair: bool, teenPair: bool): CheckInSafetyStep =
+  if (reading == CheckInFine or groupPlan) CheckInNoStep
   else if (reading == CheckInUrgent) CheckInFileNow
+  else if (not(adultPair or teenPair)) CheckInNoStep
   else CheckInAsk
 
-pure def lawFineAnswerAsksNothing(appFilesEveryCue: bool, adultPair: bool, teenPair: bool): bool =
-  checkInSafetyStep(CheckInFine, appFilesEveryCue, adultPair, teenPair) == CheckInNoStep
+pure def lawFineAnswerAsksNothing(groupPlan: bool, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInFine, groupPlan, adultPair, teenPair) == CheckInNoStep
 
 pure def lawNoCueAndNoConcernIsFine(urgentCue: bool): bool =
   checkInReading(false, urgentCue, false) == CheckInFine
 
-pure def lawUrgentCueFilesAtOnceInAnAdultPair(appFilesEveryCue: bool): bool =
-  checkInSafetyStep(CheckInUrgent, appFilesEveryCue, true, false) == CheckInFileNow
+pure def lawUrgentCueFilesAtOnceOutsideAPlan(adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInUrgent, false, adultPair, teenPair) == CheckInFileNow
 
-pure def lawUrgentCueIsNeverAsked(appFilesEveryCue: bool, adultPair: bool, teenPair: bool): bool =
-  checkInSafetyStep(CheckInUrgent, appFilesEveryCue, adultPair, teenPair) != CheckInAsk
+pure def lawUrgentCueIsNeverAsked(groupPlan: bool, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInUrgent, groupPlan, adultPair, teenPair) != CheckInAsk
 
-pure def lawCuesStillFileWhereTheyDid(reading: CheckInReading, adultPair: bool, teenPair: bool): bool =
-  (reading == CheckInCue or reading == CheckInUrgent) implies checkInSafetyStep(reading, true, adultPair, teenPair) == CheckInFileNow
+pure def lawNonUrgentCueAsksInAPair(adultPair: bool, teenPair: bool): bool =
+  (adultPair or teenPair) implies checkInSafetyStep(CheckInCue, false, adultPair, teenPair) == CheckInAsk
 
-pure def lawQuestionNeedsAnAdultPair(reading: CheckInReading, appFilesEveryCue: bool): bool =
-  checkInSafetyStep(reading, appFilesEveryCue, false, false) != CheckInAsk
+pure def lawQuestionNeedsAPair(reading: CheckInReading, groupPlan: bool): bool =
+  checkInSafetyStep(reading, groupPlan, false, false) != CheckInAsk
 
-pure def lawConcernAsksInAnAdultPair(appFilesEveryCue: bool): bool =
-  checkInSafetyStep(CheckInConcern, appFilesEveryCue, true, false) == CheckInAsk
+pure def lawGroupPlanGetsNoStep(reading: CheckInReading, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(reading, true, adultPair, teenPair) == CheckInNoStep
 
-pure def lawTeenPairGetsTheAdultPairStep(reading: CheckInReading, appFilesEveryCue: bool): bool =
-  checkInSafetyStep(reading, appFilesEveryCue, false, true) == checkInSafetyStep(reading, appFilesEveryCue, true, false)
+pure def lawConcernAsksInAPair(teenPair: bool): bool =
+  checkInSafetyStep(CheckInConcern, false, true, teenPair) == CheckInAsk and checkInSafetyStep(CheckInConcern, false, teenPair, true) == CheckInAsk
+
+pure def lawTeenPairGetsTheAdultPairStep(reading: CheckInReading): bool =
+  checkInSafetyStep(reading, false, false, true) == checkInSafetyStep(reading, false, true, false)
 ```
 
 ### The answer to the check-in question acts once, then the question closes
 
-The question waits for the member's next own text (not a reaction, not text from an assistant) for 24 hours, the same window as "Who do you mean?", and the shared line routes a short answer to the app that asked in the same way. While another question of the Network is open in the same thread (an anonymous probe, a day-of check-in for a booked meeting, a crew offer or the weekly check-in), only a text that uses the words report, flag or block answers the check-in question; a bare yes or no goes to the other question and the check-in question stays open. Otherwise any own text closes the question, so it is never asked again. An answer received before the question or handled more than 24 hours after it is not an answer: the question lapses and the feedback stays. The Network reads the answer clause by clause. A clause that ends in a question mark ("Should I report him?") chooses nothing. A clause with a refusal before the word ("I don't want to report him", "rather not block") refuses that choice. "Both" counts only as a whole answer ("both", "both please"), never inside a sentence ("we both moved on"). An answer that says report (also "report and block", "both", or "report him") opens the safety case exactly as a check-in report does: the pair block, the close of the pair's open items, the trust report as someone who met the person, the report with its stored kind, source "check_in" and the meeting, and the urgent hold when the kind is urgent. A report also blocks, so an answer that refuses the block does not choose the report. An answer that says block blocks exactly as "block <name>" does for a person the member met. An answer that says no or neither, or refuses each choice it names, closes the question with a short acknowledgement. An answer that both refuses and chooses ("No, report him") is unclear. A report or block command that names a person other than the person asked about, or a name that matches nobody or more than one person, goes to the ordinary report and block flow. Any other answer is unclear: it opens no case, it is not asked again, and the Network reads the text as an ordinary message. The check-in log keeps flags and ids only, never the member's words. Changed (owner decision 2026-11-22): this answer is new; before, the Network asked nothing after a check-in answer. Changed again (owner decision 2026-11-22, review of the first build): a refusal now wins over a choice, a question or a refused word chooses nothing, and a bare answer goes to another open question, because the first reader filed reports that the member had refused and lost the answers to probes and day-of check-ins.
+The question waits for the member's next own text (not a reaction, not text from an assistant) for 24 hours, the same window as "Who do you mean?", and the shared line routes a short answer to the app that asked in the same way. While another question of the Network is open in the same thread (an anonymous probe, a day-of check-in for a booked meeting, a crew offer or the weekly check-in), only a text that uses the words report, flag or block answers the check-in question; a bare yes or no goes to the other question and the check-in question stays open. Otherwise any own text closes the question, so it is never asked again. An answer received before the question or handled more than 24 hours after it is not an answer: the question lapses and the feedback stays. The Network reads the answer clause by clause. A clause that ends in a question mark ("Should I report him?") chooses nothing. A clause with a refusal before the word ("I don't want to report him", "rather not block") refuses that choice. "Both" counts only as a whole answer ("both", "both please"), never inside a sentence ("we both moved on"). An answer that says report (also "report and block", "both", or "report him") opens the safety case exactly as a check-in report does: the pair block, the close of the pair's open items, the trust report as someone who met the person, the report with its stored kind, source "check_in" and the meeting, and the urgent hold when the kind is urgent. A report also blocks, so an answer that refuses the block does not choose the report. An answer that says block blocks exactly as "block <name>" does for a person the member met. An answer that says no or neither, or refuses each choice it names, closes the question with a short acknowledgement. An answer that both refuses and chooses ("No, report him") is unclear. A report or block command that names a person other than the person asked about, or a name that matches nobody or more than one person, goes to the ordinary report and block flow. Any other answer is unclear: it opens no case, it is not asked again, and the Network reads the text as an ordinary message. The check-in log keeps flags and ids only, never the member's words. Changed (owner decision D7 of 2026-11-22): this answer is new, because before it the Network asked nothing after a check-in answer; a refusal wins over a choice and a bare answer goes to another open question, so that the reader never files a report the member refused and never takes the answer to a probe or a day-of check-in.
 
 ```quint
 type CheckInSafetyAnswer = AnswerReport | AnswerBlock | AnswerNeither | AnswerUnclear

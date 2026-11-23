@@ -1,9 +1,3 @@
-// A yes answers one probe about one arrangement (audit OPP18). Before the fix, a member who said yes
-// kept that yes when the other person declined and a reviewed alternate replaced them: the alternate
-// said yes and the two were introduced by first name, although the first member was never asked
-// about the alternate. The same held for an activity-partner plan whose partner was backfilled.
-// spec/probeDispatch.md, "A replacement asks again every member who heard about the earlier roster" and
-// "Nobody is introduced without a yes to the current roster"
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
@@ -27,7 +21,6 @@ test.each(["yes", "no"])("a member who agreed is asked again about the replaceme
   const mark = w.mark();
   await w.say(second!, "no");
 
-  // The member who agreed gets a new probe about the new arrangement first; the alternate waits.
   expect(await w.runUntil(() => w.probed(first!) || w.probed("c"))).toBe(true);
   expect(w.probed(first!)).toBe(true);
   expect(probesTo(w, first!, mark)).toHaveLength(1);
@@ -78,8 +71,6 @@ test("an activity-partner plan asks the first member again before its alternate 
 });
 
 test("a probe still waiting for its answer is sent again when the other member is replaced", async () => {
-  // The first member's probe described the second member. The second member stops before their turn;
-  // a yes to the old probe must not introduce the first member to the alternate.
   const w = new Mini(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   w.propose(["a", "b"], { alternates: ["c"] });
@@ -100,8 +91,6 @@ test("a probe still waiting for its answer is sent again when the other member i
 });
 
 test("a member asked again who stops before the new probe still counts as told when found to be a minor", async () => {
-  // A re-ask must not erase the record that the member heard about the opportunity: the minors policy
-  // reads it (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
   const w = new Mini([...people, climber("d", "Dev Rao")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c", "d");
   const id = w.propose(["a", "b"], { alternates: ["c", "d"] });
@@ -109,7 +98,6 @@ test("a member asked again who stops before the new probe still counts as told w
   const [first, second] = w.probed("a") ? ["a", "b"] : ["b", "a"];
   await w.say(first!, "yes");
   expect(await w.runUntil(() => w.probed(second!))).toBe(true);
-  // At 23:00 the new probe to the member asked again waits for the end of their quiet hours.
   await w.until(23);
   const mark = w.mark();
   await w.say(second!, "no");

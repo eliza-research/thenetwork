@@ -1,8 +1,3 @@
-// Send-time recipient eligibility through the real ConsentNetwork: each refusal is reached the way
-// production reaches it (a STOP text, a block or report text, a staff hold, a member record that a
-// staff or settings change paused, an age under 18, a state restored from the store) and read back
-// through recipientPolicy, the check the delivery queue's recipient hook calls before every send.
-// spec/recipientEligibility.md, "Check the recipient's own state in a fixed order"; "A message about another member needs two adults with no block between them"
 import { describe, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import type { SendRequest } from "../../blooio/src/types.ts";
@@ -13,6 +8,7 @@ import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { lateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
+import type { NetworkState } from "../src/network.ts";
 import { Mini, type Spec } from "./mini.ts";
 
 const person = (id: string, name: string, o: Partial<Spec> = {}): Spec => ({
@@ -26,9 +22,8 @@ async function world(extra: Spec[] = []) {
   return w;
 }
 
-/** A store restart that brings back a member state the store holds (the same JSON PgStore keeps). */
-function restore(w: Mini, edit: (state: any) => void) {
-  const state = JSON.parse(JSON.stringify(w.net.exportState()));
+function restore(w: Mini, edit: (state: NetworkState) => void) {
+  const state = JSON.parse(JSON.stringify(w.net.exportState())) as NetworkState;
   edit(state);
   w.net.importState(state);
 }
@@ -39,29 +34,23 @@ describe("send-time recipient eligibility", () => {
     expect(w.net.recipientPolicy("a", "probe", { about: ["b"] })).toEqual({ ok: true });
     expect(w.net.recipientPolicy("nobody", "reply")).toEqual({ ok: false, reason: "unknown_member" });
 
-    // STOP refuses every message the network sends, a reply and a safety notice too.
-    // The carrier keyword, as the service passes it on.
     await w.net.onInbound({ id: "stop-d", memberId: "d", body: "STOP", ts: w.clock.now(), channel: "sms", keyword: "STOP" });
     for (const kind of ["reply", "safety", "probe", "info", "reengage"] as const)
       expect(w.net.recipientPolicy("d", kind)).toEqual({ ok: false, reason: "opted_out" });
 
-    // A paused account gets only replies and safety notices.
-    // The platform's member record carries the account state the Network reads (MemberRecord.accountStatus).
     Object.assign(w.members.find(m => m.id === "c")!, { accountStatus: "paused" });
     w.clock.advance(1);
     expect(w.net.recipientPolicy("c", "info", { proactive: true })).toEqual({ ok: false, reason: "account_paused" });
     expect(w.net.recipientPolicy("c", "reply")).toEqual({ ok: true });
     expect(w.net.recipientPolicy("c", "safety")).toEqual({ ok: true });
 
-    // A held member gets replies and safety notices, never a message about another member.
     expect(w.net.holdMember("b", "staff", "test hold").ok).toBe(true);
     expect(w.net.recipientPolicy("b", "checkin")).toEqual({ ok: false, reason: "held" });
     expect(w.net.recipientPolicy("b", "probe", { about: ["a"] })).toEqual({ ok: false, reason: "held" });
     expect(w.net.recipientPolicy("b", "reply")).toEqual({ ok: true });
     expect(w.net.recipientPolicy("b", "safety")).toEqual({ ok: true });
 
-    // "Only when I ask": no proactive message except the one re-engagement message.
-    restore(w, s => { s.members.find((m: any) => m.id === "a").onlyWhenAsked = true; });
+    restore(w, s => { s.members.find(m => m.id === "a")!.onlyWhenAsked = true; });
     expect(w.net.recipientPolicy("a", "info", { proactive: true })).toEqual({ ok: false, reason: "only_when_asked" });
     expect(w.net.recipientPolicy("a", "reengage", { proactive: true })).toEqual({ ok: true });
     expect(w.net.recipientPolicy("a", "reply")).toEqual({ ok: true });
@@ -78,7 +67,7 @@ describe("send-time recipient eligibility", () => {
 
   test("an unknown age is not a known adult: no message to them or about them", async () => {
     const w = await world();
-    restore(w, s => { s.members.find((m: any) => m.id === "d").ageUnknown = true; });
+    restore(w, s => { s.members.find(m => m.id === "d")!.ageUnknown = true; });
     expect(w.net.recipientPolicy("d", "probe", { about: ["a"] })).toEqual({ ok: false, reason: "minor" });
     expect(w.net.recipientPolicy("a", "probe", { about: ["d"] })).toEqual({ ok: false, reason: "other_not_matchable" });
     expect(w.net.recipientPolicy("d", "reply")).toEqual({ ok: true });
@@ -89,7 +78,6 @@ describe("send-time recipient eligibility", () => {
     expect(w.net.recipientPolicy("t", "probe", { about: ["a"] })).toEqual({ ok: false, reason: "minor" });
     expect(w.net.recipientPolicy("t", "reveal", { about: ["a"] })).toEqual({ ok: false, reason: "minor" });
     expect(w.net.recipientPolicy("t", "cancellation", { about: ["a"] })).toEqual({ ok: true });
-    // And no adult hears about the minor.
     expect(w.net.recipientPolicy("a", "probe", { about: ["t"] })).toEqual({ ok: false, reason: "other_not_matchable" });
     expect(w.net.recipientPolicy("a", "probe", { about: ["gone"] })).toEqual({ ok: false, reason: "other_not_matchable" });
   });
@@ -106,13 +94,11 @@ describe("send-time recipient eligibility", () => {
   test("a recipient or another person on watch or on a staff hold", async () => {
     const w = await world();
     restore(w, s => {
-      const ok = { score: 3, level: "watch", events: [], reportsFrom: [], blocksMade: [] };
-      s.trust = [...(s.trust ?? []).filter((r: any) => r.id !== "a"), { id: "a", ...ok }];
+      s.trust = [...s.trust.filter(r => r.id !== "a"), { id: "a", score: 3, level: "watch", events: [], reportsFrom: [], blocksMade: [] }];
     });
     expect(w.net.recipientPolicy("a", "probe", { about: ["b"] })).toEqual({ ok: false, reason: "on_watch" });
     expect(w.net.recipientPolicy("b", "probe", { about: ["a"] })).toEqual({ ok: false, reason: "other_on_watch" });
     expect(w.net.holdMember("d", "staff", "test hold").ok).toBe(true);
-    // A staff hold is a trust level past watch; "other_held" is an open report (report-booked.test.ts).
     expect(w.net.recipientPolicy("b", "probe", { about: ["d"] })).toEqual({ ok: false, reason: "other_on_watch" });
   });
 
@@ -120,7 +106,6 @@ describe("send-time recipient eligibility", () => {
     const w = await world();
     expect(w.net.holdMember("d", "staff", "test hold").ok).toBe(true);
     await w.say("c", "block Ben Ito");
-    // d is held and listed first; the block between c and b is the earlier check.
     expect(w.net.recipientPolicy("c", "probe", { about: ["d", "b"] })).toEqual({ ok: false, reason: "blocked_pair" });
     expect(w.net.recipientPolicy("c", "probe", { about: ["b", "d"] })).toEqual({ ok: false, reason: "blocked_pair" });
   });
@@ -155,12 +140,10 @@ describe("send-time recipient eligibility", () => {
   });
 });
 
-// The same verdict at the real send boundary: rows in the Postgres outbound queue (platform.outbound),
-// drained through the channel.ts recipient hook. Each refused row ends with its reason and never reaches the provider.
 test.skipIf(!pgAvailable)("the persisted queue refuses each ineligible row with its reason and sends the eligible one", async () => {
   const url = await migratedDb("recipient_eligibility");
   const sql = new SQL(url);
-  const clock = new SimClock(Date.UTC(2026, 10, 7, 21)); // 16:00 New York, inside the send window.
+  const clock = new SimClock(Date.UTC(2026, 10, 7, 21));
   const app = APPS.friends;
   const calls: SendRequest[] = [];
   const adapter = new BlooioAdapter({ app: app.id, from: "+12125550680", clock, log: () => {},
@@ -185,7 +168,6 @@ test.skipIf(!pgAvailable)("the persisted queue refuses each ineligible row with 
     const mini = new Mini(members, { app: app.id, matchingEnabled: false, growth: false, plans: false });
     await mini.onboard(...members.map(m => m.id));
     const rt = service.runtimeFor(app.id)!;
-    // Dot has no age the Network can trust (a state with the age unknown, as a member who never gave one).
     const saved = mini.net.exportState();
     saved.members.find(m => m.id === dot.id)!.ageUnknown = true;
     await rt.unitOfWork(net => net.importState(saved));
@@ -216,7 +198,6 @@ test.skipIf(!pgAvailable)("the persisted queue refuses each ineligible row with 
     }
     expect(calls.filter(call => rows.some(r => call.idempotencyKey.endsWith(r.row.id)))).toEqual([]);
 
-    // The same hook passes an eligible member: a re-engagement to Eve is not refused for the recipient.
     const ok = reengage(eve);
     await adapter.queue.enqueue(sql, [{ ...ok, city: "nyc" }]);
     await adapter.queue.drain();

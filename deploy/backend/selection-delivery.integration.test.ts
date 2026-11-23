@@ -11,10 +11,11 @@ import { createBackend, jsonLogger, loadConfig } from "./backend.ts";
 const SECRET = "whsec_selection_delivery";
 const ADMIN = "selection-admin-token", REVIEWER = "selection-reviewer-token";
 const IVY = "+12125550181", LEO = "+12125550182";
+type ReviewItem = { oppId: string; revision: number; proposal: { participants: string[] } };
 
 describe.skipIf(!pgAvailable)("backend: a selected proposal goes through review approval to a queued delivery (createBackend, Postgres, dry-run)", () => {
   let sql: SQL | undefined, svc: NetworkService | undefined;
-  afterAll(async () => { await svc?.close().catch(() => {}); await sql?.close(); await dropTestDb(); });
+  afterAll(async () => { await svc?.close(); await sql?.close(); await dropTestDb(); });
 
   test("selection waits in review with nobody contacted; the staff approval through the staff port leads the backend tick to a dry-run delivery to the pair", async () => {
     const url = await testDb();
@@ -43,8 +44,8 @@ describe.skipIf(!pgAvailable)("backend: a selected proposal goes through review 
     const memberId = async (e164: string) =>
       ((await sql!`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'slop' and ph.e164 = ${e164}`)[0] as { id: string } | undefined)?.id;
     const aboutOpp = async (opp: string) =>
-      ((await sql!`select member_id, status, proactive from network.messages where app_id = 'slop' and direction = 'outbound' and opportunity_id = ${opp} order by ts, id`) as any[])
-        .map(r => ({ member: r.member_id as string, status: r.status as string, proactive: r.proactive as boolean }));
+      ((await sql!`select member_id, status, proactive from network.messages where app_id = 'slop' and direction = 'outbound' and opportunity_id = ${opp} order by ts, id`) as { member_id: string; status: string; proactive: boolean }[])
+        .map(r => ({ member: r.member_id, status: r.status, proactive: r.proactive }));
     const advance = async (ms: number) => { clock.advance(ms); await backend.tickAll(); };
 
     const people = [
@@ -56,19 +57,19 @@ describe.skipIf(!pgAvailable)("backend: a selected proposal goes through review 
     expect([ivy, leo].every(Boolean)).toBe(true);
 
     expect((await staff(ADMIN, "POST", "/apps/slop/matching", { on: true })).status).toBe(200);
-    let item: any;
+    let item: ReviewItem | undefined;
     for (let i = 0; i < 12 && !item; i++) {
       await advance(2 * HOUR);
-      const queue = await (await staff(REVIEWER, "GET", "/apps/slop/review")).json() as any;
-      item = queue.items?.find((x: any) => x.proposal.participants.includes(ivy) && x.proposal.participants.includes(leo));
+      const queue = await (await staff(REVIEWER, "GET", "/apps/slop/review")).json() as { items?: ReviewItem[] };
+      item = queue.items?.find(x => x.proposal.participants.includes(ivy) && x.proposal.participants.includes(leo));
     }
-    expect(item).toBeDefined();
+    if (!item) throw new Error("no review item for the pair after 24 hours");
     await advance(2 * HOUR);
     expect(await aboutOpp(item.oppId)).toEqual([]);
 
     const decided = await staff(REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20, revision: item.revision });
     expect(decided.status).toBe(200);
-    expect(((await decided.json()) as any).ok).toBe(true);
+    expect(((await decided.json()) as { ok: boolean }).ok).toBe(true);
     let delivered: { member: string; status: string; proactive: boolean }[] = [];
     for (let i = 0; i < 24 && !delivered.length; i++) { await advance(HOUR); delivered = await aboutOpp(item.oppId); }
     expect(delivered.length).toBeGreaterThan(0);

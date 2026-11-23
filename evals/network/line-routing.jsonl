@@ -91,8 +91,8 @@
 {"kind": "first", "text": "slop, I'm 15", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
 {"kind": "first", "text": "I'm 12, slop", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "under_age", "app": "ntwrk"}}
 {"kind": "first", "text": "Kim, 16", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "joined", "app": "ntwrk"}}
-{"kind": "first", "text": "STOP ALL", "reading": {"command": "LineStopAll", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
-{"kind": "first", "text": "stop all", "reading": {"command": "LineStopAll", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
+{"kind": "first", "text": "STOP ALL", "reading": {"command": "LineStop", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
+{"kind": "first", "text": "stop all", "reading": {"command": "LineStop", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
 {"kind": "first", "text": "stop texting me", "reading": {"command": "LineStop", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
 {"kind": "first", "text": "START", "reading": {"command": "LineStart", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
 {"kind": "first", "text": "can you stop by later?", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}

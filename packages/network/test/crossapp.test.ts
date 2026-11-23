@@ -223,7 +223,8 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
       const activeMatch = w.propose(unaffected, { alternates: affected, category: "hobby" });
       for (const opp of [blockedMatch, activeMatch]) {
         expect(await w.runUntil(() => w.net.reviewQueue().some(item => item.oppId === opp), 2 * DAY)).toBe(true);
-        expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+        const { revision } = w.net.reviewQueue().find(item => item.oppId === opp)!;
+        expect(w.net.review(opp, "approve", { reviewer: "sim_staff", revision })).toBe(true);
       }
       const rt = svc.runtimeFor(FR)!;
       await friends.queue.setLineSafety("review");

@@ -22,9 +22,12 @@ function clefAnswering(levels: readonly number[]): ClefFetch {
     return { ok: true, status: 200, json: async () => ({ success: true, result: { answers } }) };
   };
 }
-const photos = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p${i}`, bytes: new Uint8Array([0xff, 0xd8, 0xff, i]) }));
+const photoBytes = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p${i}`, bytes: new Uint8Array([0xff, 0xd8, 0xff, i]) }));
 const rate = (levels: readonly number[]) =>
-  new WorkersAIClefRater({ token: "t", accountId: "a", fetch: clefAnswering(levels) }).rate(ADULT, photos(levels.length));
+  new WorkersAIClefRater({ token: "t", accountId: "a", fetch: clefAnswering(levels) }).rate(ADULT, photoBytes(levels.length));
+
+const rated = (photos: number, spread?: number): AppearanceScore =>
+  ({ face: 0, body: 0, overall: 0.3, confidence: 0.8, photos, ...(spread === undefined ? {} : { spread }), model: "clef-test" });
 
 type Dater = { id: string; is: "woman" | "man"; rating?: AppearanceScore };
 
@@ -57,12 +60,14 @@ describe("slop.date private standing", () => {
     expect(disagreeing?.spread).toBeGreaterThan(1);
     expect(single?.photos).toBe(1);
     expect(single?.spread).toBeUndefined();
+  });
 
+  test("the standing uncertainty narrows with rated photos and widens when the photo ratings disagree", () => {
     const women = pool("w", "woman", 24);
     const w = slopWorld([
       ...women, ...pool("m", "man", 24),
-      { id: "agree", is: "woman", rating: agreeing! }, { id: "disagree", is: "woman", rating: disagreeing! },
-      { id: "single", is: "woman", rating: single! }, { id: "unrated", is: "woman" },
+      { id: "agree", is: "woman", rating: rated(4, 0) }, { id: "disagree", is: "woman", rating: rated(3, 1.5) },
+      { id: "single", is: "woman", rating: rated(1) }, { id: "unrated", is: "woman" },
     ]);
     expect(dateProfile(w, "agree")?.uncertainty).toBe(12);
     expect(dateProfile(w, "disagree")?.uncertainty).toBe(20);

@@ -144,16 +144,16 @@ lemma lawOlderClaimNeverUnlocksAdult_ensures(earlier: BirthReadings, lower: int,
   }
 }
 
-lemma lawLegacyMinorKeepsMinorAge_ensures(adultBirthKey: int)
-  ensures (lawLegacyMinorKeepsMinorAge(adultBirthKey) == true)
+lemma lawMinorBeforeBirthDatesKeepsMinorAge_ensures(adultBirthKey: int)
+  ensures (lawMinorBeforeBirthDatesKeepsMinorAge(adultBirthKey) == true)
 {
   assert dayKeyYear == 10000;
-  var legacy := legacyReading(15, 20260101, 20261122);
-  assert legacy.lower == 20100101;
-  assert legacy.upper == 20111122;
-  assert legacy.youngest == 20111122;
-  if adultBirthKey <= legacy.lower {
-    var merged := mergeReading(true, legacy, birthDateLower(adultBirthKey), adultBirthKey);
+  var before := statedAgeBeforeBirthDates(15, 20260101, 20261122);
+  assert before.lower == 20100101;
+  assert before.upper == 20111122;
+  assert before.youngest == 20111122;
+  if adultBirthKey <= before.lower {
+    var merged := mergeReading(true, before, birthDateLower(adultBirthKey), adultBirthKey);
     assert merged.lower == 20100101;
     assert merged.upper == adultBirthKey;
     assert merged.youngest == 20111122;

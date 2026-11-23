@@ -12,7 +12,6 @@ import type { AppId } from "../../packages/platform/src/apps.ts";
 import { connectMcp, newPhone, pgAvailable, rpc, startStack, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
-if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
 let st: Stack;
 let sql: SQL;

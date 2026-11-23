@@ -29,6 +29,7 @@ import { serveSite } from "../../scripts/sites-dev.ts";
 import { buildSite, SITES, type Site } from "../../sites/sites.ts";
 
 export { pgAvailable };
+if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
 export const PROXY_SECRET = "e2e-proxy-secret-0123456789abcdef0123456789abcdef";
 export const WEBHOOK_SECRET = "whsec_e2e_shared";
@@ -97,6 +98,7 @@ export async function startStack(o: {
   extraNetwork?: "ntwrk:sf";
   simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
   reviewJudge?: ReviewJudge;
+  staffTokens?: string;
 } = {}): Promise<Stack> {
   const url = await migratedDb(`e2e_${++stackSequence}`);
   if (o.slopCity || o.extraNetwork) {
@@ -117,7 +119,7 @@ export async function startStack(o: {
   // The platform's host map plus each local site origin (random ports), so a browser Origin of a site counts as that app's own.
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
   const svc = await NetworkService.fromDatabase({
-    url, clock, env, instance: "e2e", tokens: `admin:${ADMIN_TOKEN},safety@slop:${SAFETY_TOKEN}`, webhookSecret: WEBHOOK_SECRET,
+    url, clock, env, instance: "e2e", tokens: [`admin:${ADMIN_TOKEN},safety@slop:${SAFETY_TOKEN}`, ...(o.staffTokens ? [o.staffTokens] : [])].join(","), webhookSecret: WEBHOOK_SECRET,
     network: { seed: 1 }, log: () => {}, reviewJudge: o.reviewJudge ?? holdEveryItem.judge,
     // Every test browser is 127.0.0.1: the per-IP OTP limits (unit-tested in packages/platform) would stop the suite.
     publicApi: { otp, minStartMs: 0, minVerifyMs: 0, ipOf, hostMap, otpLimits: { perIpPerHour: 10_000, verifyPerIpPerHour: 10_000 } },
@@ -238,14 +240,14 @@ export const VERIFIER = "e2e-verifier-" + "A1b2C3d4e5F6g7H8i9J0k-._~".repeat(2);
 export const REDIRECT = "https://client.example/callback";
 
 /** An MCP client's OAuth dance on one site, through the site router: register, authorize, sign in, approve, token. */
-export async function connectMcp(st: Stack, app: AppId, phone: string, o: { browser?: Browser; path?: "/mcp" | "/mcp/openai"; redirect?: string } = {}) {
+export async function connectMcp(st: Stack, app: AppId, phone: string, o: { browser?: Browser; path?: "/mcp" | "/mcp/openai"; redirect?: string; scope?: string } = {}) {
   const b = o.browser ?? new Browser();
   const redirect = o.redirect ?? REDIRECT;
   const reg = await st.site(app, "/oauth/register", { json: { client_name: "E2E Assistant", redirect_uris: [redirect], token_endpoint_auth_method: "none" } });
   const client = (await reg.json()) as Record<string, any>;
   if (reg.status !== 201 && reg.status !== 200) return { reg, client, token: undefined, html: "" };
   const resource = `${st.sites[app].origin}${o.path ?? "/mcp"}`;
-  const q = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource });
+  const q = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource, ...(o.scope ? { scope: o.scope } : {}) });
   const page = await st.site(app, `/oauth/authorize?${q}`, { browser: b });
   let html = await page.text();
   let done = page;

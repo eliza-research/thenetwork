@@ -19,7 +19,7 @@
 //             attention and plans invariants, NYC scenarios, sim scenarios at pass^3, networkPack conformance
 //   slop      slop.date: seeds 13-16, 4 weeks, 300 per city; safety + passing quality gates block, known-failing gates tracked;
 //             the relay inside the world (adversary personas after the reveal) and the photo in the probe; the slop-live arm (the
-//             service's slop wiring and onboarding loop in the sim World, human review, seeds 21-22, 30 days)
+//             service's slop wiring and onboarding loop in the sim World, the stand-in review judge, seeds 21-22, 30 days)
 //   relay     the relay policy (engine relay.ts): evals/relay/ corpora and scripted scenarios; photo-in-probe rule
 //   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
 //   peon-seats peon job postings to seats to hiring managers through the ConsentNetwork (#9): intake, routing, double opt-in, exclusions, restart, close
@@ -35,6 +35,8 @@
 //   audit     regression gates for the 2026-10-08 audit's P0/P1 fixes that lost their tests in the cleanup
 //             (docs/audit/2026-10-09-platform-status.md): NYC world (seed 3, 9 days), trust, plans, the four
 //             site builds, the sites' API client and the Cloudflare deploy guard (refused commands only)
+//   matching  the generic match core on planted worlds, engine only, per pack and lane: exactness against brute force
+//             (seeds 1-10, N 100/200/400), pair-check cost (N 1k/10k/100k), parity, reciprocity, stability, circles
 //   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page

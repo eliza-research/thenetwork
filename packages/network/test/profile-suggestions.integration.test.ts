@@ -288,7 +288,6 @@ test("a STOP in the consent ledger stops collection and acceptance before its pr
   expect(await store.decide(owner, accept, now)).toEqual({ kind: "denied" });
   expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(1);
   expect(await facets()).toHaveLength(0);
-  // A newer START for this app beats the older global STOP.
   await sql`insert into platform.consent_events(e164,app_id,state,source,at) values('+12125550100','ntwrk','opted_in','fixture',${new Date(now + 1)})`;
   expect(await store.decide(owner, accept, now)).toMatchObject({ kind: "saved" });
   expect(await facets()).toHaveLength(1);
@@ -398,8 +397,8 @@ test("retention removes finished suggestions and empty batches after the platfor
   await store.applyRetention(owner.app, cutoffEdge);
   expect(await sql`select id from platform.profile_suggestions where status in ('rejected','expired')`).toHaveLength(3);
   await store.applyRetention(owner.app, cutoffEdge + 1);
-  expect((await sql`select id,status from platform.profile_suggestions`).map((r: any) => r.status)).toEqual(["accepted"]);
-  expect((await sql`select id from platform.profile_suggestion_batches`).map((r: any) => r.id)).toEqual([kept.id]);
+  expect((await sql<{ id: string; status: string }[]>`select id,status from platform.profile_suggestions`).map(r => r.status)).toEqual(["accepted"]);
+  expect((await sql<{ id: string }[]>`select id from platform.profile_suggestion_batches`).map(r => r.id)).toEqual([kept.id]);
   expect(await facets()).toHaveLength(1);
 });
 
@@ -547,7 +546,7 @@ test("HTTP review shows the private preview and decides only an exact command: a
       expect([text, r.status, r.body.kind]).toEqual([text, 403, "denied"]);
     }
     expect(await facets()).toHaveLength(0);
-    expect((await sql`select status from platform.profile_suggestions where batch_id=${b.id}`).map((r: any) => r.status)).toEqual(["proposed"]);
+    expect((await sql<{ status: string }[]>`select status from platform.profile_suggestions where batch_id=${b.id}`).map(r => r.status)).toEqual(["proposed"]);
     expect((await sql`select revision from platform.profile_suggestion_batches where id=${b.id}`)[0]!.revision).toBe(b.revision);
     expect((await decide(`accept ${token} 1 private`)).body).toMatchObject({ kind: "saved", accepted: [b.suggestions[0]!.id], rejected: [], reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toEqual([expect.objectContaining({ value: "I enjoy climbing", scope: "agent_private" })]);
@@ -589,7 +588,7 @@ test("HTTP review never shows or decides a batch for another person, app, chat, 
     await attempt("app", (id, body) => storedTurn(id, body, "friends", "owned-friends-member"));
     await attempt("person", (id, body) => storedTurn(id, body, "ntwrk", "other-member", "other-phone-hash"));
     expect(await facets()).toHaveLength(0);
-    expect((await sql`select status from platform.profile_suggestions where batch_id=${b.id}`).map((r: any) => r.status)).toEqual(["proposed"]);
+    expect((await sql<{ status: string }[]>`select status from platform.profile_suggestions where batch_id=${b.id}`).map(r => r.status)).toEqual(["proposed"]);
     await storedTurn("owner-accept", text);
     expect((await http.post("decide", "owner-accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
@@ -886,14 +885,13 @@ async function reviewCommandTurn(f: Awaited<ReturnType<typeof ownerProofFixture>
 
 test("review bootstrap is on exactly with the isolated route, origin and key, and needs no switch", async () => {
   expect(profileReviewFromEnv({}, () => now)).toEqual({});
-  expect(profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "1" }, () => now)).toEqual({});
   expect(profileReviewFromEnv({ NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now)).toEqual({});
   const f = await ownerProofFixture();
   try {
     const route = { PLATFORM_ENV: "staging", NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(f.policy) };
     expect(profileReviewFromEnv({ ...route, SERVICE_TURN_SECRET: httpSecret }, () => now)).toEqual({});
     expect(profileReviewFromEnv({ ...route, NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example" }, () => now)).toEqual({});
-    const configured = profileReviewFromEnv({ ...route, NETWORK_PROFILE_REVIEW_ENABLED: "0",
+    const configured = profileReviewFromEnv({ ...route,
       NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now);
     expect(typeof configured.profileSuggestionIdentity).toBe("function");
     expect(typeof configured.profileSuggestionAuthorization).toBe("function");

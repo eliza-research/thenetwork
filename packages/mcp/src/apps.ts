@@ -37,7 +37,7 @@ export interface McpApp {
   openai: boolean;
 }
 
-const TEEN_FRIEND_RULE = "Matching is for adults 18 or older, except friendship introductions between people aged 13 to 18 born at most 2 years apart, after a person reviews each one.";
+const TEEN_FRIEND_RULE = "Matching is for adults 18 or older, except friendship introductions between people aged 13 to 18 born at most 2 years apart, after an automatic check approves each one.";
 const ADULT_RULE = "Nobody under 18 is matched for dates or work on this app. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.";
 
 function app(id: McpAppId, name: string, domain: string, what: string, keyword: string | null, extra: { adultsOnly?: string[]; smsTerms?: boolean }): McpApp {

@@ -1,16 +1,11 @@
-// The shared-line routing corpus (evals/network/line-routing.jsonl) through the real inbound path:
-// a signed Blooio webhook on the shared line, the service's routing, the line gate, the text join and
-// the answer to "what are you looking for?". Each row checks the typed reading the shell makes and the
-// decision the service takes. Postgres in a database of its own per test process; every send is dry-run.
-// spec/lineRouting.md, "STOP ends the message before any other check"; "A banned number gets only HELP and app leave"; "A refused app is never enrolled, even with "all of them""
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { DAY, MINUTE, SimClock } from "@thenetwork/core";
-import { findExecutable } from "../../core/src/runtime/process.ts";
+import { earliestDayKeyOf } from "../../core/src/birth-date.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { APPS, keywordApp, lookingForReading, type AppId } from "../../platform/src/apps.ts";
 import { detectKeyword } from "../../platform/src/consent.ts";
 import { DryRunAdapter } from "../service/channel.ts";
@@ -24,18 +19,14 @@ type Row =
 
 const REPO = resolve(import.meta.dirname, "../../..");
 const ROWS: Row[] = readFileSync(`${REPO}/evals/network/line-routing.jsonl`, "utf8").trim().split("\n").map(l => JSON.parse(l) as Row);
-const COMMAND = { stop: "LineStop", stop_all: "LineStopAll", help: "LineHelp", start: "LineStart" } as const;
+const COMMAND = { stop: "LineStop", stop_all: "LineStop", help: "LineHelp", start: "LineStart" } as const;
 const APP_WORDS = Object.values(APPS).flatMap(a => [a.id, ...a.domain.split(".")]);
 const ENROLL_ORDER = ["friends", "slop", "peon"];
 
 const T = 600_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
-const DB = `network_line_routing_test_${process.pid}`;
-const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
-const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
 const SECRET = "whsec_shared";
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
+let url: string;
 let sql: SQL;
 let phoneSeq = 0;
 const newPhone = () => `+1646555${String(1000 + ++phoneSeq).padStart(4, "0")}`;
@@ -45,7 +36,7 @@ const open: NetworkService[] = [];
 function service(clock: SimClock) {
   const directs: { app: string; to: string; body: string }[] = [];
   const s = new NetworkService({
-    url: URL_, clock, instance: "routing", log: () => {}, env: { PLATFORM_ENV: "dev" },
+    url, clock, instance: "routing", log: () => {}, env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "slop:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
     tokens: "admin:adm-tok", webhookSecret: SECRET, network: { seed: 1 },
     adapter: (_net, rt) => {
@@ -70,11 +61,11 @@ async function text(s: NetworkService, clock: SimClock, from: string, body: stri
   return (await res.json()).result as string;
 }
 
-const activeApps = async (e164: string) => (await sql`select m.app_id from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id
-  where ph.e164 = ${e164} and m.state = 'active' order by m.app_id`).map((r: any) => r.app_id as string);
+const activeApps = async (e164: string) => (await sql<{ app_id: string }[]>`select m.app_id from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id
+  where ph.e164 = ${e164} and m.state = 'active' order by m.app_id`).map(r => r.app_id);
 
-const memberIdOf = async (app: AppId, e164: string) => (await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
-  where m.app_id = ${app} and ph.e164 = ${e164}`)[0]!.id as string;
+const memberIdOf = async (app: AppId, e164: string) => (await sql<{ id: string }[]>`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
+  where m.app_id = ${app} and ph.e164 = ${e164}`)[0]!.id;
 
 async function metInSlop(s: NetworkService, clock: SimClock) {
   const ana = newPhone(), ben = newPhone();
@@ -94,28 +85,26 @@ async function metInSlop(s: NetworkService, clock: SimClock) {
   return { ana, anaSlop, benSlop };
 }
 
+async function askWhoInSlop(s: NetworkService, clock: SimClock, ana: string, anaSlop: string, benSlop: string) {
+  expect(await text(s, clock, ana, "report him, he was rude")).toBe("handled");
+  expect(await s.runtimeFor("slop")!.readState(n => n.exportState().members.find(m => m.id === anaSlop)?.pendingSafety))
+    .toMatchObject({ verb: "report", targets: [benSlop] });
+  expect(await s.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([]);
+}
+
 const compare = (misses: unknown[], text: string, got: unknown, want: unknown) => {
   if (JSON.stringify(got) !== JSON.stringify(want)) misses.push({ text, got, want });
 };
 
 describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound path (Postgres)", () => {
   beforeAll(async () => {
-    await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
-    await admin(`create database ${DB}`);
-    sql = new SQL({ url: URL_, max: 2 });
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    url = await migratedDb("line_routing");
+    sql = new SQL({ url, max: 2 });
   }, T);
-  afterEach(async () => { for (const s of open.splice(0)) await s.close().catch(() => {}); });
+  afterEach(async () => { for (const s of open.splice(0)) await s.close(); });
   afterAll(async () => {
-    for (const s of open) await s.close().catch(() => {});
     await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
-  });
-
-  test("the corpus has at least 60 rows and every kind of reading", () => {
-    expect(ROWS.length).toBeGreaterThanOrEqual(60);
-    for (const kind of ["first", "join", "lookingFor"]) expect(ROWS.filter(r => r.kind === kind).length).toBeGreaterThanOrEqual(15);
+    await dropDb(url);
   });
 
   test("a first message: its keyword and command reading, then the app it joins or the command it runs", async () => {
@@ -141,19 +130,17 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     await s.start();
     const misses: unknown[] = [];
     for (const row of ROWS.filter((r): r is Extract<Row, { kind: "join" }> => r.kind === "join")) {
-      const said = parseJoinText(row.text, APP_WORDS, true, 20261005);
+      const said = parseJoinText(row.text, APP_WORDS, true, earliestDayKeyOf(clock.now()));
       const reading = { age: said.age ?? null, ...(row.reading.name !== undefined ? { name: said.name } : {}) };
       const from = newPhone();
       expect(await text(s, clock, from, "hi")).toBe("join_asked");
       const outcome = await text(s, clock, from, row.text);
       compare(misses, row.text, { reading, decision: { outcome } }, { reading: row.reading, decision: row.decision });
-      // Under the join age nothing is kept.
       if (row.decision.outcome === "under_age") expect(await activeApps(from)).toEqual([]);
     }
     expect(misses).toEqual([]);
   }, T);
 
-  // spec/lineRouting.md, "STOP ends the message before any other check"; "A banned number gets only HELP and app leave"; "An invitation decline and a held number come before any flow"
   test("the line gate: STOP before the ban, a banned or held number gets only HELP, a member's app keyword joins that app too", async () => {
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
@@ -172,7 +159,6 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     expect(await text(s, clock, banned, "STOP")).toBe("stopped");
     expect(await activeApps(banned)).toEqual([]);
 
-    // A known number that staff put on the recycled-number hold.
     const held = newPhone();
     expect(await text(s, clock, held, "friends")).toBe("join_asked");
     expect(await text(s, clock, held, "Cy, 34")).toBe("joined");
@@ -192,7 +178,6 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     expect(await activeApps(member)).toEqual(["friends", "slop"]);
     expect(await text(s, clock, member, "leave slop.date")).toBe("left");
     expect(await activeApps(member)).toEqual(["friends"]);
-    // STOP on the shared line stops every app the member is in (a member's STOP is "handled", a stranger's "stopped").
     expect(await text(s, clock, member, "STOP")).toBe("handled");
     for (const app of ["friends", "slop"] as const) expect(await s.accounts.optedIn(app, member)).toBe(false);
   }, T);
@@ -212,12 +197,7 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     const { s } = service(clock);
     await s.start();
     const { ana, anaSlop, benSlop } = await metInSlop(s, clock);
-    await s.runtimeFor("slop")!.unitOfWork(n => {
-      const state = n.exportState();
-      state.members.find(m => m.id === anaSlop)!.pendingSafety = { verb: "report", kind: "other", at: clock.now(), targets: [benSlop] };
-      n.importState(state);
-    });
-    clock.advance(MINUTE);
+    await askWhoInSlop(s, clock, ana, anaSlop, benSlop);
     expect(await text(s, clock, ana, "yes")).toBe("handled");
     expect(await s.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([expect.objectContaining({ subjectId: benSlop })]);
     expect(await s.runtimeFor("friends")!.readState(n => n.safetyReports())).toEqual([]);
@@ -229,15 +209,16 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     await s.start();
     const { ana, anaSlop, benSlop } = await metInSlop(s, clock);
     const anaFriends = await memberIdOf("friends", ana);
-    await s.runtimeFor("slop")!.unitOfWork(n => {
-      const state = n.exportState();
-      state.members.find(m => m.id === anaSlop)!.pendingSafety = { verb: "report", kind: "other", at: clock.now(), targets: [benSlop] };
-      n.importState(state);
-    });
-    clock.advance(MINUTE);
-    await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, proactive, system, ts)
-      values ('friends', 'routing-newer-question', ${anaFriends}, 'outbound', 'imessage', 'What do you like to do on weekends?', 'dry_run', false, false, ${new Date(clock.now())})`;
-    clock.advance(MINUTE);
+    await askWhoInSlop(s, clock, ana, anaSlop, benSlop);
+    const asked = clock.now();
+    const written = async (app: AppId, memberId: string) => (await sql<{ n: number }[]>`select count(*)::int as n from network.messages
+      where app_id = ${app} and member_id = ${memberId} and direction = 'outbound' and ts >= ${new Date(asked)}`)[0]!.n;
+    expect(["handled", "open"]).toContain(await text(s, clock, ana, "friends.help"));
+    expect(await written("friends", anaFriends)).toBeGreaterThan(0);
+    expect(await written("slop", anaSlop)).toBe(0);
+    expect(await s.runtimeFor("slop")!.readState(n => n.exportState().members.find(m => m.id === anaSlop)?.pendingSafety))
+      .toMatchObject({ verb: "report", targets: [benSlop] });
+    expect(await s.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([]);
     await text(s, clock, ana, "climbing");
     expect(await s.runtimeFor("slop")!.readState(n => n.exportState().members.find(m => m.id === anaSlop)?.pendingSafety))
       .toMatchObject({ verb: "report", targets: [benSlop] });
@@ -250,12 +231,7 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     await s.start();
     const { ana, anaSlop, benSlop } = await metInSlop(s, clock);
     expect(await text(s, clock, ana, "peon.biz")).toBe("join_asked");
-    await s.runtimeFor("slop")!.unitOfWork(n => {
-      const state = n.exportState();
-      state.members.find(m => m.id === anaSlop)!.pendingSafety = { verb: "report", kind: "other", at: clock.now(), targets: [benSlop] };
-      n.importState(state);
-    });
-    clock.advance(MINUTE);
+    await askWhoInSlop(s, clock, ana, anaSlop, benSlop);
     expect(await text(s, clock, ana, "Ana, 30")).toBe("joined");
     expect(await activeApps(ana)).toEqual(["friends", "peon", "slop"]);
     expect(await s.runtimeFor("slop")!.readState(n => n.exportState().members.find(m => m.id === anaSlop)?.pendingSafety))

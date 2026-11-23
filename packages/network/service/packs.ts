@@ -14,9 +14,6 @@
 //            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
-// Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
-// (the stored switch starts off; the network's registry row only allows the switch). Minors
-// never enter a pack's input (ConsentNetwork.packInput). Nothing here reads hidden truth.
 import { canBeMatched, CITY_TZ, DAY, HOUR, type MemberId } from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
@@ -253,7 +250,6 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       if (o.category !== "romance") return undefined;
       return slopCheckInText(others);
     },
-    postDateReports: true,
   };
 }
 
@@ -291,6 +287,5 @@ export function peonHooks(): AppHooks {
       const seat = seatOf(o);
       return seat ? SEAT_COPY.checkIn({ title: seat.title ?? "the role", must: [] }, others) : undefined;
     },
-    postDateReports: true,
   };
 }

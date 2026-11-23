@@ -17,7 +17,7 @@ import { APPS, POWERED_BY, type AppId } from "../../platform/src/apps.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, type ChannelAdapter, type Delivery, type Outbound } from "../service/channel.ts";
-import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
+import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, WEBHOOK_PATH, type NetworkRuntime, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor } from "../src/copy.ts";
 import { START } from "./mini.ts";
 import { deliveryIdFor } from "../../notify/src/scheduler.ts";
@@ -381,7 +381,7 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     await s.close();
     const sent: SendRequest[] = [];
     const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env: {}, app: rt.app.id, log: () => {} }) };
+    const live = { adapter: (_net: unknown, rt: NetworkRuntime) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) };
     const { s: seeder } = service(clock, live);
     await seeder.start();
     const queue = (seeder.runtimeFor("friends")!.adapter as BlooioAdapter).queue;

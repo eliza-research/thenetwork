@@ -46,6 +46,8 @@ an already recorded delivery. The item and its delivery are stored in one
 transaction, so the item is never pending for the scheduler without its
 delivery. Changed 2026-11-18: they were two transactions (SD-151), and a
 failure between them left the text pending, so the scheduler texted it again.
+A message that another sender delivered also adds its item and records its
+delivery in one transaction (`NotifyStore.addDelivered`).
 Each new accepted text about that opportunity
 remains a separate item. Resolve an item's opportunity
 in the caller's app. Retained subjects that used only the opportunity or

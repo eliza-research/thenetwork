@@ -1,8 +1,3 @@
-// spec/privateHomeHelpVenue.md, "The conversation points each participant to the private page"
-// spec/privateHomeHelpVenue.md, "The requester supplies one address after everyone accepts this revision"
-// spec/privateHomeHelpVenue.md, "A helper reads the address in a directly verified private request"
-// spec/boundedHelp.md, "Fix the roster before review and recheck it at approval"
-// Signed text turns, the staff API and the site API on one NetworkService with PostgreSQL.
 import { expect, test } from "vitest";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { MINUTE, SimClock } from "@thenetwork/core";
@@ -29,7 +24,6 @@ const CLOSED = "The private address step for that home-help plan is not open. It
 async function addressWorld(database: string) {
   const url = await migratedDb(database);
   const sql = new SQL(url);
-  // Friday 12:00 in New York; the task is on Saturday afternoon.
   const clock = new SimClock(Date.UTC(2026, 10, 20, 17));
   const secret = "a-synthetic-home-help-address-flow-secret";
   const sent: SendRequest[] = [];
@@ -37,7 +31,7 @@ async function addressWorld(database: string) {
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, notify: false, instance: "home-help-address",
     env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
-    tokens: "safety@ntwrk:ntwrk-safety,reviewer@ntwrk:ntwrk-reviewer",
+    tokens: "safety@ntwrk:ntwrk-safety",
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }], devMatching: ["ntwrk:nyc"],
     network: { growth: false }, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
     adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {},
@@ -113,12 +107,17 @@ async function addressWorld(database: string) {
   return { sql, sent, clock, say, staff, site, login, service, close, ready };
 }
 
+async function awaitHelperCards(world: Awaited<ReturnType<typeof addressWorld>>, code: string) {
+  const cards = () => world.sent.filter(s => s.text.includes(`YES HOME HELP ${code} 2`)).length;
+  for (let i = 0; i < 8 && cards() < 3; i++) { world.clock.advance(30 * MINUTE); await world.service.tick(); }
+}
+
 async function everyoneAgrees(world: Awaited<ReturnType<typeof addressWorld>>, plan: Awaited<ReturnType<Awaited<ReturnType<typeof addressWorld>>["ready"]>>) {
-  const { say, site, login, service, sent } = world;
+  const { say, site, login, service } = world;
   const { rae, ari, bea, code, addressCommand } = plan;
   await service.tick();
   await say(rae, `YES HOME HELP ${code} 2`);
-  for (let i = 0; i < 8 && sent.filter(s => s.text.includes(`YES HOME HELP ${code} 2`)).length < 3; i++) { world.clock.advance(30 * MINUTE); await service.tick(); }
+  await awaitHelperCards(world, code);
   for (const helper of [ari, bea]) expect(await say(helper, `YES HOME HELP ${code} 2`)).toEqual([expect.stringContaining(addressCommand)]);
   await login(rae);
   expect(await site(rae, "/api/home-help/venue", { action: "submit", id: code, revision: 2, address: ADDRESS })).toEqual({ status: 200, body: { ok: true } });
@@ -128,11 +127,10 @@ async function everyoneAgrees(world: Awaited<ReturnType<typeof addressWorld>>, p
 
 test.skipIf(!pgAvailable)("the address step opens only for the approved roster after everyone agrees, and a changed roster closes it", async () => {
   const world = await addressWorld("home_help_address_flow");
-  const { sql, sent, clock, say, staff, site, login, service } = world;
+  const { sql, sent, say, staff, site, login, service } = world;
   try {
     const { rae, ari, bea, people, ids, code, planId, addressCommand } = await world.ready();
 
-    // Approved, but nobody has agreed yet: the step is closed and the site refuses the address.
     expect(await say(rae, addressCommand)).toEqual([CLOSED]);
     await login(rae);
     const submit = { action: "submit", id: code, revision: 2, address: ADDRESS };
@@ -142,17 +140,14 @@ test.skipIf(!pgAvailable)("the address step opens only for the approved roster a
     expect(sent.filter(s => s.to === rae && s.text.includes(`YES HOME HELP ${code} 2`))).toHaveLength(1);
     const raeYes = await say(rae, `YES HOME HELP ${code} 2`);
     expect(raeYes).toEqual([`I've recorded your yes. The address stays private until everyone agrees. To check the private address step, send:\n${addressCommand}`]);
-    // The requester's yes alone does not open the step.
     expect(await say(rae, addressCommand)).toEqual([CLOSED]);
     expect((await site(rae, "/api/home-help/venue", submit)).status).toBe(409);
 
-    // Helper cards are proactive outreach and wait for the ordinary pacing after the helpers' last messages.
-    for (let i = 0; i < 8 && sent.filter(s => s.text.includes(`YES HOME HELP ${code} 2`)).length < 3; i++) { clock.advance(30 * MINUTE); await service.tick(); }
+    await awaitHelperCards(world, code);
     for (const helper of [ari, bea]) {
       expect(sent.filter(s => s.to === helper && s.text.includes(`YES HOME HELP ${code} 2`))).toHaveLength(1);
       expect(await say(helper, `YES HOME HELP ${code} 2`)).toEqual([expect.stringContaining(addressCommand)]);
     }
-    // A helper waits for the saved address; a person outside the roster never gets a link.
     expect(await say(ari, addressCommand)).toEqual([CLOSED]);
     expect(await say(people[3][0], addressCommand)).toEqual([CLOSED]);
 
@@ -167,14 +162,12 @@ test.skipIf(!pgAvailable)("the address step opens only for the approved roster a
     await login(ari);
     expect(await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).toEqual({ status: 200, body: { ok: true, address: ADDRESS } });
 
-    // A changed roster is a new revision: approval, the step and the read all end.
     expect((await staff(`/${planId}`, { action: "nominate", revision: 2, helperIds: [ids.get("Ari")!, ids.get("Cy")!] })).status).toBe(200);
     expect(await say(rae, addressCommand)).toEqual([CLOSED]);
     expect(await say(ari, addressCommand)).toEqual([CLOSED]);
     expect((await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).status).toBe(409);
     expect(await say(rae, `HOME HELP ADDRESS ${code} 3`)).toEqual([CLOSED]);
 
-    // The address left only through the private reveal response.
     const stored = JSON.stringify([
       await sql`select response, replies from platform.inbound`,
       await sql`select body from network.messages`,
@@ -229,26 +222,23 @@ test.skipIf(!pgAvailable)("after everyone agreed, a staff safety hold on a helpe
   }
 }, 120_000);
 
-// spec/privateHomeHelpVenue.md, "The conversation points each participant to the private page"
 test.skipIf(!pgAvailable)("the private page reads each participant's step without the address, and a revoked address closes the requester's step", async () => {
   const world = await addressWorld("home_help_address_status");
-  const { sql, sent, clock, say, site, login, service } = world;
+  const { sql, sent, say, site, login, service } = world;
   try {
     const { rae, ari, bea, people, code, addressCommand } = await world.ready();
     const outsider = people[3][0];
     const status = { action: "status", id: code, revision: 2 };
     const closed = { status: 409, body: { ok: false, error: "home_help_venue_unavailable" } };
 
-    // Approved, but nobody has agreed yet: the status gets the same closed answer as the other actions.
     await login(rae);
     expect(await site(rae, "/api/home-help/venue", status)).toEqual(closed);
 
     await service.tick();
     await say(rae, `YES HOME HELP ${code} 2`);
-    for (let i = 0; i < 8 && sent.filter(s => s.text.includes(`YES HOME HELP ${code} 2`)).length < 3; i++) { clock.advance(30 * MINUTE); await service.tick(); }
+    await awaitHelperCards(world, code);
     for (const helper of [ari, bea]) expect(await say(helper, `YES HOME HELP ${code} 2`)).toEqual([expect.stringContaining(addressCommand)]);
 
-    // Everyone agreed: the requester's step is open and empty; a helper waits; a person outside the roster is closed.
     expect(await site(rae, "/api/home-help/venue", status)).toEqual({ status: 200, body: { ok: true, role: "requester", addressSaved: false } });
     await login(ari);
     expect(await site(ari, "/api/home-help/venue", status)).toEqual(closed);
@@ -259,10 +249,8 @@ test.skipIf(!pgAvailable)("the private page reads each participant's step withou
     expect(await site(rae, "/api/home-help/venue", status)).toEqual({ status: 200, body: { ok: true, role: "requester", addressSaved: true } });
     expect(await site(ari, "/api/home-help/venue", status)).toEqual({ status: 200, body: { ok: true, role: "helper", addressSaved: true } });
     expect(await site(outsider, "/api/home-help/venue", status)).toEqual(closed);
-    // The status reads and changes nothing: the helper still reads the address after it.
     expect(await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).toEqual({ status: 200, body: { ok: true, address: ADDRESS } });
 
-    // After a revocation a submit stores nothing, so the requester's step is closed on the page and in the conversation.
     expect(await site(rae, "/api/home-help/venue", { action: "revoke", id: code, revision: 2 })).toEqual({ status: 200, body: { ok: true } });
     expect(await site(rae, "/api/home-help/venue", status)).toEqual(closed);
     expect(await site(ari, "/api/home-help/venue", status)).toEqual(closed);

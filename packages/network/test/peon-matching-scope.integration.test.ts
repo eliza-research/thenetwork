@@ -1,35 +1,23 @@
-// spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran", through the real service
-// on Postgres: the service is built from platform.networks (where migration 0011 allows peon:nyc), and the staff API's
-// matching switch and /health give one answer for peon. Owner decision 2026-11-22: the registry row alone decides,
-// in production too, with no live decision. The admin console shows the /health value.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 
-const database = `network_peon_scope_${randomUUID().replaceAll("-", "")}`;
-const local = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}`;
-const url = `${local}/${database}`;
 const clock = new SimClock(Date.UTC(2026, 10, 12, 17));
-let admin: SQL, db: SQL;
+let url: string, db: SQL;
 
 beforeAll(async () => {
   if (!pgAvailable) return;
-  await devPgUp();
-  admin = new SQL({ url: `${local}/postgres`, max: 1 });
-  await admin.unsafe(`create database ${database}`);
-  await applySchema(url, { lockTimeout: "60s" });
+  url = await testDb();
   db = new SQL({ url, max: 1 });
 }, 120_000);
 
 afterAll(async () => {
   await db?.close();
-  await admin?.unsafe(`drop database if exists ${database} with (force)`);
-  await admin?.close();
+  await dropTestDb();
 });
 
 async function withService(env: Record<string, string>, run: (call: (app: string, method: string, path: string, body?: object) => Promise<{ status: number; body: any }>) => Promise<void>) {

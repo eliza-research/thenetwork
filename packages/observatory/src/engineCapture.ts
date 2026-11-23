@@ -36,10 +36,6 @@ export function summarizeRun(log: MatchingRunLog, proposals: EngineProposal[], o
   };
 }
 
-export type StoredRunSummary = Omit<EngineRunSummary, "search" | "searchOutcomes"> & Partial<Pick<EngineRunSummary, "search" | "searchOutcomes">>;
-
-export const storedRunSummary = (stored: StoredRunSummary): EngineRunSummary =>
-  ({ ...stored, search: stored.search ?? emptySearchTally, searchOutcomes: stored.searchOutcomes ?? [] });
 
 export async function runEngineSummarized(snapshot: WorldSnapshot, opts: { seed: number; city?: City; shadow?: boolean }) {
   const t0 = performance.now();

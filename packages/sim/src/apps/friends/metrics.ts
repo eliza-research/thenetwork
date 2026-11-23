@@ -11,6 +11,7 @@ import type { HarmKind } from "./oracle.ts";
 import { FRIENDS_START_DAY_KEY, friendsStatedOpen, hoodOf, isReal, openGroupOf } from "./persona.ts";
 import { visibleRedFlag, weekTime } from "./snapshot.ts";
 import { pk, type FlowRecord, type FriendsRunResult, type RosterAge } from "./world.ts";
+import { UNKNOWN_AGE_SIDE } from "../../teen.ts";
 
 export interface FriendsMetrics {
   matcher: string; seed: number; weeks: number; members: number; real: number;
@@ -52,7 +53,7 @@ export interface FriendsMetrics {
   giniMeetups: number; zeroMeetupShare: number;
   expected: { perProposal: number; perMember: number };
   safety: {
-    declaredMinorProposals: number; declaredMinorContacts: number;
+    ageRuleBrokenProposals: number; declaredMinorContacts: number;
     hiddenMinorContacts: number; adversaryContacts: number; knownAdversaryContacts: number;
     adversaryContactsByKind: Partial<Record<string, number>>; adversariesReached: number; medianReachPerAdversary: number;
     harms: Partial<Record<HarmKind, number>>; harmsReported: number;
@@ -66,7 +67,7 @@ export interface FriendsMetrics {
 }
 
 export interface TeenBreaches { adult: number; gap: number; lane: number; unready: number; switchOff: number; group: number; place: number }
-export interface TeenSafety {
+interface TeenSafety {
   proposals: TeenBreaches; contacts: TeenBreaches;
   introductions: number; minorContacts: number; validMeetups: number; introShare: number;
   teenMeetups: number; teenGroupMeetups: number; groupShare: number;
@@ -92,11 +93,10 @@ export function teenBreachesOf(sides: readonly AgeSide[], r: Pick<RosterAge, "mi
 }
 
 const addBreaches = (into: TeenBreaches, b: TeenBreaches) => { for (const k of BREACH_KEYS) into[k] += b[k]; };
-export const breachTotal = (b: TeenBreaches) => BREACH_KEYS.reduce((n, k) => n + b[k], 0);
 
-export function contactSides(f: FlowRecord): AgeSide[] {
+function contactSides(f: FlowRecord): AgeSide[] {
   const byId = new Map(f.roster.map((id, i) => [id, f.sides[i]!]));
-  return f.going.map(id => byId.get(id) ?? { adult: false, ready: false, birthKey: 0 });
+  return f.going.map(id => byId.get(id) ?? UNKNOWN_AGE_SIDE);
 }
 
 function teenSafety(res: FriendsRunResult, proposals: readonly FlowRecord[], good: number): TeenSafety {
@@ -304,7 +304,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
       perMember: div(proposals.reduce((s, f) => s + f.expected * f.invited.filter(id => realIds.has(id)).length, 0), real.length),
     },
     safety: {
-      declaredMinorProposals: proposals.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
+      ageRuleBrokenProposals: proposals.filter(f => f.ageRuleBroken).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
       adversaryContacts: adv, knownAdversaryContacts: knownContacts.size, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,
       medianReachPerAdversary: median(advIds.map(id => reach.get(id)?.size ?? 0)) ?? 0, harms, harmsReported: reported, harmsUndetected: undetected,
       opennessViolations, teen: teenSafety(res, proposals, P.good),
@@ -317,7 +317,7 @@ export function friendsOutboundLog(res: FriendsRunResult) {
   return {
     flows: res.flows.map(f => ({
       key: f.key, kind: f.kind, invited: f.invited, stage: f.stage, probed: f.probed, yes: f.yes, replied: f.replied,
-      going: f.going, booked: f.booked, attended: f.attended, capDrops: f.capDrops, declaredMinor: f.declaredMinor, meetAt: f.meetAt ?? null,
+      going: f.going, booked: f.booked, attended: f.attended, capDrops: f.capDrops, ageRuleBroken: f.ageRuleBroken, meetAt: f.meetAt ?? null,
     })),
     contacts: res.contacts,
   };

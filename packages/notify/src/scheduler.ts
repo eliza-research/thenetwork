@@ -73,6 +73,9 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   rand: randomInt,
 };
 
+function requireSummary(input: InboxItemInput): void {
+  if (!input.summary.trim()) throw new Error("inbox item needs a summary");
+}
 
 export interface SendPlan {
   personId: string;
@@ -110,7 +113,7 @@ export class Notifier {
 
   /** Producers (engine, plans, reminders) add items here. Deduped on (person, app, event, subject). */
   add(input: InboxItemInput, now: number) {
-    if (!input.summary.trim()) throw new Error("inbox item needs a summary");
+    requireSummary(input);
     return this.store.addItem(input, now);
   }
 
@@ -121,8 +124,7 @@ export class Notifier {
    */
   async recordSent(input: InboxItemInput, d: { deliveryId: string; channel: Channel; countsTowardCap: boolean; sentAt: number }) {
     if (d.deliveryId.startsWith("ntf_")) throw new Error("ntf_ delivery ids belong to the scheduler");
-    if (!input.summary.trim()) throw new Error("inbox item needs a summary");
-    // spec/notificationAcknowledgement.md, "A delivered text can appear only once and its opportunity must still be current"
+    requireSummary(input);
     return this.store.addDelivered(input, { deliveryId: d.deliveryId, target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
   }
 

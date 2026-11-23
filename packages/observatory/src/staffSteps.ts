@@ -22,7 +22,7 @@ interface ConsoleStep {
 const ID = /^(?!\.{1,2}$)[^\s/]{1,600}$/;
 const REVISION = /^\d{1,9}$/;
 
-export const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
+const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
   { step: "ReadPostings", method: "GET", console: "/api/staff/postings", service: () => "/postings", action: "step_read_postings", query: ["managerId"] },
   { step: "SavePosting", method: "POST", console: "/api/staff/postings", service: () => "/postings", action: "step_save_posting" },
   { step: "ClosePosting", method: "POST", console: "/api/staff/postings/:id/close", service: id => `/postings/${id}/close`, action: "step_close_posting", target: "case" },
@@ -44,6 +44,8 @@ export const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
   { step: "ReadJudgedReviews", method: "GET", console: "/api/staff/review/judged", service: () => "/review/judged", action: "step_read_review_judged", query: ["since"] },
   { step: "ReadJudgedReviews", method: "GET", console: "/api/staff/review/judged/:id/:revision", service: (id, _app, revision) => `/review/judged/${id}/${revision}`, action: "step_read_review_judged", target: "opportunity" },
   { step: "StopApprovedReview", method: "POST", console: "/api/staff/review/:id/stop", service: id => `/review/${id}/stop`, action: "step_stop_review", target: "opportunity" },
+  { step: "DecideSafetyCase", method: "POST", console: "/api/staff/teen-intros", service: () => "/teen-intros", action: "step_switch_teen_intros" },
+  { step: "DecideSafetyCase", method: "POST", console: "/api/staff/safety/older-than-stated", service: () => "/safety/older-than-stated", action: "step_report_older_than_stated" },
 ];
 
 const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
@@ -69,7 +71,8 @@ const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
   [/^\/review\/judged(\/[^/]+\/\d+)?$/, "ReadJudgedReviews", "ReadJudgedReviews"],
   [/^\/review\/[^/]+\/stop$/, "StopApprovedReview", "StopApprovedReview"],
   [/^\/review\/[^/]+$/, "DecideReviewItem", "DecideReviewItem"],
-  [/^\/safety\/(?:hold|ban|dismiss|lift|close|clear-minor)$/, "DecideSafetyCase", "DecideSafetyCase"],
+  [/^\/safety\/(?:hold|ban|dismiss|lift|close|clear-minor|older-than-stated)$/, "DecideSafetyCase", "DecideSafetyCase"],
+  [/^\/teen-intros$/, "DecideSafetyCase", "DecideSafetyCase"],
 ];
 
 export function serviceStaffStep(method: string, path: string): StaffStep | undefined {
@@ -77,10 +80,10 @@ export function serviceStaffStep(method: string, path: string): StaffStep | unde
   return row ? (method === "GET" ? row[1] : row[2]) : undefined;
 }
 
-export interface StaffStepAnswer { status: number; json: Record<string, unknown> }
+interface StaffStepAnswer { status: number; json: Record<string, unknown> }
 export type StaffStepForward = (actor: string, method: Method, path: string, body: Record<string, unknown> | undefined) => Promise<StaffStepAnswer>;
 
-export interface StaffStepDeps {
+interface StaffStepDeps {
   identified: (handler: (req: Routed, user: StaffUser) => Promise<Response>) => (req: Routed) => Promise<Response>;
   appOf: (req: Request) => AppId | Response;
   mode: () => Mode;

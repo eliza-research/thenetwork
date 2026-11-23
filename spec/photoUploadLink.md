@@ -47,7 +47,7 @@ pure def sometimesLinkRefused(link: PhotoUploadLink): bool = link.phase == Uploa
 
 ### A link uploads once, before it expires, on its own app, for a holder who is still eligible
 
-Every use of an open link closes it. The use uploads only when the request reaches the link's own app before the expiry and the holder passes the same checks again at use. Any other use closes the link with nothing stored, so a member asks for a new link. The shell rejects a request from a still eligible holder without the current photo consent, or with an empty or oversized batch, before it uses the link; a holder who is no longer eligible closes the link even without the consent. Changed: before, a member who left the app (which clears the consent) got a consent error and kept an open link. A consent sent with the batch is recorded on the membership before storage.
+Every use of an open link closes it. The use uploads only when the request reaches the link's own app before the expiry and the holder passes the same checks again at use. Any other use closes the link with nothing stored, so a member asks for a new link. The shell rejects a request from a still eligible holder without the current photo consent, or with an empty or oversized batch, before it uses the link; a holder who is no longer eligible closes the link even without the consent. A consent sent with the batch is recorded on the membership before storage. Changed (2026-11-22): a member who left the app got a consent error and kept an open link -> the eligibility check comes first and closes the link, because leaving clears the consent.
 
 ```quint
 pure def uploadLinkUsable(link: PhotoUploadLink, holder: UploadLinkHolder, sameApp: bool, at: int): bool =
@@ -72,7 +72,7 @@ pure def sometimesLinkSpent(link: PhotoUploadLink): bool = link.phase == UploadL
 
 ### A status check says whether a link can still upload, and does not use it
 
-The link page asks before the member chooses photos. The check reads the link row and the holder with the same decision that a use applies, `uploadLinkUsable`, on the app of the request, and it writes nothing, so the link stays open. An open link answers with whether the upload must carry the photo consent, and with the current consent version and text, so the page shows the exact words that the member agrees to. A malformed token gets status 404. An unknown, used or expired link, a link of another app and a holder who is no longer eligible all get status 410. Both answers have the same body, `link_unavailable`, which names no person, and a use of the link gives the same two statuses. Changed on 2026-11-22 (owner decision, one-purpose pages): before, the page could only learn that a link was closed by using it, and it had no source for the consent text.
+The link page asks before the member chooses photos. The check reads the link row and the holder with the same decision that a use applies, `uploadLinkUsable`, on the app of the request, and it writes nothing, so the link stays open. An open link answers with whether the upload must carry the photo consent, and with the current consent version and text, so the page shows the exact words that the member agrees to. A malformed token gets status 404. An unknown, used or expired link, a link of another app and a holder who is no longer eligible all get status 410. Both answers have the same body, `link_unavailable`, which names no person, and a use of the link gives the same two statuses. Changed (owner decision 2026-11-22, D7): the page could only learn that a link was closed by using it, and it had no source for the consent text -> a check that writes nothing gives both, because the one-purpose page must show them before the member chooses photos.
 
 ```quint
 pure val sameAppValues = Set(true, false)
@@ -88,7 +88,7 @@ pure def lawClosedStatusMeansTheUseStoresNothing(holder: UploadLinkHolder, sameA
 
 ### One link use carries one to four photos of at most four MiB each and eight MiB in all
 
-A batch has the size that one private rating reads, so every photo in it can be rated. The whole batch is at most the size of one normal upload, eight MiB, so it fits under the nine MiB body that the site router and the backend's public port read. Each photo then goes through the normal upload checks. Changed: the eight MiB total is new; before, four photos of four MiB each were promised and the edge refused any batch over nine MiB before the backend saw it.
+A batch has the size that one private rating reads, so every photo in it can be rated. The whole batch is at most the size of one normal upload, eight MiB, so it fits under the nine MiB body that the site router and the backend's public port read. Each photo then goes through the normal upload checks. Changed (2026-11-22): four photos of four MiB each were promised -> the batch is at most eight MiB in total, because the edge refused any batch over nine MiB before the backend saw it.
 
 ```quint
 import photoPolicy as Policy from "./photoPolicy"

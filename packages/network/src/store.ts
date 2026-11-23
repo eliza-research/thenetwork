@@ -4,12 +4,11 @@
 //    normalized rows the console reads (opportunities, participations, review_items, requests).
 //    Every unit of work (a tick, an inbound message, a staff action) runs under one Postgres advisory
 //    lock and loads the newest state first, so two processes never overwrite each other's saves.
-//    A tick's engine run computes between two units, without the lock (runTick, tick-engine.ts).
 // The SQL is in packages/network/db/network-state.sql.
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { engineAttemptAllowed, tickMayEnter, tickMayStartBesideEngine, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
-import { captureEngine, computeEngine, EngineRunDue, preparedEngine, type EngineStep } from "./tick-engine.ts";
+import { captureEngine, EngineRunDue, inlineEngine, preparedEngine, type EngineStep } from "./tick-engine.ts";
 import { runStoredNetworkUnit } from "../../core/src/vibe/runtimeUnitShell.js";
 import { reviewStateOf, type ConsentNetwork, type NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
@@ -66,7 +65,7 @@ function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwor
 
 const computing = new WeakSet<NetworkStore>();
 
-export type TickUnitScope = <T>(unit: () => Promise<T>) => Promise<T>;
+type TickUnitScope = <T>(unit: () => Promise<T>) => Promise<T>;
 
 export async function runTick(net: ConsentNetwork, store: NetworkStore | undefined, now: number, scope: TickUnitScope = unit => unit()): Promise<boolean> {
   const s = storeOf(net, store);
@@ -82,7 +81,7 @@ export async function runTick(net: ConsentNetwork, store: NetworkStore | undefin
         if (!(e instanceof EngineRunDue)) throw e;
         if (!engineAttemptAllowed(attempt)) return false;
         computing.add(s);
-        engine = preparedEngine(await computeEngine(e.request));
+        engine = preparedEngine({ request: e.request, result: await inlineEngine(e.request) });
       }
     }
   } finally {
@@ -156,15 +155,10 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
 }
 
 // ------------------------------------------------------------------ relay rows (migration 0026)
-/** Relay log rows newer than this are written on every save; older rows do not change. */
 const RELAY_ROW_WINDOW_MS = 2 * 86_400_000;
 /** A Postgres text[] literal for bulk inserts. */
 const textArray = (xs: readonly string[]) => `{${xs.map(x => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
 
-/**
- * The relay rows for a state: one network.relay_threads row per thread (ids and times only) and one
- * network.relay_records row per RelayRecord (no body, no contact value).
- */
 export function relayRows(state: NetworkState, app: string, networkId?: string): { threads: Row[]; records: Row[] } {
   const r = state.relay;
   if (!r) return { threads: [], records: [] };
@@ -203,15 +197,10 @@ export async function writeRelayRows(tx: SQL, state: NetworkState, app: string, 
     where ${net ?? null}::text is null or relay_records.network_id = ${net ?? null}`;
 }
 
-/**
- * After a restart: a stored state with no relay log (saved before the relay, or reset) gets it back
- * from network.relay_records, so the rate limits survive.
- */
 export async function loadRelayRows(tx: SQL, state: NetworkState | undefined, app: string, networkId?: string): Promise<NetworkState | undefined> {
   if (!state || state.relay?.log.length) return state;
   const schema = await relaySchema(tx);
   if (!schema.tables) return state;
-  // Only this network's rows (migration 0031): another city of the same app keeps its own log.
   const net = schema.network ? networkId ?? `${app}:nyc` : undefined;
   const rows = await tx`select * from network.relay_records where app_id = ${app} and (${net ?? null}::text is null or network_id = ${net ?? null})
     order by at desc, item_id limit ${RELAY_LOG_MAX}` as Row[];
@@ -287,8 +276,8 @@ export class PgStore implements NetworkStore {
       if (goneReqs.length) await tx`delete from network.requests where id in ${tx(goneReqs)}`;
       // Participations are rewritten for every opportunity the state holds: a re-roll or a decline
       // (forget) changes who is in it. Gone opportunities lose theirs by the cascade.
-      const held = [...oppIds];
-      for (let i = 0; i < held.length; i += 500) await tx`delete from network.participations where opportunity_id in ${tx(held.slice(i, i + 500))}`;
+      const stateOppIds = [...oppIds];
+      for (let i = 0; i < stateOppIds.length; i += 500) await tx`delete from network.participations where opportunity_id in ${tx(stateOppIds.slice(i, i + 500))}`;
       let parts = rows.participations;
       // With the console schema, a participation needs its network.members row (foreign key): skip any member not there.
       const [{ members }] = await tx`select to_regclass('network.members') is not null as members`;

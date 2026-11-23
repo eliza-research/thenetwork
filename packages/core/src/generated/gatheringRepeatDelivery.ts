@@ -5,20 +5,20 @@
 
 /** Story: Receive a reviewed second-encounter proposal safely / A probe or initial reveal must match the reviewed opportunity and current source (spec/gatheringRepeatDelivery.md) */
 //@ pure
-export function gatheringRepeatContactAllowed(rollout: boolean, exactPair: boolean, approved: boolean, expectedLifecycle: boolean, exactMessage: boolean, sourceCurrent: boolean): boolean {
-  return rollout && exactPair && approved && expectedLifecycle && exactMessage && sourceCurrent;
+export function gatheringRepeatContactAllowed(matchingOn: boolean, exactPair: boolean, approved: boolean, expectedLifecycle: boolean, exactMessage: boolean, sourceCurrent: boolean): boolean {
+  return matchingOn && exactPair && approved && expectedLifecycle && exactMessage && sourceCurrent;
 }
 
 /** Story: Receive a reviewed second-encounter proposal safely / A probe or initial reveal must match the reviewed opportunity and current source (spec/gatheringRepeatDelivery.md) */
 //@ pure
-export function lawGatheringRepeatContactNeedsReview(rollout: boolean, exactPair: boolean, expectedLifecycle: boolean, exactMessage: boolean, sourceCurrent: boolean): boolean {
+export function lawGatheringRepeatContactNeedsReview(matchingOn: boolean, exactPair: boolean, expectedLifecycle: boolean, exactMessage: boolean, sourceCurrent: boolean): boolean {
   //@ ensures \result === true
-  return !gatheringRepeatContactAllowed(rollout, exactPair, false, expectedLifecycle, exactMessage, sourceCurrent);
+  return !gatheringRepeatContactAllowed(matchingOn, exactPair, false, expectedLifecycle, exactMessage, sourceCurrent);
 }
 
 /** Story: Receive a reviewed second-encounter proposal safely / A probe or initial reveal must match the reviewed opportunity and current source (spec/gatheringRepeatDelivery.md) */
 //@ pure
-export function lawGatheringRepeatContactNeedsCurrentSource(rollout: boolean, exactPair: boolean, approved: boolean, expectedLifecycle: boolean, exactMessage: boolean): boolean {
+export function lawGatheringRepeatContactNeedsCurrentSource(matchingOn: boolean, exactPair: boolean, approved: boolean, expectedLifecycle: boolean, exactMessage: boolean): boolean {
   //@ ensures \result === true
-  return !gatheringRepeatContactAllowed(rollout, exactPair, approved, expectedLifecycle, exactMessage, false);
+  return !gatheringRepeatContactAllowed(matchingOn, exactPair, approved, expectedLifecycle, exactMessage, false);
 }

@@ -45,7 +45,7 @@ export function ledgerReader(ledger: CapitalLedger, cfg?: CapitalConfigInput): C
 /**
  * Wire a ledger to a Network: `onLedger` records every event, `capital` reads the levers. Events
  * the ledger cannot take (out of time order after a restart) are counted, never thrown into the
- * Network's send path. `onLedger` answers whether the ledger accepted the event (a known id is accepted).
+ * Network's send path.
  */
 export function capitalWiring(ledger = new CapitalLedger(), o: { reader?: boolean } = {}) {
   const counts: Record<string, number> = {};

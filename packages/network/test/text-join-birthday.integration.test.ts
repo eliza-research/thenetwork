@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { MINUTE, SimClock } from "@thenetwork/core";
-import { findExecutable } from "../../core/src/runtime/process.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { DryRunAdapter } from "../service/channel.ts";
@@ -14,13 +12,9 @@ import { brandOf, copyFor } from "../src/copy.ts";
 
 const T = 300_000;
 const START = Date.UTC(2026, 10, 22, 17);
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
-const DB = `network_text_join_birthday_test_${process.pid}`;
-const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
-const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
 const SECRET = "whsec_shared";
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
+let url: string;
 let sql: SQL;
 let phoneSeq = 0;
 const newPhone = () => `+1917555${String(1000 + ++phoneSeq).padStart(4, "0")}`;
@@ -34,7 +28,7 @@ const peonCopy = copyFor(brandOf(APPS.peon));
 function service(clock: SimClock) {
   const directs: { app: string; to: string; body: string }[] = [];
   const s = new NetworkService({
-    url: URL_, clock, instance: "birthday", log: () => {}, env: { PLATFORM_ENV: "dev" },
+    url, clock, instance: "birthday", log: () => {}, env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "slop:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
     tokens: "admin:adm-tok,safety:safe-tok", webhookSecret: SECRET, network: { seed: 1 },
     adapter: (_net, rt) => {
@@ -63,7 +57,7 @@ const personOf = async (e164: string) => (await sql`select person_id::text as id
 const birthDateOf = async (e164: string) => (await sql`select p.birth_date from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${e164}`)[0]?.birth_date ?? null;
 const memberIdOf = async (app: AppId, e164: string) => (await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
   where m.app_id = ${app} and ph.e164 = ${e164}`)[0]!.id as string;
-const outbound = async (member: string) => (await sql`select body from network.messages where member_id = ${member} and direction = 'outbound' order by ts, id`).map((r: any) => r.body as string);
+const outbound = async (member: string) => (await sql`select body from network.messages where member_id = ${member} and direction = 'outbound' order by ts, id`).map(r => (r as { body: string }).body);
 const signalsOf = async (person: string) => (await sql`select person_id from platform.person_minor_signals where person_id = ${person}::uuid`).length;
 const birthRowOf = async (e164: string) => (await sql`select p.birth_date, p.birth_lower, p.birth_upper from platform.people p
   join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${e164}`)[0] as { birth_date: number | null; birth_lower: number | null; birth_upper: number | null };
@@ -79,19 +73,7 @@ const teenReadyOf = (s: NetworkService, id: string) =>
 const olderCasesOf = (s: NetworkService, id: string) =>
   s.runtimeFor("friends")!.readState(n => n.safetyCases().filter(c => c.memberId === id).flatMap(c => c.events).filter(e => e.kind === "older_than_stated").length);
 
-async function agelessMember(s: NetworkService, clock: SimClock, app: AppId, e164: string, firstName: string): Promise<string> {
-  const people = new PgPeopleStore(sql);
-  const person = await people.createPerson({ id: randomUUID(), e164, method: "staff", at: clock.now(), lowestAge: null });
-  const m = { app, personId: person.id, memberId: `${app}_${randomUUID()}`, state: "active" as const, review: null, firstName, profile: {}, joinedAt: clock.now(), leftAt: null };
-  await people.putMembership(m);
-  await people.addConsent({ e164, app, state: "opted_in", source: "staff", at: clock.now() });
-  expect(await s.createMember(s.runtimeFor(app)!, m, { age: 30, firstName })).toBe(true);
-  await sql`update network.members set age = null where id = ${m.memberId}`;
-  expect(await sql`select age from platform.matching_ages where app_id = ${app} and member_id = ${m.memberId}`).toEqual([{ age: null }]);
-  return m.memberId;
-}
-
-async function minorMember(s: NetworkService, clock: SimClock, app: AppId, e164: string, firstName: string, age: number): Promise<string> {
+async function staffMember(s: NetworkService, clock: SimClock, app: AppId, e164: string, firstName: string, age: number): Promise<string> {
   const people = new PgPeopleStore(sql);
   const person = await people.createPerson({ id: randomUUID(), e164, method: "staff", at: clock.now(), lowestAge: null });
   const m = { app, personId: person.id, memberId: `${app}_${randomUUID()}`, state: "active" as const, review: null, firstName, profile: {}, joinedAt: clock.now(), leftAt: null };
@@ -101,22 +83,26 @@ async function minorMember(s: NetworkService, clock: SimClock, app: AppId, e164:
   return m.memberId;
 }
 
+async function agelessMember(s: NetworkService, clock: SimClock, app: AppId, e164: string, firstName: string): Promise<string> {
+  const id = await staffMember(s, clock, app, e164, firstName, 30);
+  await sql`update network.members set age = null where id = ${id}`;
+  expect(await sql`select age from platform.matching_ages where app_id = ${app} and member_id = ${id}`).toEqual([{ age: null }]);
+  return id;
+}
+
 const storedScopeTold = async (network: string, memberId: string) => (await sql`select m->>'minorScopeToldAt' as told from network.network_state s,
   jsonb_array_elements(s.state->'members') m where s.id = ${network} and m->>'id' = ${memberId}`)[0]?.told ?? null;
 
 describe.skipIf(!pgAvailable)("text join by birthday (Postgres)", () => {
   beforeAll(async () => {
-    await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
-    await admin(`create database ${DB}`);
-    sql = new SQL({ url: URL_, max: 2 });
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    url = await testDb();
+    sql = new SQL({ url, max: 2 });
   }, T);
   afterEach(async () => { for (const s of open.splice(0)) await s.close().catch(() => {}); });
   afterAll(async () => {
     for (const s of open) await s.close().catch(() => {});
     await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
+    await dropTestDb();
   });
 
   test("the join question asks for the birthday, and a name with a birthday joins with an exact birth date", async () => {
@@ -247,7 +233,7 @@ describe.skipIf(!pgAvailable)("text join by birthday (Postgres)", () => {
     expect(LOOKING_FOR_ASK_MINOR).toContain("Reply FRIENDS to start.");
     expect(await text(s, clock, pia, "friends and work")).toBe("handled");
     const apps = async (e164: string) => (await sql`select m.app_id, m.state from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id
-      where ph.e164 = ${e164} order by m.app_id`).map((r: any) => `${r.app_id}:${r.state}`);
+      where ph.e164 = ${e164} order by m.app_id`).map(r => { const row = r as { app_id: string; state: string }; return `${row.app_id}:${row.state}`; });
     expect(await apps(pia)).toEqual(["friends:active", "ntwrk:active"]);
     expect(await text(s, clock, rae, "hey there")).toBe("join_asked");
     expect(await text(s, clock, rae, "Rae, 3/15/2011")).toBe("joined");
@@ -283,7 +269,7 @@ describe.skipIf(!pgAvailable)("text join by birthday (Postgres)", () => {
     const { s } = service(clock);
     await s.start();
     const pat = newPhone();
-    const id = await minorMember(s, clock, "peon", pat, "Pat", 16);
+    const id = await staffMember(s, clock, "peon", pat, "Pat", 16);
     await text(s, clock, pat, "hi");
     expect(await outbound(id)).toContain(peonCopy.welcomeMinor("Pat", "MinorPeonNotice"));
     expect(await storedScopeTold("peon:nyc", id)).not.toBeNull();
@@ -314,7 +300,7 @@ describe.skipIf(!pgAvailable)("text join by birthday (Postgres)", () => {
     const first = service(clock);
     await first.s.start();
     const ray = newPhone();
-    const id = await minorMember(first.s, clock, "peon", ray, "Ray", 16);
+    const id = await staffMember(first.s, clock, "peon", ray, "Ray", 16);
     await text(first.s, clock, ray, "hi");
     expect(await outbound(id)).toContain(peonCopy.welcomeMinor("Ray", "MinorPeonNotice"));
     expect((await outbound(id)).filter(b => b === peonCopy.minorPeon)).toHaveLength(0);
@@ -401,7 +387,7 @@ describe.skipIf(!pgAvailable)("text join by birthday (Postgres)", () => {
     expect(await text(s, clock, kit, "friends.help")).toBe("join_asked");
     expect(await text(s, clock, kit, "3/15/2010")).toBe("join_asked");
     expect(directs.at(-1)!.body).toBe(friendsCopy.joinNeedName);
-    expect((await sql`select birth_date from platform.pending_texts where kind = 'join' and birth_date is not null`).map((r: any) => r.birth_date)).toContain(20100315);
+    expect((await sql`select birth_date from platform.pending_texts where kind = 'join' and birth_date is not null`).map(r => (r as { birth_date: number }).birth_date)).toContain(20100315);
     expect(await text(s, clock, kit, "Kit")).toBe("joined");
     expect(await birthDateOf(kit)).toBe(20100315);
   }, T);

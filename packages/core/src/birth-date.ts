@@ -1,7 +1,5 @@
 import { HOUR } from "./clock.ts";
 
-const ISO_BIRTH_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
 const keyOfParts = (year: number, month: number, day: number): number => year * 10000 + month * 100 + day;
 
 const utcDayKeyOf = (ms: number): number => {
@@ -9,22 +7,17 @@ const utcDayKeyOf = (ms: number): number => {
   return keyOfParts(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 };
 
-export const earliestDayKeyOf = (ms: number): number => utcDayKeyOf(ms - 12 * HOUR);
+const EARTH_EARLIEST_OFFSET = -12 * HOUR;
 
-export const latestDayKeyOf = (ms: number): number => utcDayKeyOf(ms + 14 * HOUR);
+const EARTH_LATEST_OFFSET = 14 * HOUR;
 
-export function parseIsoBirthDate(text: string): number | undefined {
-  const match = ISO_BIRTH_DATE.exec(text);
-  if (!match) return undefined;
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+export const earliestDayKeyOf = (ms: number): number => utcDayKeyOf(ms + EARTH_EARLIEST_OFFSET);
+
+export const latestDayKeyOf = (ms: number): number => utcDayKeyOf(ms + EARTH_LATEST_OFFSET);
+
+export function birthKeyOfParts(year: number, month: number, day: number): number | undefined {
+  if (![year, month, day].every(Number.isSafeInteger) || year < 0 || year > 9999) return undefined;
   const date = new Date(Date.UTC(year, month - 1, day));
   const real = date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
   return real ? keyOfParts(year, month, day) : undefined;
-}
-
-export function birthKeyText(key: number): string {
-  const year = Math.trunc(key / 10000);
-  const month = Math.trunc(key / 100) % 100;
-  const day = key % 100;
-  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }

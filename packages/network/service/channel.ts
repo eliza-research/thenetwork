@@ -1,7 +1,7 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId, TimeOption } from "@thenetwork/core";
 import { plans } from "@thenetwork/engine";
-import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
+import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, reviewApproved, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState, type StoredReview } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey, rescheduleUpdatePrefix } from "../src/rescheduling.ts";
@@ -271,7 +271,7 @@ type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {
 };
 
 type StoredPlanProbe = {
-  stage: string | null; review_decision: string | null; review_invalidated: string | null;
+  stage: string | null; review: StoredReview | null;
   review_revision: number;
   pending_seat: boolean | null; probe_deadline: number | null;
   activity_window: plans.StatedWindows["windows"][number] | null; stated: plans.StatedWindows | null;
@@ -362,7 +362,7 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
 
   // lockPeerOpportunityContact already shares the exact runtime row against
   // updates to either the plan or the recipient's check-in state.
-  const [current] = await tx<StoredPlanProbe[]>`select plan.stage, plan.review->>'decision' as review_decision, plan.review->'invalidated' as review_invalidated,
+  const [current] = await tx<StoredPlanProbe[]>`select plan.stage, plan.review,
       case when jsonb_typeof(plan.review->'rerolls')='array' then jsonb_array_length(plan.review->'rerolls') else 0 end as review_revision,
       plan."planRun"->'answers'->>${row.memberId}::text='pending' as pending_seat,
       (plan.plan->>'probeDeadline')::double precision as probe_deadline, plan.plan->'window' as activity_window, member.stated,
@@ -379,7 +379,7 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
     where saved.app_id=${row.app} and saved.id=${rt.pg.id}`;
   if (!current?.stage || !current.activity_window || current.probe_deadline === null) return refused;
   const laneOpen = rt.net.planProbeWindowOpen(current.stage, { window: current.activity_window, probeDeadline: current.probe_deadline }, now);
-  if (!queuedPlanProbeAllowed(current.review_decision === "approve" && !current.review_invalidated, current.pending_seat === true, laneOpen)) {
+  if (!queuedPlanProbeAllowed(reviewApproved(current.review ?? undefined), current.pending_seat === true, laneOpen)) {
     return refused;
   }
   if (current.reviewed_offer || reviewedKey) {
@@ -402,7 +402,7 @@ async function replacementProbeAdmission(tx: SQL, row: QueueRow, rt: NetworkRunt
   const source = saved?.state.opps.find(o => o.id === replacement.replacementFor);
   const sourceClosed = source?.stage === "closed" && source.closedFrom === "scheduled" && source.closedReason === "participant dropped";
   const run = replacement.planRun;
-  const pending = replacement.stage === "probing" && replacement.review?.decision === "approve" && !replacement.review.invalidated
+  const pending = replacement.stage === "probing" && reviewApproved(replacement.review)
     && run?.stage === "probing" && replacement.participants.includes(row.memberId) && run.answers[row.memberId] === "pending"
     && replacement.participants.every(id => run.answers[id] === "pending" || run.answers[id] === "yes");
   if (!recoveryPlanCanProceed(sourceClosed, pending, now < replacement.plan.probeDeadline)) return refused;
@@ -474,13 +474,8 @@ export interface ChannelAdapter {
 /** The kinds of a direct text (never "proactive": a direct text is not an introduction or a probe). */
 export type DirectKind = Exclude<MessageKind, "proactive">;
 
-/** The thread-history line of the replies a dry-run backend collects for the Eliza gateway. */
-export const DRY_RUN_LINE = "dry-run";
+const DRY_RUN_LINE = "dry-run";
 
-/**
- * Nothing leaves the machine through this adapter. The service stores every send with status "dry_run".
- * Its line queue never sends: it gives the replies that the gateway delivers the same leak guard and thread history as a live line.
- */
 export class DryRunAdapter implements ChannelAdapter {
   readonly name = "dry_run" as const;
   readonly storedStatus = "dry_run";
@@ -488,9 +483,8 @@ export class DryRunAdapter implements ChannelAdapter {
   constructor(private log: (line: string) => void = console.log) {}
   attach(rt: NetworkRuntime) {
     const provider: ProviderAdapter = { kind: "sim", send: async () => { throw new ChannelSendError("A dry run never sends", "invalid"); } };
-    this.q = lineQueue(rt, { provider, clock: rt.clock, line: DRY_RUN_LINE, app: rt.app.id, env: {}, live: () => false, cloud: false, log: this.log });
+    this.q = lineQueue(rt, { provider, clock: rt.clock, line: DRY_RUN_LINE, app: rt.app.id, env: {}, live: () => false, log: this.log });
   }
-  /** The queue, after attach(). */
   get queue(): OutboundQueue {
     if (!this.q) throw new Error("DryRunAdapter is not attached to a network runtime");
     return this.q;
@@ -519,8 +513,6 @@ export interface BlooioAdapterOptions {
   env?: Record<string, string | undefined>;
   limits?: { perLinePerDay?: number; newChatsPerLinePerDay?: number; perRecipientPerHour?: number; baseBackoffMs?: number; leaseMs?: number };
   log?: (line: string) => void;
-  net?: unknown;
-  memberOf?: unknown;
 }
 
 interface LineQueueOptions {
@@ -530,12 +522,10 @@ interface LineQueueOptions {
   app: string;
   env: Record<string, string | undefined>;
   live: () => boolean;
-  cloud: boolean;
   limits?: BlooioAdapterOptions["limits"];
   log: (line: string) => void;
 }
 
-/** A runtime's line queue: the send-time checks of a persisted adapter, and the leak guard and thread history of every collected reply. */
 function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
   const policy = blooioRecipientPolicy(rt.net, rt.memberOf);
   const leaks = forbiddenProvider(rt.net, to => rt.memberOf(to));
@@ -683,7 +673,7 @@ export class BlooioAdapter implements ChannelAdapter {
   attach(rt: NetworkRuntime) {
     this.rt = rt;
     this.q = lineQueue(rt, { provider: this.o.provider, clock: this.o.clock, line: this.o.from!, app: this.app, env: this.env,
-      live: () => true, cloud: this.name === "eliza_cloud", limits: this.o.limits, log: this.log });
+      live: () => true, limits: this.o.limits, log: this.log });
   }
 
   async enqueue(tx: SQL, msgs: Outbound[], forgotten: ReadonlySet<MemberId>): Promise<Map<string, string>> {
@@ -715,10 +705,6 @@ export class BlooioAdapter implements ChannelAdapter {
   lineSafety(action: string | undefined, eventType?: string) { return this.queue.setLineSafety(action, eventType); }
 }
 
-/**
- * The queue whose leak guard and thread history every collected reply passes, whatever channel sends the
- * runtime's other messages. An adapter without a line queue cannot hand replies to the gateway.
- */
 export function collectedReplyGuard(adapter: ChannelAdapter): OutboundQueue {
   if (adapter instanceof BlooioAdapter || adapter instanceof DryRunAdapter) return adapter.queue;
   throw new Error(`The ${adapter.name} adapter has no line queue for collected replies`);

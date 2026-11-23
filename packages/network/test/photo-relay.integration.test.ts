@@ -1,9 +1,8 @@
 import {afterAll,beforeAll,expect,test} from "vitest";
-import {randomUUID} from "node:crypto";
 import {serveHttp,type HttpServer} from "../../core/src/runtime/http.ts";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {DAY,HOUR,MINUTE,SimClock} from "@thenetwork/core";
-import {applySchema} from "../../observatory/db/dev-pg.ts";
+import {dropTestDb,pgAvailable,testDb} from "../../observatory/test/pg.ts";
 import {TURN_PATH,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter} from "../service/cloud-channel.ts";
@@ -15,14 +14,12 @@ import {PhotoPages,PHOTO_PAGE_COOKIE} from "../../platform/src/photo-pages.ts";
 import {PgAudit} from "../../observatory/src/staff.ts";
 import type {AuditEntry} from "../../observatory/src/types.ts";
 
-const db=`network_photo_relay_${randomUUID().replaceAll("-","")}`,url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
-const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
 const secret="synthetic-photo-relay-signing-secret-20261122",start=Date.UTC(2026,10,22,17),clock=new SimClock(start);
 const staffToken="synthetic-photo-relay-safety-token-20261122",reviewerToken="synthetic-photo-relay-reviewer-token-20261122";
 const phones={ari:"+12125550301",maya:"+12125550302",jordan:"+12125550303",teo:"+12125550304",nia:"+12125550305",omar:"+12125550306",
   lee:"+12125550307",kim:"+12125550308",rosa:"+12125550309",tao:"+12125550310",sam:"+12125550311",una:"+12125550312"} as const;
 type Who=keyof typeof phones;
-let sql:SQL,service:NetworkService,server:HttpServer,cloud:HttpServer,seq=0,storageReads=0,failPreviewAudit=false,screenMode:"clean"|"flagged"|"down"="clean",screenCalls=0;
+let url:string,sql:SQL,service:NetworkService,server:HttpServer,cloud:HttpServer,seq=0,storageReads=0,failPreviewAudit=false,screenMode:"clean"|"flagged"|"down"="clean",screenCalls=0;
 const people:Record<Who,{personId:string;memberId:string}>={} as never;
 const photoBytes=new Map<string,Uint8Array>();
 const photoStorage:PhotoStorage={kind:"local",put:async(k,bytes)=>{photoBytes.set(k,bytes.slice());},get:async k=>{storageReads++;return photoBytes.get(k);},delete:async k=>{photoBytes.delete(k);}};
@@ -46,7 +43,7 @@ const join=async(who:Who,name:string,age:number)=>{
 };
 const pair=async(threadId:string,x:Who,y:Who)=>service.runtimeFor("slop")!.unitOfWork(n=>{
   const st=n.exportState(),now=clock.now(),ids=[people[x].memberId,people[y].memberId];st.opps=st.opps.filter(op=>op.id!==threadId);
-  st.opps.push({id:threadId,origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:ids,alternates:[],primed:[],status:ids.map(id=>[id,"yes"]),explanations:{},stage:"scheduled",deadline:now+60*DAY,createdAt:now,score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:now,deadline:now+60*DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:ids,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number]);
+  st.opps.push({id:threadId,origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:ids,alternates:[],primed:[],status:ids.map(id=>[id,"yes"]),explanations:{},stage:"scheduled",deadline:now+60*DAY,createdAt:now,score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:now,deadline:now+60*DAY,decision:"approve",approver:"staff",reviewer:"fixture"},sameDay:false,contacted:ids,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number]);
   n.importState(st);
 });
 const upload=async(who:Who,n:number)=>{
@@ -55,14 +52,15 @@ const upload=async(who:Who,n:number)=>{
   if(!r.ok)throw Error(JSON.stringify(r));return r.value.id;
 };
 const offers=async(from:Who,to:Who)=>(await sql`select id,phase from platform.photo_offers where app_id='slop'
-  and sender_person_id=${people[from].personId}::uuid and recipient_person_id=${people[to].personId}::uuid order by created_at,id`).map((r:any)=>({id:r.id as string,phase:r.phase as string}));
+  and sender_person_id=${people[from].personId}::uuid and recipient_person_id=${people[to].personId}::uuid order by created_at,id` as {id:string;phase:string}[]).map(r=>({id:r.id,phase:r.phase}));
 const messages=async(who:Who,prefix:string)=>(await sql`select id,body from network.messages where app_id='slop' and member_id=${people[who].memberId}
-  and direction='outbound' and id like ${`${prefix}%`} order by ts,id`).map((r:any)=>({id:r.id as string,body:r.body as string}));
-const items=async(offerId:string)=>(await sql`select id,state from platform.photo_relay_items where offer_id=${offerId} order by id`).map((r:any)=>({id:r.id as string,state:r.state as string}));
+  and direction='outbound' and id like ${`${prefix}%`} order by ts,id` as {id:string;body:string}[]).map(r=>({id:r.id,body:r.body}));
+const items=async(offerId:string)=>(await sql`select id,state from platform.photo_relay_items where offer_id=${offerId} order by id` as {id:string;state:string}[]).map(r=>({id:r.id,state:r.state}));
 const askOf=async(offerId:string)=>`photo-ask:${(await sql`select request_key from platform.photo_offers where id=${offerId}`)[0]!.request_key as string}`;
 
 beforeAll(async()=>{
-  await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
+  if(!pgAvailable)return;
+  url=await testDb();sql=new SQL({url,max:4});
   cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
     expect(auth.ok).toBe(true);const input=JSON.parse(raw);
@@ -82,9 +80,9 @@ beforeAll(async()=>{
   await pair("photo-ari-maya","ari","maya");await pair("photo-ari-jordan","ari","jordan");
   await upload("ari",1);await upload("ari",2);
 },180_000);
-afterAll(async()=>{await server?.stop(true);await service?.close();await cloud?.stop(true);await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
+afterAll(async()=>{await server?.stop(true);await service?.close();await cloud?.stop(true);await sql?.close();await dropTestDb();});
 
-test("a sender names a photo in their own words, sees exactly what would go, and only a YES to that proposal offers it",async()=>{
+test.skipIf(!pgAvailable)("a sender names a photo in their own words, sees exactly what would go, and only a YES to that proposal offers it",async()=>{
   expect((await say("ari","call photo 1 beach")).reply).toBe('Done. Photo 1 is now "beach".');
   const proposed=await say("ari","send Maya the beach one");
   expect(proposed.outcome).toBe("handled");
@@ -111,7 +109,7 @@ test("a sender names a photo in their own words, sees exactly what would go, and
   expect(await offers("ari","maya")).toHaveLength(1);
 },120_000);
 
-test("a changed photo set or a lapsed proposal never becomes consent",async()=>{
+test.skipIf(!pgAvailable)("a changed photo set or a lapsed proposal never becomes consent",async()=>{
   const proposed=await say("ari","send Jordan photo 2");
   expect(proposed.reply).toContain("Send Jordan photo 2");
   const second=(await service.photos.rows(people.ari.personId,"slop")).sort((x,y)=>x.createdAt-y.createdAt)[1]!;
@@ -126,7 +124,7 @@ test("a changed photo set or a lapsed proposal never becomes consent",async()=>{
   expect(await offers("ari","jordan")).toEqual([]);
 },120_000);
 
-test("the receiver is asked first: a no looks like a lapse to the sender, and after a yes the automatic check releases a clean photo at once with one view link",async()=>{
+test.skipIf(!pgAvailable)("the receiver is asked first: a no looks like a lapse to the sender, and after a yes the automatic check releases a clean photo at once with one view link",async()=>{
   const [first]=await offers("ari","maya");
   expect((await say("maya","no")).reply).toBe("Okay, I won't show it. Ari isn't told why.");
   expect((await offers("ari","maya"))[0]).toEqual({id:first!.id,phase:"declined"});
@@ -160,7 +158,7 @@ test("the receiver is asked first: a no looks like a lapse to the sender, and af
   expect(JSON.stringify(await sql`select body from network.messages where app_id='slop'`)).not.toMatch(/ph_[a-f0-9]{24}/);
 },180_000);
 
-test("a minor receiver is never offered a photo, and a STOP while asked ends the offer without a second ask",async()=>{
+test.skipIf(!pgAvailable)("a minor receiver is never offered a photo, and a STOP while asked ends the offer without a second ask",async()=>{
   await join("teo","Teo",16);await pair("photo-ari-teo","ari","teo");
   const toMinor=await say("ari","send Teo the beach one");
   expect(toMinor.outcome).toBe("handled");
@@ -181,7 +179,7 @@ test("a minor receiver is never offered a photo, and a STOP while asked ends the
   expect(await messages("ari",`photo-notice:${offer!.id}`)).toEqual([{id:`photo-notice:${offer!.id}`,body:"Nia didn't take your photo, so it stays with you."}]);
 },180_000);
 
-test("NO MORE PHOTOS silences every later offer, and two unopened offers turn photos off for the pair",async()=>{
+test.skipIf(!pgAvailable)("NO MORE PHOTOS silences every later offer, and two unopened offers turn photos off for the pair",async()=>{
   await join("omar","Omar",33);await pair("photo-ari-omar","ari","omar");
   expect((await say("omar","no more photos")).reply).toBe("Done. I won't offer you photos from matches. Say PHOTOS OK to change that.");
   for(let i=0;i<2;i++){
@@ -196,7 +194,7 @@ test("NO MORE PHOTOS silences every later offer, and two unopened offers turn ph
   expect(await offers("ari","omar")).toHaveLength(2);
 },180_000);
 
-test("a connected agent can only ask: the proposal is texted to the phone, the list has no ids or links, and no photo resolve route exists",async()=>{
+test.skipIf(!pgAvailable)("a connected agent can only ask: the proposal is texted to the phone, the list has no ids or links, and no photo resolve route exists",async()=>{
   const requested=await service.photoRequest(people.ari.personId,"slop",phones.ari,"send Jordan the beach one");
   expect(requested).toEqual({status:"texted",text:"I texted you the photo to check. Reply YES to that text to send it."});
   expect(JSON.stringify(requested)).not.toContain("http");
@@ -229,7 +227,7 @@ test("a connected agent can only ask: the proposal is texted to the phone, the l
   expect(await staffResolve.json()).toEqual({ok:false,error:"not_found"});
 },120_000);
 
-test("a take-back with no match named takes that photo back from every open offer, and an unnamed take-back with two open offers asks which match",async()=>{
+test.skipIf(!pgAvailable)("a take-back with no match named takes that photo back from every open offer, and an unnamed take-back with two open offers asks which match",async()=>{
   midday();
   await join("lee","Lee",32);await join("kim","Kim",28);
   await pair("photo-ari-lee","ari","lee");await pair("photo-ari-kim","ari","kim");
@@ -250,7 +248,7 @@ test("a take-back with no match named takes that photo back from every open offe
   expect((await say("ari","take back photo 1")).reply).toBe("No photo of yours is waiting to go to this match.");
 },180_000);
 
-test("a photo that the automatic check flags keeps the staff gate: a failed audit reads nothing, a release needs a safety reviewer's preview, and an expired item is never released",async()=>{
+test.skipIf(!pgAvailable)("a photo that the automatic check flags keeps the staff gate: a failed audit reads nothing, a release needs a safety reviewer's preview, and an expired item is never released",async()=>{
   midday();
   screenMode="flagged";
   try{
@@ -307,7 +305,7 @@ test("a photo that the automatic check flags keeps the staff gate: a failed audi
   }finally{screenMode="clean";}
 },180_000);
 
-test("a classifier outage releases nothing: the photo waits, is tried again after 1, 5, 15 and 60 minutes, and goes to staff after five tries",async()=>{
+test.skipIf(!pgAvailable)("a classifier outage releases nothing: the photo waits, is tried again after 1, 5, 15 and 60 minutes, and goes to staff after five tries",async()=>{
   midday();
   await join("tao","Tao",31);await pair("photo-ari-tao","ari","tao");
   screenMode="down";
@@ -337,7 +335,7 @@ test("a classifier outage releases nothing: the photo waits, is tried again afte
   }finally{screenMode="clean";}
 },180_000);
 
-test("a clean photo stays open after 48 hours, PHOTO LINK replaces the link, and a take-back by text ends it at once and lists it as taken back",async()=>{
+test.skipIf(!pgAvailable)("a clean photo stays open after 48 hours, PHOTO LINK replaces the link, and a take-back by text ends it at once and lists it as taken back",async()=>{
   midday();
   await join("sam","Sam",30);await pair("photo-ari-sam","ari","sam");
   await say("ari","send Sam the beach one");
@@ -372,7 +370,7 @@ test("a clean photo stays open after 48 hours, PHOTO LINK replaces the link, and
   expect((await say("sam","PHOTO LINK")).reply).toBe("No photo is waiting for you to open.");
 },180_000);
 
-test("a ready photo does not hold the next offer to the same match, and STOP then START keeps the old link closed for good",async()=>{
+test.skipIf(!pgAvailable)("a ready photo does not hold the next offer to the same match, and STOP then START keeps the old link closed for good",async()=>{
   midday();
   await join("una","Una",30);await pair("photo-ari-una","ari","una");
   await say("ari","send Una the beach one");
@@ -382,7 +380,7 @@ test("a ready photo does not hold the next offer to the same match, and STOP the
   expect(await offers("ari","una")).toEqual([{id:first!.id,phase:"ready"}]);
   const [ready]=await messages("una",`photo-ready:${first!.id}`);
   const token=/\/photos\/view#([A-Za-z0-9_-]{43})/.exec(ready!.body)![1]!;
-  const pages=new PhotoPages({relay:service.photoRelay,photos:service.photos,sql,now:()=>clock.now(),actions:{
+  const pages=new PhotoPages({relay:service.photoRelay,photos:service.photos,sql,actions:{
     consent:async()=>({state:"refused"}),takeBack:async()=>({state:"nothing_open"}),report:async()=>undefined}});
   const open=async(cookie?:string)=>(await pages.route(new Request("https://slop.date/api/photos/page/open",{method:"POST",
     headers:{"content-type":"application/json",...(cookie?{cookie:`${PHOTO_PAGE_COOKIE}=${cookie}`}:{})},body:JSON.stringify({token})}),"/api/photos/page/open","slop"))!;

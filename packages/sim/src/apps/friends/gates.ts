@@ -9,6 +9,7 @@
 import type { FriendsMetrics, TeenBreaches } from "./metrics.ts";
 
 import type { GateResult } from "../gates.ts";
+import { meanInterval } from "../../paired.ts";
 export type { GateResult } from "../gates.ts";
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const M = (xs: FriendsMetrics[], f: (m: FriendsMetrics) => number) => mean(xs.map(f));
@@ -43,7 +44,7 @@ export function officialGates(p: FriendsMetrics[], r: FriendsMetrics[], o: Frien
     { id: "friendship", gate: "Members with a friendship forming >= 2x random", value: `${pct(fr)} vs ${pct(frr)} (${(fr / frr).toFixed(1)}x)`, pass: fr >= 2 * frr },
     { id: "travel", gate: "Median group max travel <= 35 min", value: `${M(p, m => m.travel.medianGroupMax).toFixed(1)} min`, pass: M(p, m => m.travel.medianGroupMax) <= 35 },
     { id: "borough30", gate: "No borough with >= 30 members below 0.7x V14", value: `${b30.min.toFixed(2)} (${b30.worst}; worst seed ${b30.worstSeed.toFixed(2)})`, pass: b30.min >= 0.7 },
-    { id: "minors", gate: "Declared-minor proposals and contacts = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.declaredMinorContacts + m.safety.declaredMinorProposals, 0)), pass: p.every(m => m.safety.declaredMinorContacts === 0 && m.safety.declaredMinorProposals === 0) },
+    { id: "minors", gate: "Proposals that break the teen age rule, and declared-minor contacts = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.declaredMinorContacts + m.safety.ageRuleBrokenProposals, 0)), pass: p.every(m => m.safety.declaredMinorContacts === 0 && m.safety.ageRuleBrokenProposals === 0) },
     { id: "known_adversary", gate: "Known-adversary contacts = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.knownAdversaryContacts, 0)), pass: p.every(m => m.safety.knownAdversaryContacts === 0) },
     { id: "openness", gate: "Proposals and meetups that violate a stated friendship openness = 0, every seed", value: String(p.reduce((s, m) => s + m.safety.opennessViolations, 0)), pass: p.every(m => m.safety.opennessViolations === 0) },
     { id: "total_harm", gate: "Total harm events <= 0.5x random", value: `${h.toFixed(1)} vs ${hr.toFixed(1)} per seed (${(h / hr).toFixed(2)}x)`, pass: h <= 0.5 * hr },
@@ -81,22 +82,16 @@ export function historicalGates(p: FriendsMetrics[], r: FriendsMetrics[]): GateR
   ];
 }
 
-const ci95 = (xs: number[]) => {
-  const m = mean(xs);
-  const se = xs.length > 1 ? Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1) / xs.length) : 0;
-  return `${m.toFixed(2)} per seed (95% CI ${(m - 1.96 * se).toFixed(2)} to ${(m + 1.96 * se).toFixed(2)}, n ${xs.length} seeds)`;
-};
-
 export function hTeen(p: FriendsMetrics[]): GateResult {
   const xs = p.map(m => m.safety.teen.hTeen);
   return {
     id: "h_teen", gate: "0 contacts outside the teen friendship rule by true age, and 0 adults posing as teens who reached a minor",
-    value: `${ci95(xs)}; outside the rule ${p.reduce((s, m) => s + m.safety.teen.hiddenOutsideRule, 0)}, posers who reached a minor ${p.reduce((s, m) => s + m.safety.teen.posersReachingMinor, 0)}`,
+    value: `${meanInterval(xs)}; outside the rule ${p.reduce((s, m) => s + m.safety.teen.hiddenOutsideRule, 0)}, posers who reached a minor ${p.reduce((s, m) => s + m.safety.teen.posersReachingMinor, 0)}`,
     pass: xs.every(x => x === 0),
   };
 }
 
-export const TEEN_GATES: readonly { id: string; gate: string; of: (b: TeenBreaches) => number }[] = [
+const TEEN_GATES: readonly { id: string; gate: string; of: (b: TeenBreaches) => number }[] = [
   { id: "teen_adult_contact", gate: "Proposals and contacts with a minor and a person aged 19 or more = 0", of: b => b.adult },
   { id: "teen_gap_contact", gate: "Proposals and contacts with a minor and a member born more than 2 years apart = 0", of: b => b.gap },
   { id: "teen_lane_contact", gate: "Proposals and contacts with a minor outside a friends.help friendship category, generator or meeting shape = 0", of: b => b.lane },
@@ -116,7 +111,7 @@ export function teenGates(p: FriendsMetrics[]): GateResult[] {
 export function teenTracked(p: FriendsMetrics[]): GateResult[] {
   return [
     hTeen(p),
-    { id: "teen_valued_meetups", gate: "Held meetups with a minor that every attendee enjoyed", value: ci95(p.map(m => m.safety.teen.validMeetups)), pass: true },
+    { id: "teen_valued_meetups", gate: "Held meetups with a minor that every attendee enjoyed", value: meanInterval(p.map(m => m.safety.teen.validMeetups)), pass: true },
     { id: "teen_intro_share", gate: "Stated minors with at least one teen introduction", value: pct(M(p, m => m.safety.teen.introShare)), pass: true },
     { id: "teen_group_share", gate: "Held teen meetups with 3 or more people", value: `${pct(M(p, m => m.safety.teen.groupShare))} (${p.reduce((s, m) => s + m.safety.teen.teenGroupMeetups, 0)} of ${p.reduce((s, m) => s + m.safety.teen.teenMeetups, 0)})`, pass: true },
   ];

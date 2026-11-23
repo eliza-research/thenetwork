@@ -8,7 +8,7 @@
 
 ### Only the canonical member can list or manage the app's own intents
 
-Use a member turn with current membership and consent. A refused command never creates a membership. A matching replay requires that the same member still owns the app binding. A list shows only the member's own live and paused standing things in this app, each with a stable letter-only reference, a list number and its current status. The reference alphabet keeps generated references from matching the phone-number check. A job posting is on the list, but its close uses the posting read-back and it cannot be paused. An UNDO asks for the newest open change and goes to the reply rule below. Changed (owner decision 2026-11-22): the commands now also resume, keep and undo, and the list also shows requests and job posts, because a member could not see or end a request or a post from the thread before. A refused command takes no reply. A refused bare CLOSE or KEEP (no reference and no number) and a refused UNDO go on to the ordinary turn, because before these commands the same words were ordinary text, and a member who is not active yet (for example still onboarding) must still be heard. A refused list, reference or number command stays handled with no reply. For a sender who is not a member, the same bare words are not an account command, so the join flow answers them. Changed (owner decision 2026-11-22): a refused bare reply now goes on to the ordinary turn, because the new bare words otherwise swallowed ordinary text with no reply.
+Use a member turn with current membership and consent. A refused command never creates a membership. A matching replay requires that the same member still owns the app binding. A list shows only the member's own live and paused standing things in this app (learned wants, intents, requests and job posts), each with a stable letter-only reference, a list number and its current status. The reference alphabet keeps generated references from matching the phone-number check. A job posting is on the list, but its close uses the posting read-back and it cannot be paused. An UNDO asks for the newest open change and goes to the reply rule below. A refused command takes no reply. A refused bare CLOSE or KEEP (no reference and no number) and a refused UNDO go on to the ordinary turn, because the same words are ordinary text, and a member who is not active yet (for example still onboarding) must still be heard. A refused list, reference or number command, and every refused pause or resume, stays handled with no reply. For a sender who is not a member, the same bare words are not an account command, so the join flow answers them. Changed (owner decision 2026-11-22, D5): the commands only listed, paused and closed learned wants and intents -> they also resume, keep and undo, and the list also shows requests and job posts, because a member could not see, turn back on or end a request or a post from the thread.
 
 ```quint
 type IntentCommand = ListIntents | PauseIntent | CloseIntent | ResumeIntent | KeepIntent | UndoIntent
@@ -32,8 +32,9 @@ pure def standingIntentReplayAllowed(canonicalMember: bool): bool = canonicalMem
 pure def refusedCommandPasses(command: IntentCommand, bareReply: bool): bool =
   command == UndoIntent or (bareReply and (command == CloseIntent or command == KeepIntent))
 
-pure def lawRefusedNamedCommandStaysHandled(command: IntentCommand, bareReply: bool): bool =
-  refusedCommandPasses(command, bareReply) implies (command == UndoIntent or command == CloseIntent or command == KeepIntent)
+pure def lawRefusedListPauseAndResumeStayHandled(bareReply: bool): bool =
+  not(refusedCommandPasses(ListIntents, bareReply)) and not(refusedCommandPasses(PauseIntent, bareReply))
+    and not(refusedCommandPasses(ResumeIntent, bareReply))
 
 pure def lawRefusedReferenceCommandStaysHandled(command: IntentCommand): bool =
   command != UndoIntent implies not(refusedCommandPasses(command, false))

@@ -13,7 +13,7 @@ The validation layer is now:
 
 The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
 
-The other CI checks: `ci.yml` runs every simulation block (`offline-core` and the `matching` matrix, with Postgres and `REQUIRE_PG=1`). `ci.yml` also runs `pnpm run typecheck` (every TypeScript project). `vibespec.yml` runs `pnpm run spec:check-generated`, `pnpm run spec:explore` and its `full-check` job (`pnpm run check`: the spec check, the Dafny proofs and every conformance journey under `test/drivers`, with Postgres) on every pull request and on demand. Each night it runs the full check alone, with `--nightly`. A push to main runs them only for changes to specs, generated code and the sites. `quint-models.yml` runs `pnpm run quint:check` on every whole-flow model in `spec/models` (two shards, the bounds of each model, seed `0x5eed`) for changes to the models, the script or the pinned Quint (pull requests and main), on demand and weekly; a violated invariant or an unreached witness fails it.
+The other CI checks: `ci.yml` runs every simulation block (`offline-core` and the `matching` matrix, with Postgres and `REQUIRE_PG=1`). `ci.yml` also typechecks the root and `sites` TypeScript projects (`tsc --noEmit -p .` and `tsc --noEmit -p sites/tsconfig.json`). `vibespec.yml` runs `pnpm run spec:check-generated`, `pnpm run spec:explore` and its `full-check` job (`pnpm run check`: the spec check, the Dafny proofs and every conformance journey under `test/drivers`, with Postgres) on every pull request and on demand. Each night it runs the full check alone, with `--nightly`. A push to main runs them only for changes to specs, generated code and the sites. `quint-models.yml` runs `pnpm run quint:check` on every whole-flow model in `spec/models` (two shards, the bounds of each model, seed `0x5eed`) for changes to the models, the script or the pinned Quint (pull requests and main), on demand and weekly; a violated invariant or an unreached witness fails it.
 
 **No unit tests and no smoke tests.** A unit test checks one function with fakes. A smoke test checks that something starts or answers, or calls a live provider. Do not add either. A bug fix adds a sim gate, a scenario, a corpus row in `evals/`, or an integration or e2e case that fails before the fix.
 
@@ -62,6 +62,15 @@ The other CI checks: `ci.yml` runs every simulation block (`offline-core` and th
 | `sites/test/sites.test.ts` | The four built sites against the platform registry, plus the dev proxy server |
 
 Helper of the integration files: `packages/network/test/mini.ts` (`START`, the small world).
+
+### Integration: the backend's operations
+
+| File | What it checks |
+|---|---|
+| `deploy/backend/ops-precision.integration.test.ts` | The 7-day shadow precision counts only staff decisions on engine proposals; the review judge counts come from the stored review events, and `review_judge_down` and `review_judge_rate` start at their thresholds |
+| `deploy/backend/ops-turn-watch.integration.test.ts` | Signed shared-line turns over HTTP: unconfirmed replies, unresolved turns and unknown deliveries alert once each, a possible STOP first and bad, with counts only; an erased turn that was handled first raises no alert |
+| `deploy/backend/ops-catalog.integration.test.ts` | The public event catalog alert starts after a day and one retry hour without a successful scan, and the next scan resolves it |
+| `deploy/backend/selection-delivery.integration.test.ts` | Through `createBackend` on Postgres: a selected pair waits in review with nobody contacted, and a staff approval of the held item leads the tick to a dry-run delivery to the pair |
 
 The security suite is part of the integration suite. `pnpm run security` runs it alone (the file list is in `package.json`). AGENTS.md has the same list. The 11 files (2026-10-09):
 

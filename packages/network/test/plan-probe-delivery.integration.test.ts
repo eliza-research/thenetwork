@@ -80,12 +80,14 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     expect(await probes()).toEqual([]);
     await adapter.queue.setLineSafety("review");
 
+    await service.reviewJudgeTick();
     const reviewUrl = "http://127.0.0.1/apps/friends/review";
     const headers = { authorization: "Bearer plan-reviewer", "content-type": "application/json" };
     const queue = await service.fetch(new Request(reviewUrl, { headers }));
     expect(queue.status).toBe(200);
-    const { items } = await queue.json() as { items: { oppId: string; revision: number }[] };
+    const { items } = await queue.json() as { items: { oppId: string; revision: number; exception?: { verdict: string; reason: string } }[] };
     expect(items).toHaveLength(1);
+    expect(items[0]!.exception).toMatchObject({ verdict: "cannot_run", reason: "no_provider" });
     const { oppId, revision } = items[0]!;
     expect(oppId).toBe(`${app.id}.nw-1-${sampledIndex}`);
     const approval = await service.fetch(new Request(`${reviewUrl}/${encodeURIComponent(oppId)}`, {

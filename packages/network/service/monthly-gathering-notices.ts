@@ -113,7 +113,7 @@ export async function gatheringNoticeAdmission(tx: SQL, app: AppInfo, runtimeId:
   const event = await reservedEvent(tx, app, key, row.memberId);
   if (!saved || !event) return refused;
   const current = await currentNotice(tx, accounts, app, event, row.to, kind, saved.state.matchingEnabled,
-    storedGatheringInviteRecipientCurrent(saved.state, row.memberId), now);
+    storedGatheringInviteRecipientCurrent(saved.state, row.memberId, now), now);
   const type = isAttendance(kind) ? "feedback_request" : "reminder";
   const [message] = await tx`select id from network.messages where app_id=${app.id} and id=${row.id} and member_id=${row.memberId}
     and direction='outbound' and type=${type} and not system and not proactive and opportunity_id is null and body=${row.text}`;

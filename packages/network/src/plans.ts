@@ -9,7 +9,7 @@
 import { fromLocal, HOUR, localParts, type MemberId } from "@thenetwork/core";
 import { plans, type AttentionLedgerEntry } from "@thenetwork/engine";
 import { weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
-import { VENUES, type Venue as GeoVenue } from "./geo.ts";
+import { VENUES, venueAgeMin, type Venue as GeoVenue } from "./geo.ts";
 import { NY } from "./outreach.ts";
 
 export type PlanVenue = plans.Venue;
@@ -25,22 +25,24 @@ const TAG_ACTIVITIES: Record<string, string[]> = {
   games: ["library_games", "rec_center_games"], coffee: ["coffee_crawl"], picnic: ["park_picnic"],
 };
 const ACTIVITY_KIND: Record<string, GeoVenue["kind"]> = {
-  museum_visit: "museum", library_games: "library", rec_center_games: "rec_center", park_picnic: "park", bowling: "bowling",
+  museum_visit: "museum", library_games: "library", rec_center_games: "rec_center", park_picnic: "park",
 };
 /** Local opening hours by kind of place: [open, close) on weekdays and at weekends. */
 const HOURS: Record<GeoVenue["kind"], { weekday: [number, number]; weekend: [number, number] }> = {
   park: { weekday: [7, 21], weekend: [7, 21] }, waterfront: { weekday: [7, 21], weekend: [7, 21] }, courts: { weekday: [7, 21], weekend: [7, 21] },
   library: { weekday: [10, 20], weekend: [10, 17] }, plaza: { weekday: [8, 21], weekend: [8, 21] }, market: { weekday: [8, 20], weekend: [8, 22] },
   museum: { weekday: [11, 21], weekend: [11, 18] }, cafe_district: { weekday: [8, 22], weekend: [8, 22] },
-  rec_center: { weekday: [9, 21], weekend: [9, 17] }, climbing_gym: { weekday: [10, 22], weekend: [9, 21] }, bowling: { weekday: [11, 23], weekend: [10, 23] },
+  rec_center: { weekday: [9, 21], weekend: [9, 17] },
 };
 
 export const PLAN_VENUES: PlanVenue[] = VENUES.map(v => ({
   id: v.id, city: "nyc" as const, area: v.neighborhood, name: v.name,
   activities: [...new Set(v.tags.flatMap(t => TAG_ACTIVITIES[t] ?? []))].filter(a => plans.activityById.has(a) && (ACTIVITY_KIND[a] ?? v.kind) === v.kind),
-  priceTier: 0 as const, ageMin: v.allAges ? 13 : 18, hours: HOURS[v.kind], public: true as const, source: "curated" as const,
+  priceTier: 0 as const, ageMin: venueAgeMin(v), hours: HOURS[v.kind], public: true as const, source: "curated" as const,
   allAges: v.allAges, adultPlans: v.adultPlans,
 })).filter(v => v.activities.length > 0);
+
+export const PLAN_VENUE_AGES: plans.VenueAges = plans.venueAgesIn(PLAN_VENUES);
 
 /** Local hours of each part of the day in a stated window ("Saturday evening" = 17:00-22:00). */
 const PARTS: Record<string, [number, number]> = { morning: [9, 12], afternoon: [12, 17], evening: [17, 22] };

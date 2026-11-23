@@ -24,21 +24,22 @@ const addGrant = <K>(out: Map<K, RoleGrant[]>, k: K, g: RoleGrant) => {
   out.set(k, list);
 };
 
-export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: boolean; minLength?: number } = {}): Map<string, RoleGrant[]> {
+export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: boolean; minLength?: number; variable?: string } = {}): Map<string, RoleGrant[]> {
   const out = new Map<string, RoleGrant[]>();
-  const short = (tok: string) => { if (o.minLength && tok.length < o.minLength) throw new Error(`OBSERVATORY_TOKENS: a token is shorter than ${o.minLength} characters (use a random token, for example openssl rand -base64 32)`); return tok; };
+  const variable = o.variable ?? variable;
+  const short = (tok: string) => { if (o.minLength && tok.length < o.minLength) throw new Error(`${variable}: a token is shorter than ${o.minLength} characters (use a random token, for example openssl rand -base64 32)`); return tok; };
   for (const part of (spec ?? "").split(",").map(x => x.trim()).filter(Boolean)) {
     const i = part.indexOf(":"), j = part.lastIndexOf(":");
-    const bad = () => new Error(`OBSERVATORY_TOKENS: bad entry "${part.slice(0, Math.max(i, 0))}:..." (use role@app:token or token:role@app; role one of ${STAFF_ROLES.join(", ")})`);
+    const bad = () => new Error(`${variable}: bad entry "${part.slice(0, Math.max(i, 0))}:..." (use role@app:token or token:role@app; role one of ${STAFF_ROLES.join(", ")})`);
     if (i < 1 || j >= part.length - 1) throw bad();
     const left = part.slice(0, i).trim(), right = part.slice(j + 1).trim();
     if (o.explicitApp && ((isGrant(left) && !left.includes("@")) || (isGrant(right) && !right.includes("@") && !isGrant(left)))) {
-      throw new Error(`OBSERVATORY_TOKENS: "${isGrant(left) ? left : right}" names no app; in production write role@app or role@*`);
+      throw new Error(`${variable}: "${isGrant(left) ? left : right}" names no app; in production write role@app or role@*`);
     }
-    if (isGrant(left) && part.slice(i + 1).trim()) addGrant(out, short(part.slice(i + 1).trim()), parseGrant(left, "OBSERVATORY_TOKENS"));
-    else if (isGrant(right) && part.slice(0, j).trim()) addGrant(out, short(part.slice(0, j).trim()), parseGrant(right, "OBSERVATORY_TOKENS"));
-    else if (left.includes("@")) parseGrant(left, "OBSERVATORY_TOKENS");
-    else if (right.includes("@")) parseGrant(right, "OBSERVATORY_TOKENS");
+    if (isGrant(left) && part.slice(i + 1).trim()) addGrant(out, short(part.slice(i + 1).trim()), parseGrant(left, variable));
+    else if (isGrant(right) && part.slice(0, j).trim()) addGrant(out, short(part.slice(0, j).trim()), parseGrant(right, variable));
+    else if (left.includes("@")) parseGrant(left, variable);
+    else if (right.includes("@")) parseGrant(right, variable);
     else throw bad();
   }
   return out;

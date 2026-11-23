@@ -9,9 +9,9 @@ import { slopProfiles, type SlopProfile } from "./profile.ts";
 import { seekingMatches } from "./rules.ts";
 import { distanceBand } from "./zips.ts";
 
-export const SLOP_JUDGE_VERSION = "slop-judge-0.2";
+export const SLOP_JUDGE_VERSION = "slop-judge-0.3";
 
-export const SLOP_JUDGE_SYSTEM = `You review one proposed first date between two adults (P1 and P2) for slop.date, a dating matchmaker that texts each person an anonymous suggestion and reveals nobody until both say yes. A human reviewer approves every suggestion; you only check fit and safety.
+export const SLOP_JUDGE_SYSTEM = `You review one proposed first date between two adults (P1 and P2) for slop.date, a dating matchmaker that texts each person an anonymous suggestion and reveals nobody until both say yes. You check fit and safety; your answer can only remove a suggestion.
 Use ONLY the context: what each person stated (who they are and who they want to meet, the age range they want, what they are looking for, dealbreakers, stated values), their age band, the distance band between them, interests, and safety signals.
 Stated preferences come first: a pair where either person's stated wants are not met is a "no", even if everything else looks good. Unknown values never count against anyone.
 Safety: any safety cue, failed verification, reports, blocks after shared encounters, no-shows or back-outs in the context lower social_comfort and raise red_flags; a serious one (scam pattern, age signal, hostile language) is a dealbreaker.

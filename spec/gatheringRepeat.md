@@ -6,7 +6,7 @@
 
 ### A current exact mutual choice can enter review once per gathering pair
 
-The source names the approved event revision, group review instance, exact unordered pair and one version of their affirmative attendance and follow-up receipts. Use only the exact source refreshed by the service. Require local adult eligibility, social one-to-one preferences and the same pair safety and outreach checks as an ordinary repeat. Keep one opportunity for the event and pair across retries, changed receipt versions and restart. Staff cannot replace either participant or supply copy that exposes the private source.
+The source names the approved event revision, group review instance, exact unordered pair and one version of their affirmative attendance and follow-up receipts. Use only the exact source refreshed by the service. Require local adult eligibility, social one-to-one preferences and the same pair safety and outreach checks as an ordinary repeat. Keep one opportunity for the event and pair across retries, changed receipt versions and restart. Staff cannot replace either participant or supply copy that exposes the private source. Changed (owner decision D6 of 2026-11-22): the stage decision lost its rollout switch, because the flag was removed and the only caller passed true.
 
 ```quint
 pure val gatheringRepeatOppPrefix: str = "gathering-repeat:"
@@ -14,14 +14,14 @@ pure val gatheringRepeatOppPrefix: str = "gathering-repeat:"
 pure def gatheringRepeatSourceMatches(sameGathering: bool, sameRevision: bool, sameGroupReview: bool, samePair: bool, sameConsentVersion: bool): bool =
   sameGathering and sameRevision and sameGroupReview and samePair and sameConsentVersion
 
-pure def gatheringRepeatMayStage(rolloutEnabled: bool, currentSource: bool, pairPermitted: bool, alreadyOffered: bool): bool =
-  rolloutEnabled and currentSource and pairPermitted and not(alreadyOffered)
+pure def gatheringRepeatMayStage(currentSource: bool, pairPermitted: bool, alreadyOffered: bool): bool =
+  currentSource and pairPermitted and not(alreadyOffered)
 
 pure def lawGatheringRepeatRejectsChangedConsent(sameGathering: bool, sameRevision: bool, sameGroupReview: bool, samePair: bool): bool =
   not(gatheringRepeatSourceMatches(sameGathering, sameRevision, sameGroupReview, samePair, false))
 
-pure def lawGatheringRepeatStagesOnce(rolloutEnabled: bool, currentSource: bool, pairPermitted: bool): bool =
-  not(gatheringRepeatMayStage(rolloutEnabled, currentSource, pairPermitted, true))
+pure def lawGatheringRepeatStagesOnce(currentSource: bool, pairPermitted: bool): bool =
+  not(gatheringRepeatMayStage(currentSource, pairPermitted, true))
 ```
 
 ### Review and each new reply are separate from the earlier mutual choice

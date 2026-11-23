@@ -12,35 +12,26 @@ Imported from `quint/staff_console.qnt` at `30d950e`. See [model index](README.m
 
 The production staff role projection and route admission use [Observatory staff permissions](../staffPermissions.md). Audit, revocation and socket timing remain in this standalone flow.
 
-Convention (2026-11-21, second pass): the intended action is in `step`, so `safety` checks the intended design of every flow. Where the code differs, a `*Code` action (one `*By(code, ...)` body with the code branch) is outside `step`, and a run test shows the rule fail after it. This is the convention of [join_age](join_age.md) and [safety_trust](safety_trust.md).
+Convention: the intended action is in `step`, so `safety` checks the intended design of every flow. Where the code differs, a `*Code` action (one `*By(code, ...)` body with the code branch) is outside `step`, and a run test shows the rule fail after it. This is the convention of [join_age](join_age.md) and [safety_trust](safety_trust.md).
 
-Compared with `vibestack-matching` on 2026-11-18 for the reveal, the case rows and the matching switch. Three earlier fixes are gone from `packages/observatory/web` (open code defects; `unrevealWithCode` and `switchAppCode` are the code):
+The console staff-step proxy (`packages/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action. It admits a step only in real mode and with the role of `staffStepAdmitted`, and it needs a configured service and a named person (`X-Network-Staff-Id`). With no service it answers 503 `read_only` and writes no row. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode`). A write records its "requested" row before the forwarder sends it, and a failed audit write stops the step (`inv_consoleAuditFirst`). A forward that times out records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504: the console says that the step may have run (`inv_consoleSaysServiceDoes`). Any other forward error records ok false with `service_unavailable` and answers 503. Staff-step ids `.` and `..` are refused. `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are admin steps for all apps. `staffStepTimeoutTest` and `staffStepRefusedTest` replay the proxy; `packages/observatory/test/staff-steps.integration.test.ts` and `held.test.ts` cover it.
 
-- `inv_revealShownTruly` (SD-247): `store.ts` `unreveal` removes the client reveal whatever the DELETE answer is, so after a 403, a 503 or a network error the server still serves the revealed data while the badge is gone.
-- `inv_actionTargetsSelectedPerson` (SD-068): `SafetyCases` in `admin.tsx` has no `key={s.app}` and `useFetch` keeps the old answer until the new one comes. For that time the rows of the old app stay, and "Close case" sends the old row's case id (`sc1`) to the new app, which closes another member's case.
-- `inv_confirmMatchesApp` (SD-246): `Config` in `admin.tsx` also has no `key={s.app}`. An armed switch survives an app switch until the config read answers, and the confirm sends `on: !c.matchingEnabled` of the old app to the new app.
+The held routes `/api/held` and `/api/held/:id/photo` ask `staffStepAdmitted` (`ReadHeldRelay`, `DecideHeldRelay`). The leak queue holds member-facing texts that the leak guard stopped. The relay queue holds only selected relay photos that the automatic image check flagged or could not check (owner decision D14 of 2026-11-22); no relayed text waits for staff (owner decision D18 of 2026-11-22).
 
-The confirm press of the matching switch now always sends; a reload of the config (a new `c`) or the 4 s timer ends the ask.
+The matching switch: the registry row of the network ([runtime unit](../runtimeUnit.md)) alone decides whether matching may run. The service refuses "on" and the tick does not run outside it, the real source sends every press to the service, and the overview says "locked" unless the service's `/health` says `matchingAllowed: true`; no service, or a failed `/health`, also reads as locked (`inv_consoleShowsGate`, `inv_tickRunImpliesRegistry`). Changed (owner decision D6 of 2026-11-22): the launch scope and its inputs `production` and `peonLive` are removed, because every app is approved for live sends.
 
-Compared again 2026-11-21, action by action, with the code of `vibestack-matching` (audit COV08). Eleven fixes that the model took from the source branch (`wave2/staff_console`) were never on this branch; the 2026-11-18 and 2026-11-19 comparisons had read them as present. The intended action stays in `step` and its rule in `safety`; the `*Code` action follows the code, and a run test shows each failure:
+Open code defects (the `*Code` action follows the code, and the run test shows the rule fail):
 
-- SD-288, fixed 2026-11-22: `ServiceClient.act` and the staff-step proxy answer a timeout as `service_timeout` (504, the action may have run), the result audit row has outcome "unknown", and the real source reads the state again (`timeoutAfterCommitTest`; `packages/observatory/test/held.test.ts`).
-- SD-083, fixed 2026-11-22: `RealSource` keeps a connection whose login check threw apart (`unchecked`), reads nothing through it, and `refresh` checks it again first (`loginCheckRetryServesTest`; `packages/observatory/test/real-console.test.ts`).
-- SD-082, fixed 2026-11-22: `stateRow` and the age events read are strict; only a missing view (42P01) falls back, so a failed read fails the poll and the last good age view stays (`ageReadErrorTest`; `real-console.test.ts`).
-- SD-466 (`pollSafetyCode`): `useFetch` replaces the data with a failed answer, so the case and report rows unmount and a typed note goes (`failedPollTest`).
-- SD-070 (`pressHoldCode`): `reportAction` always says "Person held on every app" (and "Minor signal cleared on every app"), also for staff with safety on one app, where the service acts on this app only (`holdScopeTextTest`). Since 2026-11-22 the service's hold and minor-clear answers carry `reach` (`app` or `all`, `staffSafetyActionReach` in [staffSafetyService](../staffSafetyService.md)), and `ServiceClient.act` and `/api/safety` pass it on (`real-fixes.test.ts`, `service-safety.test.ts`). The console page does not read it yet, so the code action stays.
-- SD-285, fixed 2026-11-22: `setMode` starts the new source first, and `source` drops a rejected start (`modeSwitchFailKeepsModeTest`; `packages/observatory/test/console-mode.integration.test.ts`).
-- SD-286, fixed 2026-11-22: the command handlers keep the mode they admitted and answer `mode_changed` when it changed during their awaits (`controlStale`, `modeHeaderRaceTest`; `console-mode.integration.test.ts`).
-- SD-470 (`clientAnswerCode`): `Store.api` sets `authNeeded` on any 401, also the late 401 of a replaced token (`late401Test`).
-- SD-287, fixed 2026-11-22: the held photo route refuses only a passed `until` and keeps the preview at most five minutes on the console clock (`previewSkewTest`; `held.test.ts`).
-- SD-279, fixed 2026-11-22: `Projector.apply` applies `opportunity_closed` to a SCHEDULED opportunity (CANCELLED), and an outcome for a terminal opportunity adds a feed line only (`closedBookedPlanCancelledTest`; `packages/observatory/test/consent.test.ts` closes a booked plan in a game run with a minor signal and checks the cancelled state and the outcome feed line).
-- SD-281, fixed 2026-11-22: `RealSource.load` replaces the edges with the database's (`Store.setEdges`), and a removed edge makes the next delta a reset (`forgetTest`; `real-console.test.ts`).
+- SD-247 (`inv_revealShownTruly`, `unrevealWithCode`): `store.ts` `unreveal` removes the client reveal whatever the DELETE answer is, so after a 403, a 503 or a network error the server still serves the revealed data while the badge is gone.
+- SD-068 (`inv_actionTargetsSelectedPerson`, `switchAppCode`): `SafetyCases` in `admin.tsx` has no `key={s.app}`, and `useFetch` keeps the old answer until the new one comes. For that time the rows of the old app stay, and "Close case" sends the old row's case id to the new app.
+- SD-246 (`inv_confirmMatchesApp`, `switchAppCode`): `Config` in `admin.tsx` has no `key={s.app}`. An armed switch survives an app switch until the config read answers, and the confirm sends `on: !c.matchingEnabled` of the old app to the new app.
+- SD-466 (`pollSafetyCode`, `failedPollTest`): `useFetch` replaces the data with a failed answer, so the case and report rows unmount and a typed note goes.
+- SD-070 (`pressHoldCode`, `holdScopeTextTest`): `reportAction` always says "Person held on every app" (and "Minor signal cleared on every app"). The service answer carries `reach` (`app` or `all`, `staffSafetyActionReach` in [staffSafetyService](../staffSafetyService.md)), and `ServiceClient.act` and `/api/safety` pass it on, but the console page does not read it.
+- SD-470 (`clientAnswerCode`, `late401Test`): `Store.api` sets `authNeeded` on any 401, also the late 401 of a replaced token.
 
-SD-282 (`inv_declinedMeansDeclined`, `openConsoleDecisions`) is not in `safety`: it needs a privacy and data-retention decision, and no intended action is settled. The other fixes are on this branch: SD-084 (`revealFor`, `revealCurrent`), SD-071 (`SlopPanel`, `staffPhotoAllowed`), SD-135 (`auditedRun` for the leak and relay decisions), SD-505 (`deltaAction` of [observatory sync](../observatorySync.md)), PER63. All `file:line` comments were replaced by function and route names on 2026-11-21.
+SD-282 (`inv_declinedMeansDeclined`, `openConsoleDecisions`) is not in `safety`: it needs a privacy and data-retention decision, and no intended action is settled.
 
-The console staff-step proxy (`packages/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action since 2026-11-22 (audit STAFF-models-convention). Before, it was compared by hand only. The action admits a step in real mode with the role of `staffStepAdmitted`, needs a configured service and a named person, and writes the "requested" row first; the shared `consoleAnswer` and `consoleTimeout` give the answer. `staffStepTimeoutTest` and `staffStepRefusedTest` replay it. The held-text routes `/api/held` and `/api/held/:id/photo` also ask `staffStepAdmitted` (ReadHeldRelay, DecideHeldRelay) since 2026-11-22 (STAFF-held-role). Compared by hand with the code on 2026-11-22. It admits a step only in real mode and with `staffStepAdmitted`. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode` holds). A write records its "requested" row before the forwarder sends it to the service, and a failed audit write stops the step (`inv_consoleAuditFirst` holds). Since 2026-11-22 (STAFF-orphan-requested) the step asks for the forwarder first: with no service it answers 503 `read_only` and writes no row, so no "requested" row stays without a result. Staff-step ids `.` and `..` are refused (STAFF-dot-ids). The steps `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are new, admin for all apps. Compared again on 2026-11-22 after the observatory change of the same day. A forward that times out (`isTimeout`) records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504 with `serviceTimeout()`: the console says that the step may have run, which is the fixed form that `step` models, so `inv_consoleSaysServiceDoes` holds for the staff steps. Any other error of the forward records ok false with code `service_unavailable` and answers 503. `packages/observatory/test/staff-steps.integration.test.ts` covers the role check, the named person in `X-Network-Staff-Id` and the refusal of a shared token. `packages/observatory/test/held.test.ts` covers the 504 timeout answer and the audit rows of a staff step and of `ServiceClient.act`; `consoleTimeout` models both.
-
-Compared 2026-11-19 for the matching gate. Audit PER63 replaced the service's registry-only check and the console's own peon list (`PACK_READY`) with one launch-scope decision, [`matchingSwitchAllowed`](../runtimeUnit.md) (`matching-scope.ts` `networkMatchingAllowed`): the service refuses "on" and the tick does not run outside the scope, the real source sends every press to the service, and the overview says "locked" unless the service's `/health` says `matchingAllowed: true`; since 2026-11-22 (peon-r29-2) no service, or a failed `/health`, also reads as locked, and the switch reads from the Network's stored state only (`real-console.test.ts`). Compared again on 2026-11-22 after the owner decision of that day, which approved every app: the launch-scope decision and `matching-scope.ts` are removed, the registry row alone decides, and the model no longer has the inputs `production` and `peonLive`; SD-088 is `inv_tickRunImpliesRegistry` in `safety`. SD-247, SD-068, SD-246 and SD-282 were checked again in the code and are still open.
+Fixed in the code, one intended action each: SD-288 (`timeoutAfterCommitTest`), SD-083 (`loginCheckRetryServesTest`), SD-082 (`ageReadErrorTest`), SD-285 (`modeSwitchFailKeepsModeTest`), SD-286 (`controlStale`, `modeHeaderRaceTest`), SD-287 (`previewSkewTest`), SD-279 (`closedBookedPlanCancelledTest`), SD-281 (`forgetTest`), SD-084 (`revealFor`, `revealCurrent`), SD-071 (`SlopPanel`, `staffPhotoAllowed`), SD-135 (`auditedRun`), SD-505 (`deltaAction` of [observatory sync](../observatorySync.md)), SD-088 (`inv_tickRunImpliesRegistry`) and PER63.
 
 ```quint
 // quint-check: max-steps=14 max-samples=20000 verify-steps=6
@@ -521,36 +512,36 @@ module staff_console {
   // ------------------------------------------------------------------ network-matching-gate
   // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran": the registry row alone
   // (owner decision 2026-11-22). The service builds each runtime's matchingAllowed from it and reports it on /health.
-  pure def launchScope(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): bool =
+  pure def registryAllows(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): bool =
     mg.registry.get(app)
 
-  // setMatching (service.ts): "on" outside the launch scope is refused (and audited); "off" is always taken.
+  // setMatching (service.ts): "on" outside the registry row is refused (and audited); "off" is always taken.
   pure def serviceSwitch(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str, on: bool): { registry: str -> bool, stored: str -> bool, engineRan: str -> bool } =
-    if (on and not(launchScope(mg, app))) mg else { ...mg, stored: mg.stored.set(app, on) }
+    if (on and not(registryAllows(mg, app))) mg else { ...mg, stored: mg.stored.set(app, on) }
 
   // A direct call to the service staff API with a service admin token (another actor; observatory.md D35).
   action directServiceSwitch(app: str, on: bool): bool = s' = { ...s, mg: serviceSwitch(s.mg, app, on) }
 
-  // The service tick runs matching for a network whose matching is on and inside its launch scope
-  // (runtime.ts tick: rollout = matchingAllowed and state.matchingEnabled; a load outside the scope also stores off).
+  // The service tick runs matching for a network whose matching is on and allowed by its registry row
+  // (runtime.ts tick: rollout = matchingAllowed and state.matchingEnabled; a load outside the registry row also stores off).
   action serviceTick(app: str): bool = all {
     s.mg.stored.get(app),
-    launchScope(s.mg, app),
+    registryAllows(s.mg, app),
     s' = { ...s, mg: { ...s.mg, engineRan: s.mg.engineRan.set(app, true) } },
   }
 
   // The overview's matching line (health.ts appHealth): "locked" unless the service's last /health answer says the
-  // network is inside its launch scope (real.ts serviceMatchingAllowed, env.matchingLocked), else the stored switch.
+  // network is allowed by its registry row (real.ts serviceMatchingAllowed, env.matchingLocked), else the stored switch.
   // A missing or failed answer reads as locked (peon-r29-2, fixed 2026-11-22); the model has the service always answer.
   // The console keeps no list of its own in real mode (audit PER63).
   pure def overviewMatching(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): str =
-    if (not(launchScope(mg, app))) "locked" else if (mg.stored.get(app)) "on" else "off"
+    if (not(registryAllows(mg, app))) "locked" else if (mg.stored.get(app)) "on" else "off"
 
   // Config "Turn on/off" (admin.tsx Config): the generated consoleWorkspace pressMatchingSwitch and
   // confirmMatchingSwitch. The first click arms with the target `!c.matchingEnabled` read from the panel's data.
   // The second click sends that target to the app shown now (store.control uses the current app). A change made
   // by another admin ends the ask only through a reload of the config (configPoll). The button shows only with
-  // data. The real source sends every press to the service, which alone decides the launch scope (setMatching).
+  // data. The real source sends every press to the service, which alone reads the registry row (setMatching).
   action pressSwitch(st: str): bool = all {
     allowedR(s.grantsCopy, st, Set(), s.cs.shownApp),
     s.cf.dataApp != "none",
@@ -566,7 +557,7 @@ module staff_console {
     },
   }
 
-  // The Config useFetch key (mode, matchingEnabled, review mode) changes, and the panel refetches for the app shown.
+  // The Config useFetch key (mode, matchingEnabled) changes, and the panel refetches for the app shown.
   // The answer is a new `c`, so the ask (edit.of === c) ends.
   action configPoll: bool = s' = { ...s, cf: { ...s.cf, dataApp: s.cs.shownApp, armed: false } }
   // The 4 s timer disarms the switch.
@@ -792,8 +783,8 @@ module staff_console {
   // only while its person holds a role for its app.
   val inv_socketAuthorized = s.sockets.forall(k => k.fresh implies rolesFor(s.grantsCopy, k.st, k.app).size() > 0)
 
-  // auditFirst. AGENTS.md "every proactive proposal and every member request goes through human review" and the
-  // service rule "an audit row first (no row, no action)" (network service.ts staffAction and auditedRun). Every staff effect
+  // auditFirst. spec/staffSafetyService.md "Keep the requested and result audits in order": an audit row first
+  // (no row, no action; network service.ts staffAction and auditedRun). Every staff effect
   // in the service has a "requested" row before it. Register: SD-135 (fixed).
   val inv_auditFirst = s.svcEffects.forall(e => e.rowBefore)
 
@@ -847,11 +838,11 @@ module staff_console {
   // everySwitchAudited is inv_consoleAuditFirst with kind config; the switch goes through staffAction
   // (service.ts setMatching), so a committed config effect is covered by inv_auditFirst.
 
-  // consoleShowsGate. AGENTS.md decision 4 (peon matching runs locally only) and observatory.md 2.13: the
-  // overview's matching line says what the service does: "on" exactly when the stored switch is on inside the
-  // launch scope, which is when the service tick runs matching. Code: health.ts appHealth with
+  // consoleShowsGate. spec/runtimeUnit.md (the registry row) and observatory.md 2.13: the
+  // overview's matching line says what the service does: "on" exactly when the stored switch is on and the
+  // registry row allows matching, which is when the service tick runs matching. Code: health.ts appHealth with
   // env.matchingLocked from the service's /health matchingAllowed. Register: SD-122 (fixed), PER63.
-  val inv_consoleShowsGate = APPS.forall(a => (overviewMatching(s.mg, a) == "on") == (s.mg.stored.get(a) and launchScope(s.mg, a)))
+  val inv_consoleShowsGate = APPS.forall(a => (overviewMatching(s.mg, a) == "on") == (s.mg.stored.get(a) and registryAllows(s.mg, a)))
 
   // tickRunImpliesRegistry. service.ts setMatching and the runtime tick: matching runs only where the registry
   // row allows it.

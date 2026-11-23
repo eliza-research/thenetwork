@@ -12,12 +12,12 @@ Imported from `quint/observatory_sync.qnt` at `30d950e`. See [model index](READM
 
 The browser calls [Observatory snapshot and live updates](../observatorySync.md) for the current load, delta versions, and feed sequence. Reveal, filters, and other separate console state remain in this standalone model.
 
-Compared with `vibestack-matching` on 2026-11-18, and again on 2026-11-19 (no change in `store.ts`, `map.ts`, `drawer.tsx` or the generated `observatorySync`; `unreveal`, `loadReveals` and `matchFeed` are as described below). Compared again 2026-11-21 (audit COV08): `store.ts` `load`, `applyDelta` (generated `deltaAction`), `applyData` (`acceptsFeedItem`), `setApp`, `loadReveals` (`reveals = r.data ?? []`, generation check only), `unreveal` (drops the badge whatever the answer) and `matchFeed` (applies Origin) have not changed. No new drift. Two open defects, both in `packages/observatory/web`:
+The convention of [staff_console](staff_console.md) applies: the intended `grant`, `unreveal`, `otherAnswer`, `revealAnswer` and `shellKeys` are in `step`, and `unrevealRun`, `badgeFollowsGrant`, `revealReadPending`, `tabNonInterference` and `safetyIgnoresOrigin` are in `safety`. The intended page adds one to a reveal generation on each POST or DELETE answer, reads the list again after it, drops a GET answer of an older reveal generation, keeps the list on a failed GET answer, ends the badge only on 200 or 404, and applies no Origin filter on the Safety tab; `witness_badgeKeptOnFailure` and `witness_oldReadDropped` show the intended paths. The `*Code` actions (`grantCode`, `unrevealCode`, `otherAnswerCode`, `revealAnswerCode`, one `*By(code, ...)` body each) and `shellKeysCode` follow the code and are outside `step`; the `*CodeTest` runs show each rule fail after them.
 
-Changed 2026-11-22 (audit STAFF-models-convention): this model now uses the convention of [staff_console](staff_console.md). Before, the code actions were in `step` and the five rules were outside `safety`. Now the intended `grant`, `unreveal`, `otherAnswer`, `revealAnswer` and `shellKeys` are in `step`, and `unrevealRun`, `badgeFollowsGrant`, `revealReadPending`, `tabNonInterference` and `safetyIgnoresOrigin` are in `safety`. The intended page adds one to a reveal generation on each POST or DELETE answer, reads the list again after it, drops a GET answer of an older reveal generation, keeps the list on a failed GET answer, ends the badge only on 200 or 404, and applies no Origin filter on the Safety tab. The `*Code` actions (`grantCode`, `unrevealCode`, `otherAnswerCode`, `revealAnswerCode`, one `*By(code, ...)` body each) and `shellKeysCode` follow the code and are outside `step`; the `*CodeTest` runs show each rule fail after them. The four witnesses of the defects are gone, because the intended design cannot reach them; `witness_badgeKeptOnFailure` and `witness_oldReadDropped` show the intended paths. The two defects below are still open in the web code (frontend agent):
+Open defects in `packages/observatory/web` (the model keeps the rule):
 
-- The PII reveal badge no longer follows the server grant. `store.ts` `unreveal` removes the badge whatever the DELETE answer is (a 403, a 500 or a network error leaves the grant on the server). `loadReveals` sets `reveals = r.data ?? []`, so a failed GET removes the badge, and a GET that the server read before a POST answer replaces the list after it (it checks only the load generation). The earlier fix (`revealGen`, `revealMerge`, `revealReread`, the `badgeEnds` rule) is gone. `unrevealRun`, `badgeFollowsGrant` and `revealReadPending` state the rules; they are not part of `safety`.
-- The Safety tab filters its events with `store.ts` `matchFeed`, which applies the Origin filter. The filter bar dims Origin on that tab (`filterApplies` in [console navigation](../consoleNavigation.md)), so a dimmed filter hides safety events that have no opportunity of that origin. `tabNonInterference` and `safetyIgnoresOrigin` state the rules; they are not part of `safety`.
+- SYNC-REVEAL: the PII reveal badge does not follow the server grant. `store.ts` `unreveal` removes the badge whatever the DELETE answer is (a 403, a 500 or a network error leaves the grant on the server). `loadReveals` sets `reveals = r.data ?? []`, so a failed GET removes the badge, and a GET that the server read before a POST answer replaces the list after it (it checks only the load generation).
+- SYNC-ORIGIN: the Safety tab filters its events with `store.ts` `matchFeed`, which applies the Origin filter. The filter bar dims Origin on that tab (`filterApplies` in [console navigation](../consoleNavigation.md)), so a dimmed filter hides safety events that have no opportunity of that origin.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -738,11 +738,6 @@ module observatory_sync {
   val witness_otherAppLoadIgnored: bool = ui.lastEvent != "landOtherApp"
   /** A load lands and the buffer replays at least one delta as data. */
   val witness_bufferReplayed: bool = not(ui.lastEvent == "land" and ui.applied.length() > 0)
-  /**
-   * Two versions applied as data after one load. Random runs of the default step reach it only by
-   * chance, so twoDataDeltasTest replays it; this value is not a witness for quint:check.
-   */
-  val reach_twoDataDeltas: bool = ui.applied.length() < 2
   /** A delta at the state's own version is kept as meta. */
   val witness_metaDelta: bool = ui.lastEvent != "deltaMeta"
   /** An older delta (a rewind or a repeat) is dropped. */

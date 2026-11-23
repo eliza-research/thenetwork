@@ -4,8 +4,14 @@ import { BASELINES } from "../src/apps/slop/baselines.ts";
 import { runSlopWorld } from "../src/apps/slop/world.ts";
 
 test("a slop date and a no-show fall at the slot hour in the zone of the date's city, whatever the host zone", () => {
+  const hostZone = process.env.TZ;
   process.env.TZ = "Pacific/Auckland";
-  const result = runSlopWorld({ seed: 16, perCity: 120, weeks: 8, matcher: w => BASELINES.greedy(w) });
+  let result: ReturnType<typeof runSlopWorld>;
+  try {
+    result = runSlopWorld({ seed: 16, perCity: 120, weeks: 8, matcher: w => BASELINES.greedy(w) });
+  } finally {
+    if (hostZone === undefined) delete process.env.TZ; else process.env.TZ = hostZone;
+  }
   const cityOf = new Map(result.flows.map(f => [f.key, f.city]));
   const met = result.world.state.interactions.filter(i => i.outcome === "completed" || i.outcome === "no_show");
   expect(met.length).toBeGreaterThan(0);

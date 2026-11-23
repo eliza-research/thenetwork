@@ -1,19 +1,4 @@
 import { setTimeout as waitForMs } from "node:timers/promises";
-// The pipeline block: the real message path end to end (mvp-plan "Still missing in sim"; critical path
-// 3 and 9). A signed Blooio webhook goes into NetworkService.fetch, the service runs the four networks
-// (ntwrk, slop, peon, friends) on a throwaway Postgres database on the dev cluster (:54339), every send
-// goes into the persisted queue (platform.outbound) in the unit's transaction, and the Blooio adapter
-// delivers it to a fake provider that records every request (harness.ts). The clock is simulated.
-// Scripted members join by keyword, onboard, ask for a climbing partner, are probed and booked. Around that: duplicate webhooks, two messages of one
-// sender handled in order, a provider outage with retries, STOP in the middle of a probe, a crash during
-// a provider call and a restart (a second service instance), quiet hours across the restart, the
-// unanswered streak, line safety, "leave <app>", STOP on the shared line, and the one STOP/HELP
-// owner. No model is called; nothing leaves the machine.
-//
-// Without Postgres the block records one tracked gate saying it was skipped (CI fails on that skip).
-// Blocking gates: 0 lost or duplicated outbound messages; 0 sends after STOP; 0 sends to minors about
-// other members (and nothing stored for an under-13); every outbound row ends delivered or failed;
-// keyword routing; restart, crash, outage, dedupe, ordering, Apple line safety and the STOP/HELP owner.
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { NOT_SENT, OutboundQueue, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
@@ -39,7 +24,7 @@ export async function pipelineBlock(b: Block): Promise<void> {
   await b.run("pipeline: dry run stays the default: without NETWORK_CHANNEL every send is a dry run, and a channel without its credentials does not start", () => {
     const line = { BLOOIO_API_KEY: "synthetic-key", BLOOIO_FROM: H.LINE };
     expect(configuredChannel({}, [])).toBe("dry-run");
-    expect(configuredChannel({ ...line, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", SLOP_LIVE_APPROVED: "1" }, [])).toBe("dry-run");
+    expect(configuredChannel(line, [])).toBe("dry-run");
     expect(configuredChannel({ ...line, NETWORK_CHANNEL: "blooio" }, ["--dry-run"])).toBe("dry-run");
     expect(() => configuredChannel({ NETWORK_CHANNEL: "blooio", BLOOIO_FROM: H.LINE }, [])).toThrow();
     expect(configuredChannel({ ...line, NETWORK_CHANNEL: "blooio" }, [])).toBe("blooio");

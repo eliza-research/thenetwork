@@ -1,11 +1,8 @@
-// Age policy per app (platform plan 2.6), built on the one age policy in packages/core/src/policy.ts.
-// Age is a person-level fact: the lowest age a person ever stated or a record held, on any app,
-// decides. A person who said 15 on ntwrk cannot join slop later by saying 25.
 import { canBeMatched, canJoin, validAge } from "../../core/src/policy.ts";
-import { birthKeyText, earliestDayKeyOf, latestDayKeyOf, parseIsoBirthDate } from "../../core/src/birth-date.ts";
+import { birthKeyOfParts, earliestDayKeyOf, latestDayKeyOf } from "../../core/src/birth-date.ts";
 import {
   ageOnDay, birthDateExact, birthDateLower, birthKeyUsable, type BirthReadings, effectiveAge, effectiveBirthKey, laterBirthKey,
-  legacyReading, lowerAge, readingsConflict, statedAgeLower, statedAgeUpper,
+  lowerAge, readingsConflict, statedAgeBeforeBirthDates, statedAgeLower, statedAgeUpper,
 } from "../../core/src/generated/memberAge.ts";
 import { teenBarOnConflict } from "../../core/src/generated/friendIntroAge.ts";
 import { exactReadingKept, firstReadingExact, floorStatedAge, mergeAgeReadings } from "../../core/src/generated/siteEnrollment.ts";
@@ -51,10 +48,9 @@ export interface AgeRecord {
   teenBarred: boolean;
 }
 
-export interface PersonAgeWrite { readings: BirthReadings; birthDate: number | null; firstExact: boolean | null; lowestAge: number }
-export interface FloorAgeWrite { readings: BirthReadings; lowestAge: number; firstExact: boolean }
-export interface MovedPersonAge { person: PersonAgeWrite; bar: boolean }
-export interface AgeWrite { person: PersonAgeWrite | undefined; floor: FloorAgeWrite; bar: boolean }
+interface PersonAgeWrite { readings: BirthReadings; birthDate: number | null; firstExact: boolean | null; lowestAge: number }
+interface MovedPersonAge { person: PersonAgeWrite; bar: boolean }
+interface AgeWrite { person: PersonAgeWrite | undefined; floor: AgeFloorRecord; bar: boolean }
 
 const NO_READINGS: BirthReadings = { lower: 0, upper: 0, youngest: 0 };
 
@@ -71,10 +67,12 @@ const mergeInto = (earlier: BirthReadings | undefined, reading: BirthReadings): 
 const mergeRecords = (first: BirthReadings | undefined, second: BirthReadings | undefined): BirthReadings | undefined =>
   second === undefined ? first : mergeInto(first, second);
 
+const floorAt = (before: AgeFloorRecord | undefined, age: number, at: number): number => (before && before.age <= age ? before.at : at);
+
 const livePerson = (p: Person | undefined): Person | undefined => (p && p.deletedAt === null ? p : undefined);
 
 export const joinBirthDateUsable = (birthKey: number, at: number): boolean =>
-  parseIsoBirthDate(birthKeyText(birthKey)) === birthKey && birthKeyUsable(birthKey, earliestDayKeyOf(at));
+  birthKeyOfParts(Math.trunc(birthKey / 10000), Math.trunc(birthKey / 100) % 100, birthKey % 100) === birthKey && birthKeyUsable(birthKey, earliestDayKeyOf(at));
 
 export const readingAge = (stated: AgeReading, at: number): number =>
   stated.kind === "age" ? stated.age : ageOnDay(stated.birthDate, earliestDayKeyOf(at));
@@ -83,12 +81,12 @@ function personReadings(p: Person | undefined, at: number): BirthReadings | unde
   const live = livePerson(p);
   if (!live) return undefined;
   if (live.birth) return live.birth.readings;
-  return live.lowestAge === null ? undefined : legacyReading(live.lowestAge, earliestDayKeyOf(live.createdAt), earliestDayKeyOf(at));
+  return live.lowestAge === null ? undefined : statedAgeBeforeBirthDates(live.lowestAge, earliestDayKeyOf(live.createdAt), earliestDayKeyOf(at));
 }
 
 function floorReadings(f: AgeFloorRecord | undefined): BirthReadings | undefined {
   if (!f) return undefined;
-  return f.readings ?? legacyReading(f.age, earliestDayKeyOf(f.at), earliestDayKeyOf(f.at));
+  return f.readings ?? statedAgeBeforeBirthDates(f.age, earliestDayKeyOf(f.at), earliestDayKeyOf(f.at));
 }
 
 const hasStoredReadings = (s: AgeStanding): boolean => !!livePerson(s.person)?.birth || !!s.floor?.readings;
@@ -100,14 +98,14 @@ function combinedReadings(s: AgeStanding, at: number): BirthReadings | undefined
 export function effectiveAgeAt(s: AgeStanding, at: number): number | undefined {
   if (!hasStoredReadings(s)) return lowestAge(livePerson(s.person)?.lowestAge ?? undefined, s.floor?.age);
   const readings = combinedReadings(s, at);
-  return readings === undefined ? undefined : effectiveAge(true, readings, 0, earliestDayKeyOf(at));
+  return readings === undefined ? undefined : effectiveAge(readings, earliestDayKeyOf(at));
 }
 
 export function ageRecordOf(s: AgeStanding, at: number, barred: boolean): AgeRecord {
   const readings = hasStoredReadings(s) ? combinedReadings(s, at) : undefined;
   if (readings === undefined) {
-    const legacy = effectiveAgeAt(s, at);
-    return { age: legacy, maxAge: legacy, birthKey: undefined, birthExact: false, ageConflict: false, teenBarred: barred };
+    const integerAge = effectiveAgeAt(s, at);
+    return { age: integerAge, maxAge: integerAge, birthKey: undefined, birthExact: false, ageConflict: false, teenBarred: barred };
   }
   const key = effectiveBirthKey(readings);
   const birthDate = livePerson(s.person)?.birth?.birthDate ?? null;
@@ -155,17 +153,18 @@ export function ageWrite(s: AgeStanding, stated: AgeReading, at: number): AgeWri
   const person = livePerson(s.person);
   const statesBirthDate = stated.kind === "birthDate";
   const exact = person && stated.kind === "birthDate" ? personAfter(person, at, exactReading(stated.birthDate), stated.birthDate, statedAge) : undefined;
-  const ageWithBirthDate = exact ? effectiveAge(true, mergeRecords(exact.readings, floorBefore) ?? exact.readings, 0, today) : statedAge;
+  const ageWithBirthDate = exact ? effectiveAge(mergeRecords(exact.readings, floorBefore) ?? exact.readings, today) : statedAge;
   const keepExact = exactReadingKept(statesBirthDate, person !== undefined, ageWithBirthDate);
   const personNext = keepExact && exact ? exact : person ? personAfter(person, at, typed, null, statedAge) : undefined;
   const withStatement = personNext ? mergeRecords(personNext.readings, floorBefore) ?? personNext.readings : mergeInto(floorBefore, typed);
-  const floorAge = floorStatedAge(statedAge, effectiveAge(true, withStatement, 0, today));
-  const floor: FloorAgeWrite = {
-    readings: mergeInto(floorBefore, typedReading(floorAge, today)),
-    lowestAge: lowestAge(s.floor?.age, floorAge, person?.lowestAge ?? undefined) ?? floorAge,
+  const floorAge = floorStatedAge(statedAge, effectiveAge(withStatement, today));
+  const floorLowest = lowestAge(s.floor?.age, floorAge, person?.lowestAge ?? undefined) ?? floorAge;
+  const floorAfter = mergeInto(floorBefore, typedReading(floorAge, today));
+  const floor: AgeFloorRecord = {
+    age: floorLowest, at: floorAt(s.floor, floorLowest, at), readings: floorAfter,
     firstExact: floorFirstExact(s.floor, statesBirthDate && canJoin(statedAge)),
   };
-  const final = mergeRecords(personNext?.readings, floor.readings) ?? floor.readings;
+  const final = mergeRecords(personNext?.readings, floorAfter) ?? floorAfter;
   return { person: personNext, floor, bar: teenBarOnConflict(readingsConflict(final), ageOnDay(final.youngest, latestDayKeyOf(at))) };
 }
 
@@ -174,11 +173,11 @@ export function createdReadings(floor: AgeFloorRecord | undefined, lowest: numbe
   return mergeRecords(floorReadings(floor), typed);
 }
 
-export function floorAfterErasure(s: AgeStanding, at: number): FloorAgeWrite | undefined {
+export function floorAfterErasure(s: AgeStanding, at: number): AgeFloorRecord | undefined {
   const age = effectiveAgeAt(s, at);
   if (age === undefined || !validAge(age) || age <= 0) return undefined;
   const integer = lowestAge(age, livePerson(s.person)?.lowestAge ?? undefined, s.floor?.age) ?? age;
-  return { readings: mergeInto(floorReadings(s.floor), typedReading(age, earliestDayKeyOf(at))), lowestAge: integer, firstExact: false };
+  return { age: integer, at: floorAt(s.floor, integer, at), readings: mergeInto(floorReadings(s.floor), typedReading(age, earliestDayKeyOf(at))), firstExact: false };
 }
 
 export function mergedFloors(moved: AgeFloorRecord, existing: AgeFloorRecord | undefined): AgeFloorRecord {

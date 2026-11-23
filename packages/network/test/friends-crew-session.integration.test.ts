@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR, fromLocal, type Facet, type InitialInviteReceipt, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, fromLocal, type InitialInviteReceipt, type MemberId } from "@thenetwork/core";
 import { FRIENDS_PLANS, friendsPack, localEmbed, plans, resolveConfig, World, type EngineInput } from "@thenetwork/engine";
 import { CapitalLedger, ledgerReader } from "../src/capital.ts";
 import { bookingNoticeReceiptKey, meetingFeedbackKey } from "../src/network.ts";
@@ -21,7 +21,7 @@ test("friends: a crew session is pair-gated on Friend profiles, and a block betw
     { id: "c", name: "Cara Li", age: 29, area: venue.area, interests },
   ]);
   const ids: MemberId[] = ["a", "b", "c"];
-  for (const id of ids) mini.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 } satisfies Facet);
+  mini.verify(...ids);
   const snapshot = JSON.parse(JSON.stringify(mini.ctx().snapshot())) as EngineInput;
   const cfg = resolveConfig({ seed: 1, cities: ["nyc"] });
   const crew: plans.Crew = {
@@ -46,8 +46,7 @@ test.each(["open", "closes_during_session", "removed"] as const)("a Friends crew
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
     interests: ["coffee", "climbing"],
   })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS });
-  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
-    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  w.verify(...ids);
   await w.onboard(...ids);
   const start = availability === "closes_during_session" ? fromLocal(2026, 10, 10, venue.hours.weekend[1] - 1, "America/New_York") : Date.UTC(2026, 9, 10, 16);
   const crew: plans.Crew = { id: "crew_availability", activityId: activity,
@@ -79,8 +78,7 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
     interests: ["coffee", "climbing"],
   })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true,
     plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
-  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
-    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  w.verify(...ids);
   await w.onboard(...ids);
 
   const at = Date.UTC(2026, 9, 10, 16);
@@ -141,7 +139,8 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
   const blocked = w.net.exportState();
   blocked.blocks.push("a|b");
   w.net.importState(blocked);
-  expect(w.net.review(proposed!.id, "approve", { reviewer: "sim_staff" })).toBe(false);
+  const held = w.net.reviewQueue().find(i => i.oppId === proposed!.id)!;
+  expect(w.net.review(proposed!.id, "approve", { reviewer: "sim_staff", revision: held.revision })).toBe(false);
   expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
 });
 
@@ -168,10 +167,7 @@ test("friends crew reach fills only compatible seats in exposure order", async (
     id, name: names[index]!, age: 30, area: id === "b-weak" ? "Riverdale" : venue.area,
     interests: id === "crew-c" ? ["climbing"] : id === "b-weak" ? ["coffee"] : ["coffee", "climbing"],
   })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS, capital });
-  for (const { id } of w.members) w.facets.push({
-    id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
-    scope: "agent_private", provenance: "said", confidence: 1,
-  });
+  w.verify(...w.members.map(m => m.id));
   await w.onboard(...crewIds, ...applicants);
   const crew: plans.Crew = { id: "crew_fixture", activityId: activity, venueId: venue.id, city: "nyc", members: crewIds,
     cadenceDays: 7, hostRotation: crewIds, sessions: [], handedOff: false, slot: { start: Date.UTC(2026, 9, 10, 16) } };

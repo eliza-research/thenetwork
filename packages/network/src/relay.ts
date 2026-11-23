@@ -1,6 +1,6 @@
 import type { MemberId, Owned } from "@thenetwork/core";
 import { initial as initialRelay, step as stepRelay, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
-import { relaySevereBlockCaseEvent, relayStartsMinorPolicy, relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
+import { relayAgeStatementRead, relayAgeStatementRefuses, relaySevereBlockCaseEvent, relayStartsMinorPolicy, relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
 import {
   relayGuard, relayItemAsync, relaySenderNotice, RELAY_LIMITS, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
@@ -12,7 +12,7 @@ export const SWAP_WITHDRAWN = "consent:withdrawn";
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
 const VERDICT = { block: "Block", pass: "Pass" } as const satisfies Record<RelayResult["decision"], RelayVerdict>;
-const SEVERE_REASON_FAMILIES = new Set(["harass_severe", "llm_severe", "clef_severe"]);
+const SEVERE_REASON_FAMILIES = new Set(["harass_severe", "clef_severe"]);
 const DELIVERY_RESULT = { sent: "Delivered", deferred: "Queued", refused: "Refused" } as const satisfies Record<ReturnType<RelayHost["send"]>, DeliveryResult>;
 
 export interface RelayMember {
@@ -46,10 +46,11 @@ export interface RelayHost {
   saysYounger?(id: MemberId, text: string): boolean;
   severeBlock(id: MemberId): void;
   teenPair?(matchId: string): boolean;
+  classifierFailed(itemId: string, error: string): void;
 }
 
-export type RelayAskKind = Exclude<RelayItem["kind"], "photo">;
-export interface RelayTargetResult { choice: RelayTargetChoice; match?: RelayMatch }
+type RelayAskKind = Exclude<RelayItem["kind"], "photo">;
+interface RelayTargetResult { choice: RelayTargetChoice; match?: RelayMatch }
 export interface RelayThreadState { id: string; app: string; members: [MemberId, MemberId]; openedAt: number; messages: RelayThreadMessage[] }
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
@@ -69,7 +70,7 @@ export interface RelayOutcome {
   delivered?: boolean;
 }
 export interface RelayCallOptions {
-  hook?: RelayClassifierHook;
+  hook: RelayClassifierHook;
   contactOf?: (id: MemberId) => string | undefined;
   canonical?: ReadonlyMap<MemberId, RelayCanonical>;
 }
@@ -90,6 +91,10 @@ const SEND_REFUSED = "send:refused";
 const undeliveredNotice = (kind: RelayItem["kind"]) => (kind === "contact_share" ? NOTICE.swapFailed : NOTICE.undelivered);
 const swapAsk = (name: string) => `${name} would like to swap numbers with you. If you'd like that too, say "send them my number" in the next 15 minutes and I'll share both.`;
 const SHARED_NUMBER = (name: string) => `${name || "They"} shared their number.`;
+
+const AGE_STATED = "minor:self_stated";
+interface RelayTeen { pair: boolean; younger: boolean; ageStated: boolean }
+const NOT_TEEN: RelayTeen = { pair: false, younger: false, ageStated: false };
 
 const bodyOf = (rendered: string | null) => (rendered ? /^.{1,40}? says: "([\s\S]*)"$/.exec(rendered)?.[1] : undefined);
 
@@ -115,7 +120,7 @@ export class RelayDesk {
     return match ? { choice, match } : { choice };
   }
 
-  async request(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> {
+  async request(ask: RelayAsk, o: RelayCallOptions): Promise<RelayOutcome> {
     const prior = this.prior(ask.itemId);
     if (prior) return { ...prior, replayed: true };
     const { choice, match } = this.matchFor(ask.from, ask.matchId);
@@ -123,22 +128,25 @@ export class RelayDesk {
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: choice === "RelayNamedNotLive" ? NOTICE.matchClosed : NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
     const now = this.host.now();
-    if (ask.kind !== "text" && this.host.teenPair?.(match.id) === true) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.textOnly };
+    const pair = this.host.teenPair?.(match.id) === true;
+    if (ask.kind !== "text" && pair) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.textOnly };
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
-    const item: RelayItem = { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text: (ask.text ?? "").trim() };
-    const teenPair = this.host.teenPair?.(match.id) === true;
-    if (item.text && (!teenPair || this.host.saysYounger?.(item.from, item.text) === true) && this.host.observeSenderAge?.(item.from, item.text) && (!teenPair || this.host.member(item.from)?.markedMinor !== false)) {
-      return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-    }
-    return this.apply(await this.decide(item, match, o), match, item);
+    const text = (ask.text ?? "").trim();
+    const item: RelayItem = { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text };
+    const younger = text !== "" && this.host.saysYounger?.(item.from, text) === true;
+    const observed = relayAgeStatementRead(text !== "", pair, younger) && this.host.observeSenderAge?.(item.from, text) === true;
+    const ageStated = relayAgeStatementRefuses(observed, pair, this.host.member(item.from)?.markedMinor !== false);
+    const teen: RelayTeen = { pair, younger, ageStated };
+    return this.apply(await this.decide(item, match, o, teen), match, item, undefined, younger);
   }
 
-  private async decide(item: RelayItem, match: RelayMatch, o: RelayCallOptions): Promise<RelayResult> {
-    const ctx = this.context(item, match, o);
-    return relayItemAsync(item, ctx, o.hook ? { hook: o.hook } : {});
+  private async decide(item: RelayItem, match: RelayMatch, o: RelayCallOptions, teen: RelayTeen = NOT_TEEN): Promise<RelayResult> {
+    const res = await relayItemAsync(item, this.context(item, match, o, teen), { hook: o.hook });
+    if (res.classifierError !== undefined) this.host.classifierFailed(item.id, res.classifierError);
+    return teen.ageStated ? { ...res, record: { ...res.record, ageSignal: true } } : res;
   }
 
-  private context(item: RelayItem, match: RelayMatch, o: RelayCallOptions): RelayContext {
+  private context(item: RelayItem, match: RelayMatch, o: RelayCallOptions, teen: RelayTeen): RelayContext {
     const party = (id: MemberId): RelayParty => {
       const m = this.host.member(id), c = o.canonical?.get(id);
       const strict = o.canonical !== undefined;
@@ -150,7 +158,7 @@ export class RelayDesk {
     const thread = this.thread(match.id);
     const mine = (thread?.messages ?? []).filter(x => x.from === item.from && x.kind === "text").map(x => bodyOf(x.rendered)).filter((x): x is string => !!x).slice(-3);
     const facts = this.host.privateFacts();
-    const teenPair = item.kind === "text" && this.host.teenPair?.(match.id) === true && (o.canonical === undefined || match.participants.every(p => o.canonical?.get(p)?.teenReady === true));
+    const teenPair = item.kind === "text" && teen.pair && (o.canonical === undefined || match.participants.every(p => o.canonical?.get(p)?.teenReady === true));
     return {
       ...(teenPair ? { teenFriendPair: true } : {}),
       now: item.at,
@@ -161,17 +169,17 @@ export class RelayDesk {
       recentTexts: mine,
       thread: (thread?.messages ?? []).map(x => x.rendered).filter((x): x is string => !!x).slice(-4),
       guard: relayGuard({ forbidden: facts.forbidden, facts: facts.forbidden.filter(f => (typeof f === "string" ? f : f.text).trim().split(/\s+/).length >= 2), canaries: facts.canaries }),
-      ...(this.host.ratesPhotos || teenPair ? { extraRules: (t: string) => [
+      ...(this.host.ratesPhotos || teenPair || teen.ageStated ? { extraRules: (t: string) => [
         ...(this.host.ratesPhotos && appearanceLeak(t) ? ["rating:appearance"] : []),
-        ...(teenPair && this.host.saysYounger?.(item.from, t) === true ? ["teen:age_talk"] : []),
+        ...(teenPair && teen.younger ? ["teen:age_talk"] : []),
+        ...(teen.ageStated ? [AGE_STATED] : []),
       ] } : {}),
     };
   }
 
-  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string): RelayOutcome {
+  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string, saysYounger = false): RelayOutcome {
     const ageSignal = res.record.ageSignal;
     this.log(res.record);
-    const saysYounger = item.kind === "text" && item.text !== undefined && this.host.saysYounger?.(item.from, item.text) === true;
     if (relayStartsMinorPolicy(ageSignal || saysYounger, this.host.member(item.from)?.markedMinor ?? false)) this.host.minorSignal(item.from, saysYounger);
     if (relaySevereBlockCaseEvent(VERDICT[res.decision], res.reasons.some(r => SEVERE_REASON_FAMILIES.has(r.split(":")[0]!)))) this.host.severeBlock(item.from);
     const decision = stepRelay(initialRelay, { type: "recordVerdict", verdict: VERDICT[res.decision] });

@@ -1,9 +1,6 @@
 // Person and membership rules for the public API and for the text channel (platform plan 2.4-2.6,
 // 3.4, 4.3). Rules:
 //  - The verified phone finds the person. A second app's join adds a membership to the same person.
-//  - Age is a person-level fact: the lowest age ever stated wins, on every app. The phone's age floor
-//    (a keyed hash and an age, platform.age_floor) keeps it for a phone with no person yet and after a
-//    delete of everything, so a retry with an older age is refused.
 //  - An under-age join stores nothing for that app (only the age floor).
 //  - Nothing crosses apps by default. A share grant names fields; sensitive classes are never shareable.
 //  - A phone not seen for 12 months may have a new owner: at the next login or message the number is
@@ -83,7 +80,7 @@ export function parseHome(body: Record<string, unknown>): HomeInput | undefined 
 
 export type JoinInput = JoinProfile & ({ age: number; birthDate?: undefined } | { birthDate: number; age?: undefined });
 
-export interface JoinProfile {
+interface JoinProfile {
   firstName: string;
   homeCity?: Extract<City, "nyc" | "sf">;
   neighborhood?: string;
@@ -101,7 +98,7 @@ export interface TeenAgeFacts { firstReadingExact: boolean; lineType: string | n
 
 const ISO_BIRTH_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-export const joinReading = (input: JoinInput): AgeReading =>
+const joinReading = (input: JoinInput): AgeReading =>
   input.birthDate !== undefined ? { kind: "birthDate", birthDate: input.birthDate } : { kind: "age", age: input.age };
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -292,7 +289,7 @@ export class Accounts {
 
   private async ageRecorded(phoneHash: string): Promise<void> {
     const fn = this.ageListener;
-    if (fn) await Promise.resolve().then(() => fn(phoneHash)).catch(() => {});
+    if (fn) await fn(phoneHash);
   }
 
   private async currentPhoneForChange(who: Who, at?: number) {
@@ -303,13 +300,6 @@ export class Accounts {
     return { ownership: "OwnedPhone" as const, person };
   }
 
-  /**
-   * Step 1 of a member's own number change. `freshSignIn` says whether the caller's sign-in on the current
-   * number (a platform code or a Cloud phone proof) is fresh: the confirmation from the existing number.
-   * `sendCode` sends a code to the new number through the OTP service and its limits. The answer never says
-   * whether the new number is known or banned: that is checked at step 2, after the person proved they hold it.
-   */
-  // spec/phoneChange.md, "The request uses the existing account"
   async startNumberChange(app: AppInfo, who: Who, newE164: string, freshSignIn: boolean, sendCode: () => Promise<boolean>): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> {
     const at = this.now();
     const request = stepPhoneChange(phoneChangeInitial, { type: "requestChallenge", freshSignIn, sameNumber: newE164 === who.e164 });
@@ -683,7 +673,6 @@ export class Accounts {
     const person = await this.personFor(who.e164);
     if (!person) return false;
     return this.store.withLock(`profile-share:${person.id}`, async () => {
-      // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
       if (await this.banned(who.e164, person)) return false;
       const [to, from] = await Promise.all([this.store.getMembership(person.id, app.id), this.store.getMembership(person.id, fromApp)]);
       const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited" && m.state !== "restricted";

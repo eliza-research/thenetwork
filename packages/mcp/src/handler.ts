@@ -32,7 +32,7 @@ import {
 } from "../../core/src/generated/connectedAssistants.ts";
 import {
   configuredHostServes, connectorAddressCeilingMinute, connectorAnonymousPerAddressMinute, connectorLimitKey, connectorRegisterBucket,
-  connectorRegisterPerAddressHour, connectorAssistantRegisterPerAddressHour, connectorRequestsPerGrantMinute, connectorTokenAddressCeilingMinute,
+  connectorRegisterLimit, connectorRequestsPerGrantMinute, connectorTokenAddressCeilingMinute,
   connectorTokenPerGrantMinute, profileDailyCap, profileLimitReached, type RegisterBucket,
 } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
@@ -41,7 +41,7 @@ import { confirmHandoff, grantHandoff, offerHandoff } from "./signup-handoff.ts"
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage } from "./pages.ts";
-import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, scopesOn, type SignupDraftFields, type Token } from "./store.ts";
+import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, scopesOn, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
@@ -85,7 +85,7 @@ export interface McpHandlerOptions {
   /** OAuth Client ID Metadata Documents: the fetch used to read a client's https client_id. Without it, CIMD is off. */
   cimdFetch?: typeof fetch;
   ttl?: Partial<typeof TTL>;
-  limits?: Partial<typeof LIMITS>;
+  limits?: Partial<typeof LIMITS & { registerPerIpHour: number; registerAssistantPerIpHour: number }>;
   /** The minimum time of the "text me a code" answer, so a known and an unknown number look the same (default 700 ms). */
   minOtpStartMs?: number;
   log?: (s: string) => void;
@@ -99,10 +99,7 @@ export const TTL = {
   codeMs: 5 * 60_000,
   requestMs: 15 * 60_000,
 };
-/** spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling". */
 export const LIMITS = {
-  registerPerIpHour: connectorRegisterPerAddressHour,
-  registerAssistantPerIpHour: connectorAssistantRegisterPerAddressHour,
   authorizePerIpHour: 60,
   tokenPerGrantMinute: connectorTokenPerGrantMinute,
   tokenPerIpMinute: connectorTokenAddressCeilingMinute,
@@ -222,7 +219,9 @@ function decodeHeaderValue(v: string | null): string | null {
 function parseScopes(s: string | null | undefined, offered: readonly Scope[]): Scope[] | undefined {
   if (s === null || s === undefined || s.trim() === "") return DEFAULT_SCOPES.filter(p => offered.includes(p));
   const parts = [...new Set(s.trim().split(/\s+/))];
-  return parts.every(p => (SCOPES as readonly string[]).includes(p)) ? (parts as Scope[]).filter(p => offered.includes(p)) : undefined;
+  if (!parts.every(p => (SCOPES as readonly string[]).includes(p))) return undefined;
+  const granted = (parts as Scope[]).filter(p => offered.includes(p));
+  return granted.length ? granted : undefined;
 }
 
 /** RFC 7591 redirect URI rules: absolute, no fragment, no userinfo, https; http only for a loopback host. */
@@ -262,7 +261,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const now = o.now ?? Date.now;
   const ttl = { ...TTL, ...o.ttl };
   const lim = { ...LIMITS, ...o.limits };
-  const registerLimits: Record<RegisterBucket, number> = { AssistantRegisterBucket: lim.registerAssistantPerIpHour, AddressRegisterBucket: lim.registerPerIpHour };
+  const registerOverride: Record<RegisterBucket, number | undefined> = { AssistantRegisterBucket: o.limits?.registerAssistantPerIpHour, AddressRegisterBucket: o.limits?.registerPerIpHour };
   const log = o.log ?? (s => console.log(s));
   /** Recompute the affected assistant from all of the person's grants after an OAuth change. */
   async function reconcileAssistantSignal(grant: Grant | undefined) {
@@ -363,7 +362,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   // operator disabling the opt-in suspends access without deleting consent or blocking revoke.
   function openAiUnavailable(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
     const openAi = assistantOf(client) === "chatgpt" || (client.kind === "cimd" && isOpenAiHost(new URL(client.id).hostname));
-    return openAi && !c.app.openai && !customSlopClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
+    return openAi && !c.app.openai && !slopChatGptClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
   }
 
   function chatGptRedirects(uris: readonly string[]): boolean {
@@ -373,7 +372,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     });
   }
 
-  function customSlopClient(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
+  function slopChatGptClient(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
     return c.app.id === "slop" && client.kind === "dcr" && chatGptRedirects(client.redirectUris);
   }
 
@@ -437,13 +436,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
     const b = await readJson(c.req);
     const uris = b?.redirect_uris;
-    const valid = Array.isArray(uris) && uris.length >= 1 && uris.length <= 5 && uris.every(redirectUriAllowed);
-    const bucket = connectorRegisterBucket(valid && (uris as string[]).every(uri => assistantOf({ redirectUris: [uri], surface: "full" }) !== "web"));
-    if (await limited(`reg:${bucket}:${sha256hex(ipBucket(c.ip))}`, registerLimits[bucket], 3_600_000)) return tooMany(3600);
+    const listed = Array.isArray(uris) && uris.length >= 1 && uris.length <= 5;
+    const allowed = listed && uris.every(redirectUriAllowed);
+    const bucket = connectorRegisterBucket(allowed && (uris as string[]).every(uri => assistantOf({ redirectUris: [uri], surface: "full" }) !== "web"));
+    if (await limited(`reg:${bucket}:${sha256hex(ipBucket(c.ip))}`, registerOverride[bucket] ?? connectorRegisterLimit(bucket), 3_600_000)) return tooMany(3600);
     const bad = (d: string, error = "invalid_client_metadata") => json(400, { error, error_description: d });
     if (!b) return bad("The body must be a JSON object.");
-    if (!Array.isArray(uris) || uris.length < 1 || uris.length > 5) return bad("redirect_uris must list 1 to 5 URIs.", "invalid_redirect_uri");
-    if (!uris.every(redirectUriAllowed)) return bad("Each redirect URI must be https (http only for localhost), with no fragment and no wildcard.", "invalid_redirect_uri");
+    if (!listed) return bad("redirect_uris must list 1 to 5 URIs.", "invalid_redirect_uri");
+    if (!allowed) return bad("Each redirect URI must be https (http only for localhost), with no fragment and no wildcard.", "invalid_redirect_uri");
     const method = (b.token_endpoint_auth_method ?? "client_secret_basic") as ClientAuthMethod;
     if (!["none", "client_secret_basic", "client_secret_post"].includes(method)) return bad("token_endpoint_auth_method must be none, client_secret_basic or client_secret_post.");
     const grants = (b.grant_types ?? ["authorization_code", "refresh_token"]) as unknown[];
@@ -452,8 +452,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!Array.isArray(responses) || !responses.every(r => r === "code")) return bad("response_types may be code only.");
     if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope, scopesOn(c.app.id)))) return bad(`Supported scopes: ${scopesOn(c.app.id).join(", ")}.`);
     const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f]/g, "").slice(0, 100) : null;
-    const custom = c.app.id === "slop" && chatGptRedirects(uris as string[]);
-    const surface: Surface = !custom && !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
+    const slopChatGpt = c.app.id === "slop" && chatGptRedirects(uris as string[]);
+    const surface: Surface = !slopChatGpt && !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
     if (surface === "openai" && !c.app.openai) return bad("This app is not available for this client.");
     const secret = method === "none" ? null : randomToken("ntws_");
     const client: OAuthClient = { id: `mcp_${randomId()}`, secretHash: secret ? sha256hex(secret) : null, name, redirectUris: uris as string[], authMethod: method, app: c.app.id, surface, kind: "dcr", createdAt: now() };
@@ -523,7 +523,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const rawResource = q.get("resource");
     const resource = rawResource ? canonicalResource(rawResource, c.issuer) : resourceFor(c.issuer, client.surface);
     if (!resource) return fail("invalid_target", "resource must be this site's MCP endpoint");
-    if (customSlopClient(c, client) && resource !== resourceFor(c.issuer, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
+    if (slopChatGptClient(c, client) && resource !== resourceFor(c.issuer, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
     if (client.surface === "openai" && resource !== resourceFor(c.issuer, "openai")) return fail("invalid_target", "this client must use the /mcp/openai endpoint");
     // login_hint, phone or any other person data in the URL is never read: the person types it on our page.
     const browser = randomToken();
@@ -545,19 +545,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   function signupClientAllowed(c: Ctx, r: AuthRequest, client: OAuthClient): boolean {
     const surfaceOffered = c.app.openai || (client.surface === "full" && r.resource === resourceFor(c.issuer, "full")
-      && assistantOf(client) !== "chatgpt" && !customSlopClient(c, client));
+      && assistantOf(client) !== "chatgpt" && !slopChatGptClient(c, client));
     return browserSignupAppAllowed(c.app.id, surfaceOffered, tokenCovers("check_status", r.scopes), tokenCovers("submit_profile", r.scopes))
       && !!o.platform.session && !!o.platform.signupEnrollment && !!o.platform.joinSignup;
   }
 
-  async function signupDraftFor(app: McpAppId, e164: string, personId: string | null): Promise<SignupDraftFields | null> {
-    if (!signupDraftAppEnabled(app)) return null;
+  async function discardUnusableSignupDraft(app: McpAppId, e164: string, personId: string | null): Promise<void> {
+    if (!signupDraftAppEnabled(app)) return;
     const key = o.platform.phoneKey(e164);
     const status = personId === null ? "not_joined" : await o.platform.status(personId, app, key);
-    const ageAllowed = !!o.platform.signupAgeAllowed && await o.platform.signupAgeAllowed(key, app);
-    const route = signupDraftClaimRoute(status, ageAllowed, await o.platform.grantIsBanned(key, personId));
+    const route = signupDraftClaimRoute(status, await o.platform.signupAgeAllowed(key, app, now()), await o.platform.grantIsBanned(key, personId));
     if (route === "DiscardDraft") await store.deleteSignupDrafts(key, app);
-    return route === "ReadDraft" ? (await store.claimSignupDraft(key, app, personId, now())) ?? null : null;
   }
 
   async function discardBannedSignupDrafts(app: McpAppId, e164: string, personId: string | null): Promise<void> {
@@ -661,7 +659,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   function validBrowserEntry(c: Ctx, r: AuthRequest, client: OAuthClient): boolean {
     return client.app === c.app.id && client.redirectUris.includes(r.redirectUri) && !!canonicalResource(r.resource, c.issuer)
       && (client.surface !== "openai" || r.resource === resourceFor(c.issuer, "openai"))
-      && (!customSlopClient(c, client) || r.resource === resourceFor(c.issuer, "full"))
+      && (!slopChatGptClient(c, client) || r.resource === resourceFor(c.issuer, "full"))
       && validChallenge(r.codeChallenge) && !openAiUnavailable(c, client);
   }
 
@@ -719,7 +717,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (r.e164 !== null) await discardBannedSignupDrafts(c.app.id, r.e164, r.personId);
       return expired();
     }
-    const draft = form.get("decision") === "open" && r.step === "consent" ? await signupDraftFor(c.app.id, who.e164, who.personId) : null;
+    if (form.get("decision") === "open" && r.step === "consent") await discardUnusableSignupDraft(c.app.id, who.e164, who.personId);
     const signupView = signupFormProof(r, "signup");
     const decision = form.get("decision");
     const exactForm = safeEqual(form.get("signupView") ?? "", signupView);
@@ -728,7 +726,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const enrollment = await availableSignup(c, who);
     if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
     const showSignup = (error?: string) => {
-      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error, draft });
+      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;
     };
@@ -1292,7 +1290,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const out = (status: number, body: unknown, headers: Record<string, string> = {}) => json(status, body, { ...cors, ...headers });
     const address = sha256hex(ipBucket(c.ip));
     const tooManyRequests = () => out(429, rpcError(null, -31029, "Too many requests"), { "retry-after": "60" });
-    // spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling"
     if (await limited(`mcp:ceiling:${address}`, lim.mcpIpCeilingMinute, 60_000)) return tooManyRequests();
     const auth = await bearer(c, resource);
     const verified = auth !== null && typeof auth === "object";
@@ -1376,7 +1373,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           }
           if (await limited(`status:grant:${auth.grant.id}`, lim.statusPerGrantMinute, 60_000)) return out(429, rpcError(id, -31029, "Too many requests"), { "retry-after": "60" });
           const args = checkArgs(tool, params.arguments, [], host);
-          // spec/connectorTools.md: the generated guard of the call.
           if (!canCallTool(connectionOf(host, surface, auth.token.scopes), tool)) {
             const text = tool === "prepare_signup" && !args.ok ? args.message : "The person must sign in on the site and allow access first.";
             return result({ content: [{ type: "text", text }], isError: true });
@@ -1389,7 +1385,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
           }
         }
-        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, scopes: auth?.token.scopes ?? [], store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
+        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, scopes: auth?.token.scopes ?? [], store, now: now(), log, assistant: auth ? assistantOf(auth.client) : undefined });
         if ((need === "profile:read" || need === "photos:use") && r.kind === "ok" && auth) {
           const live = await bearer(c, resource);
           if (live === "unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
@@ -1516,8 +1512,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     },
     async discardAgeRefusedSignupDrafts(phoneKey) {
       for (const id of (Object.keys(apps) as McpAppId[]).filter(signupDraftAppEnabled)) {
-        const ageAllowed = !!o.platform.signupAgeAllowed && await o.platform.signupAgeAllowed(phoneKey, id);
-        if (signupDraftAfterAgeRecorded(ageAllowed) === "DeleteDraft") await store.deleteSignupDrafts(phoneKey, id);
+        if (signupDraftAfterAgeRecorded(await o.platform.signupAgeAllowed(phoneKey, id, now())) === "DeleteDraft") await store.deleteSignupDrafts(phoneKey, id);
       }
     },
     async forgetPerson(personId, app) {

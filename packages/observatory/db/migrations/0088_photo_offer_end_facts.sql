@@ -1,10 +1,3 @@
-alter table platform.photo_offers add column party_ended boolean not null default false;
-
-drop index if exists platform.photo_offers_one_open;
-create unique index photo_offers_one_open on platform.photo_offers (app_id, sender_person_id, recipient_person_id) where phase in ('asking','reviewing');
-drop index if exists platform.photo_offers_checked;
-create index photo_offers_checked on platform.photo_offers (app_id, checked_at) where phase in ('asking','reviewing') or (phase = 'ready' and party_ended);
-
 create function platform.end_photo_offers_of(people uuid[], app text, released text[]) returns void
   language sql security definer set search_path = pg_catalog as $$
   update platform.photo_offers set party_ended = true

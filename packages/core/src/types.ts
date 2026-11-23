@@ -97,7 +97,6 @@ export interface Member {
   birthKey?: number;
   birthExact?: boolean;
   ageConflict?: boolean;
-  maxAge?: number;
   teenBarred?: boolean;
   teenHeld?: boolean;
   teenReady?: boolean;

@@ -1,21 +1,16 @@
 import type { AlertDispatch, DispatchPhase, Event } from "../../packages/core/src/generated/opsAlertDispatch.ts";
+import { HOUR, MINUTE } from "../../packages/core/src/clock.ts";
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { AlertDispatcher, PgAlertStore, type Alert, type DispatchResult } from "../../deploy/backend/ops.ts";
 import { withConformanceDatabases } from "./conformanceDatabase.ts";
 import { serveJourney } from "./serveJourney.ts";
-
-// Each key is one alert round of the backend's AlertDispatcher (deploy/backend/ops.ts) on its own database: the
-// round holds a database-wide advisory lock, so two rounds in one database never run at the same time. The round is
-// built from the event that prepares it: as many new alerts as notices, as many recorded posts in the last hour, and
-// that hourly limit. The webhook holds every post open until recordDelivery answers it, so `PostingNotices` is a
-// round whose shell waits on its post.
 
 const START = Date.UTC(2026, 9, 9, 16);
 const LANES = 2;
 
 type Round = {
   sql: SQL;
-  result?: Promise<DispatchResult | undefined>;
+  result?: Promise<void>;
   done?: DispatchResult | Error;
   post?: { resolve(accepted: boolean): void };
   posted?: () => void;
@@ -36,7 +31,7 @@ await withConformanceDatabases("ops_alert_conformance", LANES, async databases =
 
   async function prepare(round: Round, event: Extract<Event, { type: "prepareDispatch" }>) {
     for (let n = 0; n < event.postsLastHour; n++) {
-      await round.sql`insert into network.ops_alert_posts (at, alerts, ok) values (${new Date(START - 60_000 * (n + 1))}, 1, true)`;
+      await round.sql`insert into network.ops_alert_posts (at, alerts, ok) values (${new Date(START - MINUTE * (n + 1))}, 1, true)`;
     }
     const alerts: Alert[] = Array.from({ length: event.noticeCount }, (_, n) => ({
       key: `conformance_alert_${n}`, level: "warn", count: n + 1, text: `Conformance alert ${n}`,
@@ -44,18 +39,17 @@ await withConformanceDatabases("ops_alert_conformance", LANES, async databases =
     const dispatcher = new AlertDispatcher({
       store: new PgAlertStore(round.sql),
       post: () => new Promise<boolean>(resolve => { round.post = { resolve }; round.posted?.(); }),
-      now: () => START, repeatMs: 3_600_000, maxPostsPerHour: event.hourlyLimit, format: "json", env: "conformance", build: "conformance",
+      now: () => START, repeatMs: HOUR, maxPostsPerHour: event.hourlyLimit, format: "json", env: "conformance", build: "conformance",
     });
     const posted = new Promise<void>(resolve => { round.posted = resolve; });
-    round.result = dispatcher.dispatch(alerts);
-    round.result.then(result => { round.done = result; }, (error: Error) => { round.done = error; });
-    await Promise.race([posted, round.result.catch(() => {})]);
+    round.result = dispatcher.dispatch(alerts).then(result => { round.done = result; }, (error: Error) => { round.done = error; });
+    await Promise.race([posted, round.result]);
     round.posted = undefined;
     if (round.post === undefined) await settled(round);
   }
 
   async function settled(round: Round): Promise<DispatchResult> {
-    await round.result!.catch(() => {});
+    await round.result;
     if (round.done instanceof Error) throw round.done;
     if (round.done === undefined) throw new Error("Another round held the alert lock");
     return round.done;
@@ -86,14 +80,17 @@ await withConformanceDatabases("ops_alert_conformance", LANES, async databases =
   }
 
   async function reset() {
+    const failures: Error[] = [];
     for (const round of rounds.values()) {
       round.post?.resolve(false);
       round.post = undefined;
-      await round.result?.catch(() => {});
+      await round.result;
+      if (round.done instanceof Error) failures.push(round.done);
       await round.sql`delete from network.ops_alert_posts`;
       await round.sql`delete from network.ops_alerts`;
     }
     rounds.clear();
+    if (failures.length > 0) throw new AggregateError(failures, "An alert round failed during the journey");
     return null;
   }
 

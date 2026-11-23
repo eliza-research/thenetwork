@@ -33,7 +33,7 @@ export function hiddenFree(p: Persona, t: number, seed: number | string): boolea
 
 /** Something that knows where a persona is (Oracle.presentIn). */
 export interface PresenceCheck { presentIn(p: Persona, city: City, t: number): boolean }
-export interface WorldTruth extends PresenceCheck { readonly coins: Coins }
+interface WorldTruth extends PresenceCheck { readonly coins: Coins }
 
 /** Free at `t` for a meeting in `city`: in that city then (trips count) and free in its week. */
 export function freeFor(p: Persona, t: number, city: City, seed: number | string, presence: PresenceCheck): boolean {

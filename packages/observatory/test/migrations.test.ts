@@ -107,6 +107,13 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
     for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_slop", "network_observatory_peon", "network_observatory_cross_app"]) {
       for (const rel of ["platform.teen_pool_holds", "platform.teen_pair_avoid"]) expect([role, rel, await as(role, tx => tx.unsafe(`select 1 from ${rel}`))]).toEqual([role, rel, denied]);
     }
+    expect(await as("network_observatory_slop", tx => tx`select from_id, to_id, at from platform.teen_pair_avoid_members_slop`)).toEqual({ v: [] });
+    expect(await as("network_observatory_slop", tx => tx`select teen_pool_held from platform.matching_ages_slop where member_id = 's1'`)).toEqual({ v: [{ teen_pool_held: false }] });
+    expect(await as("network_observatory_slop", tx => tx`select 1 from platform.teen_pair_avoid_members_ntwrk`)).toEqual(denied);
+    expect(await as("network_observatory_slop", tx => tx`select 1 from platform.teen_pair_avoid_members`)).toEqual(denied);
+    expect(await as("network_observatory_slop", tx => tx`select explanation from network.review_judgments`)).toEqual({ v: [] });
+    expect(await as("network_observatory_slop", tx => tx`select packet from network.review_judgments`)).toEqual(denied);
+    expect(await as("network_observatory_cross_app", tx => tx`select explanation from network.review_judgments`)).toEqual(denied);
   }, T);
 
   test("OBS-08: the cross-app role cannot read names, bios, ages or message texts; its counts work", async () => {

@@ -17,7 +17,6 @@ function profileText(x: Mini, id: string, body: string) {
   return x.net.onInbound({ id, memberId: "a", source: "mcp", channel: "sms", ts: x.clock.now(), body });
 }
 
-// spec/standingIntentManagement.md, "Saying a want again changes nothing that the member paused or closed"
 test("a paused want stays paused when profile text or the member's own ask names it again", async () => {
   for (const seed of [1, 2, 3]) {
     const x = new Mini([climber, belayer], { seed, inlineJudge: holdEveryItem.inline, onboardingRequests: false });
@@ -49,7 +48,6 @@ test("a paused want stays paused when profile text or the member's own ask names
   }
 });
 
-// spec/standingIntentManagement.md, "Saying a want again changes nothing that the member paused or closed" (a request with no desire)
 test("profile text does not bring back a closed request that has no desire, and the member's own ask does", async () => {
   for (const seed of [1, 2, 3]) {
     const x = new Mini([climber], { seed, inlineJudge: holdEveryItem.inline, onboardingRequests: false });
@@ -75,7 +73,6 @@ test("profile text does not bring back a closed request that has no desire, and 
   }
 });
 
-// spec/memberRequest.md, "Only the member's pending request for a withdrawn desire closes" (requesterHearsOpportunityClose)
 test("the later close of an introduction that a pause kept tells the paused member nothing", async () => {
   for (const seed of [1, 2, 3]) {
     const x = new Mini([climber, belayer], { seed, inlineJudge: holdEveryItem.inline, onboardingRequests: false });
@@ -83,6 +80,7 @@ test("the later close of an introduction that a pause kept tells the paused memb
     await x.say("a", "Find me a climbing partner.");
     const request = x.net.exportState().requests.at(-1)!;
     const oppId = request.oppId!;
+    await x.net.tick(x.clock.now());
     expect(x.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
     expect(await x.runUntil(() => x.probed("a"))).toBe(true);
     await x.say("a", "Yes, that works for me.");
@@ -100,13 +98,13 @@ test("the later close of an introduction that a pause kept tells the paused memb
   }
 });
 
-// spec/standingIntentManagement.md, "A bare reply answers only the newest open standing question" (standingCloseConfirmed)
 test("CLOSE to a pause text that named no introduction asks first when an introduction started later", async () => {
   for (const seed of [1, 2, 3]) {
     const x = new Mini([climber, belayer], { seed, inlineJudge: holdEveryItem.inline, onboardingRequests: false });
     await x.onboard("a", "b");
     await x.say("a", "Find me a climbing partner.");
     const oppId = x.net.exportState().requests.at(-1)!.oppId!;
+    await x.net.tick(x.clock.now());
     expect(x.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
     expect(await x.runUntil(() => x.probed("a"))).toBe(true);
     expect(command(x, "what am I looking for", "list-1").kind).toBe("reply");

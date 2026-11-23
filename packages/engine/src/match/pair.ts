@@ -70,9 +70,6 @@ function masksAccept(a: MatchProfile, b: MatchProfile): boolean {
 
 export const masksAdmit = (a: MatchProfile, b: MatchProfile): boolean => maskPairAllowed(masksAccept(a, b), masksAccept(b, a));
 
-export const maskRefusesAdmitted = (w: World, a: MatchProfile, b: MatchProfile): boolean =>
-  !masksAdmit(a, b) && pairReason(w, a.memberId, b.memberId, laneCategory(a.lane), a.lane) === null;
-
 export function eligiblePair(w: World, a: MatchProfile, b: MatchProfile): string | null {
   if (a.memberId === b.memberId) return "duplicate_participant";
   if (a.lane !== b.lane || !laneSidesCompatible(a.lane, a.side, b.side)) return "lane_mismatch";

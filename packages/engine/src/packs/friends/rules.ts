@@ -1,6 +1,7 @@
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { NETWORK_MEMBER_RULES, NETWORK_PAIR_RULES } from "../network/rules.ts";
 import { friendsMutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
+import { friendsVerifyPasses } from "../../../../core/src/generated/friendIntroAge.ts";
 import { friendsInfo } from "./info.ts";
 import type { World } from "../../world.ts";
 import type { MemberId } from "@thenetwork/core";
@@ -31,7 +32,7 @@ let memberRules: readonly MemberRule[] | undefined;
 export const friendsMemberRules = (): readonly MemberRule[] => (memberRules ??= [
   { id: "romance_excluded", check: (_w, _id, _mi, c) => (c.category === "romance" ? "romance_excluded" : null) },
   net("category_opt_out"),
-  { id: "unverified", check: (w, id) => (friendsInfo(w).get(id)?.verified ? null : "unverified") },
+  { id: "unverified", check: (w, id) => (friendsVerifyPasses(w.get(id)?.m.teenReady === true, friendsInfo(w).get(id)?.verified === true) ? null : "unverified") },
   { id: "safety_review", check: (w, id) => (friendsInfo(w).get(id)?.safetyCue ? "safety_review" : null) },
   net("only_when_asked"),
   net("reliability_holdout"),

@@ -130,7 +130,7 @@ pure def sometimesCheckFailed(signIn: StaffSignIn): bool = signIn.phase == Check
 
 ### The server serves data only to a single sign-on identity with a second factor
 
-The server reads the second factor from the authentication methods that the verified Cloudflare Access assertion names. It answers the identity check for every accepted identity and tells whether a second factor is present. It refuses every other route and the live socket to a single sign-on identity without a second factor. A token identity has no second factor, and the start rule accepts tokens only with data on this machine. This rule is new: before it, the server did not read the second factor, so a single sign-on identity without one got its full roles and the second-factor phase never occurred (audit stories-b-1).
+The server reads the second factor from the authentication methods that the verified Cloudflare Access assertion names. It answers the identity check for every accepted identity and tells whether a second factor is present. It refuses every other route and the live socket to a single sign-on identity without a second factor. A token identity has no second factor, and the start rule accepts tokens only with data on this machine. Changed (audit stories-b-1): the server did not read the second factor -> it reads it, because a single sign-on identity without one got its full roles and the second-factor phase never occurred.
 
 ```quint
 pure def identityServed(viaAccess: bool, secondFactorShown: bool): bool = not(viaAccess) or secondFactorShown
@@ -144,7 +144,7 @@ pure def lawAccessWithoutSecondFactorGetsNoData(grants: int): bool =
 
 ### A second factor is the multi-factor method or two distinct methods
 
-The server reads the authentication methods (`amr`) of the verified Cloudflare Access assertion. It counts each distinct method name once, without case. The assertion shows a second factor only when it names the multi-factor method (`mfa`) or at least two distinct methods. One method alone is never a second factor, because one-time code, hardware key, software key and smart card can each be the only method of a sign-in (an emailed one-time PIN gives `otp` alone). This rule is new: before it, the shell decided, and any one of `mfa`, `otp`, `hwk`, `swk` or `sc` counted, so a sign-in with only an emailed code got full staff roles (audit of the stories-b-1 fix).
+The server reads the authentication methods (`amr`) of the verified Cloudflare Access assertion. It counts each distinct method name once, without case. The assertion shows a second factor only when it names the multi-factor method (`mfa`) or at least two distinct methods. One method alone is never a second factor, because one-time code, hardware key, software key and smart card can each be the only method of a sign-in (an emailed one-time PIN gives `otp` alone). Changed (audit stories-b-1): the shell decided, and any one of `mfa`, `otp`, `hwk`, `swk` or `sc` counted -> this rule decides, because a sign-in with only an emailed code got full staff roles.
 
 ```quint
 pure val staffSignInDistinctMethodsForSecondFactor = 2

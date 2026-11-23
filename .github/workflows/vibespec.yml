@@ -236,7 +236,8 @@ jobs:
         if: steps.download-shard.outcome == 'success'
         continue-on-error: true
         run: python3 scripts/formal-shard-artifacts.py restore "$RUNNER_TEMP/formal-artifact"
-      - run: pnpm run connector:css
+      - name: Build the connector CSS
+        run: pnpm run connector:css
       - name: Run the full Vibestack check (the nightly profile on the schedule)
         id: check
         shell: bash

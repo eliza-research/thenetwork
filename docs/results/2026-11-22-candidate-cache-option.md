@@ -1,6 +1,6 @@
 # Incremental candidate cache: a recorded option, not wired (2026-11-22)
 
-This report is hand-written. The measured numbers come from the saved output of the incr wave, `/Users/nubs/tn-work/w1-incr/fix1/test-repo.txt` (abbreviated `incr/`). No new run was made for this report. No model was called and no member data was read.
+This report is hand-written. The measured numbers come from the saved output of the incr wave, `<run dir>/w1-incr/fix1/test-repo.txt` (abbreviated `incr/`; the wave's run directory on the build machine, not in the repository). No new run was made for this report. No model was called and no member data was read.
 
 ## Decision
 

@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
-export interface QueueFacts { humanReview: boolean; reviewItems: boolean; requestsKnown: boolean }
+export interface QueueFacts { reviewItems: boolean; requestsKnown: boolean }
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export type ConsoleMode = "SimulatedMode" | "RealMode";
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
@@ -22,7 +22,7 @@ export type ConsoleView = "LoadingView" | "NoRoleView" | "AllAppsView" | "Person
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
 export type HitGroups = "NoHits" | "NamesAndPlaces" | "NamesPlacesAndIds";
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
-export interface TabFacts { simulated: boolean; analystRole: boolean; realOnlyServer: boolean; humanReview: boolean; reviewItems: boolean; requestsKnown: boolean }
+export interface TabFacts { simulated: boolean; analystRole: boolean; realOnlyServer: boolean; reviewItems: boolean; requestsKnown: boolean }
 /** Story: Use the stage and the drawer / The filter bar dims the filters that do not apply to the open tab (spec/consoleNavigation.md) */
 export type FilterKey = "RangeKey" | "BoroughKey" | "MembersKey" | "OriginKey" | "StateKey";
 
@@ -47,7 +47,7 @@ export type Event =
   | { type: "togglePick"; alreadyPicked: boolean; minorMember: boolean }
   | { type: "showStage"; target: ConsoleStage }
   | { type: "flyToVenue" }
-  | { type: "receiveQueues"; humanReview: boolean; reviewItems: boolean; requestsKnown: boolean }
+  | { type: "receiveQueues"; reviewItems: boolean; requestsKnown: boolean }
   | { type: "jumpToTab"; tab: DrawerTab }
   | { type: "toggleDrawer" }
   | { type: "chooseTab"; tab: DrawerTab };
@@ -57,7 +57,7 @@ export const maxFocusHistory: number = 20;
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export const maxPicks: number = 6;
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
-export const initial: ConsoleNav = { page: "AppPage", stage: "MapStage", subject: "Overview", depth: 0, wantedTab: "FeedTab", drawerOpen: true, popoverOpen: false, queryChars: 0, picks: 0, viewer: ({ known: false, mode: "SimulatedMode", appsHeld: 0, crossApp: false, admin: false, analyst: false, simRole: false, safety: false, realOnly: false } as Viewer), queues: ({ humanReview: false, reviewItems: false, requestsKnown: false } as QueueFacts) };
+export const initial: ConsoleNav = { page: "AppPage", stage: "MapStage", subject: "Overview", depth: 0, wantedTab: "FeedTab", drawerOpen: true, popoverOpen: false, queryChars: 0, picks: 0, viewer: ({ known: false, mode: "SimulatedMode", appsHeld: 0, crossApp: false, admin: false, analyst: false, simRole: false, safety: false, realOnly: false } as Viewer), queues: ({ reviewItems: false, requestsKnown: false } as QueueFacts) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -923,7 +923,7 @@ export function sometimesGraphStage(nav: ConsoleNav): boolean {
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
 //@ pure
 export function tabVisible(tab: DrawerTab, facts: TabFacts): boolean {
-  return tab === "ReviewTab" ? (facts.simulated ? facts.humanReview : facts.reviewItems) : (tab === "GameTab" ? facts.simulated : (tab === "RequestsTab" ? facts.requestsKnown : (tab === "LabTab" ? facts.analystRole && !facts.realOnlyServer : (tab === "ConfigTab" ? facts.analystRole : true))));
+  return tab === "ReviewTab" ? facts.reviewItems : (tab === "GameTab" ? facts.simulated : (tab === "RequestsTab" ? facts.requestsKnown : (tab === "LabTab" ? facts.analystRole && !facts.realOnlyServer : (tab === "ConfigTab" ? facts.analystRole : true))));
 }
 
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
@@ -935,7 +935,7 @@ export function shownTab(wanted: DrawerTab, facts: TabFacts): DrawerTab {
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
 //@ pure
 export function factsOf(nav: ConsoleNav): TabFacts {
-  return { simulated: nav.viewer.mode === "SimulatedMode", analystRole: nav.viewer.analyst, realOnlyServer: nav.viewer.realOnly, humanReview: nav.queues.humanReview, reviewItems: nav.queues.reviewItems, requestsKnown: nav.queues.requestsKnown };
+  return { simulated: nav.viewer.mode === "SimulatedMode", analystRole: nav.viewer.analyst, realOnlyServer: nav.viewer.realOnly, reviewItems: nav.queues.reviewItems, requestsKnown: nav.queues.requestsKnown };
 }
 
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
@@ -946,7 +946,7 @@ export function canReceiveQueues(nav: ConsoleNav): boolean {
 
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
 //@ pure
-export function receiveQueues(nav: ConsoleNav, humanReview: boolean, reviewItems: boolean, requestsKnown: boolean): ConsoleNav {
+export function receiveQueues(nav: ConsoleNav, reviewItems: boolean, requestsKnown: boolean): ConsoleNav {
   //@ ensures (inv(nav) && canReceiveQueues(nav)) ==> alwaysAppPageNeedsAnApp(\result)
   //@ ensures (inv(nav) && canReceiveQueues(nav)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
   //@ ensures (inv(nav) && canReceiveQueues(nav)) ==> alwaysNoRolePageOnlyWithoutRoles(\result)
@@ -965,7 +965,7 @@ export function receiveQueues(nav: ConsoleNav, humanReview: boolean, reviewItems
   //@ ensures (inv(nav) && canReceiveQueues(nav)) ==> stepVenueOpensTheMap(nav, "receiveQueues", \result)
   //@ ensures (inv(nav) && canReceiveQueues(nav)) ==> stepJumpOpensTheDrawer(nav, "receiveQueues", \result)
   //@ ensures (inv(nav) && canReceiveQueues(nav)) ==> stepChosenTabShowsUnlessItCollapses(nav, "receiveQueues", \result)
-  return { ...nav, queues: ({ humanReview: humanReview, reviewItems: reviewItems, requestsKnown: requestsKnown } as QueueFacts) };
+  return { ...nav, queues: ({ reviewItems: reviewItems, requestsKnown: requestsKnown } as QueueFacts) };
 }
 
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
@@ -1214,7 +1214,7 @@ export function step(current: ConsoleNav, event: Event): ConsoleNav {
   if (event.type === "togglePick") return canTogglePick(current, event.alreadyPicked, event.minorMember) ? togglePick(current, event.alreadyPicked, event.minorMember) : current;
   if (event.type === "showStage") return canShowStage(current, event.target) ? showStage(current, event.target) : current;
   if (event.type === "flyToVenue") return canFlyToVenue(current) ? flyToVenue(current) : current;
-  if (event.type === "receiveQueues") return canReceiveQueues(current) ? receiveQueues(current, event.humanReview, event.reviewItems, event.requestsKnown) : current;
+  if (event.type === "receiveQueues") return canReceiveQueues(current) ? receiveQueues(current, event.reviewItems, event.requestsKnown) : current;
   if (event.type === "jumpToTab") return canJumpToTab(current, event.tab) ? jumpToTab(current, event.tab) : current;
   if (event.type === "toggleDrawer") return canToggleDrawer(current) ? toggleDrawer(current) : current;
   if (event.type === "chooseTab") return canChooseTab(current, event.tab) ? chooseTab(current, event.tab) : current;
@@ -1254,7 +1254,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "togglePick" && typeof raw.alreadyPicked === "boolean" && typeof raw.minorMember === "boolean") return { type: "togglePick", alreadyPicked: raw.alreadyPicked, minorMember: raw.minorMember };
   if (raw.type === "showStage" && (raw.target === "MapStage" || raw.target === "GraphStage")) return { type: "showStage", target: raw.target };
   if (raw.type === "flyToVenue") return { type: "flyToVenue" };
-  if (raw.type === "receiveQueues" && typeof raw.humanReview === "boolean" && typeof raw.reviewItems === "boolean" && typeof raw.requestsKnown === "boolean") return { type: "receiveQueues", humanReview: raw.humanReview, reviewItems: raw.reviewItems, requestsKnown: raw.requestsKnown };
+  if (raw.type === "receiveQueues" && typeof raw.reviewItems === "boolean" && typeof raw.requestsKnown === "boolean") return { type: "receiveQueues", reviewItems: raw.reviewItems, requestsKnown: raw.requestsKnown };
   if (raw.type === "jumpToTab" && (raw.tab === "ReviewTab" || raw.tab === "FeedTab" || raw.tab === "PipelineTab" || raw.tab === "RequestsTab" || raw.tab === "EngineTab" || raw.tab === "SafetyTab" || raw.tab === "MetricsTab" || raw.tab === "LabTab" || raw.tab === "ConfigTab" || raw.tab === "GameTab")) return { type: "jumpToTab", tab: raw.tab };
   if (raw.type === "toggleDrawer") return { type: "toggleDrawer" };
   if (raw.type === "chooseTab" && (raw.tab === "ReviewTab" || raw.tab === "FeedTab" || raw.tab === "PipelineTab" || raw.tab === "RequestsTab" || raw.tab === "EngineTab" || raw.tab === "SafetyTab" || raw.tab === "MetricsTab" || raw.tab === "LabTab" || raw.tab === "ConfigTab" || raw.tab === "GameTab")) return { type: "chooseTab", tab: raw.tab };
@@ -1275,8 +1275,8 @@ export function parseState(x: unknown): ConsoleNav | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.page === "AppPage" || raw.page === "AllAppsPage" || raw.page === "PersonPage" || raw.page === "NoRolePage") && (raw.stage === "MapStage" || raw.stage === "GraphStage") && (raw.subject === "Overview" || raw.subject === "NeighborhoodSubject" || raw.subject === "MemberSubject" || raw.subject === "OpportunitySubject") && Number.isSafeInteger(raw.depth) && (raw.wantedTab === "FeedTab" || raw.wantedTab === "ReviewTab" || raw.wantedTab === "PipelineTab" || raw.wantedTab === "RequestsTab" || raw.wantedTab === "EngineTab" || raw.wantedTab === "SafetyTab" || raw.wantedTab === "MetricsTab" || raw.wantedTab === "LabTab" || raw.wantedTab === "ConfigTab" || raw.wantedTab === "GameTab") && typeof raw.drawerOpen === "boolean" && typeof raw.popoverOpen === "boolean" && Number.isSafeInteger(raw.queryChars) && Number.isSafeInteger(raw.picks) && typeof raw.viewer === "object" && raw.viewer !== null && !Array.isArray(raw.viewer) && typeof raw.viewer.known === "boolean" && (raw.viewer.mode === "SimulatedMode" || raw.viewer.mode === "RealMode") && Number.isSafeInteger(raw.viewer.appsHeld) && typeof raw.viewer.crossApp === "boolean" && typeof raw.viewer.admin === "boolean" && typeof raw.viewer.analyst === "boolean" && typeof raw.viewer.simRole === "boolean" && typeof raw.viewer.safety === "boolean" && typeof raw.viewer.realOnly === "boolean" && Object.keys(raw.viewer).length === 9 && typeof raw.queues === "object" && raw.queues !== null && !Array.isArray(raw.queues) && typeof raw.queues.humanReview === "boolean" && typeof raw.queues.reviewItems === "boolean" && typeof raw.queues.requestsKnown === "boolean" && Object.keys(raw.queues).length === 3 && Object.keys(raw).length === 11)) return undefined;
-  const parsed: ConsoleNav = ({ page: raw.page, stage: raw.stage, subject: raw.subject, depth: raw.depth, wantedTab: raw.wantedTab, drawerOpen: raw.drawerOpen, popoverOpen: raw.popoverOpen, queryChars: raw.queryChars, picks: raw.picks, viewer: ({ known: raw.viewer.known, mode: raw.viewer.mode, appsHeld: raw.viewer.appsHeld, crossApp: raw.viewer.crossApp, admin: raw.viewer.admin, analyst: raw.viewer.analyst, simRole: raw.viewer.simRole, safety: raw.viewer.safety, realOnly: raw.viewer.realOnly }), queues: ({ humanReview: raw.queues.humanReview, reviewItems: raw.queues.reviewItems, requestsKnown: raw.queues.requestsKnown }) });
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.page === "AppPage" || raw.page === "AllAppsPage" || raw.page === "PersonPage" || raw.page === "NoRolePage") && (raw.stage === "MapStage" || raw.stage === "GraphStage") && (raw.subject === "Overview" || raw.subject === "NeighborhoodSubject" || raw.subject === "MemberSubject" || raw.subject === "OpportunitySubject") && Number.isSafeInteger(raw.depth) && (raw.wantedTab === "FeedTab" || raw.wantedTab === "ReviewTab" || raw.wantedTab === "PipelineTab" || raw.wantedTab === "RequestsTab" || raw.wantedTab === "EngineTab" || raw.wantedTab === "SafetyTab" || raw.wantedTab === "MetricsTab" || raw.wantedTab === "LabTab" || raw.wantedTab === "ConfigTab" || raw.wantedTab === "GameTab") && typeof raw.drawerOpen === "boolean" && typeof raw.popoverOpen === "boolean" && Number.isSafeInteger(raw.queryChars) && Number.isSafeInteger(raw.picks) && typeof raw.viewer === "object" && raw.viewer !== null && !Array.isArray(raw.viewer) && typeof raw.viewer.known === "boolean" && (raw.viewer.mode === "SimulatedMode" || raw.viewer.mode === "RealMode") && Number.isSafeInteger(raw.viewer.appsHeld) && typeof raw.viewer.crossApp === "boolean" && typeof raw.viewer.admin === "boolean" && typeof raw.viewer.analyst === "boolean" && typeof raw.viewer.simRole === "boolean" && typeof raw.viewer.safety === "boolean" && typeof raw.viewer.realOnly === "boolean" && Object.keys(raw.viewer).length === 9 && typeof raw.queues === "object" && raw.queues !== null && !Array.isArray(raw.queues) && typeof raw.queues.reviewItems === "boolean" && typeof raw.queues.requestsKnown === "boolean" && Object.keys(raw.queues).length === 2 && Object.keys(raw).length === 11)) return undefined;
+  const parsed: ConsoleNav = ({ page: raw.page, stage: raw.stage, subject: raw.subject, depth: raw.depth, wantedTab: raw.wantedTab, drawerOpen: raw.drawerOpen, popoverOpen: raw.popoverOpen, queryChars: raw.queryChars, picks: raw.picks, viewer: ({ known: raw.viewer.known, mode: raw.viewer.mode, appsHeld: raw.viewer.appsHeld, crossApp: raw.viewer.crossApp, admin: raw.viewer.admin, analyst: raw.viewer.analyst, simRole: raw.viewer.simRole, safety: raw.viewer.safety, realOnly: raw.viewer.realOnly }), queues: ({ reviewItems: raw.queues.reviewItems, requestsKnown: raw.queues.requestsKnown }) });
   return inv(parsed) ? parsed : undefined;
 }
 

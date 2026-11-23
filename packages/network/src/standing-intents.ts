@@ -11,7 +11,7 @@ export function canonicalStandingReference(supplied: string): string {
   return upper.startsWith("I-") ? encodeReference(upper.slice(2)) : upper;
 }
 
-export type StandingTarget = { kind: "reference"; reference: string } | { kind: "position"; position: number } | { kind: "pending" };
+type StandingTarget = { kind: "reference"; reference: string } | { kind: "position"; position: number } | { kind: "pending" };
 
 export type StandingIntentCommand =
   | { kind: "ListIntents"; page: number }
@@ -62,7 +62,7 @@ export function standingIntentReference(app: string, member: string, key: string
 }
 
 const dayFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
-export const standingDate = (ms: number) => dayFormat.format(new Date(ms));
+const standingDate = (ms: number) => dayFormat.format(new Date(ms));
 const quoted = (summaries: readonly string[]) => summaries.map(s => `“${s}”`).join(", ");
 const LINE_STATUS: Record<StandingStatus, string> = { active: "active", paused: "paused", waiting_on_you: "waiting on you", open: "open" };
 

@@ -48,6 +48,7 @@ test.each(["delayed_receipt", "not_sent"] as const)("terminal probe and plan exp
     score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
   };
   const item = (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): { id: string } }).submitPlan(plan, now);
+  await w.net.tick(now);
   expect(w.net.review(item.id, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await w.runUntil(() => heldPlan !== undefined, DAY)).toBe(true);
   const sent = heldPlan!;

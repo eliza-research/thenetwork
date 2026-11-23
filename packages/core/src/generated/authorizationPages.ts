@@ -380,7 +380,7 @@ export function scopeName(scope: Scope): string {
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeText(scope: Scope): string {
-  return scope === "AppsRead" ? "See which Network apps are available" : (scope === "MembershipRead" ? "Read your membership status and new updates" : (scope === "ProfileRead" ? "Read the profile you saved for this app and what it looks for for you" : (scope === "PhotosUse" ? "See your slop.date photo list (numbers, names, days, who has each) and ask to send one. It never sees the photos, and you confirm each send on your phone." : "Save your profile, prepare signup details, and pause or turn back on what this app looks for for you")));
+  return scope === "AppsRead" ? "See which Network apps are available" : (scope === "MembershipRead" ? "Read your membership status and new updates" : (scope === "ProfileRead" ? "Read the profile you saved for this app and what this app finds for you" : (scope === "PhotosUse" ? "See your slop.date photo list (numbers, names, days, who has each) and ask to send one. It never sees the photos, and you confirm each send on your phone." : "Save your profile, prepare signup details, and pause or turn back on what this app finds for you")));
 }
 
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */

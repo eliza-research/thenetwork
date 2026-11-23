@@ -59,7 +59,14 @@ test("siteEnrollment, the effective age controls a repeated join: a repeated web
 test("siteEnrollment, success follows the join hook: a failed join forgets the membership and keeps the app's grants and photos", async () => {
   const e164 = "+12125550172";
   forgotten.length = 0;
-  await expect(service.accounts.join(app, { e164, personId: null }, { firstName: "Jo", age: 36, homeCity: "atlantis" as never, consent })).rejects.toThrow(/table "members"/);
+  await sql.unsafe("create function network.join_repair_fault() returns trigger language plpgsql as $$ begin raise exception 'join repair fault'; end $$");
+  await sql.unsafe("create trigger join_repair_fault before insert on network.members for each row execute function network.join_repair_fault()");
+  try {
+    await expect(service.accounts.join(app, { e164, personId: null }, { firstName: "Jo", age: 36, homeCity: "nyc", consent })).rejects.toThrow("join repair fault");
+  } finally {
+    await sql.unsafe("drop trigger join_repair_fault on network.members");
+    await sql.unsafe("drop function network.join_repair_fault()");
+  }
   const person = (await service.accounts.personFor(e164))!;
   expect((await service.accounts.store.getMembership(person.id, app.id))?.state).toBe("removed");
   expect(await service.accounts.optedIn(app.id, e164)).toBe(false);

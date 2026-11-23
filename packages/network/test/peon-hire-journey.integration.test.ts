@@ -1,27 +1,16 @@
-// spec/peonHireDispatch.md and spec/peonCandidateSearch.md through the real service on Postgres: the
-// shared line's signed turns (/internal/turn), the staff API under /apps/peon and the Blooio queue with a
-// simulated provider. An employer posts a job on the line, staff verify the employer, a candidate saves a
-// search, the proposal waits for human review, the candidate hears first, then the employer, and the
-// introduction goes out only after both yeses. The refusals: an unverified employer, a minor, an unknown
-// age, a banned number, a posting closed during review, and STOP from either side. Fictional numbers.
-import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { BlooioAdapter, DryRunAdapter, type Delivery, type Outbound } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 
-const database = `network_peon_hire_${randomUUID().replaceAll("-", "")}`;
-const local = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}`;
-const url = `${local}/${database}`;
 const secret = "peon-hire-journey-signed-fixture";
 const clock = new SimClock(Date.UTC(2026, 10, 12, 17));
-let admin: SQL, db: SQL, service: NetworkService;
+let url: string, db: SQL, service: NetworkService;
 const accepted = new Set<string>();
 let turnId = 0;
 let holdQueue = false;
@@ -29,7 +18,6 @@ let holdQueue = false;
 class HoldingCarrier extends BlooioAdapter {
   override async deliver(messages: Outbound[]): Promise<Delivery[]> { return holdQueue ? [] : super.deliver(messages); }
 }
-
 
 function start() {
   service = new NetworkService({ url, clock, instance: "peon-hire-journey", log: () => {}, photoStorage: null, notify: false,
@@ -65,10 +53,7 @@ const staff = (path: string, body?: object, token = "adm-tok") => service.fetch(
 
 beforeAll(async () => {
   if (!pgAvailable) return;
-  await devPgUp();
-  admin = new SQL({ url: `${local}/postgres`, max: 1 });
-  await admin.unsafe(`create database ${database}`);
-  await applySchema(url, { lockTimeout: "60s" });
+  url = await testDb();
   db = new SQL({ url, max: 2 });
   await start();
 }, 120_000);
@@ -76,8 +61,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await service?.close();
   await db?.close();
-  await admin?.unsafe(`drop database if exists ${database} with (force)`);
-  await admin?.close();
+  await dropTestDb();
 });
 
 async function join(phone: string, line: string) {
@@ -109,7 +93,6 @@ const runtime = () => service.runtimeFor("peon")!;
 async function matchingDay(phones: readonly string[]) {
   const queue = (runtime().adapter as BlooioAdapter).queue;
   for (const phone of phones) await queue.inbound(phone);
-  // The next matching day at 14:00 in New York, inside the members' send window, so an approved probe leaves at once.
   const day = Math.floor((clock.now() + 24 * HOUR) / (24 * HOUR)) * 24 * HOUR + 19 * HOUR;
   clock.advance((day >= clock.now() + 24 * HOUR ? day : day + 24 * HOUR) - clock.now());
   await runtime().tick();
@@ -128,7 +111,6 @@ test.skipIf(!pgAvailable)("a posting confirmed on the line reaches an introducti
   const candidate = (await join(candidatePhone, "My name is Rae. I am 29 years old.")).id!;
   expect(await saveSearch(candidatePhone, "data analyst")).toEqual(["I saved your Peon job search. I'll ask you before any introduction."]);
 
-  // A minor joins Peon but cannot save a search; a person who gives no age is not a member and saves nothing.
   const minor = (await join(minorPhone, "My name is Kim. I am 16 years old.")).id!;
   expect(await saveSearch(minorPhone, "data analyst")).toEqual([]);
   expect(await searches(minor)).toEqual([]);
@@ -142,7 +124,6 @@ test.skipIf(!pgAvailable)("a posting confirmed on the line reaches an introducti
   const item = pairOf(items, candidate, employer)!;
   expect(item).toBeDefined();
   expect(items.flatMap(i => i.proposal.participants)).not.toContain(minor);
-  // The proposal waits for a person on the team: nothing is queued for either side before the decision.
   await runtime().deliver();
   expect(await messagesOf(item.oppId)).toEqual([]);
 
@@ -185,26 +166,22 @@ test.skipIf(!pgAvailable)("an unverified employer, a ban, a posting closed durin
     expect(await saveSearch(c.candidatePhone, c.role)).toEqual(["I saved your Peon job search. I'll ask you before any introduction."]);
   }
   const items = await matchingDay(cases.flatMap(c => [c.employerPhone, c.candidatePhone]));
-  // An unverified employer's posting gets no proposal.
   expect(items.some(i => i.proposal.participants.includes(unverified!.candidate) || i.proposal.participants.includes(unverified!.employer))).toBe(false);
   const item = (c: typeof banned) => pairOf(items, c!.candidate, c!.employer)!;
   for (const c of [banned, closed, candidateStop, employerStop]) expect(item(c)).toBeDefined();
 
-  // A number banned during review: the item leaves the queue, nobody hears, and the number cannot join again.
   expect(await (await staff("/safety/ban", { memberId: banned!.candidate, by: "phone", note: "Confirmed by staff." }, "saf-tok")).json()).toEqual({ ok: true });
   expect(await decide(item(banned))).toEqual({ ok: false, reason: "not_in_review" });
   await runtime().deliver();
   expect(await messagesOf(item(banned).oppId)).toEqual([]);
   expect((await turn(banned!.candidatePhone, "join peon\nMy name is Cab. I am 30 years old.")).body).toMatchObject({ reason: "held", replies: [], accountEligible: false });
 
-  // The employer closes the posting on the line while the item waits: the approval finds nothing to send.
   expect((await turn(closed!.employerPhone, "We filled it.")).body.replies[0]).toMatch(/^Close your registered nurse post\?/);
   expect((await turn(closed!.employerPhone, "yes")).body.replies[0]).toMatch(/^Closed: registered nurse\./);
   expect(await decide(item(closed))).toEqual({ ok: false, reason: "not_in_review" });
   await runtime().deliver();
   expect(await messagesOf(item(closed).oppId)).toEqual([]);
 
-  // The candidate says STOP after the role is offered: the employer never hears.
   expect(await decide(item(candidateStop))).toEqual({ ok: true });
   await runtime().deliver();
   expect((await turn(candidateStop!.candidatePhone, "STOP")).body).toMatchObject({ consent: { state: "opted_out", scope: "all" } });
@@ -213,7 +190,6 @@ test.skipIf(!pgAvailable)("an unverified employer, a ban, a posting closed durin
   expect(await messagesOf(item(candidateStop).oppId)).toEqual([expect.objectContaining({ to: candidateStop!.candidate, type: "probe", status: "sent" })]);
   expect(await stateOf(item(candidateStop).oppId)).toBe("SKIPPED");
 
-  // The employer says STOP after the blind summary: no name goes either way, and the candidate hears it did not come together.
   expect(await decide(item(employerStop))).toEqual({ ok: true });
   await runtime().deliver();
   await turn(employerStop!.candidatePhone, "Yes");
@@ -227,8 +203,6 @@ test.skipIf(!pgAvailable)("an unverified employer, a ban, a posting closed durin
   expect(after.some(m => /Cae|Eme/.test(m.body))).toBe(false);
   expect(await stateOf(item(employerStop).oppId)).toBe("SKIPPED");
 
-  // spec/peonHireDispatch.md, "A review covers this candidate search and these posting terms": the employer
-  // changes the pay after the approval and before the queued offer leaves; the offer is suppressed.
   const changed = { role: "warehouse logistics", employerPhone: "+12125550210", candidatePhone: "+12125550211" };
   const changedEmployer = (await join(changed.employerPhone, "My name is Emf. I am 40 years old.")).id!;
   await postOnLine(changed.employerPhone, changed.role);
@@ -246,7 +220,6 @@ test.skipIf(!pgAvailable)("an unverified employer, a ban, a posting closed durin
   await runtime().deliver();
   expect(await messagesOf(changedItem.oppId)).toEqual([expect.objectContaining({ to: changedCandidate, type: "probe", status: "suppressed_ineligible" })]);
 
-  // Verification is what held the first pair back: once staff verify the employer, the pair goes to review.
   await verify(unverified!.employer, "Company 0");
   expect(pairOf(await matchingDay([unverified!.employerPhone, unverified!.candidatePhone]), unverified!.candidate, unverified!.employer)).toBeDefined();
 }, 300_000);

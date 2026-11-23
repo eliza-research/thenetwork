@@ -205,7 +205,7 @@ export function lawCleanupMissesLaterGrant(cutoffAt: number): boolean {
 
 /** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
 //@ pure
-export function lawLegacyRowIsCovered(cutoffAt: number): boolean {
+export function lawUnstampedRowIsCovered(cutoffAt: number): boolean {
   //@ ensures \result === true
   return !(cutoffAt >= 0) || cleanupCoversGrant(cutoffAt, 0);
 }

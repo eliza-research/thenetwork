@@ -1,5 +1,3 @@
-// The relay classifier chosen from the environment (relay-endpoint.ts relayClassifierFromEnv). No network:
-// without Workers AI credentials no Clef client is built and the classifier cannot run.
 import { expect, test } from "vitest";
 import { relayClassifierFromEnv } from "../service/relay-endpoint.ts";
 

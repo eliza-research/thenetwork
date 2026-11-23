@@ -2,14 +2,15 @@
 // real public venues (approximate WGS84 coordinates), a transit-time estimate, and meeting-spot
 // selection. Venues are public places (parks, libraries, plazas, markets): the MVP suggests where
 // to meet but never books, and never uses anyone's home (PRD 32.12, 17.5).
-import type { Category } from "@thenetwork/core";
+import { ADULT_AGE, type Category } from "@thenetwork/core";
 import { km, type Borough, type LatLng } from "@thenetwork/core/src/geo.ts";
+import { teenActivityOffered, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 export { km, type Borough, type LatLng };
 
 export interface Neighborhood extends LatLng { name: string; borough: Borough }
 export interface Venue extends LatLng {
   id: string; name: string; neighborhood: string; borough: Borough;
-  kind: "park" | "library" | "plaza" | "market" | "museum" | "waterfront" | "courts" | "cafe_district" | "rec_center" | "climbing_gym" | "bowling";
+  kind: "park" | "library" | "plaza" | "market" | "museum" | "waterfront" | "courts" | "cafe_district" | "rec_center";
   tags: string[];
   allAges: boolean; adultPlans: boolean;
   bookingUrl?: string;
@@ -46,7 +47,7 @@ const V = (id: string, name: string, neighborhood: string, kind: Venue["kind"], 
   ages: { allAges: boolean; adultPlans: boolean }, bookingUrl?: string): Venue =>
   ({ id, name, neighborhood, borough: NEIGHBORHOOD.get(neighborhood)?.borough ?? "Manhattan", kind, lat, lng, tags, allAges: ages.allAges, adultPlans: ages.adultPlans, ...(bookingUrl ? { bookingUrl } : {}) });
 const EVERYONE = { allAges: true, adultPlans: true };
-const TEEN_ONLY = { allAges: true, adultPlans: false };
+const TEEN_PLANS_ONLY = { allAges: true, adultPlans: false };
 export const VENUES: Venue[] = [
   V("prospect-long-meadow", "Prospect Park, Long Meadow", "Park Slope", "park", 40.6602, -73.969, ["outdoors", "running", "picnic", "walk", "social"], EVERYONE),
   V("grand-army-greenmarket", "Grand Army Plaza Greenmarket", "Prospect Heights", "market", 40.6741, -73.97, ["food", "cooking", "market", "social"], EVERYONE),
@@ -88,17 +89,19 @@ export const VENUES: Venue[] = [
   V("st-marys-park", "St. Mary's Park", "Mott Haven", "park", 40.8105, -73.9149, ["outdoors", "social", "parents"], EVERYONE),
   V("snug-harbor", "Snug Harbor", "St. George", "park", 40.6437, -74.1027, ["arts", "gardens", "walk"], EVERYONE),
   V("governors-island", "Governors Island", "Financial District", "park", 40.6895, -74.0168, ["cycling", "outdoors", "picnic", "arts"], EVERYONE),
-  V("st-johns-rec", "St. John's Recreation Center", "Crown Heights", "rec_center", 40.6694, -73.9422, ["sports", "basketball", "tennis", "games"], TEEN_ONLY),
-  V("chelsea-rec", "Chelsea Recreation Center", "Chelsea", "rec_center", 40.7465, -74.0014, ["sports", "basketball", "tennis", "games"], TEEN_ONLY),
-  V("hansborough-rec", "Hansborough Recreation Center", "Harlem", "rec_center", 40.8116, -73.9465, ["sports", "basketball", "tennis", "games"], TEEN_ONLY),
-  V("al-oerter-rec", "Al Oerter Recreation Center", "Flushing", "rec_center", 40.7675, -73.8331, ["sports", "basketball", "tennis", "games"], TEEN_ONLY),
-  V("bpl-williamsburgh", "Brooklyn Public Library, Williamsburgh", "Williamsburg", "library", 40.7081, -73.9571, ["books", "games"], TEEN_ONLY),
-  V("nypl-jefferson-market", "NYPL Jefferson Market Library", "West Village", "library", 40.7358, -74.0036, ["books", "games"], TEEN_ONLY),
-  V("amnh", "American Museum of Natural History", "Upper West Side", "museum", 40.787, -73.9754, ["museums", "arts"], TEEN_ONLY),
-  V("moving-image", "Museum of the Moving Image", "Astoria", "museum", 40.7644, -73.9235, ["museums", "arts"], TEEN_ONLY),
-  V("smith-street-cafes", "Smith Street cafes", "Carroll Gardens", "cafe_district", 40.6795, -73.9991, ["food", "coffee"], TEEN_ONLY),
-  V("bedford-avenue-cafes", "Bedford Avenue cafes", "Williamsburg", "cafe_district", 40.7081, -73.9571, ["food", "coffee"], TEEN_ONLY),
+  V("st-johns-rec", "St. John's Recreation Center", "Crown Heights", "rec_center", 40.6694, -73.9422, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("chelsea-rec", "Chelsea Recreation Center", "Chelsea", "rec_center", 40.7465, -74.0014, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("hansborough-rec", "Hansborough Recreation Center", "Harlem", "rec_center", 40.8116, -73.9465, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("al-oerter-rec", "Al Oerter Recreation Center", "Flushing", "rec_center", 40.7675, -73.8331, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("bpl-williamsburgh", "Brooklyn Public Library, Williamsburgh", "Williamsburg", "library", 40.7081, -73.9571, ["books", "games"], TEEN_PLANS_ONLY),
+  V("nypl-jefferson-market", "NYPL Jefferson Market Library", "West Village", "library", 40.7358, -74.0036, ["books", "games"], TEEN_PLANS_ONLY),
+  V("amnh", "American Museum of Natural History", "Upper West Side", "museum", 40.787, -73.9754, ["museums", "arts"], TEEN_PLANS_ONLY),
+  V("moving-image", "Museum of the Moving Image", "Astoria", "museum", 40.7644, -73.9235, ["museums", "arts"], TEEN_PLANS_ONLY),
+  V("smith-street-cafes", "Smith Street cafes", "Carroll Gardens", "cafe_district", 40.6795, -73.9991, ["food", "coffee"], TEEN_PLANS_ONLY),
+  V("bedford-avenue-cafes", "Bedford Avenue cafes", "Williamsburg", "cafe_district", 40.7173, -73.9569, ["food", "coffee"], TEEN_PLANS_ONLY),
 ];
+
+export const venueAgeMin = (v: Pick<Venue, "allAges">): number => (v.allAges ? teenFriendMinAge : ADULT_AGE);
 
 /** Interest/category tags -> venue tags they suit. */
 const TAG_HINTS: Record<string, string[]> = {
@@ -142,7 +145,7 @@ export function meetingSpot(areasIn: (string | undefined)[], category: Category 
   const homes = areas.map(neighborhood);
   const want = new Set([...(category ? TAG_HINTS[category] ?? [] : []), ...tags.flatMap(t => TAG_HINTS[t] ?? [t])]);
   let best: { venue: Venue; minutes: Record<string, number>; worst: number; cost: number } | undefined;
-  for (const v of VENUES.filter(x => rosterHasMinor ? x.allAges : x.adultPlans)) {
+  for (const v of VENUES.filter(x => teenActivityOffered(rosterHasMinor, x.allAges, x.adultPlans))) {
     const mins = homes.map(h => travelMinutes(h, v));
     const worst = Math.max(...mins);
     const match = v.tags.filter(t => want.has(t)).length;

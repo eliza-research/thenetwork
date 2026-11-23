@@ -115,7 +115,6 @@ export class GameSource implements DataSource {
   private inviters = new Set<MemberId>();
   /** Leak-guard fallbacks per member and time (the timeline marks those messages). */
   private guardFallback = new Set<string>();
-  /** Matching switch and review mode changes (admin-console 3.11). */
   private configHistory: ConfigChange[] = [];
   /** Wall time of the last health computation. */
   private healthWall = 0;
@@ -226,7 +225,7 @@ export class GameSource implements DataSource {
       },
     });
     this.world = new World({
-      seed: o.seed, personas, days: o.days, start: this.start, writeLog: false, ...(o.timeAware ? { timeAware: true } : {}),
+      seed: o.seed, personas, days: o.days, start: this.start, app: this.consent?.app.id ?? "ntwrk", writeLog: false, ...(o.timeAware ? { timeAware: true } : {}),
       network: this.consent ?? new StubNetwork({ seed: o.seed, randomIntros: o.engine === "random" }),
       engine: this.engine, agent: this.takeover,
       spawnFriend: joinGate(friendFactory({ seed: o.seed, ...(cast?.badInvitees ? { joinRate: 1, badActorRate: 1 } : {}) }), minAge),

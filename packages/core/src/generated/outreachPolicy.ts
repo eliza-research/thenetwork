@@ -153,9 +153,22 @@ export function outreachRequiresAdult(kind: string): boolean {
 
 /** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
 //@ pure
+export function outreachTeenItemKind(kind: string): boolean {
+  return kind === "probe" || kind === "reveal" || kind === "nudge" || kind === "scheduling" || kind === "reminder" || kind === "feedback" || kind === "relay";
+}
+
+/** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
+//@ pure
 export function lawRecruitingRequiresAdult(kind: string): boolean {
   //@ ensures \result === true
   return !(kind === "growth") || outreachRequiresAdult(kind);
+}
+
+/** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
+//@ pure
+export function lawRecruitingIsNeverATeenItemKind(kind: string): boolean {
+  //@ ensures \result === true
+  return !(kind === "growth" || kind === "invite_notice" || kind === "home_help_consent" || kind === "worthwhile" || kind === "reengage") || !outreachTeenItemKind(kind);
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */

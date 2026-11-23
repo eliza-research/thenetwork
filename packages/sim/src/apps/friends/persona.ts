@@ -5,7 +5,8 @@
 import type { MemberId } from "@thenetwork/core";
 import { ACTIVITIES } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, type FriendsSlot, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { Rng, clamp01, hash32 } from "@thenetwork/core";
+import { Rng, clamp01, earliestDayKeyOf, fromLocal, hash32 } from "@thenetwork/core";
+import { birthKeyForAgeOn } from "../../generator.ts";
 import { FIRST_NAMES, LAST_NAMES } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
 import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
@@ -79,7 +80,7 @@ export interface FriendsStated {
   openGender?: "women" | "men";
 }
 
-export type FriendGender = "woman" | "man" | "nonbinary";
+type FriendGender = "woman" | "man" | "nonbinary";
 const FRIEND_GENDER_SHARES = { unstated: 0.15, nonbinary: 0.01, woman: 0.53, womenOnly: 0.2, menOnly: 0.08 };
 function drawFriendGender(seed: number | string, i: number, statedOpenness: boolean): Pick<FriendsStated, "gender" | "openGender"> {
   const S = FRIEND_GENDER_SHARES, r = new Rng(hash32("friends-gender", seed, i));
@@ -124,15 +125,10 @@ const FAMILIES = [...new Set(FRIEND_ACTIVITIES.map(a => a.family))];
 const WORK_HUBS = ["midtown", "financial_district", "flatiron", "chelsea", "downtown_brooklyn", "long_island_city", "soho", "murray_hill"].filter(h => NEIGHBORHOODS.some(n => n.id === h));
 const byId = new Map(NEIGHBORHOODS.map(n => [n.id, n]));
 
-export const FRIENDS_TEEN_WORLD = { minorShare: 0.15, minorLiarShare: 0.2, adultPoserShare: 0.02 } as const;
-export const FRIENDS_START_DAY_KEY = 20261012;
-const START_MONTH_DAY = FRIENDS_START_DAY_KEY % 10000;
-
-export function birthKeyForAge(age: number, r: Rng): number {
-  const monthDay = r.int(1, 12) * 100 + r.int(1, 28);
-  const year = Math.trunc(FRIENDS_START_DAY_KEY / 10000) - age - (monthDay <= START_MONTH_DAY ? 0 : 1);
-  return year * 10000 + monthDay;
-}
+export const NYC_TZ = "America/New_York";
+export const FRIENDS_WORLD_DATE = { y: 2026, m: 10, d: 12 };
+export const FRIENDS_WORLD_START = fromLocal(FRIENDS_WORLD_DATE.y, FRIENDS_WORLD_DATE.m, FRIENDS_WORLD_DATE.d, 0, NYC_TZ);
+export const FRIENDS_START_DAY_KEY = earliestDayKeyOf(FRIENDS_WORLD_START);
 
 function drawAge(r: Rng): number {
   return r.bool(0.75) ? Math.max(18, Math.min(60, Math.round(r.normal(30, 6)))) : r.int(18, 68);
@@ -171,7 +167,7 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     const br = new Rng(hash32("friends-birth", o.seed, i));
     const poserCoin = br.next();
     const poser = !isMinor && !adversary && trueAge >= 19 && trueAge <= 40 && poserCoin < poserShare;
-    const trueBirthKey = birthKeyForAge(trueAge, br);
+    const trueBirthKey = birthKeyForAgeOn(trueAge, FRIENDS_START_DAY_KEY, br);
     return { i, r, br, id, name, isMinor, trueAge, trueBirthKey, poser, adversary };
   });
   const latent = o.planted
@@ -183,7 +179,7 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     const planted = latent?.marks.get(id);
     const liarAge = adversary === "age_liar" ? r.int(18, 21) : trueAge;
     const claimedAge = poser ? br.int(14, 17) : liarAge;
-    const statedBirthKey = claimedAge === trueAge ? trueBirthKey : birthKeyForAge(claimedAge, br);
+    const statedBirthKey = claimedAge === trueAge ? trueBirthKey : birthKeyForAgeOn(claimedAge, FRIENDS_START_DAY_KEY, br);
     const lifeStage = isMinor ? "student" : lifeStageFor(trueAge, r);
     const homeH: Neighborhood = r.weighted(hoods);
     const often: string[] = [];
@@ -246,13 +242,6 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
   return out;
 }
 
-/**
- * Onboarding checks (observable outcomes, not labels). Liveness: people pass 95%, 4% never finish
- * (pending), 1% fail; bots fail 85% (10% spoof it). Age assurance: a facial age estimate (true age +
- * N(0, 2.5)); 25+ passes; under 25 the member is asked for an ID: real adults finish it 90% of the
- * time, lying minors fail 97% (3% get through with a borrowed ID). Declared minors are introduced only for
- * friendship under the teen age rule (spec/friendIntroAge.md); their checks stay pending.
- */
 function verification(r: Rng, h: FriendsHidden, claimedAge: number): FriendsStated["verify"] {
   if (claimedAge < 18) return { liveness: "pending", age: "pending" };
   const u = r.next();
@@ -269,7 +258,7 @@ export const hoodOf = (id: string) => byId.get(id)!;
 /** Real members: true adults who are not adversaries (per-member metrics use these). */
 export const isReal = (p: FriendsPersona) => !p.hidden.isMinor && !p.hidden.adversary && !p.hidden.poser;
 
-export function statedFriend(p: FriendsPersona): FriendStatement {
+function statedFriend(p: FriendsPersona): FriendStatement {
   const G = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" } as const;
   const O = { women: "FriendsWithWomen", men: "FriendsWithMen" } as const;
   return { friendGender: p.stated.gender ? G[p.stated.gender] : "GenderUnstated", friendOpenness: p.stated.openGender ? O[p.stated.openGender] : "FriendsWithAnyone" };

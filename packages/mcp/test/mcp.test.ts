@@ -219,7 +219,7 @@ describe("surface=openai hides slop", () => {
   test("app_info names teen friendship introductions on friends.help and ntwrk.party, and none on slop.date or peon.biz", async () => {
     const env = setup();
     const rule = async (app: string) => (await call(env, NTWRK, "app_info", { app })).body!.result.structuredContent.adults_only[0];
-    const teen = "Matching is for adults 18 or older, except friendship introductions between people aged 13 to 18 born at most 2 years apart, after a person reviews each one.";
+    const teen = "Matching is for adults 18 or older, except friendship introductions between people aged 13 to 18 born at most 2 years apart, after an automatic check approves each one.";
     const adult = "Nobody under 18 is matched for dates or work on this app. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.";
     expect([await rule("ntwrk"), await rule("friends"), await rule("slop"), await rule("peon")]).toEqual([teen, teen, adult, adult]);
   });

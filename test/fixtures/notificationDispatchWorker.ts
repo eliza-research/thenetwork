@@ -1,6 +1,5 @@
 import type { DigestFlow, DigestPhase, Event } from "../../packages/core/src/generated/notificationDispatch.ts";
 import { DAY, HOUR } from "../../packages/core/src/clock.ts";
-import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { PgNotifyStore } from "../../packages/notify/src/pg-store.ts";
 import { Accounts } from "../../packages/platform/src/accounts.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
@@ -9,17 +8,6 @@ import { deliveryIdFor, Notifier, type OutboundSink, type Recipient, type SendPl
 import type { NotifyStore } from "../../packages/notify/src/store.ts";
 import { withConformanceDatabase } from "./conformanceDatabase.ts";
 import { serveJourney } from "./serveJourney.ts";
-
-// Each key is one person's digest on the Notifier (packages/notify/src/scheduler.ts) over the real Postgres inbox. A
-// flow starts with its first event, which says which of the two it is:
-//  - rereadItems: the person gets as many due items as the plan names, Notifier.dispatch plans them, and its re-read
-//    of the items waits. The event then happens to the inbox for real: items the person saw, a recipient that is gone,
-//    a new phone number. The rebuild (its read of the person's surface signals), the delivery record and the enqueue
-//    each wait too, so `RebuildingDigest`, `ReusingDigest` and `EnqueueingDigest` are the effect the shell waits on.
-//    A record that fails is an item the person saw after the re-read.
-//  - readQueuedDigest: two items go out in a recorded digest (or a digest recorded under another id), and
-//    Notifier.stillNeeded waits on its read of the items. The revalidation event erases an item, lets one expire, or
-//    marks the rest seen first.
 
 const START = Date.UTC(2026, 9, 9, 16);
 
@@ -41,9 +29,8 @@ type Flow = {
 };
 
 await withConformanceDatabase("notification_dispatch_conformance", async sql => {
-  const base = new PgNotifyStore(sql as SQL);
-  // The inbox admits items only for a live person (packages/notify/db/retention.sql).
-  const accounts = new Accounts(new PgPeopleStore(sql as SQL), { hashKey: "conformance-notify", now: () => START, apps: id => APPS[id] });
+  const base = new PgNotifyStore(sql);
+  const accounts = new Accounts(new PgPeopleStore(sql), { hashKey: "conformance-notify", now: () => START, apps: id => APPS[id] });
   const flows = new Map<string, Flow>();
   let people = 0;
 
@@ -52,7 +39,6 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
     return new Promise<void>(release => { flow.waiting = { gate: name, release }; flow.arrived?.(); });
   }
 
-  /** Let the shell run until it waits on its next effect or ends. */
   async function progress(flow: Flow, work?: () => Promise<unknown>) {
     const arrived = new Promise<void>(resolve => { flow.arrived = resolve; });
     if (work) flow.run = work();
@@ -68,8 +54,7 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
   function flowFor(key: string): Flow {
     const existing = flows.get(key);
     if (existing) return existing;
-    const flow = { personId: "", itemIds: [], armed: new Set(), rebuilt: false, enqueued: 0 } as Flow;
-    flow.store = new Proxy(base, {
+    const store: NotifyStore = new Proxy(base, {
       get(target, property, receiver) {
         const value = Reflect.get(target, property, receiver);
         if (typeof value !== "function") return value;
@@ -77,14 +62,16 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
         const name = gated[property];
         if (!name) return value.bind(target);
         return async (...args: unknown[]) => {
-          // The plan's own build reads the signals too; only an armed read is the dispatch's rebuild.
           if (name === "signals" && flow.armed.has("signals")) flow.rebuilt = true;
           await gate(flow, name);
           return value.apply(target, args);
         };
       },
     });
-    flow.notifier = new Notifier(flow.store, { get: personId => personId === flow.personId ? flow.recipient : undefined }, { isQuiet: () => false });
+    const flow: Flow = {
+      personId: "", itemIds: [], armed: new Set(), rebuilt: false, enqueued: 0, store,
+      notifier: new Notifier(store, { get: personId => personId === flow.personId ? flow.recipient : undefined }, { isQuiet: () => false }),
+    };
     flows.set(key, flow);
     return flow;
   }
@@ -105,7 +92,6 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
   });
 
   async function startDispatch(flow: Flow, event: Extract<Event, { type: "rereadItems" }>): Promise<"accepted" | "refused"> {
-    // A plan names at least one item, and the re-read keeps some of them. The shell never forms other counts.
     if (event.plannedCount < 1 || event.remainingCount < 0 || event.remainingCount > event.plannedCount) return "refused";
     await addItems(flow, event.plannedCount);
     flow.recipient = { personId: flow.personId, to: "+12125553001", timeZone: "America/New_York", prefs: { channel: "sms" }, proactiveAllowed: true };
@@ -116,7 +102,6 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
     if (seen.length) await flow.store.markSeen(flow.personId, "imessage", START, seen);
     if (!event.recipientAvailable) flow.recipient = undefined;
     else if (event.destinationChanged) flow.recipient = { ...flow.recipient, to: "+12125553002" };
-    // The plan's own build read the signals; only the dispatch's rebuild, record and enqueue wait from here.
     flow.armed = new Set(["signals", "record", "enqueue"]);
     await progress(flow);
     return "accepted";
@@ -134,7 +119,6 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
     await progress(flow, () => flow.notifier.stillNeeded(flow.deliveryId!, START).then(needed => { flow.result = { kind: "revalidate", needed }; }));
   }
 
-  /** The inbox shows item ids as "inb_<row id>" (packages/notify/src/pg-store.ts). */
   function rowId(itemId: string): string {
     const match = /^inb_(\d+)$/.exec(itemId);
     if (!match) throw new Error(`Unexpected inbox item id ${itemId}`);

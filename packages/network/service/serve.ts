@@ -6,6 +6,7 @@ import { devShortcutsAllowed, type Env } from "../../platform/src/env.ts";
 import { CloudflareTurnstile } from "../../platform/src/turnstile.ts";
 import { isAppId, siteHosts, stagingSiteOrigins } from "../../platform/src/apps.ts";
 import type { NetworkService } from "./service.ts";
+import { PHOTO_RELAY_TEXT } from "./photoRelayFlow.ts";
 
 export interface ServiceMcpOptions {
   /** The Postgres for the oauth schema (packages/mcp/db/oauth.sql, applied here). Undefined: memory (tests and dev only). */
@@ -103,7 +104,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
         ? svc.changeLookingFor(personId, app, e164, grantId, ref, change) : Promise.resolve({ kind: "refused", reason: "not_member" } as const)),
       photoHoldings: (personId, app, e164) => (isAppId(app) ? svc.photoHoldings(personId, app, e164) : Promise.resolve(undefined)),
       photoRequest: (personId, app, e164, words) => (isAppId(app) ? svc.photoRequest(personId, app, e164, words)
-        : Promise.resolve({ status: "unavailable" as const, text: "I can't send photos here." })),
+        : Promise.resolve({ status: "unavailable" as const, text: PHOTO_RELAY_TEXT.unavailable })),
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
         updates: (personId, app, assistant, token, passesLeakGate) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token, passesLeakGate) : Promise.resolve([])),
@@ -135,16 +136,10 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
 
 const TICK_MS = 60_000;
 
-/** The legacy carrier webhook route, with or without its app suffix. */
 export const isBlooioWebhookPath = (path: string) => path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/");
 
-/**
- * The staff and webhook server (default 127.0.0.1:4848) and the public API the sites call (default 127.0.0.1:8790).
- * blooioWebhook is backendWebhookServed(NETWORK_CHANNEL): false when the Eliza gateway owns the carrier webhook.
- */
 export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; blooioWebhook: boolean; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
-  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
   const fetch = (req: Request) => !o.blooioWebhook && isBlooioWebhookPath(new URL(req.url).pathname)
     ? Response.json({ ok: false, error: "webhook_not_served" }, { status: 404 })
     : svc.fetch(req);
@@ -166,8 +161,10 @@ export function startTicks(svc: NetworkService, log: (s: string) => void = conso
     catch (e) { log(`${key}: tick failed: ${(e as Error).message}`); }
     finally { busy.delete(key); }
   };
+  let inbox: Promise<void> = Promise.resolve();
   const inboxThenNetworks = async () => {
-    await worker("inbox", () => svc.inboxTick());
+    if (!busy.has("inbox")) inbox = worker("inbox", () => svc.inboxTick());
+    await inbox;
     await Promise.all([...svc.runtimes.values()].map(rt => worker(rt.id, async () => {
       if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`);
     })));

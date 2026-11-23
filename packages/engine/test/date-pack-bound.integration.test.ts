@@ -7,6 +7,7 @@ import { localEmbed } from "../src/embed.ts";
 import { bruteForceCandidates } from "../src/match/mod.ts";
 import { sharesTag } from "../src/match/pair.ts";
 import type { AppPack } from "../src/pack.ts";
+import { BODY_TYPES as BODY } from "../src/packs/slop/appearance.ts";
 import { slopPack, SLOP_ENGINE_DEFAULTS } from "../src/packs/slop/index.ts";
 import { SLOP_DEFAULT_OPTIONS } from "../src/packs/slop/options.ts";
 import { datePackBound, datePackClassCap, datePackClassKey } from "../src/packs/slop/packBound.ts";
@@ -17,7 +18,6 @@ import { World } from "../src/world.ts";
 
 const INTERESTS = ["climbing", "jazz", "cooking", "film", "running", "board_games", "art", "travel", "dogs", "books", "yoga", "wine"];
 const ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
-const BODY = ["slim", "athletic", "average", "curvy", "plus_size"];
 
 function profile(r: Rng, n: number): SlopProfile {
   const maybe = <T>(p: number, x: () => T): T | undefined => (r.bool(p) ? x() : undefined);
@@ -40,7 +40,7 @@ function profile(r: Rng, n: number): SlopProfile {
     wants: maybe(0.6, () => unit([0, 1, 2, 3, 4].map(() => r.normal()))),
     self: maybe(0.7, () => [0, 1, 2, 3, 4].map(() => r.normal(0, 1.3))),
     wantsBody: r.bool(0.25) ? pickSome(BODY, 3) : [],
-    appearance: maybe(0.7, () => ({ face: r.next(), body: r.next(), overall: r.next(), confidence: r.range(0.2, 1), bodyType: r.pick(BODY) as never, bodyTypeConfidence: r.range(0.2, 1) })),
+    appearance: maybe(0.7, () => ({ face: r.next(), body: r.next(), overall: r.next(), confidence: r.range(0.2, 1), bodyType: r.pick(BODY), bodyTypeConfidence: r.range(0.2, 1) })),
     safety: [], verification: [], silentAsks: [], openAsks: [], askCounts: {}, visiting: [], interestFacet: new Map(),
     history: {
       yes: 0, no: 0, silent: 0, dates: rated, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [],
@@ -50,49 +50,32 @@ function profile(r: Rng, n: number): SlopProfile {
   };
 }
 
-const quantile = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
+function untaggedInfeasibleBelow(): number {
+  const w = laneWeights("Date"), floor = laneLimits("Date").rules.utilityFloor;
+  let below = 1000;
+  while (directedUtility([{ weight: w.complement, value: 0 }, { weight: w.affinity, value: 0 }, { weight: w.pack, value: below }]) >= floor) below--;
+  return below;
+}
 
-test("the Date pair bound and class caps are at least the pack value, and many fall below the untagged floor", () => {
+test("the Date pair bound and class caps are at least the pack value", () => {
   const r = new Rng(20261118);
   const people = Array.from({ length: 3000 }, (_, n) => profile(r, n));
   const o = SLOP_DEFAULT_OPTIONS;
-  const w = laneWeights("Date"), floor = laneLimits("Date").rules.utilityFloor;
-  const untaggedUtility = (pack: number) => directedUtility([{ weight: w.complement, value: 0 }, { weight: w.affinity, value: 0 }, { weight: w.pack, value: pack }]);
-  let infeasibleBelow = 1000;
-  while (untaggedUtility(infeasibleBelow) >= floor) infeasibleBelow--;
-  expect(infeasibleBelow).toBe(933);
+  expect(untaggedInfeasibleBelow()).toBe(933);
   expect(Math.round(1000 * Math.exp(2 * DATE_TYPE_WEIGHT))).toBeLessThanOrEqual(dateTypeCeiling);
 
   const violations = { bound: 0, cap: 0, boundOverCap: 0, untouchedCap: 0 };
-  const slack: number[] = [];
-  let pairs = 0, untouched = 0, valueLow = 0, boundLow = 0, capLow = 0, untouchedLow = 0;
   for (let n = 0; n < 200_000; n++) {
     const a = people[r.int(0, people.length - 1)]!, b = people[r.int(0, people.length - 1)]!;
     if (a === b) continue;
-    pairs++;
     const value = datePackValue(a, b, o), bound = datePackBound(a, b, o), cap = datePackClassCap(a, datePackClassKey(b), false, o);
     if (bound < value) violations.bound++;
     if (cap < value) violations.cap++;
     if (cap < bound) violations.boundOverCap++;
-    slack.push(bound - value);
-    if (value <= infeasibleBelow) valueLow++;
-    if (bound <= infeasibleBelow) boundLow++;
-    if (cap <= infeasibleBelow) capLow++;
     if (!a.interests.some(x => b.interests.includes(x)) && !(b.free.length && a.free.some(s => b.free.includes(s)))) {
-      untouched++;
-      const untouchedCap = datePackClassCap(a, datePackClassKey(b), true, o);
-      if (untouchedCap < bound) violations.untouchedCap++;
-      if (untouchedCap <= infeasibleBelow) untouchedLow++;
+      if (datePackClassCap(a, datePackClassKey(b), true, o) < bound) violations.untouchedCap++;
     }
   }
-  slack.sort((x, y) => x - y);
-  const share = (k: number, of: number) => Number((k / of).toFixed(3));
-  console.log(JSON.stringify({
-    pairs, infeasibleBelow,
-    slack: { mean: Number((slack.reduce((s, x) => s + x, 0) / slack.length).toFixed(1)), q1: quantile(slack, 0.25), median: quantile(slack, 0.5), q3: quantile(slack, 0.75), max: slack[slack.length - 1] },
-    shareAtOrBelow: { value: share(valueLow, pairs), pairBound: share(boundLow, pairs), classCap: share(capLow, pairs), untouchedClassCap: share(untouchedLow, untouched) },
-    untouchedPairs: untouched,
-  }));
   expect(violations).toEqual({ bound: 0, cap: 0, boundOverCap: 0, untouchedCap: 0 });
 });
 
@@ -163,9 +146,7 @@ test("the Date pair bound and class caps keep every Date search equal to the sea
     expect(search.checks).toBeLessThanOrEqual(other.checks);
     expect(search.touches).toBeLessThanOrEqual(other.touches);
   });
-  const w = laneWeights("Date"), floor = laneLimits("Date").rules.utilityFloor;
-  let infeasibleBelow = 1000;
-  while (directedUtility([{ weight: w.complement, value: 0 }, { weight: w.affinity, value: 0 }, { weight: w.pack, value: infeasibleBelow }]) >= floor) infeasibleBelow--;
+  const infeasibleBelow = untaggedInfeasibleBelow();
   expect(infeasibleBelow).toBe(933);
   const world = new World(daterInput(), SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
   const people = slopProfiles(world.input, world.canonical);

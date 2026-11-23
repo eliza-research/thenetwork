@@ -15,7 +15,7 @@
 // evals' historical replay, in packages/evals/src/historicalPrompts.ts.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { privateVocabulary } from "./explain.ts";
-import { candidateAgeReason } from "./filters.ts";
+import { candidateAgeReason, type AgeCheckedCandidate } from "./filters.ts";
 import {
   attendingRefs, checkMemberFacing, passMessages, ReplyFields, runPass, str,
   type CitedFact, type JudgeRequest, type PassVerdict,
@@ -88,11 +88,8 @@ export const deepDecision = (v: DeepVerdict) => v.verdict === "yes";
  * blocks (incl. with the connector), safety holds, category and romance opt-ins of attending people.
  * Returns the first failing reason or null.
  */
-export function hardGate(w: World, c: Pick<Candidate, "participants" | "via" | "category" | "lane"> & Partial<Pick<Candidate, "window" | "fixedWindow" | "roles" | "format" | "generator" | "anchor">> & { alternates?: MemberId[] }): string | null {
-  if (candidateAgeReason(w, {
-    participants: c.participants, alternates: c.alternates ?? [], via: c.via, category: c.category, window: c.window, fixedWindow: c.fixedWindow,
-    roles: c.roles ?? {}, format: c.format ?? "event", generator: c.generator ?? "", anchor: c.anchor, lane: c.lane,
-  })) return "underage";
+export function hardGate(w: World, c: Omit<AgeCheckedCandidate, "alternates"> & { alternates?: MemberId[] }): string | null {
+  if (candidateAgeReason(w, { ...c, alternates: c.alternates ?? [] })) return "underage";
   const everyone = [...c.participants, ...(c.via ? [c.via] : [])];
   for (const id of everyone) if (!w.get(id)) return "unknown_member";
   for (const id of everyone) if (w.holds.has(id)) return "safety_hold";

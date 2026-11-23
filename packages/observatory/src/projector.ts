@@ -1,5 +1,6 @@
 import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
+import { JUDGE_VERDICTS } from "@thenetwork/engine/src/reviewJudge.ts";
 import { requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
 import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus, ReviewInfo, ReviewReason, TimeChoice } from "./types.ts";
@@ -11,7 +12,7 @@ const TERMINAL: ReadonlySet<OppState> = new Set<OppState>([
 export const isTerminal = (s: OppState) => TERMINAL.has(s);
 /** The statuses that hold a counted yes which a flake notice can take back. */
 const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set<ParticipantStatus>(["accepted", "countered", "confirmed"]);
-const JUDGE_VERDICTS: ReadonlySet<unknown> = new Set(["approve", "flag", "undecided", "cannot_run"]);
+const JUDGE_VERDICT_SET: ReadonlySet<unknown> = new Set(JUDGE_VERDICTS);
 
 export interface ProjectorOptions {
   /** State a member takes when they join (from their profile: normal, quiet...). */
@@ -375,7 +376,7 @@ export class Projector {
         return true;
       }
       case "review_judgment": {
-        if (d.stale !== true) this.judgedVerdict.set(String(d.oppId), JUDGE_VERDICTS.has(d.verdict) ? d.verdict : "undecided");
+        if (d.stale !== true) this.judgedVerdict.set(String(d.oppId), JUDGE_VERDICT_SET.has(d.verdict) ? d.verdict : "undecided");
         return true;
       }
       case "review_exception": {

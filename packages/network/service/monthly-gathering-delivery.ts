@@ -123,7 +123,7 @@ export async function gatheringInvitationAdmission(tx: SQL, app: AppInfo, runtim
   if (!saved || !event) return refused;
   const currentReview = await reviewCurrent(tx, event, key.revision, saved.state.matchingEnabled, now);
   const eligible = currentReview && await recipientCurrent(tx, accounts, app, event, memberId, row.to,
-    storedGatheringInviteRecipientCurrent(saved.state, memberId), now);
+    storedGatheringInviteRecipientCurrent(saved.state, memberId, now), now);
   const [message] = await tx`select id from network.messages where app_id=${app.id} and id=${row.id} and member_id=${memberId}
       and direction='outbound' and type='info' and not system and proactive and opportunity_id is null and body=${row.text}`;
   return gatheringInvitationMayAdmit(currentReview, eligible, row.text === invitationCard(event, key.id), true, !!message) ? { ok: true } : refused;

@@ -39,7 +39,7 @@ import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
 export function isComplianceText(text: unknown): boolean {
   return typeof text === "string" && (detectKeyword(text) !== undefined || leaveTarget(text) !== undefined);
 }
-const isStopText = (text: unknown) => typeof text === "string" && ((k => k === "stop" || k === "stop_all")(detectKeyword(text)));
+export const isStopText = (text: unknown) => typeof text === "string" && ((k => k === "stop" || k === "stop_all")(detectKeyword(text)));
 
 export interface InboxOptions {
   sql: SQL;

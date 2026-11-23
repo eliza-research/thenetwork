@@ -12,15 +12,15 @@ Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md
 
 The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action, so it never starts, confirms or closes a job posting read-back ([posting policy](../postingPolicy.md), "Only the member's own text in the thread issues a command"). Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds. A reply to an expired probe ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended") gets one direct answer and changes no opportunity state, so the modeled answer action does not take it. A replacement asks again each member who heard about the earlier roster ([probe dispatch](../probeDispatch.md), "A replacement asks again every member who heard about the earlier roster"); the model takes the pair path, and the shell applies the same rule to an activity-partner plan backfill. A direct answer to a probe that the replacement voided gets one honest answer that the plan changed and changes no opportunity state ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended"), so the modeled answer action does not take it either. A direct answer to a probe that was waiting when its opportunity closed gets the same one honest answer that the invitation ended and changes no opportunity state, so the modeled answer action does not take it. The model uses the 48-hour window of a generic probe for every probe; the probe dispatch rules give a Slop probe and a time question 24 hours ([probe dispatch](../probeDispatch.md), "A reply or an expired deadline settles the probe").
 
-Changed (owner decision 2026-11-22): the model has a teen part (`s.teen`) for friendship introductions with a minor ([friend introductions with a minor](../friendIntroAge.md), [teen introduction stop](../teenIntroSwitch.md)). A teen item enters review only when `teenFriendAgeRule` holds, the rule runs again before each contact and at booking with the meeting day, and the teen sweep closes an open item at each day change, readiness loss and stop when the rule no longer holds. `teenSwitchOffNoMinor` is the old rule for the stopped case. `minorNever` keeps the pair path: a member who becomes a minor by a signal or a record is never teen ready.
+Review ([automated review](../automatedReview.md)). The review part of an item has a phase (`awaiting` the judge, `held` for staff, `decided`, `stopped`) and an approver (`judge` or `staff`). `judgeRecord(o, verdict, packetCurrent, env)` is `ConsentNetwork.recordJudgment`: an approval by the review judge, or a hold for staff for any other verdict, also `cannot_run` for the tick's `judge_overdue` hold, merged here into one step. A judgment for a changed packet changes nothing, and failed gates close the item as invalidated with no approval. `staffApprove(o, env)` is `decide` approve, only for a held item. `reject` takes any open item. `stopApproved` closes an approved item that is still probing. `replaceOrClose` swaps in only a roster that the approval covered (`judgedRosters`: the base roster and each single swap with an alternate; `replacement_not_judged` otherwise). A staff approval stores no rosters (`decide` sets no `judgedRosters`), so a staff-approved item closes on a replacement. `contactNeedsRecordedApproval` and `heldItemNeedsStaff` state the rule. Changed (owner decisions D15 to D17 of 2026-11-22): the review judge approves each item and staff decide only held items, because the owner removed human review.
 
-Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start (`s.teen.stopped` is false at the start; it is the stored key `teenStop`). One admin or safety staff member stops them (`teenStop`), one admin turns them on again (`teenResume`), and each step writes an audit row (`s.teen.audit`). The two-admin step, the decision reference, the pending window (`pendingDay`), the safety-role approval and its ghosts are deleted, because the owner chose "On at launch, no extra checks". Readiness needs no staff step: every teen member starts ready, and a report, signal, conflict or bar ends it (`teenReadyLost`). Small friends.help groups are new: t5 (p, q, u) passes; t6 (q, u, r) closes as a whole when r turns 19 on the latest civil date (the window of an unbooked item is scaled to the next civil day; in the code the window ends later, so this member is refused at propose, and `teenNineteenAtWindowEndTest` shows that refusal; review finding of 2026-11-22); t7 has 7 people and fails `teenRosterSizeAllowed`; t8 meets at a place that is not all-ages and fails `teenPlaceAllowed`. `teenGroupSmall` and `teenGroupRule` state the size and place parts. An open teen item that fails any part closes as a whole with a notice that names nobody; the roster of a teen item never changes, so there is no teen replacement and no fallback. Abstraction: a decline closes the teen item (the model's quorum is the whole roster); the code keeps a group that is still above its quorum without the member who declined, and offers no replacement.
+The teen part (`s.teen`) has the friendship introductions with a minor ([friend introductions with a minor](../friendIntroAge.md), [teen introduction stop](../teenIntroSwitch.md)). A teen item enters review only when `teenFriendAgeRule` holds; the rule runs again before each contact and at booking with the meeting day; the teen sweep closes an open item at each day change, readiness loss and stop when the rule no longer holds. The judge approves a teen item with the strict rubric (`teenJudge`, `teenRosterIsJudgedStrictly`), and a named staff member approves a held teen item (`teenStaffApprove`). Teen introductions are on from the start (`s.teen.stopped`, the stored key `teenStop`, is false at the start). One admin or safety staff member stops them (`teenStop`), one admin turns them on again (`teenResume`), and each step writes an audit row (`s.teen.audit`). `teenSwitchOffNoMinor` states the stopped case. Readiness needs no staff step: every teen member starts ready, and a report, signal, conflict or bar ends it (`teenReadyLost`). `minorNever` keeps the pair path: a member who becomes a minor by a signal or a record is never teen ready.
 
-Changed (owner decision 2026-11-22, carry-over of the joinLine review): the model now has the `minorKnew` mark of `network.ts` `Opp`. The minors drop (`dropMember` with "minors policy") marks every opportunity whose time and place the minor heard (`contacted`), finished ones included, and the mark stays after forget deletes the minor. `minorKnewMarked` in `safety` states it, and `minorMarksFinishedItemTest` replays a finished item that is marked when a member becomes a minor with nothing open. Before, the model had no mark, so it could not show that a record age under 18 marks a finished table. `syncMember` in the code runs the minors drop for a record minor only when an open item holds them, a crew knows them, or an opportunity they know has no mark yet; the model's `becomeMinor` always runs it. The two agree, because a drop with none of these three changes nothing. The repeat of a table and a crew session read the mark through the generated `recurrenceAllowed`; this model has no repeats, and [plan crew](plan_crew.md) checks the crew side (`noSessionAMinorKnows`).
+Small friends.help groups: t5 (p, q, u) passes; t6 (q, u, r) closes as a whole when r turns 19 on the latest civil date (the window of an unbooked item is scaled to the next civil day; in the code the window ends later, so this member is refused at propose, and `teenNineteenAtWindowEndTest` shows that refusal); t7 has 7 people and fails `teenRosterSizeAllowed`; t8 meets at a place that is not all-ages and fails `teenPlaceAllowed`. `teenGroupSmall` and `teenGroupRule` state the size and place parts. An open teen item that fails any part closes as a whole with a notice that names nobody; the roster of a teen item never changes, so there is no teen replacement and no fallback. Abstraction: a decline closes the teen item (the model's quorum is the whole roster); the code keeps a group that is still above its quorum without the member who declined, and offers no replacement. Changed (owner decision 2026-11-22, answers A1 to A5): a minor may get friendship pairs and small groups under the rule, on from the start with one staff stop, because the owner chose "friends.help and ntwrk", "On at launch, no extra checks" and "Also small teen groups".
 
-Changed (owner decision 2026-11-22, D15 to D17): human review is removed ([automated review](../automatedReview.md)). The review part of an item has a phase (`awaiting` the judge, `held` for staff, `decided`, `stopped`) and an approver (`judge` or `staff`). `approve` is split: `judgeRecord(o, verdict, packetCurrent, env)` is `ConsentNetwork.recordJudgment` (an approval by the review judge, a hold for staff for any other verdict, also `cannot_run` for the tick's `judge_overdue` hold, merged here into one step; a judgment for a changed packet changes nothing; failed gates close the item as invalidated with no approval) and `staffApprove(o, env)` is `decide` approve, only for a held item. `reject` takes any open item. `stopApproved` closes an approved item that is still probing. `replaceOrClose` swaps in only a roster that the approval covered (`judgedRosters`: the base roster and each single swap with an alternate, `replacement_not_judged` otherwise); a staff approval stores no rosters (network.ts `decide` sets no `judgedRosters`), so a staff-approved item closes on a replacement. Teen approvals merge into `teenJudge` with the strict rubric, and a held teen item is approved by a named staff member (`teenStaffApprove`). `teenReviewerNamed`, `teenAutoApprove`, `SIM_AUTO` and `teenApprovalNamesAPerson` are deleted. New invariants: `contactNeedsRecordedApproval` (replaces `reviewGate`), `heldItemNeedsStaff` and `teenRosterIsJudgedStrictly`.
+The minors drop (`dropMember` with "minors policy") sets the `minorKnew` mark of `network.ts` `Opp` on every opportunity whose time and place the minor heard (`contacted`), finished ones included, and the mark stays after forget deletes the minor (`minorKnewMarked`, `minorMarksFinishedItemTest`). `syncMember` in the code runs the minors drop for a record minor only when an open item holds them, a crew knows them, or an opportunity they know has no mark yet; the model's `becomeMinor` always runs it. The two agree, because a drop with none of these three changes nothing. The repeat of a table and a crew session read the mark through the generated `recurrenceAllowed`; this model has no repeats, and [plan crew](plan_crew.md) checks the crew side (`noSessionAMinorKnows`). Changed 2026-11-22 (joinLine review): the model has the mark, so that it can show that a record age under 18 marks a finished table.
 
-Known drift (recorded 2026-11-22, withdrawal wave; the owner has not decided which side is correct): the model's `close` releases each contacted member who said yes on every close in probing, except a block and the minors policy. The code releases such a member only on the requester's own close of a standing thing (`close()` with `closedBy`, `releasesOnRequesterClose` in the [opportunity lifecycle](../opportunityLifecycle.md)) and on the close of a system proposal or a partial release (`releasesPartialAcceptance`). Out of bounds: the model has no pause and its one request is never withdrawn, so the `requesterHearsOpportunityClose` input `withdrawn` of the [member request rules](../memberRequest.md) is always false here; in the code a request that a pause withdrew keeps its opportunity in probing, and the later close of that opportunity tells the requester nothing.
+Known drift (the owner has not decided which side is correct): the model's `close` releases each contacted member who said yes on every close in probing, except a block and the minors policy. The code releases such a member only on the requester's own close of a standing thing (`close()` with `closedBy`, `releasesOnRequesterClose` in the [opportunity lifecycle](../opportunityLifecycle.md)) and on the close of a system proposal or a partial release (`releasesPartialAcceptance`). Out of bounds: the model has no pause and its one request is never withdrawn, so the `requesterHearsOpportunityClose` input `withdrawn` of the [member request rules](../memberRequest.md) is always false here; in the code a request that a pause withdrew keeps its opportunity in probing, and the later close of that opportunity tells the requester nothing.
 
 The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
 
@@ -38,10 +38,10 @@ Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md)
 // The model follows packages/network/src/network.ts AS IT IS on branch wave2/opportunity after the fixes
 // (c06f633..25b54f1; the defect register ids are in docs/research/quint-findings/opportunity.md).
 // "N:<line>" is a line in that file at 25b54f1 where a fix changed the code; other references are from
-// ad67275 and can be up to about 55 lines lower than at 25b54f1. One action is one unit of work under the store lock (store.ts:263):
+// ad67275 and can be up to about 55 lines lower than at 25b54f1. One action is one unit of work under the store lock (store.ts):
 // an inbound message (onInbound), a staff decision (decide), a tick (tick), or one step of another actor
 // (the outbound queue, the member record). The probe send is its own action: probe() defers a probe while
-// the member's send window is closed, and tick() tries again (N:2165-2173), so other units run in between.
+// the member's send window is closed, and tick tries again, so other units run in between.
 //
 // Bounds: 3 members (a, b, c), 2 pair opportunities. o1 is a member request of a with b (alternate c);
 // o2 is an engine intro of a with c (alternate b). Time is in hours.
@@ -81,21 +81,21 @@ module opportunity {
   pure val ORDER = List("a", "b", "c")
   pure val OPPS = Set("o1", "o2")
   pure val OPP_ORDER = List("o1", "o2")
-  // feedbackDue (N:2589) searches the newest opportunity first.
+  // feedbackDue searches the newest opportunity first.
   pure val OPP_NEWEST = List("o2", "o1")
   pure val OPEN = Set("review", "probing", "scheduled")
   pure val TERMINAL = Set("closed", "done", "gone")
 
-  pure val PROBE_TTL = 48      // N:5663 probeWindow, generic probe
-  pure val PROBE_WAIT = 48     // N:440: partnerProbeDays = 2 (engine config.ts:340)
-  pure val REVIEW_SLA = 12     // N:578 reviewSlaHours
-  pure val OPT_OUT_HOURS = 48  // N:444
+  pure val PROBE_TTL = 48 // probeWindow, generic probe
+  pure val PROBE_WAIT = 48 // partnerProbeDays = 2 (engine config.ts)
+  pure val REVIEW_SLA = 12 // reviewSlaHours
+  pure val OPT_OUT_HOURS = 48
   pure val UNANSWERED_AFTER = 72 // spec/outreachPolicy.md, scaled to hours
   pure val UNANSWERED_LIMIT = 2  // spec/outreachPolicy.md
-  pure val SLOT_EXPIRY = 72    // N:3285: awaiting other than probe and booked ends after 3 days
-  pure val FEEDBACK_AFTER = 3  // N:3405
-  pure val FINALIZE_AFTER = 96 // N:3425
-  pure val FEEDBACK_DUE = 168  // N:2590
+  pure val SLOT_EXPIRY = 72 // awaiting other than probe and booked ends after 3 days
+  pure val FEEDBACK_AFTER = 3
+  pure val FINALIZE_AFTER = 96
+  pure val FEEDBACK_DUE = 168
 
   // What the member really says (the readers see only the text).
   pure val INTENTS = Set("yes", "yes_other_times", "counter", "no", "unclear", "cancel",
@@ -228,7 +228,7 @@ module opportunity {
     h: { brokeRule: false, contactWhileOff: false },
   }
 
-  // spec/memberAge.md ageOnDay; spec/friendIntroAge.md teenAgesOk, birthKeysWithinTwoYears, pairAgeAllowed and
+  // spec/memberAge.md ageOnDay; spec/friendIntroAge.md teenPartnerAge, birthKeysWithinTwoYears, pairAgeAllowed and
   // groupAgeAllowed (each pair of the roster, self included). minDay is the Clock's day key. maxDay is the latest
   // day key of the meeting end (network.ts rosterAgeAllowed with teenMeetingEnd): a booked item uses the meeting
   // day; an unbooked item uses the end of its window (the plan window, or the proposal window of now + 5 days in
@@ -309,7 +309,7 @@ module opportunity {
   pure def clearAwFor(s: S, m: str, o: str): S =
     if (mm(s, m).aw.opp == o and mm(s, m).aw.kind != "none") putM(s, m, { ...mm(s, m), aw: NO_AW }) else s
 
-  // busy(): in an open opportunity (other than `except`) and not out of it (N:4368).
+  // busy: in an open opportunity (other than `except`) and not out of it.
   pure def busy(s: S, m: str, except: str): bool =
     OPPS.exists(o => o != except and OPEN.contains(op(s, o).stage) and op(s, o).parts.contains(m)
       and not(Set("unavailable", "no", "dropped", "out").contains(stat(s, o, m))))
@@ -318,7 +318,7 @@ module opportunity {
   pure def eligible(s: S, m: str, except: str): bool =
     not(mm(s, m).forgotten) and not(mm(s, m).optedOut) and not(mm(s, m).minor) and not(busy(s, m, except))
 
-  // ---------------------------------------------------------------- the send pipeline (N:3862-3954)
+  // ---------------------------------------------------------------- the send pipeline
   // The gates of send() in order: checkRecipient (recipientVerdict, spec/recipientEligibility.md), budget, the Blooio streak, timing (recipientTimingAllowed).
   // Messages about other members and recruiting are refused for a minor (spec/outreachPolicy.md). The minor flag here stands
   // for the code's notAdult fact (spec/recipientEligibility.md): a minor, a minor signal or report, or an unknown or conflicting age.
@@ -369,7 +369,7 @@ module opportunity {
     else noteRefused(s, o, m)
   }
 
-  // owedAnswer (N:4662, SD-043): the yes or no this member still owes, other than on `except`: a probe that
+  // owedAnswer (SD-043): the yes or no this member still owes, other than on `except`: a probe that
   // went out and was not answered (first), or a booked plan they were told about and did not confirm.
   pure def owedAnswer(s: S, m: str, except: str): Aw = {
     val pr = OPP_ORDER.select(o => o != except and op(s, o).stage == "probing" and op(s, o).told.contains(m) and stat(s, o, m) == "probing")
@@ -381,21 +381,21 @@ module opportunity {
     }
   }
 
-  // probe() (N:2198-2201, SD-043 and SD-077): the probe waits while the member owes an answer on another
+  // probe (SD-043 and SD-077): the probe waits while the member owes an answer on another
   // probe, or (when they owe nothing else) while "How did it go?" waits for their answer.
   pure def probeOwed(s: S, m: str, o: str): bool = {
     val owedOn = owedAnswer(s, m, o)
     if (owedOn.kind != "none") owedOn.kind == "probe" else mm(s, m).aw.kind == "feedback"
   }
 
-  // expect() (N:4136): a pending probe or booked plan is never replaced by another kind.
+  // expect: a pending probe or booked plan is never replaced by another kind.
   pure def expectSlot(s: S, m: str, aw: Aw): S = {
     val cur = mm(s, m).aw.kind
     if ((cur == "probe" or cur == "booked") and aw.kind != "probe" and aw.kind != "booked") s
     else putM(s, m, { ...mm(s, m), aw: aw })
   }
 
-  // ---------------------------------------------------------------- close (N:2526-2561), a job
+  // ---------------------------------------------------------------- close, a job
   pure def close(s: S, o: str, reason: str, env: Env): S = {
     val x = op(s, o)
     if (TERMINAL.contains(x.stage) or x.stage == "absent") s
@@ -404,7 +404,7 @@ module opportunity {
       val wasProbing = x.stage == "probing" or wasReview
       val s1 = putO(s, o, { ...x, closedFrom: x.stage, closedReason: reason, stage: "closed", everTerminal: true })
       // Participants: clear their slot for this opportunity; tell the ones who said yes, when it was booked.
-      // SD-263 (N:2587-2591): a yes to a probe that is not booked yet is released too, except the requester
+      // SD-263: a yes to a probe that is not booked yet is released too, except the requester
       // (the request path tells them). The requester's own close of a standing thing (close() with closedBy,
       // spec/opportunityLifecycle.md releasesOnRequesterClose, owner decision 2026-11-22) releases each contacted
       // member who said yes; this branch releases on every close in probing (known drift, see the header). On a close for the minors policy in probing, each other member who got a
@@ -421,7 +421,7 @@ module opportunity {
           sendNoticeAt(a1, p, "release", o, noticeTiming(true), env)
         else a1
       })
-      // The member request (N:2542-2557): a request still probing goes back to waiting.
+      // The member request: a request still probing goes back to waiting.
       val req = x.requester
       val s3 = if (req != "" and s2.req.outcome == "probing") {
         val rm = mm(s2, req)
@@ -429,17 +429,17 @@ module opportunity {
         if (not(tell)) { ...s2, req: { ...s2.req, outcome: "none" } }
         else if (s2.req.toldNone) { ...s2, req: { ...s2.req, outcome: "none" } }
         else {
-          // tellNoneYet (N:1655): told once (again only on a repeat ask, SD-266; the model has no repeat ask).
+          // tellNoneYet: told once (again only on a repeat ask, SD-266; the model has no repeat ask).
           sendNotice({ ...s2, req: { outcome: "none", toldNone: true } }, req, "none_yet", o, env)
         }
       } else s2
-      // The interaction record (N:2559): "declined" only for reason "declined".
+      // The interaction record: "declined" only for reason "declined".
       val rec = if (wasReview) "" else if (reason == "declined") "declined" else if (wasProbing) "expired" else "cancelled"
       putO(s3, o, { ...op(s3, o), outcomeRec: rec })
     }
   }
 
-  // ---------------------------------------------------------------- probe turns (advanceProbes, N:2129)
+  // ---------------------------------------------------------------- probe turns (advanceProbes)
   // Turn order only. The probe itself is the probeSend action (see the header).
   pure def advanceTurns(s: S, o: str): S = {
     val x = op(s, o)
@@ -457,9 +457,9 @@ module opportunity {
     }
   }
 
-  // ---------------------------------------------------------------- replaceOrClose (N:2368), a job
+  // ---------------------------------------------------------------- replaceOrClose, a job
   // With one alternate the replacement cannot reveal at once: the alternate starts "queued".
-  // SD-048 (N:2408-2410): the member who is out loses a slot that points at this opportunity.
+  // SD-048: the member who is out loses a slot that points at this opportunity.
   pure def replaceOrClose(s0: S, o: str, out: str): S = {
     val s = if (op(s0, o).stage == "probing") clearAwFor(s0, out, o) else s0
     val x = op(s, o)
@@ -492,16 +492,16 @@ module opportunity {
     }
   }
 
-  // ---------------------------------------------------------------- handleDrop (N:2502), a job
+  // ---------------------------------------------------------------- handleDrop, a job
   pure def handleDrop(s: S, m: str, o: str, ack: bool, minorClose: bool, env: Env): S = {
     val x0 = op(s, o)
     val s1 = putO(s, o, { ...x0, status: x0.status.set(m, "dropped"), droppedBy: x0.droppedBy.union(Set(m)) })
     val s2 = if (ack) collect(s1, m, "reply", o, false) else s1
     val s3 = clearAwFor(s2, m, o)
     val still = partsOrdered(s3, o).select(p => stat(s3, o, p) == "yes")
-    // Only members who were told about the plan hear that it changed (N:2557). The drop_notice hook has no
+    // Only members who were told about the plan hear that it changed. The drop_notice hook has no
     // onRefused (SD-249, skipped); it carries the meeting time (SD-248).
-    // network.ts:2693: a group stays on only with 3 or more still going ("two who are left said yes to a
+    // network.ts: a group stays on only with 3 or more still going ("two who are left said yes to a
     // group, not to a meeting of two"). A pair: keep is false, so the opportunity closes on handleDrop's own
     // path, closeBooking (not close()). A minor who leaves closes the booking whatever its size: the adults do
     // not meet at a time and place a minor was told (spec/opportunityLifecycle.md, bookedGroupCanContinue).
@@ -511,7 +511,7 @@ module opportunity {
   }
 
   /**
-   * The members still going whom the booked plan reached hear that it changed (N:2557). At a minor signal a
+   * The members still going whom the booked plan reached hear that it changed. At a minor signal a
    * member still going whom the booked plan did not reach yet hears it too: the signal removed their queued
    * booked plan (withoutMinorQueue), and they said yes (closeBooking, network.ts).
    */
@@ -528,14 +528,14 @@ module opportunity {
     val s4 = tellStill(s3, o, minorClose, env)
     val s5 = putO(s4, o, { ...op(s4, o), closedFrom: op(s4, o).stage, closedReason: reason, stage: "closed", everTerminal: true })
     val released = partsOrdered(s5, o).foldl(s5, (acc, p) => clearAwFor(acc, p, o))
-    // SD-139 (N:2560-2563): the requester still says yes (another member called it off): the request waits again.
+    // SD-139: the requester still says yes (another member called it off): the request waits again.
     val x5 = op(released, o)
     if (x5.requester != "" and stat(released, o, x5.requester) == "yes" and released.req.outcome == "booked") { ...released, req: { ...released.req, outcome: "none" } }
     else released
   }
   pure def dropJob(o: str, m: str, ack: bool): Job = { ...J("drop", o, m, ""), ack: ack }
 
-  // ---------------------------------------------------------------- reveal (N:2411)
+  // ---------------------------------------------------------------- reveal
   pure def onSentReveal(s: S, o: str, m: str): S = {
     val s1 = expectSlot(s, m, { kind: "booked", opp: o, at: s.now, clarified: false })
     val x = op(s1, o)
@@ -543,18 +543,18 @@ module opportunity {
                   revealSent: x.revealSent.union(Set(m)), wasTold: x.wasTold.union(Set(m)) })
   }
 
-  /** The reveal to one participant (a job): the reveal fold's step in reveal() (N:2425). */
+  /** The reveal to one participant (a job): the reveal fold's step in reveal. */
   pure def sendReveal(s: S, o: str, p: str, env: Env): S =
     if (op(s, o).stage != "scheduled" or stat(s, o, p) != "yes") s
     else {
       val r = sendGate(s, p, "reveal", "logistics", true, false, env)
       if (r == "sent") onSentReveal(collect(s, p, "reveal", o, false), o, p)
       else if (r == "deferred") pushDef(s, "reveal", o, p)
-      else push(s, [dropJob(o, p, false)]) // the reveal hook's onRefused (N:4087)
+      else push(s, [dropJob(o, p, false)]) // the reveal hook's onRefused
     }
 
   pure def reveal(s: S, o: str, env: Env): S = {
-    // Send-time re-check (N:2415-2424): reachable, about the others, and room on the Blooio streak.
+    // Send-time re-check: reachable, about the others, and room on the Blooio streak.
     val bad = partsOrdered(s, o).select(p => {
       val x = mm(s, p)
       x.forgotten or x.optedOut or x.minor or x.outbound > 2
@@ -569,14 +569,14 @@ module opportunity {
     }
   }
 
-  /** advanceProbes (N:2129), a job: the turn order, then the reveal once every participant said yes. */
+  /** advanceProbes, a job: the turn order, then the reveal once every participant said yes. */
   pure def advanceProbes(s0: S, o: str, env: Env): S = {
     val s = advanceTurns(s0, o)
     if (op(s, o).stage == "probing" and op(s, o).parts.forall(p => stat(s, o, p) == "available")
         and op(s, o).parts.intersect(op(s, o).askedAgain) == Set()) reveal(s, o, env) else s
   }
 
-  // ---------------------------------------------------------------- dropMember (N:2564), the hub
+  // ---------------------------------------------------------------- dropMember, the hub
   // dropMember runs one job for each opportunity, in the code's order.
   pure def dropMember(s: S, m: str, reason: str): S = push(s, [J("dm", "o1", m, reason), J("dm", "o2", m, reason)])
 
@@ -601,7 +601,7 @@ module opportunity {
       else if (minorReason and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
       else if (x.stage == "review") push(a1, [J("close", o, "", reason)])
       else if (x.stage == "probing") push(setStat(a1, o, m, "unavailable"), [J("replace", o, m, "")])
-      // SD-047 (N:2633): only a member who is going ("yes") leaves a booked meeting.
+      // SD-047: only a member who is going ("yes") leaves a booked meeting.
       else if (stat(a1, o, m) == "yes") push(a1, [{ ...dropJob(o, m, false), why: reason }])
       // A minor on the booked roster who is not going still closes it (closesForMinor: participant), on closeBooking.
       else if (minorReason) push(a1, [J("closeBooking", o, "", reason)])
@@ -609,8 +609,8 @@ module opportunity {
     }
   }
 
-  // heardFrom (N:639): any inbound resets the pause rules. The queue releases messages held for an answer
-  // (outbound-queue.ts:636-643).
+  // heardFrom: any inbound resets the pause rules. The queue releases messages held for an answer
+  // (outbound-queue.ts).
   pure def unhold(q: str): str = if (q == "held") "pending" else q
   pure def heardFrom(s: S, m: str): S = {
     val x = mm(s, m)
@@ -621,11 +621,11 @@ module opportunity {
   }
 
   // ---------------------------------------------------------------- readers (oracles, fixed per intent)
-  // parseProbeReply with time options (classify.ts:669-731) merged by the probe branch (N:766-777).
-  // A bare "counter" ("how about next week instead?") is "unclear" (consentOf, classify.ts:598, SD-041); a
+  // parseProbeReply with time options (classify.ts) merged by the probe branch.
+  // A bare "counter" ("how about next week instead?") is "unclear" (consentOf, classify.ts, SD-041); a
   // counter with a yes word ("sounds fun! how about next week") is a yes with no time, the same reading as
   // "yes_other_times"; "it was great" -> yes (an affirmation); "I couldn't make it" -> no (a can't);
-  // "ok" -> yes, unclear after two of our messages in a row (N:774), and unclear when another message
+  // "ok" -> yes, unclear after two of our messages in a row, and unclear when another message
   // followed the unclarified probe: the "ok" or "Thanks! 👍" answers that message, not the probe.
   pure def readProbe(intent: str, outboundBefore: int, answersOther: bool): str =
     if (Set("yes", "fb_good").contains(intent)) "yes_all"
@@ -634,14 +634,14 @@ module opportunity {
     else if (Set("no", "cancel", "fb_self_noshow").contains(intent)) "no"
     else "unclear"
 
-  // yesNoOf / consentOf (N:654, classify.ts:556): yes, no, counter or unclear.
+  // yesNoOf / consentOf (classify.ts): yes, no, counter or unclear.
   pure def readYesNo(intent: str): str =
     if (Set("yes", "fb_good", "ack").contains(intent)) "yes"
     else if (Set("no", "cancel", "fb_self_noshow").contains(intent)) "no"
     else "unclear"
 
-  // ---------------------------------------------------------------- onProbeAnswer (N:2327)
-  // SD-075 and SD-076 (N:2330): a no also takes back a yes that is not booked yet ("available").
+  // ---------------------------------------------------------------- onProbeAnswer
+  // SD-075 and SD-076: a no also takes back a yes that is not booked yet ("available").
   pure def onProbeAnswer(s: S, m: str, o: str, yes: bool, nonePicked: bool, intent: str, env: Env): S = {
     val x = op(s, o)
     if (x.stage != "probing" or not(stat(s, o, m) == "probing" or (not(yes) and stat(s, o, m) == "available"))) s
@@ -674,7 +674,7 @@ module opportunity {
     if (due.length() > 0) due[0] else ""
   }
 
-  // onFeedback (N:2644): the post-meeting answer; a self no-show counts on the member (N:2673), unless
+  // onFeedback: the post-meeting answer; a self no-show counts on the member, unless
   // finalize already counted it (SD-328).
   pure def onFeedback(s: S, m: str, o: str, intent: str): S = {
     val x = op(s, o)
@@ -685,19 +685,19 @@ module opportunity {
     collect(s1, m, "reply", o, false)
   }
 
-  // ---------------------------------------------------------------- handleInbound routing (N:673-845)
+  // ---------------------------------------------------------------- handleInbound routing
   pure def route(s: S, m: str, intent: str, outboundBefore: int, env: Env): S = {
     val aw = mm(s, m).aw
     val yn = readYesNo(intent)
     if (intent == "job_post") {
-      // peon: postingTurn (N:758, jobs.ts) reads the post back and sets awaiting "posting" with no expect().
+      // peon: postingTurn (jobs.ts) reads the post back and sets awaiting "posting" with no expect.
       putM(s, m, { ...mm(s, m), aw: { kind: "posting", opp: "", at: s.now, clarified: false } })
     } else if (aw.kind == "posting") {
-      // The manager's yes or no to the read-back ends the draft. SD-043 (N:4681): the slot goes back to a
+      // The manager's yes or no to the read-back ends the draft. SD-043: the slot goes back to a
       // probe or booked plan that still waits for this member's answer.
       putM(s, m, { ...mm(s, m), aw: owedAnswer(s, m, "") })
     } else {
-      // The probe branch (N:762-772).
+      // The probe branch.
       val pr = readProbe(intent, outboundBefore, aw.kind == "probe" and not(aw.clarified) and mm(s, m).lastOutProbe != aw.opp)
       val probeDone = aw.kind == "probe" and pr != "unclear"
       val clarifyNow = aw.kind == "probe" and pr == "unclear" and not(aw.clarified)
@@ -713,9 +713,9 @@ module opportunity {
         val s1 = putM(s, m, { ...mm(s, m), aw: NO_AW })
         collect(if (op(s1, aw.opp).stage == "scheduled") confirmPlan(s1, aw.opp, m, false) else s1, m, "reply", aw.opp, false)
       } else {
-        // A cancel with no slot: the first scheduled opportunity where the member is "yes" (N:798-801).
+        // A cancel with no slot: the first scheduled opportunity where the member is "yes".
         val sched = OPP_ORDER.select(o => op(s, o).stage == "scheduled" and stat(s, o, m) == "yes")
-        // SD-075 and SD-076 (N:807-812): with no slot, "no" or a cancel takes back a yes to a probe that is
+        // SD-075 and SD-076: with no slot, "no" or a cancel takes back a yes to a probe that is
         // not booked yet.
         val held = OPP_ORDER.select(o => op(s, o).stage == "probing" and op(s, o).told.contains(m) and stat(s, o, m) == "available")
         if (intent == "cancel" and sched.length() > 0) push(s, [dropJob(sched[0], m, true)])
@@ -732,17 +732,17 @@ module opportunity {
     }
   }
 
-  // ---------------------------------------------------------------- the tick (N:3263)
+  // ---------------------------------------------------------------- the tick
   pure def defValid(s: S, d: Def): bool = {
     val x = op(s, d.opp)
     if (d.kind == "reveal") x.stage == "scheduled" and x.status.get(d.to) == "yes" and s.now < x.meetingAt
-    // SD-248 (N:4158): the drop notice carries the meeting time, so it stays valid after forget deletes the item.
+    // SD-248: the drop notice carries the meeting time, so it stays valid after forget deletes the item.
     else if (d.kind == "drop_notice") s.now < x.meetingAt
     else true
   }
 
   /**
-   * deliverDeferred (N:3270-3290) for one deferred send `d` (a job). The tick took the deferred sends out of
+   * deliverDeferred for one deferred send `d` (a job). The tick took the deferred sends out of
    * `deferred` into `toDeliver`; a send that must wait again goes back into `deferred`. The next deliver job
    * runs after the drop that a refused reveal starts, as in the code's loop.
    */
@@ -750,7 +750,7 @@ module opportunity {
     val acc1 = { ...acc0, toDeliver: acc0.toDeliver.exclude(Set(d)) }
     val acc = if (acc1.toDeliver != Set()) push(acc1, [J("deliver", "", "", "")]) else acc1
     if (mm(acc, d.to).forgotten) acc
-    else if (not(defValid(acc, d))) acc            // N:3274: dropped, no onRefused
+    else if (not(defValid(acc, d))) acc // dropped, no onRefused
     else if (not(env.openW.contains(d.to))) pushDef(acc, d.kind, d.opp, d.to)
     else {
       val about = d.kind == "reveal" or d.kind == "feedback"
@@ -795,7 +795,7 @@ module opportunity {
     def vouched(p: str): bool = going.select(q => q != p and x.post.get(q) == "came").length() > 0
     def present(p: str): bool = x.post.get(p) == "came" or x.post.get(p) == "came_other" or (x.post.get(p) != "self_noshow" and vouched(p))
     def reported(p: str): bool = going.select(q => q != p and x.post.get(q) == "came_other").length() > 0
-    // N:2823-2826: a reported no-show who did not answer counts once here, and is marked counted (SD-328).
+    // a reported no-show who did not answer counts once here, and is marked counted (SD-328).
     val counted = going.select(p => not(present(p)) and not(said(p)) and reported(p))
     val nsc = counted.foldl(x.noShowCount, (acc, p) => acc.set(p, acc.get(p) + 1))
     val s1 = putO(s, o, { ...x, finalized: true, noShowCount: nsc,
@@ -812,7 +812,7 @@ module opportunity {
     else {
       val due = if (y.told.contains(p)) y.sentAt.get(p) + PROBE_TTL else y.turnAt.get(p) + PROBE_WAIT
       if (acc.now < due) acc
-      // N:3430-3433: they said yes and were offered other times: no answer keeps the yes. The slot that
+      // they said yes and were offered other times: no answer keeps the yes. The slot that
       // points at this item ends first (SD-076).
       else if (y.timeRetry.contains(p)) setStat(clearAwFor(acc, p, o), o, p, "available")
       else {
@@ -823,7 +823,7 @@ module opportunity {
     }
   }
 
-  /** advance (N:3378) for one opportunity (a job). The probing loop is one job for each participant, then advanceProbes. */
+  /** advance for one opportunity (a job). The probing loop is one job for each participant, then advanceProbes. */
   pure def advance(s: S, o: str, env: Env): S = {
     val x = op(s, o)
     if (x.stage == "review" and s.now >= x.review.deadline) {
@@ -832,13 +832,13 @@ module opportunity {
     } else if (x.stage == "probing") {
       push(s, partsOrdered(s, o).foldl(List(), (l, p) => l.append(J("exp", o, p, ""))).append(J("probes", o, "", "")))
     } else if (x.stage == "scheduled") {
-      // Silence for 48 hours after the booked plan reached them (or the start) confirms it (N:3389-3393).
+      // Silence for 48 hours after the booked plan reached them (or the start) confirms it.
       val s1 = ORDER.foldl(s, (acc, p) => {
         val y = op(acc, o)
         if (y.bookedTold.contains(p) and y.bookedAt.get(p) >= 0 and (acc.now - y.bookedAt.get(p) >= OPT_OUT_HOURS or acc.now >= y.meetingAt))
           confirmPlan(acc, o, p, true) else acc
       })
-      // Reminders (N:3394-3404): inside the member's allowed window in the day before the meeting. The
+      // Reminders: inside the member's allowed window in the day before the meeting. The
       // window oracle stands for "at T-4h, or the last allowed tick before it".
       val s1r = partsOrdered(s1, o).foldl(s1, (acc, p) => {
         val y = op(acc, o)
@@ -884,7 +884,7 @@ module opportunity {
   pure def idleIn(x: S): bool = x.jobs.length() == 0
   val idle: bool = idleIn(s)
 
-  // newOpp + submit (N:2047, 2096): every opportunity goes to review first. The engine and the request
+  // newOpp + submit: every opportunity goes to review first. The engine and the request
   // search propose only eligible members (eligible, busy).
   action submit(o: str): bool = {
     val x = op(s, o)
@@ -902,7 +902,7 @@ module opportunity {
     }
   }
 
-  // reviewBlock (N:1975, SD-009): every decision is refused once the clock reached the item's review
+  // reviewBlock (SD-009): every decision is refused once the clock reached the item's review
   // deadline, also before the tick that expires it.
   pure def reviewOpen(s: S, o: str): bool =
     op(s, o).stage == "review" and op(s, o).review.decision == "" and s.now < op(s, o).review.deadline
@@ -942,7 +942,7 @@ module opportunity {
     }
   }
 
-  // decide(approve) (N:1917-1956) by a named staff member, only for an item the judge held (not_held_for_staff),
+  // decide(approve) by a named staff member, only for an item the judge held (not_held_for_staff),
   // after reviewBlock. network.ts decide stores no judgedRosters.
   action staffApprove(o: str, env: Env): bool = {
     val x = op(s, o)
@@ -976,7 +976,7 @@ module opportunity {
     }
   }
 
-  // probe() (N:2186) at a moment the member's send window is open and nothing else waits for their answer
+  // probe at a moment the member's send window is open and nothing else waits for their answer
   // (probeOwed, SD-043 and SD-077). send() with noDefer and the probe hook: onSent sets awaiting with no
   // expect(); onRefused replaces or closes.
   action probeSend(o: str, m: str, env: Env): bool = {
@@ -998,7 +998,7 @@ module opportunity {
     }
   }
 
-  // An inbound text from the member (onInbound N:595, handleInbound N:673).
+  // An inbound text from the member (onInbound, handleInbound).
   action answer(m: str, intent: str, env: Env): bool = {
     val x = mm(s, m)
     all {
@@ -1022,7 +1022,7 @@ module opportunity {
     }
   }
 
-  // STOP (N:675): heardFrom first (N:615), then dropMember.
+  // STOP: heardFrom first, then dropMember.
   action stop(m: str, env: Env): bool = all {
     idle,
     not(mm(s, m).forgotten), not(mm(s, m).optedOut),
@@ -1030,7 +1030,7 @@ module opportunity {
     s' = { ...dropMember(putM(s1, m, { ...mm(s1, m), optedOut: true }), m, "opted out"), last: L("stop", "", m, ""), jobEnv: env },
   }
 
-  // START (N:676).
+  // START.
   action start(m: str): bool = all {
     idle,
     not(mm(s, m).forgotten), mm(s, m).optedOut,
@@ -1038,7 +1038,7 @@ module opportunity {
     s' = { ...collect(putM(s1, m, { ...mm(s1, m), optedOut: false }), m, "reply", "", false), last: L("start", "", m, "") },
   }
 
-  // A minor signal or a record age under 18 (N:717-722, syncMember N:4430): minor, then dropMember. First the
+  // A minor signal or a record age under 18 (syncMember): minor, then dropMember. First the
   // deferred sends about an opportunity the minor was on, an alternate for or asked about, whatever its stage,
   // leave the queue: a cancellation (a release, a quiet decline, a drop notice) that is still valid goes now,
   // and a reveal or a feedback request never goes. "None yet" names no opportunity in the code (no proposalId)
@@ -1059,7 +1059,7 @@ module opportunity {
     s' = { ...dropMember(withoutMinorQueue(putM(s, m, { ...mm(s, m), minor: true }), m, env), m, "minors policy"), last: L("minor", "", m, ""), jobEnv: env },
   }
 
-  // Leave the app or delete (service forget -> Network.forget, N:913): declined, requests gone, dropMember,
+  // Leave the app or delete (service forget -> Network.forget): declined, requests gone, dropMember,
   // then every opportunity that names the member is deleted (forgetRest, a job after dropMember's jobs).
   action forget(m: str, env: Env): bool = all {
     idle,
@@ -1090,8 +1090,8 @@ module opportunity {
       if (y.stage != "absent" and (y.parts.contains(m) or y.requester == m)) putO(acc, o, { ...y, stage: "gone", everTerminal: true })
       else putO(acc, o, { ...y, alts: y.alts.exclude(Set(m)) })
     })
-    // N:940-948: slots on a deleted opportunity end; the member state goes; deferred sends to them, or about
-    // them (reveal and feedback carry `about`), go. A drop notice has no `about` and stays (N:4105).
+    // slots on a deleted opportunity end; the member state goes; deferred sends to them, or about
+    // them (reveal and feedback carry `about`), go. A drop notice has no `about` and stays.
     val s5 = MEMBERS.fold(s4, (acc, p) => {
       val aw = mm(acc, p).aw
       if (p == m or (aw.kind != "none" and aw.opp != "" and op(acc, aw.opp).stage == "gone")) putM(acc, p, { ...mm(acc, p), aw: NO_AW }) else acc
@@ -1113,7 +1113,7 @@ module opportunity {
     })
 
   // The clock moves between two ticks: units read clock.now(), and withTickLock skips a tick while another
-  // holder has the lock (runtime.ts). Review expiry runs only in a tick (N:3397).
+  // holder has the lock (runtime.ts). Review expiry runs only in a tick.
   action elapse(dt: int): bool = all {
     idle,
     s.deferred.forall(d => not(untilMeeting(s, d)) or s.now + dt + 1 < op(s, d.opp).meetingAt),
@@ -1131,7 +1131,7 @@ module opportunity {
   }
 
   // The outbound queue (packages/blooio/src/outbound-queue.ts) decides a collected probe or reveal later:
-  // sent, held for an answer (the line's unanswered cap, :398-401) or refused. The other messages are read by
+  // sent, held for an answer (the line's unanswered cap) or refused. The other messages are read by
   // no invariant.
   action queueDecideAt(kind: str, o: str, m: str, q: str, acceptedAt: int): bool = {
     val x = op(s, o)
@@ -1304,7 +1304,7 @@ module opportunity {
       all { roll == 1, stop(m, env) },
       start(m),
       // A minor signal in half as many draws as the other life events (weights only: the reachable states do not
-      // change). Since a minor who was asked and then replaced closes the item (network.ts:2768-2770), a minor signal
+      // change). Since a minor who was asked and then replaced closes the item (network.ts), a minor signal
       // in one roll of 10 closes the member request before it is held in almost every trace (witness_requestFulfilled).
       // An under-age decline is a minor signal too: it shares becomeMinor's roll, so the two together keep that rate.
       all { roll == 2, wide, becomeMinor(m, env) },
@@ -1353,14 +1353,14 @@ module opportunity {
   })
 
   // AGENTS.md decision 11: a counter-offer (or an answer to another question) never makes a member
-  // "available" (the yes-hold, N:2337). SD-041 (113a369), SD-077 (6d8d2d3).
+  // "available" (the yes-hold). SD-041 (113a369), SD-077 (6d8d2d3).
   val counterIsNotYes = OPPS.forall(o => {
     val x = op(s, o)
     x.stage == "probing" implies x.parts.forall(p =>
       (x.status.get(p) == "available" and x.told.contains(p)) implies CONSENT.contains(x.accepted.get(p)))
   })
 
-  // The slot routes the consent reply (N:771), so it is consent state. A probe slot points at a probe that
+  // The slot routes the consent reply, so it is consent state. A probe slot points at a probe that
   // waits for this member. SD-048 (73d1e2b: replaceOrClose clears the slot of the member who is out) and the
   // time-retry expiry that kept it (791ff6a, SD-076).
   val slotOwnerAlive = MEMBERS.forall(m => {
@@ -1369,7 +1369,7 @@ module opportunity {
       and op(s, aw.opp).status.get(m) == "probing")
   })
 
-  // Code comment on expect() (N:4185): "can't this week" must reach the probe. While a probe waits for the
+  // Code comment on expect: "can't this week" must reach the probe. While a probe waits for the
   // member's answer, the slot points at it, or the job-post read-back holds the slot and gives it back when
   // the post is saved or dropped (owedAnswer). SD-043, fixed in 74602b1 (it was lost before).
   val noLostAnswer = OPPS.forall(o => {
@@ -1402,11 +1402,11 @@ module opportunity {
   // closed and done are terminal (gone: deleted by forget).
   val terminalStable = OPPS.forall(o => op(s, o).everTerminal implies TERMINAL.contains(op(s, o).stage))
 
-  // Request comment (N:388): "booked": a meeting is set. SD-139, fixed in 6e500fa: when another member calls
+  // Request comment: "booked": a meeting is set. SD-139, fixed in 6e500fa: when another member calls
   // the meeting off, the request waits again. When the requester calls it off, the request stays "booked";
-  // that is no stuck request, as a new ask opens a new request (openRequest skips "booked", N:1598). The same
+  // that is no stuck request, as a new ask opens a new request (openRequest skips "booked"). The same
   // holds after the meeting time (done; "fulfilled" needs the requester there): the meeting was set. When the
-  // partner then leaves the app, forget deletes the done item (N:961) and clears the request's oppId (N:977);
+  // partner then leaves the app, forget deletes the done item and clears the request's oppId;
   // the meeting was still set (feedbackSent stays on the deleted item in the model).
   val requestNotStuck = s.req.outcome == "booked" implies
     (Set("scheduled", "done").contains(op(s, "o1").stage) or op(s, "o1").droppedBy.contains("a")
@@ -1439,7 +1439,7 @@ module opportunity {
   // it counted, and a late self no-show answer does not count them again.
   val noShowOnce = OPPS.forall(o => MEMBERS.forall(m => op(s, o).noShowCount.get(m) <= 1))
 
-  // N:2405-2408: everyone said yes, so the plan is booked and each member is told once. SD-146 was not
+  // everyone said yes, so the plan is booked and each member is told once. SD-146 was not
   // reproduced: with the clock constraint deferredInTime (the meeting time is in the member's send window),
   // a deferred reveal always reaches the member before the meeting.
   val bookedMembersTold = OPPS.forall(o => {
@@ -1501,9 +1501,9 @@ module opportunity {
   // so the value is kept as its own check and the run tests show its trace.
 
   // SD-006 (skipped: the Network has no delivery-outcome path from the outbound queue; a cross-module design
-  // with SD-030, SD-095 and SD-257 that needs a founder or maintainer decision). Code comment N:4083: silence
+  // with SD-030, SD-095 and SD-257 that needs a founder or maintainer decision). Code comment : silence
   // for 48 hours confirms a booked plan only after "the booked plan reached them"; the queue can hold or
-  // refuse the reveal (outbound-queue.ts:398-401), and silence still confirms.
+  // refuse the reveal (outbound-queue.ts), and silence still confirms.
   val confirmedImpliesDelivered = OPPS.forall(o => op(s, o).silent.forall(m => op(s, o).revealQ.get(m) == "delivered"))
 
   // SD-030. The opportunity can still record a probe expiry after collecting a send the queue refused
@@ -1512,7 +1512,7 @@ module opportunity {
 
   // SD-140 (skipped: the fix was reverted; with declinedBy filled in, two sim gates failed on defects that
   // were already there: the proactive timing of unsolicited info sends and the minors-in-plans gate for a
-  // minor found only after contact). engine world.ts:160 reads interaction outcomes; a member's "no" is a
+  // minor found only after contact). engine world.ts reads interaction outcomes; a member's "no" is a
   // decline, but close() records "declined" only for reason "declined".
   val declineRecorded = OPPS.forall(o => op(s, o).outcomeRec == "expired" implies op(s, o).saidNo == Set())
 
@@ -1667,7 +1667,7 @@ module opportunity {
       .expect(op(s, "o2").stage == "closed" and op(s, "o2").closedReason == "minors policy"
               and op(s, "o2").cancelHeard == Set("b", "c") and minorEndsBooking and safety)
 
-  // joinLine second opinion (minor-finished-table.integration.test.ts): a and b met at o1 and it is finished;
+  // joinLine second opinion (minor-plan-roles.integration.test.ts, "a table whose asked member's record age went under 18 before the member was forgotten never gets a repeat"): a and b met at o1 and it is finished;
   // then b becomes a minor. Nothing is open, but the minors drop still marks o1, so no repeat of its time and
   // place can follow.
   run minorMarksFinishedItemTest =

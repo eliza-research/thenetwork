@@ -5,7 +5,7 @@ import { writePath } from "../../../../core/src/runtime/files.ts";
 import { friendsArms } from "./arms.ts";
 import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
-import { FRIENDS_TEEN_WORLD } from "./persona.ts";
+import { TEEN_WORLD } from "../../generator.ts";
 import { runFriendsWorldAsync } from "./world.ts";
 
 async function main() {
@@ -13,7 +13,7 @@ async function main() {
   const parseSeeds = (s: string) => s.split(",").flatMap(r => { const [a, b] = r.split("-").map(Number); return Array.from({ length: (b ?? a!) - a! + 1 }, (_, i) => a! + i); });
   const seeds = parseSeeds(arg("seeds", "1-4")!);
   const n = Number(arg("n", "400")), weeks = Number(arg("weeks", "8")), planCap = Number(arg("plan-cap", "1"));
-  const teen = { ...(process.argv.includes("--teen") ? FRIENDS_TEEN_WORLD : {}), ...(process.argv.includes("--stop") ? { teenStop: true } : {}) };
+  const teen = { ...(process.argv.includes("--teen") ? TEEN_WORLD : {}), ...(process.argv.includes("--stop") ? { teenStop: true } : {}) };
 
   const packOverride = arg("pack");
   const ARMS = friendsArms(packOverride ? JSON.parse(packOverride) : {});

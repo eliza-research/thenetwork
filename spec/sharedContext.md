@@ -44,7 +44,7 @@ pure def checkMember(context: SharedContext, memberAndModeExist: bool): SharedCo
 
 ### Check the public labels and each confirmed shareable fact
 
-The first name and home city must pass the normal output check. A fact must belong to the member, be shareable, be confirmed, contain no sensitive information, and be current. Check the fact's text before including it. Leave out a fact longer than three hundred UTF-16 code units and never truncate a fact. Of the facts that remain, keep the fifty newest (by observation time, then valid-from time, then ID). The facet check withholds the context only if the kept facts still break a limit. Changed on 2026-11-17 (audit SHA40): before, more than fifty facts or one long fact withheld the whole context, and a member with many job postings got no answer on the shared line.
+The first name and home city must pass the normal output check. A fact must belong to the member, be shareable, be confirmed, contain no sensitive information, and be current. Check the fact's text before including it. Leave out a fact longer than three hundred UTF-16 code units and never truncate a fact. Of the facts that remain, keep the fifty newest (by observation time, then valid-from time, then ID). The facet check withholds the context only if the kept facts still break a limit. Changed (audit SHA40): more than fifty facts or one long fact withheld the whole context -> the long facts and the facts past the fifty newest are left out, because a member with many job postings got no answer on the shared line.
 
 ```quint
 pure val contextFacetLimit: int = 50
@@ -60,8 +60,9 @@ pure def contextFacetEligible(own: bool, shareable: bool, confirmed: bool, sensi
 pure def contextFacetKept(rank: int, textSize: int): bool =
   rank >= 0 and rank < contextFacetLimit and textSize <= contextFacetSizeLimit
 
-pure def lawKeptFactsFitTheLimits(rank: int, textSize: int): bool =
-  contextFacetKept(rank, textSize) implies (rank < contextFacetLimit and textSize <= contextFacetSizeLimit)
+pure def lawFactsPastTheLimitsAreDropped(rank: int, textSize: int): bool =
+  not(contextFacetKept(contextFacetLimit, textSize)) and not(contextFacetKept(rank, contextFacetSizeLimit + 1))
+    and contextFacetKept(0, contextFacetSizeLimit)
 
 pure def canCheckFacets(context: SharedContext): bool = context.phase == CheckingFacets
 pure def checkFacets(context: SharedContext, facetCount: int, oversized: bool): SharedContext =
@@ -85,7 +86,7 @@ pure def lawIneligibleAgeIsSinglePlayer(present: bool): bool = contextSinglePlay
 
 ### Active items list only the member's live matches with a safe summary
 
-An active item is one live match of the member: a two-person match in which both members said yes and that is not closed. Offer an item that is not a teen friendship item only while the member is eligible to be matched by their lowest known age; offer a teen friendship item, to every member of it, only while it passes the age rule now with the switch on; and offer either only when its summary passes the output check. The summary names only the other member's first name, which both members learn after the mutual yes. Offer at most twenty items, newest first. With no item to offer, the context has no list. New rule: the context never offered active items, so a relay could not name its match (audit SHA38). Changed (owner decision 2026-11-22): a member aged 13 to 17 sees a live teen friendship item in the list while that item still passes the age rule and the switch is on (`teenItemListed`), and an adult member of a teen friendship item sees it only on the same condition; `singlePlayer` stays true for every minor until upstream Eliza can read friendship-only items. Changed (owner decision 2026-11-22, answers A2 to A5): "the switch is on" now means that no staff stop is stored, and the same rule applies to teen items in the Friend lane of The Network.
+An active item is one live match of the member: a two-person match in which both members said yes and that is not closed. Offer an item that is not a teen friendship item only while the member is eligible to be matched by their lowest known age; offer a teen friendship item, to every member of it, only while it passes the age rule now with the switch on; and offer either only when its summary passes the output check. The summary names only the other member's first name, which both members learn after the mutual yes. Offer at most twenty items, newest first. With no item to offer, the context has no list. The switch is on while no staff stop is stored, on friends.help and in the Friend lane of The Network (`teenItemListed`). `singlePlayer` stays true for every minor, because upstream Eliza cannot read friendship-only items. Changed (audit SHA38 and owner decision 2026-11-22, D1): the context offered no active items, and no minor saw an item -> it offers the live matches, and a current teen friendship item to each of its members, because a relay could not name its match.
 
 ```quint
 pure val contextActiveItemLimit: int = 20
@@ -105,7 +106,7 @@ pure def lawIneligibleAgeGetsNoActiveItem(liveMatch: bool, summarySafe: bool): b
 
 ### Active item summaries are distinct
 
-Two offered items never carry the same summary, so the agent never has to guess between two matches. The shell counts, among the member's live matches, the matches whose other member has the same first name, and the matches that also have the same day label. The day label is "meeting" and the day of the planned meeting, or "introduced" and the day of the introduction when no meeting is planned, in New York time (every network is in New York); both members know it. A first name that no other live match has is the whole summary. A shared first name adds the day label. When the first name and the day label are both shared, the shell leaves those items out, and a relay without an item gets the "which match" question. New rule: two live matches with the same first name got the same summary, so the agent could pick the wrong match (review of audit SHA38).
+Two offered items never carry the same summary, so the agent never has to guess between two matches. The shell counts, among the member's live matches, the matches whose other member has the same first name, and the matches that also have the same day label. The day label is "meeting" and the day of the planned meeting, or "introduced" and the day of the introduction when no meeting is planned, in New York time (every network is in New York); both members know it. A first name that no other live match has is the whole summary. A shared first name adds the day label. When the first name and the day label are both shared, the shell leaves those items out, and a relay without an item gets the "which match" question. Changed (audit SHA38): two live matches with the same first name got the same summary -> the summary adds the day label or leaves the items out, because the agent could pick the wrong match.
 
 ```quint
 type ContextItemLabel = ItemLabelName | ItemLabelNameAndDay | ItemLabelLeftOut
@@ -124,7 +125,7 @@ pure def lawDayLabelOnlyWhenNameAndDayAreUnique(sameName: int, sameNameAndDay: i
 
 ### A member whose context is unavailable still gets an answer
 
-When a member's message would open a conversation but their context is unavailable, the turn answers as handled with one fixed reply that says the Network cannot help with that right now. The fixed reply goes to every admitted number, also when the active membership no longer matches the turn's member or the recorded age is unknown; the reply names nobody and carries no member data. A held, banned, suppressed or opted-out number, and a number with a recorded age under the join age, stays silent. Added on 2026-11-17 (audit SHA40): before, the turn answered handled with no reply and the gateway called no model. Changed on 2026-11-22 (audit sharedLineReplay-r39-3): before, the fixed reply went only to a number with a matching membership and a known age, so an admitted number with no matching binding got a handled turn with no reply.
+When a member's message would open a conversation but their context is unavailable, the turn answers as handled with one fixed reply that says the Network cannot help with that right now. The fixed reply goes to every admitted number, also when the active membership no longer matches the turn's member or the recorded age is unknown; the reply names nobody and carries no member data. A held, banned, suppressed or opted-out number, and a number with a recorded age under the join age, stays silent. Changed (audits SHA40 and sharedLineReplay-r39-3): the turn answered handled with no reply, then only a number with a matching membership and a known age got the fixed reply -> every admitted number gets it, because the member's message got no answer.
 
 ```quint
 type OpenTurnAnswer = AnswerOpen | AnswerUnavailable

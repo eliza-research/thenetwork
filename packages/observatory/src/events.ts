@@ -23,7 +23,7 @@ export interface EventRow {
 /** Network log kinds stored as events (packages/network ctx.log). "learned" and "feedback" hold member facts or words: never stored. */
 export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   "review_queued", "review_decision", "review_expired", "review_invalidated", "review_refused", "matching_switch",
-  "review_judgment", "review_exception", "review_stopped",
+  "review_judgment", "review_exception", "review_stopped", "photo_review_expired", "relay_classifier_failed",
   "probe_started", "probe_sent", "probe_answer", "probe_replaced", "probe_closed", "proposal_skipped", "opportunity_closed", "venue",
   "request", "request_result", "request_withdrawn_want", "trust", "abuse", "safety_action", "guard_blocked", "send_refused", "send_skipped",
   "age_unknown", "age_resolved", "age_conflict", "minor_signal", "join_declined", "invite", "growth_ask", "reengagement",
@@ -182,6 +182,8 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
       break;
     }
     case "review_expired": text = "Review SLA missed: expired, never sent"; severity = "warn"; break;
+    case "photo_review_expired": text = "Photo check expired, never sent"; severity = "warn"; break;
+    case "relay_classifier_failed": text = "Relay classifier could not read a text, so it was blocked"; severity = "warn"; break;
     case "review_invalidated": text = `Approved, then stopped on the re-check (${human(p.reason)}): nobody contacted`; severity = "warn"; keep("reason"); break;
     case "review_refused": text = `Review action refused: ${human(p.decision)} (${human(p.reason)})`; severity = "warn"; keep("decision", "reason"); break;
     case "review_judgment":

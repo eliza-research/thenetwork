@@ -15,10 +15,10 @@ import type { NetworkRuntime } from "./runtime.ts";
 
 type Env = Record<string, string | undefined>;
 
-export interface ReviewJudgeLimits { budgetMicros: number; requestLimit: number }
-export interface EngineJudgeLimits { maxCostMicro: number; maxRequests: number }
-export interface TeenAccountFacts { accountDays: number; apps: string[]; lineType: string | null }
-export type JudgeCostPurpose = "review_judge" | "engine_judge";
+interface ReviewJudgeLimits { budgetMicros: number; requestLimit: number }
+interface EngineJudgeLimits { maxCostMicro: number; maxRequests: number }
+interface TeenAccountFacts { accountDays: number; apps: string[]; lineType: string | null; firstReadingExact: boolean }
+type JudgeCostPurpose = "review_judge" | "engine_judge";
 
 function positiveUsd(env: Env, name: string, fallback: number): number {
   const raw = env[name];
@@ -82,7 +82,7 @@ interface Item { work: JudgeWork; packet: ReviewPacket }
 interface Claimed extends Item { claims: number }
 interface StoredRow { opportunity_id: string; revision: number; packet_hash: string; base_packet_hash: string; rubric: string; verdict: string; reason: string; reviewer: string }
 
-export interface ReviewJudgeWorkerOptions {
+interface ReviewJudgeWorkerOptions {
   clock: Clock;
   judgeFor: (app: AppId) => ReviewJudge | undefined;
   teenFacts: (rt: NetworkRuntime, memberId: MemberId) => Promise<TeenAccountFacts>;

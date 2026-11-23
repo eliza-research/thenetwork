@@ -1,13 +1,5 @@
 // friendsPack: friends.help (app id "friends"; formerly buddies.nyc), NYC first, as an AppPack.
 // docs/results/2026-10-08-friends-pack.md has the design, the simulator and the gate results.
-//
-// Policy in one paragraph (PRD 40.2 / 40.6; domain research Part C): groups of 3-6 at public venues
-// first, one-to-one activity partners second (only after a group meetup); an anonymous,
-// activity-first probe with time options, names only at quorum; the same people again near home
-// ("same table again"), a crew offered after one great plan and handed to its own chat after three
-// sessions; venues minimize the group's longest transit trip; romance is excluded entirely (no lane,
-// rules at member / pair / configuration level, no romance framing in any copy); unverified members
-// and members with a safety cue are held.
 import { DEFAULT_ATTENTION } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
 import type { AppPack, EligibilityPolicy, GeneratorSpec, GeoModel } from "../../pack.ts";

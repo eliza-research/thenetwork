@@ -21,8 +21,6 @@ export type PhotoSenderView = "SeesNothing" | "SeesAsked" | "SeesChecking" | "Se
 export type PhotoTakeBack = "TakeBackNothing" | "TakeBackOffer" | "TakeBackQuietly" | "TakeBackSeen";
 /** Story: Send my photo to my match / Only a yes or no to the newest ask answers it (spec/photoRelayItem.md) */
 export type AskAnswer = "NotForTheAsk" | "ReceiverTakes" | "ReceiverDeclines" | "ReceiverDeclinesAll";
-/** Story: Send my photo to my match / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
-export type PhotoWithdrawal = "PhotoWithdrawn" | "NoPhotoToWithdraw";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -242,17 +240,17 @@ export function offerOpen(o: PhotoOffer): boolean {
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
-export function canAskReceiver(o: PhotoOffer, at: number): boolean {
+export function canAskReceiver(o: PhotoOffer): boolean {
   return o.phase === "Asking" && o.answerBy === 0;
 }
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function askReceiver(o: PhotoOffer, at: number): PhotoOffer {
-  //@ ensures (inv(o) && canAskReceiver(o, at)) ==> stepOnlyReviewMakesReady(o, "askReceiver", \result)
-  //@ ensures (inv(o) && canAskReceiver(o, at)) ==> stepOnlyTheReceiverStartsTheCheck(o, "askReceiver", \result)
-  //@ ensures (inv(o) && canAskReceiver(o, at)) ==> stepNoClockEndsAReadyOffer(o, "askReceiver", \result)
-  //@ ensures (inv(o) && canAskReceiver(o, at)) ==> stepEndsAreFinal(o, \result)
+  //@ ensures (inv(o) && canAskReceiver(o)) ==> stepOnlyReviewMakesReady(o, "askReceiver", \result)
+  //@ ensures (inv(o) && canAskReceiver(o)) ==> stepOnlyTheReceiverStartsTheCheck(o, "askReceiver", \result)
+  //@ ensures (inv(o) && canAskReceiver(o)) ==> stepNoClockEndsAReadyOffer(o, "askReceiver", \result)
+  //@ ensures (inv(o) && canAskReceiver(o)) ==> stepEndsAreFinal(o, \result)
   return { ...o, answerBy: exact_photoRelayItem(at + offerAnswerMs) };
 }
 
@@ -437,7 +435,7 @@ export function unsentNoticeKept(notice: OfferNotice, phase: OfferPhase): boolea
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
 //@ pure
 export function photoSenderViewFor(phase: OfferPhase, wasReady: boolean, endedBySender: boolean, noticeLater: boolean): PhotoSenderView {
-  return phase === "Asking" ? "SeesAsked" : (phase === "Reviewing" ? "SeesChecking" : (phase === "Ready" ? "SeesSent" : (phase === "Revoked" || endedBySender ? "SeesTakenBack" : (wasReady && (phase === "Ended" || phase === "Reported") ? "SeesSent" : ((phase === "Declined" || phase === "Lapsed") && noticeLater ? "SeesAsked" : "SeesNothing")))));
+  return phase === "Asking" ? "SeesAsked" : (phase === "Reviewing" ? "SeesChecking" : (phase === "Ready" ? "SeesSent" : (phase === "Revoked" || endedBySender ? "SeesTakenBack" : (wasReady && (phase === "Ended" || phase === "Reported") ? "SeesSent" : ((phase === "Declined" || phase === "Lapsed" || phase === "Ended") && noticeLater ? "SeesAsked" : "SeesNothing")))));
 }
 
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
@@ -478,7 +476,7 @@ export function lawSentIsNotToldAfterTheEnd(phase: OfferPhase): boolean {
 //@ pure
 export function lawDeclineListsAsAskedUntilTheNotice(noticeLater: boolean): boolean {
   //@ ensures \result === true
-  return photoSenderViewFor("Declined", false, false, noticeLater) === photoSenderViewFor("Lapsed", false, false, noticeLater) && (!noticeLater || photoSenderViewFor("Declined", false, false, noticeLater) === photoSenderViewFor("Asking", false, false, noticeLater));
+  return photoSenderViewFor("Declined", false, false, noticeLater) === photoSenderViewFor("Lapsed", false, false, noticeLater) && photoSenderViewFor("Ended", false, false, noticeLater) === photoSenderViewFor("Declined", false, false, noticeLater) && (!noticeLater || photoSenderViewFor("Declined", false, false, noticeLater) === photoSenderViewFor("Asking", false, false, noticeLater));
 }
 
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
@@ -520,7 +518,7 @@ export function lawTakeBackIsNoReadReceipt(noticeLater: boolean): boolean {
 //@ pure
 export function lawTakeBackHidesADecline(noticeLater: boolean): boolean {
   //@ ensures \result === true
-  return !noticeLater || photoTakeBackFor("Declined", false, false, noticeLater) === "TakeBackQuietly";
+  return !noticeLater || (photoTakeBackFor("Declined", false, false, noticeLater) === "TakeBackQuietly" && photoTakeBackFor("Ended", false, false, noticeLater) === "TakeBackQuietly");
 }
 
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
@@ -612,48 +610,35 @@ export function lawOnlyAYesToTheNewestAskTakes(promptIsNewest: boolean, asking: 
 
 /** Story: Send my photo to my match / Only a yes or no to the newest ask answers it (spec/photoRelayItem.md) */
 //@ pure
-export function lawNeverDeclinesEveryAsk(promptIsNewest: boolean, asking: boolean, yes: boolean, no: boolean): boolean {
+export function lawNoMorePhotosDeclinesEveryAsk(promptIsNewest: boolean, asking: boolean, yes: boolean, no: boolean): boolean {
   //@ ensures \result === true
   return photoAskAnswerFor(promptIsNewest, asking, yes, no, true) === "ReceiverDeclinesAll";
 }
 
-/** Story: Send my photo to my match / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+/** Story: Send my photo to my match / A take-back revokes the member's open photo items for the match (spec/photoRelayItem.md) */
 //@ pure
 export function photoItemWithdrawable(ownItem: boolean, sameMatch: boolean, open: boolean): boolean {
   return ownItem && sameMatch && open;
 }
 
-/** Story: Send my photo to my match / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
-//@ pure
-export function photoWithdrawalFor(withdrawn: number): PhotoWithdrawal {
-  return withdrawn > 0 ? "PhotoWithdrawn" : "NoPhotoToWithdraw";
-}
-
-/** Story: Send my photo to my match / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+/** Story: Send my photo to my match / A take-back revokes the member's open photo items for the match (spec/photoRelayItem.md) */
 //@ pure
 export function lawOnlyOwnItemsAreWithdrawn(sameMatch: boolean, open: boolean): boolean {
   //@ ensures \result === true
   return !photoItemWithdrawable(false, sameMatch, open);
 }
 
-/** Story: Send my photo to my match / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+/** Story: Send my photo to my match / A take-back revokes the member's open photo items for the match (spec/photoRelayItem.md) */
 //@ pure
 export function lawOnlyThisMatchIsWithdrawn(ownItem: boolean, open: boolean): boolean {
   //@ ensures \result === true
   return !photoItemWithdrawable(ownItem, false, open);
 }
 
-/** Story: Send my photo to my match / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
-//@ pure
-export function lawNothingWithdrawnSaysSo(withdrawn: number): boolean {
-  //@ ensures \result === true
-  return !(withdrawn <= 0) || photoWithdrawalFor(withdrawn) === "NoPhotoToWithdraw";
-}
-
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PhotoOffer, event: Event): boolean {
-  if (event.type === "askReceiver") return canAskReceiver(current, event.at);
+  if (event.type === "askReceiver") return canAskReceiver(current);
   if (event.type === "answerYes") return canAnswerYes(current, event.at);
   if (event.type === "answerNo") return canAnswerNo(current);
   if (event.type === "lapseAnswer") return canLapseAnswer(current, event.at);
@@ -669,7 +654,7 @@ export function enabled(current: PhotoOffer, event: Event): boolean {
 export function step(current: PhotoOffer, event: Event): PhotoOffer {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "askReceiver") return canAskReceiver(current, event.at) ? askReceiver(current, event.at) : current;
+  if (event.type === "askReceiver") return canAskReceiver(current) ? askReceiver(current, event.at) : current;
   if (event.type === "answerYes") return canAnswerYes(current, event.at) ? answerYes(current, event.at) : current;
   if (event.type === "answerNo") return canAnswerNo(current) ? answerNo(current) : current;
   if (event.type === "lapseAnswer") return canLapseAnswer(current, event.at) ? lapseAnswer(current, event.at) : current;

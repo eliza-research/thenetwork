@@ -81,9 +81,9 @@ export function refusedCommandPasses(command: IntentCommand, bareReply: boolean)
 
 /** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 //@ pure
-export function lawRefusedNamedCommandStaysHandled(command: IntentCommand, bareReply: boolean): boolean {
+export function lawRefusedListPauseAndResumeStayHandled(bareReply: boolean): boolean {
   //@ ensures \result === true
-  return !refusedCommandPasses(command, bareReply) || (command === "UndoIntent" || command === "CloseIntent" || command === "KeepIntent");
+  return !refusedCommandPasses("ListIntents", bareReply) && !refusedCommandPasses("PauseIntent", bareReply) && !refusedCommandPasses("ResumeIntent", bareReply);
 }
 
 /** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */

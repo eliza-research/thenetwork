@@ -66,9 +66,7 @@ async function proposedItem(w: Mini, participants: MemberId[], o: Parameters<Min
   return pending(w).find(x => x.id === id)!;
 }
 
-// spec/automatedReview.md, "Story: Contact a member only after a recorded approval"
 describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => {
-  // spec/automatedReview.md, "Staff approve only a held item and may reject any open item"
   test("a flagged item waits in the staff queue unsent, and a named staff approval starts the first probe", async () => {
     const w = await world([ARI, BEA], holdEveryItem.inline);
     const item = await requestItem(w, ARI.id);
@@ -100,7 +98,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(itemMessages(w, item.id, from)).toEqual([]);
   });
 
-  // spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw"
   test("a staff decision needs a named reviewer who is not the judge, and a stale revision is refused first", async () => {
     const w = await world([ARI, BEA], holdEveryItem.inline);
     const item = await requestItem(w, ARI.id);
@@ -114,7 +111,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(oppOf(w, item.id)?.stage).toBe("review");
   });
 
-  // spec/automatedReview.md, "The judge decides an awaiting revision once, for the packet it read"
   test("a judge approval after a block between the pair closes the item as invalidated and sends nothing", async () => {
     const judge = scriptedJudge();
     const w = await world([ARI, BEA], judge.judge);
@@ -149,7 +145,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(w.net.exportState().flagged?.map(([key]) => key)).toEqual([[ARI.id, BEA.id].sort().join("|")]);
   });
 
-  // spec/automatedReview.md, "An open review closes unsent"
   test("a held item expires unsent at its deadline, and a new item of the flagged pair is held without a judge call", async () => {
     const judge = scriptedJudge();
     judge.state.answer = "flag";
@@ -175,7 +170,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(itemMessages(w, again.id, from)).toEqual([]);
   });
 
-  // spec/automatedReview.md, "A roster with a minor gets the strict rubric"
   test("a teen friends pair is approved by the judge with the strict rubric and all four code checks", async () => {
     const judge = scriptedJudge();
     judge.state.answer = "approve";
@@ -191,7 +185,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(await w.runUntil(() => itemMessages(w, item.id, from).some(s => s.meta.type === "probe"), DAY)).toBe(true);
   });
 
-  // spec/automatedReview.md, "A judgment that does not come in time is held for staff"
   test("an item with no judgment for 30 minutes is held as judge_overdue, and nothing is held while matching is paused", async () => {
     const judge = scriptedJudge();
     const w = await world([ARI, BEA], judge.judge);
@@ -213,7 +206,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(oppOf(paused, other.id)?.review?.exception).toBeUndefined();
   });
 
-  // spec/automatedReview.md, "The judge decides an awaiting revision once, for the packet it read"
   test("the packet names members only by first name and reference", async () => {
     const judge = scriptedJudge();
     const w = await world([ARI, BEA], judge.judge);
@@ -303,7 +295,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(itemMessages(w, item.id, from).filter(s => s.meta.type === "proposal")).toEqual([]);
   });
 
-  // spec/automatedReview.md, "Staff can stop an approved item before its reveal"
   test("staff stop an approved item after the first probe, and cannot stop it after the reveal", async () => {
     const judge = scriptedJudge();
     judge.state.answer = "approve";
@@ -331,7 +322,6 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(revealed.net.stopApproved(other.id, "staff-1", 0)).toEqual({ ok: false, reason: "not_stoppable" });
   });
 
-  // spec/probeDispatch.md, "A replacement keeps the requester or hiring manager and all eligible group members"
   test("a group approved with its listed swaps closes when a second swap would make a roster nobody judged", async () => {
     const judge = scriptedJudge();
     const w = await world([ARI, BEA, CYD, DEV, EZRA], judge.judge);
@@ -354,8 +344,7 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(w.log("probe_replaced").filter(l => l.detail.oppId === item.id)).toHaveLength(1);
   });
 
-  // spec/automatedReview.md, "An approval names its approver"
-  test("a held exception and a pair flag survive a restart, and an approval stored before this wave keeps an approver only when it names a person", async () => {
+  test("a held exception and a pair flag survive a restart, and an approval stored before the automated review keeps an approver only when it names a person", async () => {
     const judge = scriptedJudge();
     judge.state.answer = "flag";
     const w = await world([ARI, BEA], judge.judge);
@@ -371,11 +360,11 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
 
     const saved = w.net.exportState();
     const base = saved.opps.find(o => o.id === item.id)!;
-    const legacy = (id: string, reviewer: string) => ({ ...base, id, review: { queuedAt: base.review!.queuedAt, deadline: base.review!.deadline, decision: "approve" as const, reviewer } });
-    w.net.importState({ ...saved, opps: [...saved.opps, legacy("legacy-staff", "staff-1"), legacy("legacy-unnamed", "  "), legacy("legacy-simulator", "sim_auto_reviewer")] });
+    const storedBefore = (id: string, reviewer: string) => ({ ...base, id, review: { queuedAt: base.review!.queuedAt, deadline: base.review!.deadline, decision: "approve" as const, reviewer } });
+    w.net.importState({ ...saved, opps: [...saved.opps, storedBefore("stored-staff", "staff-1"), storedBefore("stored-unnamed", "  "), storedBefore("stored-simulator", "sim_auto_reviewer")] });
     const reviews = new Map(w.net.exportState().opps.map(o => [o.id, o.review]));
-    expect(reviews.get("legacy-staff")).toMatchObject({ approver: "staff", reviewer: "staff-1" });
-    expect(reviews.get("legacy-unnamed")?.approver).toBeUndefined();
-    expect(reviews.get("legacy-simulator")).toMatchObject({ approver: "judge", reviewer: SIM_REVIEW_JUDGE });
+    expect(reviews.get("stored-staff")).toMatchObject({ approver: "staff", reviewer: "staff-1" });
+    expect(reviews.get("stored-unnamed")?.approver).toBeUndefined();
+    expect(reviews.get("stored-simulator")).toMatchObject({ approver: "judge", reviewer: SIM_REVIEW_JUDGE });
   });
 });

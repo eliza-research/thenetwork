@@ -180,8 +180,6 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       expect([words, r.ok, r.code ?? r.error ?? r.reason]).toEqual([words, false, "edit_leak"]);
     }
     expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
-    // spec/probeDispatch.md, "A reviewer can read each first probe of the open revision" (audit OPP20, CRI13):
-    // the reviewer reads the words of the slop date probe, with its age and distance bands, before approving.
     const probesPath = (revision: number) => `/apps/slop/review/${encodeURIComponent(item.oppId)}/probes?revision=${revision}`;
     expect(await (await staff(s, REVIEWER, "GET", probesPath(item.revision + 1))).json()).toEqual({ ok: false, error: "preview_unavailable" });
     const previewed = await (await staff(s, REVIEWER, "GET", probesPath(item.revision))).json() as
@@ -237,8 +235,6 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       const reveal = (await inbox(p.memberId)).find(m => m.opp === item.oppId && /You're both in/.test(m.body))!.body;
       expect(reveal).toMatch(new RegExp(`(^|\\. )${template}(\\n\\S+)?$`));
     }
-    // The first probe each member got is the text the reviewer read. The member asked first gets it word
-    // for word; the second member is offered only the times the first one picked.
     const firstProbe = async (id: string) => (await inbox(id)).find(m => m.opp === item.oppId)?.body ?? "";
     const withoutTimes = (t: string | null) => t?.replace(/: coffee, [^.]+\./, ": coffee, <times>.");
     const delivered = await Promise.all(previewed.preview.probes.map(async p => ({ p, got: await firstProbe(p.memberId) })));

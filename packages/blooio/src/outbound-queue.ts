@@ -11,17 +11,6 @@
 //  - drain() runs under one Postgres advisory lock per line. Before each provider call the row is "sending"
 //    with a lease. recover() hands rows whose lease ran out (the worker stopped) back to the queue; they go
 //    through every check again and are sent with the same key.
-//  - Checks at dispatch, in this order (each reads the database, so a STOP that arrives while a message
-//    waits wins): too old or about a closed item (expired); the dry-run line (refused_not_approved); the
-//    consent ledger and the member's opt-out (refused_opted_out); the recipient at send time
-//    (suppressed_ineligible); a "reply" must answer an inbound message from the last hour; quiet hours in the
-//    recipient's zone for agent-initiated kinds (deferred); Apple line safety: at most 3 unanswered messages
-//    per conversation, then one re-engagement after 14 days (held until the person writes); Blooio's safety
-//    state of the line; the per-recipient hourly cap, the per-line daily cap and the per-line daily cap on new
-//    conversations (retry later); the person cap of proactive messages (refused_person_cap); the leak guard
-//    on the new text and on the recent thread to the same address (core-14; parked_leak_review). Compliance
-//    texts (STOP/HELP/START and leave confirmations) skip the opt-out, the recipient check, quiet hours and
-//    the caps, but never the leak guard's canary and fact checks on their own text.
 //  - More than one worker: every replica may run drain(). The per-line advisory lock lets one drain run at a
 //    time; a row is claimed with a conditional update to "sending" plus a lease (status unchanged, no lease),
 //    so a second worker that read the same row finds it claimed and skips it, and a worker that stopped
@@ -130,7 +119,7 @@ interface MemberDeliverySettings {
 /** What the app (the Network runtime) checks for its own rows. Every hook fails closed when it throws. */
 export interface AppChecks {
   live(): boolean;
-  /** True when the message is about something that closed (it is stored as expired). A throw: the row waits (drain's error path). */
+  /** True when the message is about something that closed (it is stored as expired). */
   stale?(row: QueueRow): boolean | Promise<boolean>;
   /** True when the consent ledger or the member's own flag says the person opted out of this app. */
   optedOut?(row: QueueRow): boolean | Promise<boolean>;
@@ -231,7 +220,7 @@ function receiptPhase(status: string): ReceiptPhase {
   switch (status) {
     case "sending": return "Sending";
     case "accepted": return "ProviderAccepted";
-    case "queued": return "LegacyQueued";
+    case "queued": return "QueuedBeforeAcceptance";
     case "sent": return "ProviderSent";
     case "delivered": return "ProviderDelivered";
     case "read": return "ProviderRead";
@@ -243,8 +232,7 @@ function receiptPhase(status: string): ReceiptPhase {
 const ACCEPTED_STATUS = {
   ProviderAccepted: "accepted", ProviderSent: "sent", ProviderDelivered: "delivered", ProviderRead: "read", ProviderFailed: "failed",
 } as const;
-/** Statuses that did not go out: their person-cap slot goes back. failed_unknown may have gone out: it keeps its slot. */
-// spec/outboundReceipt.md, "A send that may have reached the person keeps its person-cap slot"
+/** Statuses that did not go out: their person-cap slot goes back. */
 export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed(?!_unknown)|expired|dropped)/;
 
 const fingerprint = (to: string, text: string, media: string[], kind: string) =>
@@ -333,7 +321,7 @@ export class OutboundQueue {
     return this.withLine(async () => {
       const changes: StatusChange[] = [...receipts, ...await this.expireHeld()];
       const rows = await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
-        and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
+        and status = any(${this.sql.array([...DUE], "TEXT")}) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
       for (const r of rows as any[]) {
         const row = this.rowOf(r);
         let c: StatusChange | undefined;
@@ -345,12 +333,9 @@ export class OutboundQueue {
             this.o.onAlert?.(row.id, "claimed_outcome_write_failed");
             continue;
           }
-          // spec/outboundAdmission.md, "A check that cannot answer delays the row and never sends it"
-          // One bad row never stops the drain. Only a row still in the status this drain read takes the error
-          // (erasure may have ended it meanwhile). A claimed row fails with ClaimedSendWriteError above.
           const error = (e as Error).message.slice(0, 500), from = [row.status];
           const [r] = await this.sql`update platform.outbound set attempts = attempts + 1, last_error = ${error}
-            where id = ${row.id} and status = any(${`{${from.join(",")}}`}::text[]) returning attempts`;
+            where id = ${row.id} and status = any(${this.sql.array([...from], "TEXT")}) returning attempts`;
           if (r) {
             const tries = Number(r.attempts);
             c = dispatchFailurePolicy(tries < this.opt("maxAttempts", 6)) === "ParkDispatch"
@@ -392,10 +377,7 @@ export class OutboundQueue {
     return age > this.opt("ttlMs", 3 * DAY) || (row.kind === "proactive" && age > this.opt("ttlProactiveMs", DAY));
   }
 
-  /**
-   * A row ends (nothing more will happen to it). A row to a non-member keeps no address and no text.
-   * `from`: write only while the row still has one of these statuses; otherwise nothing changes and there is no change to report.
-   */
+  /** A row ends (nothing more will happen to it). A row to a non-member keeps no address and no text. */
   private async end(row: QueueRow, status: string, note?: string, error?: string): Promise<StatusChange>;
   private async end(row: QueueRow, status: string, note: string | undefined, error: string | undefined, from: readonly string[]): Promise<StatusChange | undefined>;
   private async end(row: QueueRow, status: string, note?: string, error?: string, from?: readonly string[]): Promise<StatusChange | undefined> {
@@ -405,18 +387,18 @@ export class OutboundQueue {
     const wrote = await this.sql`update platform.outbound set status = ${status}, note = ${note ?? null}, last_error = coalesce(${error ?? null}, last_error), ended_at = ${now}, updated_at = ${now},
       lease_owner = null, lease_until = null,
       to_address = case when member_id is null and ${!keep} then null else to_address end, body = case when member_id is null and ${!keep} then null else body end
-      where id = ${row.id} ${from ? this.sql`and status = any(${`{${from.join(",")}}`}::text[])` : this.sql``} returning id`;
+      where id = ${row.id} ${from ? this.sql`and status = any(${this.sql.array([...from], "TEXT")})` : this.sql``} returning id`;
     if (!wrote.length) return undefined;
     if (row.personCap && NOT_SENT.test(status)) await this.o.checks.capRelease?.(row).catch(() => {});
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
 
-  /** The row waits (not an end): a later drain tries again at `at`. `from`: as in end(). */
+  /** The row waits (not an end): a later drain tries again at `at`. */
   private async wait(row: QueueRow, status: string, at: number, note: string): Promise<StatusChange>;
   private async wait(row: QueueRow, status: string, at: number, note: string, from: readonly string[]): Promise<StatusChange | undefined>;
   private async wait(row: QueueRow, status: string, at: number, note: string, from?: readonly string[]): Promise<StatusChange | undefined> {
     const wrote = await this.sql`update platform.outbound set status = ${status}, next_attempt_at = ${new Date(at)}, note = ${note}, updated_at = ${new Date(this.now)}, lease_owner = null, lease_until = null
-      where id = ${row.id} ${from ? this.sql`and status = any(${`{${from.join(",")}}`}::text[])` : this.sql``} returning id`;
+      where id = ${row.id} ${from ? this.sql`and status = any(${this.sql.array([...from], "TEXT")})` : this.sql``} returning id`;
     if (!wrote.length) return undefined;
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
@@ -425,17 +407,10 @@ export class OutboundQueue {
     return Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (tries - 1), 30 * MINUTE);
   }
 
-  /**
-   * The row waits until the person writes (inbound() releases it). `seenInbound`: the conversation's last_inbound_at
-   * that dispatch read. inbound() takes no line lock: when the person wrote since, its release may have run before
-   * this write and found nothing, so the row is due again at once. Either that release runs after the hold, or the
-   * read below sees the new message.
-   */
   private async hold(row: QueueRow, note: string, seenInbound: unknown, written = false): Promise<StatusChange> {
     const held = written ? { id: row.id, app: row.app, memberId: row.memberId, status: "held_awaiting_reply" }
       : await this.wait(row, "held_awaiting_reply", this.now, note);
     const now = await this.conversation(row.to);
-    // spec/outboundAdmission.md, "A row does not wait for an answer that the person already gave"
     if (holdForReply(ms(now?.last_inbound_at) !== ms(seenInbound)) === "AwaitingReply") return held;
     const at = new Date(this.now);
     const [r] = await this.sql`update platform.outbound set status = 'pending', next_attempt_at = ${at}, updated_at = ${at}, note = 'recipient engaged'
@@ -482,8 +457,6 @@ export class OutboundQueue {
     const agent = isAgentInitiated(row.kind);
     const compliance = row.kind === "compliance";
 
-    // spec/outboundAdmission.md, "A current row needs a delivering line and the recipient's eligibility"
-    // A stale check that throws is not "current": the error goes to drain(), and the row waits (never sent on it).
     const stale = this.tooOld(row) || await (c.stale?.(row) ?? false);
     if (duePolicy(stale) === "Expired") return this.end(row, "expired");
     if (livePolicy(await this.guarded(() => c.live(), false)) === "DryRunLine") return this.end(row, "refused_not_approved");
@@ -703,7 +676,6 @@ export class OutboundQueue {
     if (!wrote.length) return this.currentStatus(row);
     if (alert) this.o.onAlert?.(row.id, alert);
     if (row.personCap && returnsPersonSlot(phase)) await this.o.checks.capRelease?.(row).catch(() => {});
-    // spec/outboundAdmission.md, "A row does not wait for an answer that the person already gave"
     if (status === "held_awaiting_reply") return this.hold(row, note ?? "conversation limit", seenInbound, true);
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
@@ -727,7 +699,6 @@ export class OutboundQueue {
     if (!status || !Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
     const at=new Date(acceptedAt),providerIds=receipt.providerMessageIds??[receipt.providerMessageId];
     const delivered = status === "delivered" || status === "read";
-    // spec/outboundReceipt.md, "An acceptance records a send time only for a send that went out"
     const terminal = acceptanceEndsRow(accepted.phase, !!this.o.provider.receipt, !!row.memberId), wentOut = acceptanceRecordsSend(accepted.phase);
     const committed=await this.sql.begin(async tx=>{
       await tx`select set_config('app.app_id',${this.app},true)`;
@@ -751,11 +722,8 @@ export class OutboundQueue {
     return {id:row.id,app:row.app,memberId:row.memberId,status};
   }
 
-  /** A send the provider (or the gateway) accepted joins the conversation's streak (Apple line safety) and its 14-day clock. */
   private async countSend(tx: SQL, line: string, to: string, kind: MessageKind, reengagement: boolean, at: Date): Promise<void> {
     const unanswered=kind==="compliance"?0:1;
-    // A send accepted at the same instant as the person's last message counts toward the streak (a reply
-    // follows the message it answers); only a send accepted before their message is already answered.
     await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
       values(${line},${to},${unanswered},${reengagement},${at},${at})
       on conflict(line,address) do update set
@@ -790,7 +758,7 @@ export class OutboundQueue {
       changes.push({ id: row.id, app: row.app, memberId: row.memberId, status: "failed_unknown" });
     }
     for (const stored of await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
-      and status = any(${`{${GATEWAY_WAITING.join(",")}}`}::text[]) and created_at<${new Date(this.now-ttl)} order by created_at,id limit 50`) {
+      and status = any(${this.sql.array([...GATEWAY_WAITING], "TEXT")}) order by created_at,id limit 50`) {
       const row=this.rowOf(stored);
       if (gatewayReplyPhase(this.now-row.createdAt>ttl) !== "AcceptanceExpired") continue;
       const at = new Date(this.now);

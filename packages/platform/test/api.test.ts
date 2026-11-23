@@ -330,7 +330,7 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect((await join(c, "slop", await login(c, "slop", phone), 25)).body.error).toBe("under_age");
     expect((await join(c, "peon", await login(c, "peon", phone), 30)).body.error).toBe("under_age");
     expect(await store.findPhone(phone)).toBeUndefined(); // still nothing stored for the app: only the age floor
-    expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBe(12);
+    expect((await store.ageFloorRecord(c.api.accounts.phoneHash(phone)))?.age).toBe(12);
   });
 
   test("PLAT-03 delete everything keeps the age floor and the blocks: 15, deleted, back at 25 is still 15; a block still holds", async () => {
@@ -450,18 +450,16 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect((await call(c, "slop", "GET", "/api/me", undefined, a.setCookie.split(";")[0])).status).toBe(200);
   });
 
-  test("PLAT-12 STOP on the web stops every app (PRD 40.3; owner decision 2026-11-22 removed PLATFORM_STOP_SCOPE); leave is one app", async () => {
-    for (const env of [{ PLATFORM_ENV: "dev" }, { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" }] as Record<string, string>[]) {
-      const c = make(store, { env }), phone = newPhone();
-      const b = await login(c, "friends", phone);
-      await join(c, "friends", b, 33);
-      await join(c, "peon", await login(c, "peon", phone), 33);
-      expect((await call(c, "friends", "POST", "/api/me/stop", {}, b)).status).toBe(200);
-      expect(await c.api.accounts.optedIn("friends", phone)).toBe(false);
-      expect(await c.api.accounts.optedIn("peon", phone)).toBe(false);
-      expect((await store.lastConsent(phone, "slop")).global).toMatchObject({ app: null, state: "opted_out" });
-      expect((await store.lastConsent(phone, "friends")).app).toMatchObject({ app: "friends", state: "opted_in" });
-    }
+  test("PLAT-12 STOP on the web stops every app (PRD 40.3); leave is one app", async () => {
+    const stopper = make(store, { env: { PLATFORM_ENV: "dev" } }), stopped = newPhone();
+    const b = await login(stopper, "friends", stopped);
+    await join(stopper, "friends", b, 33);
+    await join(stopper, "peon", await login(stopper, "peon", stopped), 33);
+    expect((await call(stopper, "friends", "POST", "/api/me/stop", {}, b)).status).toBe(200);
+    expect(await stopper.api.accounts.optedIn("friends", stopped)).toBe(false);
+    expect(await stopper.api.accounts.optedIn("peon", stopped)).toBe(false);
+    expect((await store.lastConsent(stopped, "slop")).global).toMatchObject({ app: null, state: "opted_out" });
+    expect((await store.lastConsent(stopped, "friends")).app).toMatchObject({ app: "friends", state: "opted_in" });
     // The leave button: that app only.
     const c = make(store), phone = newPhone();
     const f = await login(c, "friends", phone);

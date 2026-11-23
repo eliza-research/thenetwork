@@ -57,9 +57,11 @@ function reportsHarm(text: string, marker: RegExp): boolean {
 
 export const reportsAbsence = (text: string): boolean => reportsHarm(text, ABSENCE);
 
+const folded = (text: string) => text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
+
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
 export function reportKindOf(text: string): ReportKind {
-  const t = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
+  const t = folded(text);
   for (const [k, re] of KINDS) {
     if (k === "minor" ? re.test(t) : reportsHarm(t, re) || (k === "lying" && CORRECTED_MARRIAGE.test(t))) return k;
   }
@@ -75,7 +77,7 @@ export function reportKindOf(text: string): ReportKind {
 export function checkInReport(text: string): ReportKind | undefined {
   const k = reportKindOf(text);
   if (k !== "other") return k;
-  return reportsHarm(text.normalize("NFKC").replace(/[‘’ʼ]/g, "'"), /\b(report|flag|safety team)\b/i) ? "other" : undefined;
+  return reportsHarm(folded(text), /\b(report|flag|safety team)\b/i) ? "other" : undefined;
 }
 
 const CONCERN = /\b(?:uncomfortable|uneasy|unsettl(?:ed|ing)|sketchy|red flags?|(?:made|making) me (?:feel )?(?:weird|bad|uneasy|nervous|on edge)|(?:felt|seemed) off|(?:weird|bad|strange) vibes?|didn'?t feel right|went (?:badly|wrong)|(?:bad|awful|horrible) experience|crossed a line|overstepped)\b/i;
@@ -84,8 +86,6 @@ const BLOCK_WORD = /\bblock\b/i;
 const REFUSAL = /\b(?:not|never|no|nor|don'?t|do not|doesn'?t|won'?t|wouldn'?t|shouldn'?t|can'?t|cannot)\b/i;
 const BOTH_ANSWER = /^(?:both|both of them|both please|both pls|do both|both thanks)$/i;
 const NEITHER_ANSWER = /^(?:neither|neither please|neither one|none|nothing|no thanks|no thank you|never ?mind|nvm|forget it|leave it|no need)$/i;
-
-const folded = (text: string) => text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
 
 export function checkInConcern(text: string): boolean {
   return reportsHarm(folded(text), CONCERN);

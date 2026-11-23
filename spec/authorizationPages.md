@@ -260,7 +260,7 @@ pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
 
 ### Each scope shows as one short sentence, never as its scope name
 
-The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. Saved-profile reads must be requested explicitly. The default connection scopes do not include them. The page never shows the scope name of the server. Changed (owner decision 2026-11-22): the profile write sentence now also says that the assistant can pause or turn back on what the app looks for, and the profile read sentence says that it can read that list, because the looking-for tools use these two scopes and the person must see that before Allow. Changed (owner decision 2026-11-22): the photos scope is new; it must be requested explicitly, it is not a default scope, and its sentence says that the assistant sees only the photo list and never the photos, and that the person confirms each send on their phone. Changed (owner decision 2026-11-22): only the slop.date site offers the photos scope, because only slop.date keeps photos; the other sites leave it out of their metadata and drop it from a request, so their consent page never shows the slop.date photo sentence and their grants never hold a scope they cannot use.
+The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. Saved-profile reads must be requested explicitly. The default connection scopes do not include them. The page never shows the scope name of the server. Changed (owner decision 2026-11-22): the profile write sentence now also says that the assistant can pause or turn back on what the app looks for, and the profile read sentence says that it can read that list, because the looking-for tools use these two scopes and the person must see that before Allow. Changed (owner decision 2026-11-22): the photos scope is new; it must be requested explicitly, it is not a default scope, and its sentence says that the assistant sees only the photo list and never the photos, and that the person confirms each send on their phone. Changed (owner decision 2026-11-22): only the slop.date site offers the photos scope, because only slop.date keeps photos; the other sites leave it out of their metadata and drop it from a request, so their consent page never shows the slop.date photo sentence and their grants never hold a scope they cannot use. Changed (2026-11-23): a request whose named scopes all drop on the site is refused (`invalid_scope` at authorize and refresh, `invalid_client_metadata` at registration), because an empty grant gives the assistant no access and the person would approve a connection that can do nothing. Changed (2026-11-23): the two profile sentences say "what this app finds for you" in place of "what this app looks for for you" (and "what it looks for for you"), because the old words were not simple technical English.
 
 ```quint
 type Scope = AppsRead | MembershipRead | ProfileWrite | ProfileRead | PhotosUse
@@ -278,9 +278,9 @@ pure def scopeName(scope: Scope): str =
 pure def scopeText(scope: Scope): str =
   if (scope == AppsRead) "See which Network apps are available"
   else if (scope == MembershipRead) "Read your membership status and new updates"
-  else if (scope == ProfileRead) "Read the profile you saved for this app and what it looks for for you"
+  else if (scope == ProfileRead) "Read the profile you saved for this app and what this app finds for you"
   else if (scope == PhotosUse) "See your slop.date photo list (numbers, names, days, who has each) and ask to send one. It never sees the photos, and you confirm each send on your phone."
-  else "Save your profile, prepare signup details, and pause or turn back on what this app looks for for you"
+  else "Save your profile, prepare signup details, and pause or turn back on what this app finds for you"
 
 pure def lawScopeTextIsNotTheScopeName(scope: Scope): bool = scopeText(scope) != scopeName(scope)
 

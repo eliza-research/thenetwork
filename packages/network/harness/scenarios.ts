@@ -2,7 +2,7 @@
 // that must pass (tests run them all; the observatory offers them as levels). They cover abuse
 // (spam, sales, scams, contact extraction, prompt injection, harassment, block abuse, corroborated
 // reports, age signals, an under-13 join, a stated minor), member requests and plans, growth
-// (invites, newcomers, a bad invitee), logistics (travel) and automated review.
+// (invites, newcomers, a bad invitee), and logistics (travel).
 //   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/network/harness/scenarios.ts [scenario_id]
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { DAY, earliestDayKeyOf, HOUR, UNDER_MIN_AGE_DECLINE, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
@@ -12,7 +12,7 @@ import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
 import { nycPersonas } from "./experiment.ts";
 import { friendFactory } from "./growth.ts";
 import { plans } from "@thenetwork/engine";
-import { ConsentNetwork, planCatalogPlace } from "../src/network.ts";
+import { ConsentNetwork, planCatalogPlace, type NetworkState } from "../src/network.ts";
 import { holdEveryItem, simulatedReviewJudge, type InlineReviewJudge } from "../../engine/src/reviewJudge.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { computeMetrics } from "../../sim/src/judge/metrics.ts";
@@ -422,20 +422,7 @@ export const SCENARIOS: NetScenario[] = [
     id: "teen_switch_off_midrun", title: "Teen introductions stopped", days: 6, app: "friends",
     description: "Four friends.help members aged 16 and 17, born within 2 years of each other, give exact birth dates. Teen introductions are on from the start; the review judge approves their introductions with the strict rubric (owner decision 2026-11-22, D16). On day 4 one admin stops teen introductions: every item with a teen closes, nobody is named in a closing notice, and no teen gets another contact.",
     setup(ps, s) {
-      const a = adults(ps).filter(p => p.joinDay === 0 && p.homeCity === "nyc");
-      const cast = [31, 37, 43, 49].map(i => nth(a, i));
-      const day = earliestDayKeyOf(s);
-      const home = cast[0]!.routine.homeArea;
-      cast.forEach((p, i) => {
-        const age = i < 2 ? 16 : 17;
-        p.public.claimedAge = age; p.hidden.trueAge = age;
-        p.public.birthKey = day - age * 10000 - (i % 2 === 0 ? 100 : 300);
-        p.public.verified = true;
-        p.public.statedInterests = ["hiking", "coffee", "running"];
-        p.public.statedIntents = p.public.statedIntents.filter(x => x.category === "social");
-        p.routine.homeArea = home;
-        delete p.knowledge;
-      });
+      const cast = castTeens(ps, s, [31, 37, 43, 49], [16, 16, 17, 17]);
       const ids = Object.fromEntries(cast.map((p, i) => [`teen${i}`, p.id]));
       const teens = cast.map(p => p.id);
       liveAtOff.clear();
@@ -695,21 +682,20 @@ const TEEN_TABLE_PLACE = (() => {
   throw new Error("no all-ages plan place for a table of 3 or 4");
 })();
 
-function bookedTeenTable(id: string, ids: MemberId[], start: number, now: number) {
+function bookedTeenTable(id: string, ids: MemberId[], start: number, now: number): NetworkState["opps"][number] {
   const { venue, activityId } = TEEN_TABLE_PLACE;
   const plan: plans.Plan = {
     id, city: "nyc", activityId, venueId: venue.id, place: { name: venue.name, area: venue.area }, window: { start, end: start + 2 * HOUR },
     invited: ids, alternates: [], partner: false, size: { min: 3, target: ids.length, max: ids.length }, quorum: 3, probeDeadline: now,
     score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
   };
-  const components = { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 };
   return {
     id, origin: "planner", kind: "group", category: "social", objective: plans.activityById.get(activityId)!.label, detail: plans.activityById.get(activityId)!.label,
-    participants: ids, alternates: [], primed: [], status: ids.map(p => [p, "yes"]), explanations: {}, stage: "scheduled", deadline: start, createdAt: now, score: 0.6,
-    components, generator: "plan", exploration: false, sameDay: false, contacted: ids, reminded: [], tags: [], replacements: 0, feedbackFrom: [],
-    plan, planRun: { plan, answers: Object.fromEntries(ids.map(p => [p, "yes"])), bench: [], stage: "booked" },
+    participants: ids, alternates: [], primed: [], status: ids.map((p): [MemberId, "yes"] => [p, "yes"]), explanations: {}, stage: "scheduled", deadline: start, createdAt: now, score: 0.6,
+    components: NO_COMPONENTS, generator: "plan", exploration: false, sameDay: false, contacted: ids, reminded: [], tags: [], replacements: 0, feedbackFrom: [],
+    plan, planRun: { plan, answers: Object.fromEntries(ids.map((p): [MemberId, plans.PlanAnswer] => [p, "yes"])), bench: [], stage: "booked" },
     meetingAt: start, venueId: venue.id, venue: venue.name, venueArea: venue.area, bookedTold: ids, teenRuleAt: now,
-  } as never;
+  };
 }
 
 const LIVE_STAGES = new Set(["review", "probing", "scheduled"]);
@@ -731,7 +717,7 @@ export async function runScenario(s: NetScenario, opts: { seed?: number } = {}):
   const net = new ConsentNetwork({ seed, inlineJudge: s.judge ?? simulatedReviewJudge({ exceptions: false }), engine: { cities: ["nyc"] }, ...(s.app ? { app: s.app } : {}) });
   const records: RunRecord[] = [];
   const world = new World({
-    seed, personas, days: s.days, start, writeLog: false, network: net, ...(s.app ? { app: s.app } : {}), agent: joinText ? new ScriptedJoinAgent(start, joinText) : new PolicyPersonaAgent(start),
+    seed, personas, days: s.days, start, writeLog: false, network: net, app: net.app.id, agent: joinText ? new ScriptedJoinAgent(start, joinText) : new PolicyPersonaAgent(start),
     spawnFriend: friendFactory({ seed, joinRate: badInvitees ? 1 : 0.8, badActorRate: badInvitees ? 1 : 0.04 }), onRecord: r => records.push(r),
   });
   await world.begin();

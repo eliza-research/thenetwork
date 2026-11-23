@@ -8,10 +8,10 @@
 //   5. filters are respected, and the judge cannot undo a hard filter.
 // Plus registration (match age >= 18, adults-only lanes) and a positive control (worlds are non-trivial).
 import type { ChatMessage, LLM, MemberId } from "../../packages/core/src/index.ts";
-import { ageSideOf, canBeMatched, DAY } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY } from "../../packages/core/src/index.ts";
 import { ageOnDay } from "../../packages/core/src/generated/memberAge.ts";
-import { groupAgeAllowed, rosterHasMinor, teenFriendMaxAge, teenFriendRole, teenIntroShape, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
-import { teenFriendCategory, teenFriendLane, teenGenerator } from "../../packages/core/src/generated/matchLane.ts";
+import { groupAgeAllowed, rosterHasMinor, teenFriendMaxAge, teenFriendRole, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
+import { teenFriendCategory, teenGenerator } from "../../packages/core/src/generated/matchLane.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -26,6 +26,7 @@ import { EngineRng as Rng } from "../../packages/core/src/index.ts";
 import { randomWorld } from "../../packages/engine/src/testkit.ts";
 import type { AttentionItem, EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { pairKey, World } from "../../packages/engine/src/world.ts";
+import { ageSideOrUnknown, teenShape } from "../../packages/sim/src/teen.ts";
 import { Block, expect } from "./gate.ts";
 
 export interface ConformanceOptions {
@@ -57,7 +58,7 @@ export async function teenConformance(b: Block, pack: AppPack, o: Required<Pick<
   const worlds = o.seeds.map(seed => ({ seed, input: o.world(seed) }));
   const name = (rule: string) => `conformance ${pack.id} (teen world): ${rule}`;
   const world = (input: EngineInput, seed: number) => new World(input, resolveConfig({ seed }), localEmbed, pack);
-  const sideOf = (w: World, id: MemberId) => { const m = w.get(id)?.m; return m ? ageSideOf(m) : { adult: false, ready: false, birthKey: 0 }; };
+  const sideOf = (w: World, id: MemberId) => ageSideOrUnknown(w.get(id)?.m);
   const maxAgeOf = (w: World, id: MemberId) => { const m = w.get(id)?.m; return m?.birthKey === undefined ? (m?.age ?? Number.POSITIVE_INFINITY) : ageOnDay(m.birthKey, w.maxDay); };
   const unready = (w: World) => new Set(w.ids.filter(id => !sideOf(w, id).adult && !sideOf(w, id).ready));
   let teenProposals = 0;
@@ -77,10 +78,8 @@ export async function teenConformance(b: Block, pack: AppPack, o: Required<Pick<
         expect([p.id, groupAgeAllowed(true, teenFriendCategory(pack.id, p.category), w.minDay, w.maxDay, sides)]).toEqual([p.id, true]);
         expect([p.id, teenGenerator(pack.id, p.generator), teenRosterSizeAllowed(true, roster.length), p.anchor?.type === "event"]).toEqual([p.id, true, true, false]);
         for (const id of roster) expect([p.id, id, p.roles[id] !== undefined && teenFriendRole(p.roles[id]!)]).toEqual([p.id, id, true]);
-        const friendshipLane = teenFriendCategory(pack.id, p.category) && (p.lane === undefined || teenFriendLane(pack.id, p.lane));
-        const everyRoleTeen = roster.every(id => p.roles[id] !== undefined && teenFriendRole(p.roles[id]!));
-        expect([p.id, friendshipLane, p.format !== undefined && teenIntroShape(friendshipLane, p.format, everyRoleTeen, p.via !== undefined, p.anchor?.type === "event")])
-          .toEqual([p.id, true, true]);
+        const shape = teenShape(pack.id, roster, p);
+        expect([p.id, shape.lane, shape.laneOk]).toEqual([p.id, true, true]);
         expect(p.via).toBeUndefined();
         for (const id of roster) expect(maxAgeOf(w, id)).toBeLessThanOrEqual(teenFriendMaxAge);
       }

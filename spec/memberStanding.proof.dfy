@@ -59,7 +59,6 @@ lemma StandingQuotientAtMost(a: int, b: int, m: int)
   }
 }
 
-// Two floors differ by at most five when the exact quotients differ by at most five.
 lemma StandingFloorsClose(x: int, d: int, y: int, e: int)
   requires x >= 0 && y >= 0 && d > 0 && e > 0
   requires x * e - y * d <= 5 * (d * e)
@@ -82,7 +81,6 @@ lemma StandingFloorsClose(x: int, d: int, y: int, e: int)
   }
 }
 
-// The percentile of a valid rank is its unclamped quotient.
 lemma StandingPercentileExact(below: int, equal: int, rated: int)
   requires below >= 0 && equal >= 0 && 2 * below + equal <= 2 * rated && rated > 0
   ensures standingPercentile(below, equal, rated) == ((2 * below + equal) * 100) / (2 * rated)

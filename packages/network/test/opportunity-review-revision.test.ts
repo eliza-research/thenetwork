@@ -1,8 +1,3 @@
-// A review decision applies only to what the reviewer saw (known gap G6 of the review desk model,
-// spec/models/review_desk.md approveMatchesSeenPeople). Two reviewers hold the same item: one re-rolls
-// it to other people, then the other approves the version they read. Before the fix the approval named
-// only the item id, so it started probes for people no reviewer had approved. The real ConsentNetwork
-// and engine on a SimClock (mini.ts), with human review.
 import { describe, expect, test } from "vitest";
 import { HOUR } from "@thenetwork/core";
 import { Mini } from "./mini.ts";

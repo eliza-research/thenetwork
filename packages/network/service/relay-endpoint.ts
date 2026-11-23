@@ -12,14 +12,13 @@ import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/re
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import type { CostLedger } from "./cost.ts";
-import type { PhotoRequestStatus } from "./photoRelayFlow.ts";
+import type { PhotoRelayAnswer, PhotoRelayFinish } from "./photoRelayFlow.ts";
 
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
 
 export { RELAY_PATH };
 export const RELAY_MAX_BODY_BYTES = 16 * 1024;
 const MAX_TEXT = 2000;
-const PHOTO_UNAVAILABLE = "I can't send photos here.";
 const KEYS = ["channel", "messageId", "app", "memberId", "itemId", "text"];
 
 const NOTICE = {
@@ -34,10 +33,10 @@ export interface RelayEndpointDeps {
   secret: string | undefined;
   routePolicy?: NetworkRoutePolicy;
   accounts: Accounts;
-  photoRequest?: (input: { app: AppId; personId: string; memberId: string; text: string; threadId: string | null; inboundId: string; photoAsked: boolean }) => Promise<{ status: PhotoRequestStatus; text: string } | undefined>;
+  photoRequest: (input: { app: AppId; personId: string; memberId: string; text: string; threadId: string | null; inboundId: string; photoAsked: boolean; finish: PhotoRelayFinish }) => Promise<PhotoRelayAnswer | undefined>;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
   runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
-  hookFor?: (app: AppId) => RelayClassifierHook;
+  hookFor: (app: AppId) => RelayClassifierHook;
 }
 
 export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): (app: AppId) => RelayClassifierHook {
@@ -157,22 +156,18 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   try {
     const request = parseRelayRequest(text);
     const threadId = await rt.readState(net => net.relayMatch(memberId as MemberId, itemId ?? undefined)?.id ?? null);
-    const photo = await d.photoRequest?.({ app, personId: who.person.id, memberId, text, threadId, inboundId: `in:${b.channel}:${b.messageId}`, photoAsked: request.kind === "photo" });
+    const swapWithdrawn = withdrawsSwap(text);
+    if (swapWithdrawn && request.kind !== "text") await rt.unitOfWork(net => { net.relayCancelSwap(memberId as MemberId); });
+    const photoStored = (photo: PhotoRelayAnswer): StoredRelay => ({ decision: photo.status === "unavailable" ? "block" : "none", notice: photo.text });
+    const photo = await d.photoRequest({
+      app, personId: who.person.id, memberId, text, threadId, inboundId: `in:${b.channel}:${b.messageId}`, photoAsked: request.kind === "photo",
+      finish: async tx => { await lock(tx); return answer => complete(tx, photoStored(answer)); },
+    });
     let result: StoredRelay;
     if (photo) {
-      result = { decision: photo.status === "unavailable" ? "block" : "none", notice: photo.text };
-      if (withdrawsSwap(text)) {
-        await rt.unitOfWork(net => {
-          net.relayCancelSwap(memberId as MemberId);
-          rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, result); };
-        });
-      } else {
-        await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
-      }
-    } else if (request.kind === "photo") {
-      result = { decision: "block", notice: PHOTO_UNAVAILABLE };
-      await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
-    } else if (request.kind === "none" && withdrawsSwap(text)) {
+      result = photoStored(photo);
+      if (swapWithdrawn && request.kind === "text") await rt.unitOfWork(net => { net.relayCancelSwap(memberId as MemberId); });
+    } else if (request.kind === "none" && swapWithdrawn) {
       result = await rt.unitOfWork(async net => {
         net.relayCancelSwap(memberId as MemberId);
         const r: StoredRelay = { decision: "none", notice: NOTICE.withdrawn };
@@ -189,10 +184,9 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
       result = await rt.unitOfWork(async net => {
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
-        const hook = d.hookFor?.(app);
         const outcome = await net.relayRequest(
           { itemId: key, from: memberId as MemberId, kind, ...(body !== undefined ? { text: body } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
-          { ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
+          { hook: d.hookFor(app), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
         );
         const r = stored(outcome);
         rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, r); };

@@ -6,8 +6,6 @@
 //   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/network/harness/experiment.ts --days 21 --seed 1 [--only consent] [--live-asks] [--time-aware] [--paraphrase] [--primed-met 0.96 --primed-partial 0.82]
 // --paraphrase: personas say the same things in other words (harness/paraphrase.ts), so the Network's
 // text understanding is not graded on the simulator's own sentences (audit matching-e2e-1).
-// Consent arms use the simulated review judge (simulatedReviewJudge, a deterministic stand-in with no
-// model call): every opportunity is queued and judged on the next tick before any member is contacted.
 // --live-asks: personas ask only for wants that are still live in hidden truth (sim PolicyOptions).
 // --time-aware: personas answer offered times and booked plans from a hidden week, and attendance
 // depends on the meeting time (sim PolicyOptions.timeAware and WorldOptions.timeAware).
@@ -109,7 +107,7 @@ export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { 
   const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false });
   const records: RunRecord[] = [];
   const w = new World({
-    seed: o.seed, personas, days: o.days, start, writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
+    seed: o.seed, personas, days: o.days, start, app: consent?.app.id ?? "ntwrk", writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
     ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}),
     engine: consent ? undefined : wrapNycOnly(createEngine()), spawnFriend: friendFactory({ seed: o.seed }), onRecord: r => records.push(r),
   });

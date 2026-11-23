@@ -1,50 +1,40 @@
-import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
+import { simulatedServiceJudge } from "../../engine/src/reviewJudge.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
-const USER = process.env.USER ?? "postgres";
-const DB = `network_dating_shown_to_test_${process.pid}`;
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
-const URL_ = `postgres://${USER}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
-
 const SECRET = "whsec_dating_shown_to";
-const ADMIN = "adm-tok", REVIEWER = "rev-tok";
+const ADMIN = "adm-tok";
 const KAI = "+12125550181", SAM = "+12125550182";
 
+let url: string;
 let sql: SQL;
 let svc: NetworkService | undefined;
 let evt = 0;
 
 describe.skipIf(!pgAvailable)("dating: a nonbinary member's shown-to choice (NetworkService, Postgres)", () => {
   beforeAll(async () => {
-    await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
-    await admin(`create database ${DB}`);
-    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
-    sql = new SQL({ url: URL_, max: 2 });
+    url = await migratedDb("dating_shown_to");
+    sql = new SQL({ url, max: 2 });
   }, T);
   afterAll(async () => {
-    await svc?.close().catch(() => {});
+    await svc?.close();
     await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
+    await dropDb(url);
   });
 
   test("a man who seeks women is proposed to a nonbinary member shown to women seekers", async () => {
     const clock = new SimClock(START);
     const s = svc = new NetworkService({
-      url: URL_, clock, instance: "dating-shown-to", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
-      tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
-      adapter: () => new DryRunAdapter(() => {}),
+      url, clock, instance: "dating-shown-to", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
+      tokens: `admin:${ADMIN}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
+      adapter: () => new DryRunAdapter(() => {}), reviewJudge: simulatedServiceJudge({ exceptions: false }),
     });
     await s.start();
     const text = async (from: string, body: string) => {
@@ -61,11 +51,7 @@ describe.skipIf(!pgAvailable)("dating: a nonbinary member's shown-to choice (Net
         and x.direction = 'outbound' order by x.ts desc, x.id desc limit 1`;
       return (m?.body as string | undefined) ?? "";
     };
-    const staff = async (token: string, method: string, path: string, b?: unknown) => {
-      const res = await s.fetch(new Request(`http://127.0.0.1:4848/apps/slop${path}`, { method, headers: { authorization: `Bearer ${token}`, ...(b ? { "content-type": "application/json" } : {}) }, ...(b ? { body: JSON.stringify(b) } : {}) }));
-      expect(res.status).toBe(200);
-      return await res.json() as any;
-    };
+    const runtime = s.runtimes.get("slop:nyc")!;
 
     const memberIds: string[] = [];
     for (const [e164, lines, shownTo] of [
@@ -80,23 +66,24 @@ describe.skipIf(!pgAvailable)("dating: a nonbinary member's shown-to choice (Net
         answered.push(q);
         await text(e164, /right\?/.test(q) ? "Yes, that's right." : /shown to people/.test(q) ? shownTo : /trans people/.test(q) ? "Yes" : "Coffee or a walk.");
       }
-      const [row] = await sql`select m.id from network.members m join platform.phone_identities p on p.person_id = m.person_id where m.app_id = 'slop' and p.e164 = ${e164}`;
-      memberIds.push(row.id as string);
+      const [row] = await sql<{ id: string }[]>`select m.id from network.members m join platform.phone_identities p on p.person_id = m.person_id where m.app_id = 'slop' and p.e164 = ${e164}`;
+      memberIds.push(row!.id);
     }
-    const state = (await sql`select state from network.network_state where id = 'slop:nyc'`)[0].state;
-    const st = typeof state === "string" ? JSON.parse(state) : state;
-    const tagsOf = (id: string): string[] => st.members.find((x: any) => x.id === id).appTags.map((t: any) => t.tag);
+    const st = (await runtime.pg.load())!;
+    const tagsOf = (id: string) => (st.members.find(x => x.id === id)!.appTags ?? []).map(t => t.tag);
     expect(tagsOf(memberIds[0]!)).toEqual(expect.arrayContaining(["romance:is:nonbinary", "romance:seeks:man", "romance:shown_to:woman", "romance:open_trans:open"]));
     expect(tagsOf(memberIds[0]!)).not.toContain("romance:seeks:woman");
     expect(tagsOf(memberIds[1]!)).toEqual(expect.arrayContaining(["romance:is:man", "romance:seeks:woman"]));
 
-    await staff(ADMIN, "POST", "/matching", { on: true });
-    let item: any;
-    for (let i = 0; i < 12 && !item; i++) {
+    const matching = await s.fetch(new Request("http://127.0.0.1:4848/apps/slop/matching", { method: "POST",
+      headers: { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" }, body: JSON.stringify({ on: true }) }));
+    expect(matching.status).toBe(200);
+    await matching.text();
+    const pair = async () => (await runtime.pg.load())!.opps.find(o => memberIds.every(id => o.participants.includes(id)));
+    for (let i = 0; i < 12 && !(await pair()); i++) {
       for (let t = 0; t < 4; t++) { clock.advance(30 * MINUTE); await s.tick(); }
-      item = (await staff(REVIEWER, "GET", "/review")).items?.[0];
     }
-    expect(item).toBeDefined();
-    expect((await sql`select distinct status from network.messages where direction = 'outbound'`).map((r: any) => r.status)).toEqual(["dry_run"]);
+    expect(await pair()).toMatchObject({ category: "romance" });
+    expect((await sql<{ status: string }[]>`select distinct status from network.messages where direction = 'outbound'`).map(r => r.status)).toEqual(["dry_run"]);
   }, T);
 });

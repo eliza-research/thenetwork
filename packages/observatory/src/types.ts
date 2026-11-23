@@ -7,6 +7,7 @@ import type {
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
 import type { SearchOutcome, SearchTally } from "@thenetwork/engine";
+import type { JudgeVerdictName } from "@thenetwork/engine/src/reviewJudge.ts";
 import type { ReviewPlanPreview, ReviewProbePreview, ReviewProbeText } from "../../network/src/network.ts";
 
 export type StaffPlanPreview = ReviewPlanPreview & { app: string };
@@ -130,7 +131,6 @@ export interface ObsOpportunity {
   venue?: { name: string; lat: number; lng: number };
   /** Where it came from in the consent network (engine, request, plans, second_encounter...). */
   origin?: string;
-  /** Human review (PRD 32.8): every proactive opportunity waits here before any member is contacted. */
   review?: ReviewInfo;
   /**
    * Hours since it was created (open) or from creation to its last change (closed). Computed when the
@@ -179,7 +179,7 @@ export interface ReviewInfo {
   invalidated?: string;
   approver?: "judge" | "staff";
   exceptionReason?: string;
-  judgeVerdict?: "approve" | "flag" | "undecided" | "cannot_run";
+  judgeVerdict?: JudgeVerdictName;
   judgeExplanation?: string;
 }
 /** A reviewer's action (PRD 32.8). "edit" changes texts, then approves. "reroll" swaps a participant and keeps it waiting. */

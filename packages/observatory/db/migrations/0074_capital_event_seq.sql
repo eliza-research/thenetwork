@@ -1,8 +1,3 @@
--- The commit order of network capital events (spec/capitalLedger.md; SD-153). A restart replays the
--- stored events into the live ledger in this order, which is the order the Network emitted them. Two
--- events of one unit share a time, and their ids do not sort in emit order ("member_activated:<id>"
--- sorts before "member_joined:<id>"), so an order by time and id lost the activation.
--- Existing rows take numbers in their order by time and id, as the replay read them before.
 alter table network.capital_events add column if not exists seq bigint;
 create sequence if not exists network.capital_events_seq owned by network.capital_events.seq;
 update network.capital_events set seq = ordered.n

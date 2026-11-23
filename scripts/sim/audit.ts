@@ -55,7 +55,7 @@ async function networkGates(b: Block) {
   const net = new ConsentNetwork({ seed, inlineJudge: simulatedReviewJudge({ exceptions: false }), engine: { cities: ["nyc"] } });
   const R: RunRecord[] = [];
   const rosterAtNo = new Map<Log, readonly MemberId[]>();
-  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => {
+  const w = new World({ seed, personas, days, start, app: net.app.id, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => {
     R.push(r);
     if (r.type !== "network_log" || (r.kind !== "probe_answer" && r.kind !== "time_answer")
       || r.detail.yes !== false || r.detail.expired || r.detail.plan) return;

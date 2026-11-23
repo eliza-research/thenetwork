@@ -7,7 +7,7 @@
 //  - Delete everything needs a fresh login (within 10 minutes): a stolen old cookie cannot do it.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import {
-  freshSignIn, initial, sessionDeadline, sessionGraceMs, sessionMaxMs, sessionRotateMs, sessionStepUpMs, sessionTtlMs, step, type SessionFlow,
+  freshSignIn, initial, sessionDeadline, sessionGraceMs, sessionMaxMs, sessionRotateMs, sessionRowLive, sessionStepUpMs, sessionTtlMs, step, type SessionFlow,
 } from "../../core/src/generated/webSession.ts";
 import type { AppId } from "./apps.ts";
 import type { PeopleStore, Session } from "./store.ts";
@@ -72,7 +72,7 @@ export class SessionService {
     await this.store.rotateSession(s.tokenHash, s.e164, revoking.revokeAt, current => {
       const now = this.now();
       revoked = step(revoking, { type: "recordRevocation",
-        rowLive: !!current && current.app === app && current.expiresAt > now && !(current.revokedAt !== null && current.revokedAt <= now),
+        rowLive: !!current && sessionRowLive(current.app === app, current.expiresAt, current.revokedAt !== null, current.revokedAt ?? 0, now),
         rotatedMeanwhile: current?.revokedAt != null });
       next = revoked.phase === "IssuingReplacement"
         ? this.next(app, s.e164, current?.personId ?? s.personId, s.tokenHash, s.startedAt, cloud ? s.expiresAt : undefined, cloud ? true : undefined) : undefined;

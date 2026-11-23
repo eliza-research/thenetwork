@@ -1,6 +1,3 @@
-// Game mode with the consent-first Network (the default): NYC only, a recorded approval by the
-// simulated review judge or by staff before any contact, probes before reveals, real venues, growth joiners, scenario levels, the age
-// policy, private facets behind the truth lens, the judge scorer, and Postgres parity.
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, MINUTE } from "@thenetwork/core";
@@ -60,6 +57,9 @@ describe("consent-first game mode (NYC)", () => {
     expect(engineOpps.every(o => o.state === "IN_REVIEW" || o.review?.decision === "expired" || !!o.review?.invalidated
       || (o.review?.decision === "approve" && o.review.approver === "judge" && o.review.reviewer === "sim_review_judge"))).toBe(true);
     for (const o of engineOpps.filter(x => x.review?.decision !== "approve")) for (const id of o.participants) expect(about(g, id, o.id)).toEqual([]);
+    expect(engineOpps.filter(o => o.review?.decision === "approve" && o.review.approver === "judge").length).toBeGreaterThan(0);
+    expect(engineOpps.filter(o => o.review?.decision === "approve").every(o => o.review!.approver === "judge" || o.review!.approver === "staff")).toBe(true);
+    expect(engineOpps.filter(o => o.review?.decision === "expired").every(o => !!o.review!.exceptionReason)).toBe(true);
     // The judge scorer runs over the records: no canary leaks, no minor contacts.
     expect(s.stats.judge).toBeDefined();
     expect(s.stats.judge!.canaryLeaks).toBe(0);

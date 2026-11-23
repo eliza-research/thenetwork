@@ -90,7 +90,7 @@ async function main() {
   });
   await svc.start();
   console.log("relay classifier: simulated (clears every text the rules pass; dev only)");
-  for (const rt of svc.runtimes.values()) console.log(`network ${rt.id}: sends dry-run, review "human", matching ${rt.matchingAllowed ? "allowed (admin switch)" : "not allowed (registry row)"}`);
+  for (const rt of svc.runtimes.values()) console.log(`network ${rt.id}: sends dry-run, review by the judge (staff decide held items), matching ${rt.matchingAllowed ? "allowed (admin switch)" : "not allowed (registry row)"}`);
   if (!process.env.NETWORK_SERVICE_TOKENS) console.log(`staff tokens (dev only): ${tokens}`);
 
   const devOrigins = Object.fromEntries(SITES.map(s => [s.app, `http://${HOST}:${s.port}`]));

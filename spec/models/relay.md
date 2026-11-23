@@ -10,32 +10,22 @@ Check per-item consent and withdrawal, relay decisions, age restrictions, and er
 
 Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. Phone swaps and durable queue acceptance remain separate.
 
-The text outcome `minorClef` is a block for a classifier `minor_signal` flag. The engine (`relayItemAsync`) records a classifier `minor_signal` flag, as a flag or a severe flag, as the age signal of the item record, and the relay desk (`RelayDesk.apply`) reads only that record: the blocked item keeps no text and the sender gets the minors policy. Changed (owner decision 2026-11-22): the desk read the flag again from the reason codes, and a caller of the engine other than the desk lost the signal. Changed: before this, a minor signal that only the classifier found kept the text and left the sender matchable, and the model disagreed with the code.
+The rules and the relay classifier decide alone: every decided item is a pass or a block (`noRelayHold`), and the sender is told at once. The text outcome `flag` is a rule or classifier flag, and `unavailable` is a classifier that could not run (an error, a timeout, an answer that does not parse or a Clef cache miss gives `classifier:unavailable`); both block, and a text that the classifier could not read never gets an outbound row (`uncheckedNeverSent`). A rate limit or a safety hold on a member blocks the item as well; the sender asks again later. The model has a classifier in every run, as the service has in every environment: Clef with the Workers AI credentials, else a classifier that cannot run, or the simulated one that `platform:dev`, the simulator and the tests inject (`relayClassifierFromEnv`). Changed (owner decision 2026-11-22, D18, "Automate relay holds too"): a text that the rules or the classifier do not clear is blocked, because no relayed text waits for staff.
 
-Changed (owner decision 2026-11-22): a relay thread of a friends.help teen friendship pair carries moderated text only ([friend introductions with a minor](../friendIntroAge.md), `relayKindAllowed`). The world has the stored stop `teenStopped` and `teenPair` (the network's `teenFriendPair` context: the pair passes `teenFriendAgeRule` now while teen introductions are not stopped). A number swap, a swap question and a selected photo never go from or to a minor. A teen-pair text that the rules or the classifier do not pass cleanly (`passFlagged`, a `teen:*` code, an off-platform move after a meeting) is blocked (`teenRelayHeld` names the text that did not pass cleanly). When staff stop teen introductions or the rule stops holding, the thread closes. Before this change the pair checks (now `pairOkKind` and `partiesBlockKind`) refused every minor, and no invariant stated it; `teenFriendAgeRule` and `teenSwitchOffNoMinor` now state the rule as invariants (`teenSwitchOffNoMinor` is the earlier refusal for the stopped case).
+The text outcome `minorClef` is a block for a classifier `minor_signal` flag. `relayItemAsync` records a classifier `minor_signal` flag, as a flag or a severe flag, and the rules' `minor:signal` as the age signal of the item record. `RelayDesk.apply` reads only that record and asks the generated `relayStartsMinorPolicy`; the host's `minorSignal` marks the sender, writes the person minor signal (`onMinorSignal`) and closes the sender's open opportunities. The blocked item keeps no text. The person minor signal on the member's other apps is outside this model, which has one app ([safety_trust](safety_trust.md) checks it). A severe block also writes the 0-point `relay_block` case event (`relaySevereBlockCaseEvent`); it changes no relay state, so it stays outside this model.
 
-Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start, so the world has the stored stop `teenStopped` (false at the start) in place of the default-off switch `teenIntros`; `teenStop` and `teenResume` replace `teenSwitchOff`. The teen pair can be a friends.help pair or an ntwrk `Friend`-lane pair; the relay rules are the same. Q20: a teen's own words about age in a teen-pair text were held, not blocked (the engine reason `teen:age_talk`). The text outcome `teenAgeTalk` is an age that agrees with the record, and `minorRules` from a known minor in a teen pair is an age younger than the record: only the younger age opens a minor signal (`minorSignalOpens`), which ends the teen pair. A minor signal from an adult sender is blocked as before. Changed (owner decision 2026-11-22, D18): both outcomes are now blocked, as every text that does not pass cleanly is, and the younger age still opens the minor signal.
+A relay thread of a teen friendship pair, on friends.help or in the ntwrk `Friend` lane, carries moderated text only ([friend introductions with a minor](../friendIntroAge.md), `relayKindAllowed`). The world has the stored stop `teenStopped` (false at the start) and `teenPair` (the network's `teenFriendPair` context: the pair passes `teenFriendAgeRule` now while teen introductions are not stopped). A number swap, a swap question and a selected photo never go from or to a minor. A teen-pair text that the rules or the classifier do not pass cleanly (`passFlagged`, a `teen:*` code, an off-platform move after a meeting) is blocked (`relayVerdict` of [relay decision](../relayDecision.md), `teenUncleanNeverPasses`); a text that no classifier could read is blocked for every pair (`classifier:unavailable`). A teen's own words about age are blocked: the outcome `teenAgeTalk` is an age that agrees with the record, and `minorRules` from a known minor in a teen pair is an age younger than the record; only the younger age opens a minor signal (`minorSignalOpens`, Q20), which ends the teen pair. When staff stop teen introductions or the rule stops holding, the thread closes. `teenFriendAgeRule` and `teenSwitchOffNoMinor` state the pair rule and the stopped case. Changed (owner decision 2026-11-22, answers A2 to A5): a teen friendship pair may relay moderated text, because the owner allowed teen friendship introductions.
 
-Changed (owner decision 2026-11-22, D18, "Automate relay holds too"): the relay classifier and the rules decide alone, and every reason blocks the item ([relay decision](../relayDecision.md), [item lifecycle](../relayLifecycle.md)). The model therefore has no held item (`Held`, `desk.held`, `TRec.review`, `LogRec.staff`, `LogRec.rateOnly`), no staff actions (`staffRelease`, `staffReject`), no review deadline or SLA check (`HELD_SLA`, `HOLD_WINDOW`, `expiredDesk`, `slaTick`), no hold invariants (`minorTextNeverKept`, `recordReviewMatches`, `heldSlaAlerted`, `expiredStaysUnsent`), no hold properties (`releaseReadsDelivered`, `heldDecidedInTime`, `heldAnswerHasRow`), no hold witnesses and no hold runs. The text outcome `hold` is now `flag` (a rule or classifier flag), and the new outcome `unavailable` is a classifier that could not run; both block. `teenUncleanHeld` is now `teenUncleanNeverPasses`, and the new invariants `noRelayHold` (every decided item is a pass or a block) and `uncheckedNeverSent` (a text that the classifier could not read never has an outbound row) state the decision. A rate limit or a safety hold on a member blocks the item as well; the sender asks again later.
-
-Changed (owner decision 2026-11-22): photos no longer pass the relay desk. A photo goes through the photo offer, its receiver's yes, a safety review and a one-phone view link ([photo relay item](photo_relay_item.md)); the RELAY action answers a photo request before the desk. The model therefore has no `photo` variable, no selected-photo actions (`selectPhoto`, `reviewPhoto`, `revokePhoto`, `photoRequest`, `staffPhotoReject`, `resolvePhoto`, `fetchBytes`), no photo invariants (`bytesServedImpliesApprovedBound`, `photoHeldDecidable`, `photoRetryAfterRateHold`), no `witness_photoServed` and no photo runs. Before this change the model kept the desk photo item as a regression guard for a path that the code removed. `textSend` and `teenFriendAgeRule` lose their photo-id condition, which no send can meet now, so the teen rules do not change; `teenPhotoTest` is removed because no photo action exists to try.
+Photos do not pass the relay desk. A photo goes through the photo offer, its receiver's yes, an automatic check and a bound view link ([photo relay item](photo_relay_item.md)); the RELAY action answers a photo request before the desk. Changed (owner decision D14 of 2026-11-22): the desk has no photo item, because photo relay has its own flow.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
-Comparison 2026-11-22 (owner decision of 2026-11-22, carry-over of the relay review). The model was compared with `RelayDesk` (`packages/network/src/relay.ts`), the relay host of `ConsentNetwork` (`relayHost`), `relayItemAsync` (`packages/engine/src/relay.ts`), `relayAdmission` (`packages/network/service/runtime.ts`) and the relay endpoint after the relay fixes. These parts agree with the model:
+The model agrees with `RelayDesk` (`packages/network/src/relay.ts`), the relay host of `ConsentNetwork` (`relayHost`), `relayItemAsync` (`packages/engine/src/relay.ts`), `relayAdmission` (`packages/network/service/runtime.ts`) and the relay endpoint. `stepRelay` of the generated item lifecycle gives `Blocked` or `ReadyToSend`, as `apply` does. The number swap: `RelayDesk.swap` decides both shares, applies the other member's share first and the member's own share only when the first one was not refused; `relayAdmission` refuses a swap question after its consent window (`relayConsentStale`, `relay:ask_expired`; `askInsideWindow`, `askLateTest`), and `cancelSwaps` marks the passed shares of both directions `consent:withdrawn`, which `relayRecordMayDispatch` refuses (`withdrawSwaps`, `withdrawAfterSwapTest`).
 
-- The age signal. `relayItemAsync` sets `ageSignal` for the rules' `minor:signal` and for a classifier `minor_signal` flag, as a flag or a severe flag. `RelayDesk.apply` asks the generated `relayStartsMinorPolicy` and calls the host's `minorSignal`, which marks the sender, writes the person minor signal (`onMinorSignal`) and closes the sender's open opportunities. `commitText` sets `minor` and closes `matchOpen` in the same way. A classifier block with `minor_signal` is the model's `minorRules` outcome (a block with the age signal). The person minor signal on the member's other apps is outside this model, which has one app ([safety_trust](safety_trust.md) checks it).
-- The severe block. `RelayDesk.apply` asks the generated `relaySevereBlockCaseEvent` and calls the host's `severeBlock`, which writes the 0-point `relay_block` case event. It changes no relay state, so it stays outside this model.
-- The verdict. `stepRelay` of the generated [item lifecycle](../relayLifecycle.md) gives `Blocked` or `ReadyToSend`, as `apply` does (owner decision 2026-11-22, D18).
-- The classifier (owner decision 2026-11-22, D18). `relayItemAsync` asks the generated `relayClassifierReads` (the model's `classifierReads`) and `relayClassifierReading`; an error, a timeout, an answer that does not parse or a Clef cache miss gives `classifier:unavailable`, the model's `unavailable`, and blocks the text. A teen-pair text that no classifier read gets `teen:unclassified` and is blocked; the model has a classifier in every run, as the service has in every environment: Clef with the Workers AI credentials, else a classifier that cannot run (the model's `unavailable`), or the simulated one that `platform:dev`, the simulator and the tests inject (relay-endpoint.ts relayClassifierFromEnv; owner decision 2026-11-22, D18, refix). A desk call without a classifier still blocks a teen-pair text (`teen:unclassified`), because RelayDesk.decide always calls `relayItemAsync`.
-- The number swap. See the note at the top of the module.
-- The staff rejection. `relayAdmission` (`packages/network/service/runtime.ts`) still gives `relayRecordMayDispatch` the value `rec.review === "rejected"`, because the `review` column stays (migration 0086) and a record written before the owner decision of 2026-11-22 (D18) can carry it. No new record gets a review, so `queueSend` gives `false`: the model abstracts the legacy rejected rows away.
+Known drift (the model keeps the rule; another area owns the code):
 
-Known drift (code defects; the model keeps the rule and this change does not fix the code, which another area owns):
-
-- SD-138, the swap question. `waitingSwapAsked` and `askInsideWindow` state that a swap waits only on a question that was not refused and that the question goes only inside its 15 minutes. `RelayDesk.swap` records the waiting swap before it sends the question and does not read the result of `host.send`, so a refused question still leaves a waiting swap and the member hears that the Network asked. In quiet hours the question is deferred, not refused. `askRefusedTest` and `askQuietTest` replay the rule, not this code. Fixed by the merge of the default branch (2026-11-23): `relayAdmission` now finds the live waiting swap of the question and refuses it after the consent window (`relayConsentStale`, `relay:ask_expired`), as `askInsideWindow` and `askLateTest` state, and `cancelSwaps` marks the passed shares of both directions `consent:withdrawn`, which the admission refuses through the generated `relayRecordMayDispatch` (`withdrawSwaps`, `withdrawAfterSwapTest`).
-- The direct self-age (merge of the default branch, 2026-11-23; [member age](../memberAge.md)). `RelayDesk.request` asks the host's `observeSenderAge` before the desk decides: a text in which the sender states their own age under 18 directly commits that age, starts the minors policy and is refused with no relay record and no case event of the desk. In a teen pair the desk asks it only when the stated age is younger than the record (`saysYounger`), and refuses only when the sender now has the minor signal (`minorSignalOpens`); an age that agrees with the record keeps the engine path (`teen:age_talk`, blocked with a record). The model's `minorRules` outcome stands for it, but the model logs a block record with the age signal, which the code does not write on this path.
-- Code locations. Many comments in the module body still give line numbers of the source revision. The functions they name are on this branch, but the numbers are stale ([model index](README.md)).
+- SD-138, a refused swap question. `waitingSwapAsked` states that a swap waits only on a question that was not refused. `RelayDesk.swap` records the waiting swap before it sends the question and does not read the result of `host.send`, so a refused question still leaves a waiting swap and the member hears that the Network asked. In quiet hours the question is deferred, not refused. `askRefusedTest` and `askQuietTest` replay the rule, not this code.
+- The review column. `relayAdmission` gives `relayRecordMayDispatch` the value `rec.review === "rejected"` from the `review` column of `network.relay_records` (migration 0086). No record gets a review now, so `queueSend` takes it as false. The read and the column must go with a migration that settles the old rows.
 
 ```quint
 // quint-check: max-steps=25 max-samples=10000 verify-steps=3
@@ -45,12 +35,10 @@ Known drift (code defects; the model keeps the rule and this change does not fix
 // The model follows the code after the relay fixes on branch wave2/relay (SD-039, SD-040, SD-064, SD-133, SD-137,
 // SD-138, SD-252, SD-320, SD-387, Q-relay-1).
 //
-// Compared with the code of this branch on 2026-11-22 (see "Comparison 2026-11-22" above the module). The
-// 2026-11-09 note that the code makes a number swap all or nothing was wrong for this branch: it has no swapPlan
-// and no flushSwapShares. RelayDesk.swap decides both shares, applies the other member's share first and the
-// member's own share only when the first one was not refused, and the queue admission (runtime.ts
-// relayAdmission) has no partner-share check. commitShare, tickFlush and queueSend follow that code, so
-// noOneWayNumber and the SD-007 run tests describe this branch.
+// RelayDesk.swap decides both shares, applies the other member's share first and the member's own share only
+// when the first one was not refused, and the queue admission (runtime.ts relayAdmission) has no partner-share
+// check. commitShare, tickFlush and queueSend follow that code, so noOneWayNumber and the SD-007 run tests
+// describe this branch.
 // A withdrawal now marks prepared shares in both directions. A swap question uses the live request's
 // window at final admission. The current code can still defer the initial question before it is queued.
 //
@@ -199,7 +187,7 @@ module relay {
     } else d0.with("log", log1).with("order", order1)
   }
 
-  // RelayDesk.unsent (relay.ts:278-283, network.ts:5229): passed items that did not go are logged as not delivered (no number
+  // RelayDesk.unsent (relay.ts, network.ts): passed items that did not go are logged as not delivered (no number
   // shared) and leave the thread.
   pure def unsentDesk(d: Desk, items: Set[str]): Desk = {
     val d1 = items.fold(d, (acc, i) =>
@@ -209,7 +197,7 @@ module relay {
     d1.with("thread", d1.thread.exclude(items))
   }
 
-  // relay-endpoint.ts:231-232 with runtime.ts relayUnsent: before each decision in an open match, the passed items
+  // relay-endpoint.ts with runtime.ts relayUnsent: before each decision in an open match, the passed items
   // whose outbound row ended unsent (NOT_SENT) go through RelayDesk.unsent. The swap question has no item row.
   pure def syncUnsent(d: Desk, q: Queue): Desk = {
     val items = q.rows.keys().filter(key => {
@@ -228,7 +216,7 @@ module relay {
   pure def alreadyShared(d: Desk, src: str): bool =
     d.log.keys().exists(i => d.log.get(i).kind == "share" and d.log.get(i).src == src and d.log.get(i).contactShared)
 
-  // RelayHost.send (network.ts:5159-5168) into Network.send (network.ts:4162-4263): refused, deferred or a queued row.
+  // RelayHost.send (network.ts) into Network.send (network.ts): refused, deferred or a queued row.
   type SendOut = { d: Desk, q: Queue, res: str }
   pure def hostSend(x: World, d: Desk, q: Queue, s: Send, refuse: bool): SendOut =
     if (recipientRefuses(x, s.src, s.dst, textSend(s)) or refuse) { d: d, q: q, res: "refused" }
@@ -253,7 +241,7 @@ module relay {
   // ------------------------------------------------------------------------------------------ engine oracle
   // Text outcomes the oracle may give when the parties pass: the classifier and the rules.
   // `passFlagged`: the rules pass with a soft flag (a teen:* code, an off-platform move after a meeting). It is a
-  // pass for two adults and a block for a teen pair (teenRelayHeld names it).
+  // pass for two adults and a block for a teen pair (relayVerdict of spec/relayDecision.md).
   // `flag`: a rule or classifier flag. `unavailable`: the classifier could not run (classifier:unavailable).
   // `teenAgeTalk`: the rules read the sender's own age, and it agrees with the record (Q20); `minorRules` from a
   // known minor in a teen pair is an age younger than the record.
@@ -346,7 +334,7 @@ module relay {
     w' = w, desk' = desk, queue' = queue, g' = g,
   }
 
-  // The endpoint unit before the desk decides (relay-endpoint.ts:231-232): sync the unsent items, and record in the
+  // The endpoint unit before the desk decides (relay-endpoint.ts): sync the unsent items, and record in the
   // ghost what a decision that can deliver still reads as delivered (Q-relay-1, SD-252).
   pure def readGhost(x: World, d: Desk, gh: Ghost, src: str, dst: str, text: bool): Ghost =
     if (partiesBlockKind(x, src, dst, text)) gh else gh.with("staleRead", gh.staleRead.union(staleItems(d, gh)))
@@ -496,7 +484,7 @@ module relay {
     w' = w, desk' = desk, queue' = queue, g' = g,
   }
 
-  // rt.unitOfWork calls deliver() after the commit (runtime.ts:778-782). An error there is logged and the unit's
+  // rt.unitOfWork calls deliver after the commit (runtime.ts). An error there is logged and the unit's
   // result is returned, so the endpoint answers the committed decision (SD-137).
   action postCommitDeliverError(k: str): bool = all {
     ep.phase.get(k) == "committed",
@@ -526,7 +514,7 @@ module relay {
   }
 
   // ------------------------------------------------------------------------------------------ tick and queue
-  // Network.tick flushes deferred sends (network.ts:3529-3542): each runs every send-time check again. A relayed
+  // Network.tick flushes deferred sends (network.ts): each runs every send-time check again. A relayed
   // item refused now goes through RelayDesk.unsent (SD-252, Q-relay-1).
   action tickFlush(refused: Set[Send]): bool = {
     val due = desk.deferred.filter(s => not(w.quiet.get(s.dst)))
@@ -551,8 +539,8 @@ module relay {
   action queueSend(key: str): bool = {
     val r = queue.rows.get(key)
     val s = r.send
-    // The swap question goes only while its swap still waits inside its 15 minutes (runtime.ts:268-272, SD-138);
-    // an item row needs a passed record for this recipient, not withdrawn (runtime.ts:274-276, SD-039).
+    // The swap question goes only while its swap still waits inside its 15 minutes (runtime.ts, SD-138);
+    // an item row needs a passed record for this recipient, not withdrawn (runtime.ts, SD-039).
     val recOk = if (s.ask) desk.swaps.exists(sw => sw.iid == s.iid and sw.src == s.src and sw.at <= w.now and w.now - sw.at <= TTL)
       else (queue.records.keys().contains(s.iid) and queue.records.get(s.iid).dst == s.dst
         and relayRecordMayDispatch(queue.records.get(s.iid).decision == "pass", false, queue.records.get(s.iid).withdrawn))
@@ -733,19 +721,19 @@ module relay {
     numberRows(queue, src).exists(r => r.status == "queued") or desk.deferred.exists(s => s.number and s.src == src)
 
   // ------------------------------------------------------------------------------------------ invariants
-  // Founder decision 9 and relay.ts:15-17: a number goes out only after both members asked.
+  // Founder decision 9 and relay.ts: a number goes out only after both members asked.
   val numberMovesOnlyIfBothConsented = g.events.forall(e => e.number implies e.peerAsked)
 
-  // Per-item consent (founder decision 9; engine relay.ts:15-17): after "don't send my number" the endpoint
+  // Per-item consent (founder decision 9; engine relay.ts): after "don't send my number" the endpoint
   // answers "Okay, I won't share your number" (relay-endpoint.ts NOTICE.withdrawn). No number of that member goes out after it (SD-039).
   val withdrawnNotSent = g.events.forall(e => e.number implies e.live)
 
   // AGENTS.md "Relay (#7)": only what the relay passed goes out, and only inside an open match of two eligible
-  // adults with no block, at final dispatch (runtime.ts:247-256 comment).
+  // adults with no block, at final dispatch (runtime.ts comment).
   val rowSentImpliesPass = g.events.forall(e => e.recPass and e.pairOk)
 
-  // network/src/relay.ts:105-106 and engine relay.ts:493-496 (the thread keeps the delivered wording only), and engine
-  // relay.ts:127 ("contactShared: A contact share was delivered"; alreadyShared reads it). The desk corrects its
+  // network/src/relay.ts and engine relay.ts (the thread keeps the delivered wording only), and engine
+  // relay.ts ("contactShared: A contact share was delivered"; alreadyShared reads it). The desk corrects its
   // state lazily (RelayDesk.unsent before each endpoint decision and in the tick), so the rule is checked where it
   // matters: no endpoint decision that can deliver reads a lost item as delivered (Q-relay-1, SD-252).
   val decisionsReadDelivered = g.staleRead.size() == 0
@@ -758,15 +746,15 @@ module relay {
   // never has an outbound row.
   val uncheckedNeverSent = g.unchecked.forall(i => not(queue.rows.keys().contains(i)))
 
-  // runtime.ts:587 ("keep only the id. Nothing that names the member stays") and runtime.ts:624-631: after the
+  // runtime.ts ("keep only the id. Nothing that names the member stays") and runtime.ts: after the
   // forget path no stored outbound body holds the erased member's number (SD-040).
   val erasedNumberGone = queue.rows.keys().forall(key => {
     val r = queue.rows.get(key)
     (r.body and r.send.number) implies not(w.erased.get(r.send.src))
   })
 
-  // relay.ts:15 ("the other member is asked once"): a waiting swap rests on an ask that was not refused, and
-  // the ask arrives inside the 15 minutes it names (relay.ts:166) (SD-138).
+  // relay.ts ("the other member is asked once"): a waiting swap rests on an ask that was not refused, and
+  // the ask arrives inside the 15 minutes it names (relay.ts) (SD-138).
   val waitingSwapAsked = desk.swaps.forall(s => not(g.askRefused.contains(s.iid)))
   val askInsideWindow = g.events.forall(e => e.ask implies not(e.late))
 
@@ -787,7 +775,7 @@ module relay {
   val teenFriendAgeRule = g.events.forall(e => e.minorParty implies (e.teenText and not(e.number) and not(e.ask)))
   // While teen introductions are stopped no row goes to or from a minor (the rule before the owner decision).
   val teenSwitchOffNoMinor = g.events.forall(e => e.minorParty implies e.switchOn) and (w.teenPair implies not(w.teenStopped))
-  // spec/teenIntroSwitch.md teenRelayHeld: a teen-pair text without a clean pass is never passed (owner decision
+  // spec/relayDecision.md relayVerdict: a teen-pair text without a clean pass is never passed (owner decision
   // 2026-11-22, D18: it is blocked, and no staff release exists).
   val teenUncleanNeverPasses = g.teenUnclean.forall(i =>
     desk.verdict.keys().contains(i) implies desk.verdict.get(i).decision != "pass")
@@ -849,7 +837,7 @@ module relay {
   val witness_teenTextSent = not(g.events.exists(e => e.minorParty))
 
   // ------------------------------------------------------------------------------------------ run tests
-  // shared-relay.integration.test.ts:102-115: A asks, B is asked once, B asks back, both numbers go.
+  // shared-relay.integration.test.ts: A asks, B is asked once, B asks back, both numbers go.
   run swapBothAskTest =
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
@@ -917,7 +905,7 @@ module relay {
       .expect(desk.log.get("a1").decision == "block" and g.unchecked.contains("a1") and queue.rows.keys().size() == 0
         and uncheckedNeverSent and safety)
 
-  // A closed match before admission: the queued row never goes (shared-relay.integration.test.ts:174-212).
+  // A closed match before admission: the queued row never goes (shared-relay.integration.test.ts).
   run closeBeforeAdmissionTest =
     init
       .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(answer("a1"))

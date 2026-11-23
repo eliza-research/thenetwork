@@ -77,37 +77,73 @@ function runChild(tree: string, block: Block, seeds: number[], salt: number, opt
     { cwd: tree, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1 << 28 });
   const line = r.stdout.split("\n").find(l => l.startsWith("RESULT "));
   if (r.status !== 0 || !line) throw new Error(`paired: the arm in ${tree} failed (exit ${r.status})\n${r.stdout.slice(-2000)}`);
-  return JSON.parse(line.slice(7)) as SeedResult[];
+  return parseResults(line.slice(7), tree);
 }
 
-function seedList(s: string): number[] {
-  return s.split(",").flatMap(part => { const [a, b] = part.split("-").map(Number); return b === undefined ? [a!] : Array.from({ length: b - a! + 1 }, (_, i) => a! + i); });
+const BLOCKS: readonly Block[] = ["friends", "slop", "network"];
+
+function parseBlock(s: string | undefined): Block {
+  const block = BLOCKS.find(b => b === s);
+  if (!block) throw new Error(`paired: --block must be one of ${BLOCKS.join("|")}, got ${String(s)}`);
+  return block;
+}
+
+function parseCount(name: string, s: string | undefined): number {
+  const n = Number(s);
+  if (s === undefined || !Number.isSafeInteger(n) || n < 0) throw new Error(`paired: --${name} must be a whole number 0 or more, got ${String(s)}`);
+  return n;
+}
+
+function seedList(s: string | undefined): number[] {
+  if (!s) throw new Error("paired: --seeds needs a list such as 1-20 or 1,3,5");
+  return s.split(",").flatMap(part => {
+    const [a, b, ...rest] = part.split("-");
+    const lo = parseCount("seeds", a), hi = b === undefined ? lo : parseCount("seeds", b);
+    if (rest.length || hi < lo) throw new Error(`paired: --seeds range ${part} is not valid`);
+    return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+  });
+}
+
+function parseOpts(name: string, s: string | undefined): Record<string, unknown> {
+  let v: unknown;
+  try { v = JSON.parse(s ?? "{}"); } catch (e) { throw new Error(`paired: --${name} is not JSON: ${e instanceof Error ? e.message : String(e)}`); }
+  if (v === null || typeof v !== "object" || Array.isArray(v)) throw new Error(`paired: --${name} must be a JSON object`);
+  return Object.fromEntries(Object.entries(v));
+}
+
+function parseResults(line: string, tree: string): SeedResult[] {
+  const v: unknown = JSON.parse(line);
+  const ok = Array.isArray(v) && v.every(r => r !== null && typeof r === "object" && typeof r.seed === "number"
+    && r.values !== null && typeof r.values === "object" && Array.isArray(r.events) && r.events.every((e: unknown) => typeof e === "string"));
+  if (!ok) throw new Error(`paired: the arm in ${tree} wrote a result of the wrong shape`);
+  return v;
 }
 
 async function main() {
   const args = process.argv.slice(2);
   const arg = (name: string, d?: string) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1]! : d; };
   if (args[0] === "--child") {
-    const res = await child(args[1] as Block, seedList(arg("seeds")!), Number(arg("salt")), JSON.parse(arg("opts")!));
+    const res = await child(parseBlock(args[1]), seedList(arg("seeds")), parseCount("salt", arg("salt")), parseOpts("opts", arg("opts")));
     process.stdout.write(`RESULT ${JSON.stringify(res)}\n`);
     return;
   }
-  const block = arg("block") as Block;
-  if (!(block in ARMS)) throw new Error("paired: --block friends|slop|network");
+  const block = parseBlock(arg("block"));
   const here = resolve(import.meta.dirname, "../..");
   const treeA = resolve(arg("a", here)!), treeB = resolve(arg("b", treeA)!);
-  const seeds = seedList(arg("seeds", "1-20")!);
-  const saltA = Number(arg("a-salt", "0")), saltB = Number(arg("b-salt", "0"));
+  const seeds = seedList(arg("seeds", "1-20"));
+  const saltA = parseCount("a-salt", arg("a-salt", "0")), saltB = parseCount("b-salt", arg("b-salt", "0"));
+  parseOpts("a-opts", arg("a-opts", "{}")); parseOpts("b-opts", arg("b-opts", "{}"));
   console.log(`paired ${block}: seeds ${seeds.join(",")} (n ${seeds.length})\n  A ${treeA} salt ${saltA} ${arg("a-opts", "{}")}\n  B ${treeB} salt ${saltB} ${arg("b-opts", "{}")}`);
   const A = runChild(treeA, block, seeds, saltA, arg("a-opts", "{}")!);
   const B = runChild(treeB, block, seeds, saltB, arg("b-opts", "{}")!);
-  const report: Record<string, unknown> = { block, seeds, a: { tree: treeA, salt: saltA, opts: arg("a-opts", "{}") }, b: { tree: treeB, salt: saltB, opts: arg("b-opts", "{}") }, metrics: {} };
+  const metrics: Record<string, unknown> = {};
+  const report: Record<string, unknown> = { block, seeds, a: { tree: treeA, salt: saltA, opts: arg("a-opts", "{}") }, b: { tree: treeB, salt: saltB, opts: arg("b-opts", "{}") }, metrics };
   for (const k of Object.keys(A[0]!.values)) {
     const a = A.map(r => r.values[k] ?? NaN), b = B.map(r => r.values[k] ?? NaN);
     const absent = [a.some(x => !Number.isFinite(x)) && "A", b.some(x => !Number.isFinite(x)) && "B"].filter(Boolean);
     if (absent.length) { console.log(`  ${k}: not reported by arm ${absent.join(" and ")}`); continue; }
     console.log(`  ${k}: ${pairedLine(a, b)}`);
-    (report.metrics as Record<string, unknown>)[k] = { a, b, ...paired(a, b) };
+    metrics[k] = { a, b, ...paired(a, b) };
   }
   const same = A.map((r, i) => overlap(r.events, B[i]!.events));
   console.log(`  same events (Jaccard per seed): ${same.map(x => x.toFixed(2)).join(", ")}`);

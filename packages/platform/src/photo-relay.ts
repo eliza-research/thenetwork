@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
+import { DAY } from "../../core/src/clock.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import {
   answerNo, answerYes, askReceiver, canAnswerNo, canAnswerYes, canEndOffer, canLapseAnswer, canReportOffer, canRevokeOffer, canSettleReview,
@@ -22,15 +23,13 @@ export const PHOTO_SEND_NOTICE = {
   version: "2026-11-22-d14",
   text: "An automatic check screens it first. {{recipient}} can view it until you take it back, and could take a screenshot. Taking it back stops more views but can't undo one.",
 } as const;
-export const PHOTO_PAGE = { check: "/photos/check", mine: "/photos/mine", view: "/photos/view" } as const;
-export type PhotoPagePurpose = keyof typeof PHOTO_PAGE;
+const PHOTO_PAGE = { check: "/photos/check", mine: "/photos/mine", view: "/photos/view" } as const;
+type PhotoPagePurpose = keyof typeof PHOTO_PAGE;
 export const PHOTO_RELAY_TIME_ZONE = "America/New_York";
-export const PHOTO_RELAY_TTL = relayItemTtlMs;
-export const PHOTO_EXPIRY_BATCH = 100;
-const DAY_MS = 24 * 60 * 60_000;
-const PAGE_LINK_KEEP_MS = DAY_MS;
+const PHOTO_EXPIRY_BATCH = 100;
+const PAGE_LINK_KEEP_MS = DAY;
 const PHOTO_SCREEN_CLAIM_MS = 60_000;
-const FINAL_OFFER_KEEP_MS = 90 * DAY_MS;
+const FINAL_OFFER_KEEP_MS = 90 * DAY;
 const opaque = () => { for (;;) { const id = randomBytes(16).toString("hex"); if (!/\d{7}/.test(id)) return id; } };
 const ms = (v: unknown) => (v === null || v === undefined ? null : new Date(v as string).getTime());
 
@@ -38,11 +37,13 @@ export function firstNameOf(name: unknown): string {
   const n = (typeof name === "string" ? name : "").normalize("NFKC").replace(/[^\p{L}\p{M}' -]/gu, "").trim().split(/\s+/)[0] ?? "";
   return n.length >= 1 && n.length <= 30 ? n : "Your match";
 }
+export const maskOf = (numbers: readonly number[]): number => numbers.reduce((m, n) => m | (1 << (n - 1)), 0);
+export const numbersOf = (mask: number, count: number): number[] => Array.from({ length: count }, (_, i) => i + 1).filter(n => (mask >> (n - 1)) & 1);
 export function photoDay(at: number, timeZone: string = PHOTO_RELAY_TIME_ZONE): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(at));
 }
 
-export interface PhotoRelayParties {
+interface PhotoRelayParties {
   threadId: string; senderPersonId: string; recipientPersonId: string;
   senderMemberId: string; recipientMemberId: string;
 }
@@ -53,7 +54,7 @@ export interface PhotoRelayItem extends PhotoRelayParties {
   reviewId: string | null; reviewedAt: number | null; reviewerId: string | null; offerId: string | null;
   screenAttempts: number; screenAt: number | null;
 }
-export interface PhotoReviewer { id: string; roles: readonly string[] }
+interface PhotoReviewer { id: string; roles: readonly string[] }
 const storedReview: Record<ReviewState, PhotoRelayItem["state"]> = {
   ScreeningReview: "screening", PendingReview: "pending", ApprovedReview: "approved", RejectedReview: "rejected", RevokedReview: "revoked", ExpiredReview: "expired",
 };
@@ -64,7 +65,7 @@ const OPEN_ITEM_STATES: readonly PhotoRelayItem["state"][] = ["screening", "pend
 function selectionState(item: PhotoRelayItem): PhotoSelection {
   return { phase: "StoredSelection", review: reviewFromRow[item.state] };
 }
-export interface PhotoRelayStore {
+interface PhotoRelayStore {
   create(item: PhotoRelayItem, requestId: string, requestHash: string, tx?: SQL): Promise<{ item?: PhotoRelayItem; conflict?: true }>;
   pending(app: AppId): Promise<PhotoRelayItem[]>;
   ofOffer(offerId: string, tx?: SQL): Promise<PhotoRelayItem[]>;
@@ -137,8 +138,8 @@ export class PgPhotoRelayStore implements PhotoRelayStore {
   }
 }
 
-export type StoredOfferPhase = "asking" | "reviewing" | "ready" | "declined" | "lapsed" | "rejected" | "check_timed_out" | "revoked" | "ended" | "reported";
-export type StoredNotice = "sent" | "not_taken" | "not_approved" | "check_timed_out";
+type StoredOfferPhase = "asking" | "reviewing" | "ready" | "declined" | "lapsed" | "rejected" | "check_timed_out" | "revoked" | "ended" | "reported";
+type StoredNotice = "sent" | "not_taken" | "not_approved" | "check_timed_out";
 const PHASE: Record<StoredOfferPhase, OfferPhase> = {
   asking: "Asking", reviewing: "Reviewing", ready: "Ready", declined: "Declined", lapsed: "Lapsed", rejected: "Rejected",
   check_timed_out: "CheckTimedOut", revoked: "Revoked", ended: "Ended", reported: "Reported",
@@ -150,7 +151,7 @@ const OPEN_PHASES: readonly StoredOfferPhase[] = ["asking", "reviewing", "ready"
 const WAITING_PHASES: readonly StoredOfferPhase[] = ["asking", "reviewing"];
 const FINAL_PHASES: readonly StoredOfferPhase[] = ["declined", "lapsed", "rejected", "check_timed_out", "revoked", "ended", "reported"];
 
-export interface PhotoOfferRow {
+interface PhotoOfferRow {
   id: string; requestKey: string; app: AppId; threadId: string;
   senderPersonId: string; recipientPersonId: string; senderMemberId: string; recipientMemberId: string;
   photoIds: string[]; photoSha256: string[]; takenBackIds: string[]; consentId: string; consentedAt: number; policyVersion: string;
@@ -205,23 +206,23 @@ export interface PreparedOffer {
   admission: OfferAdmission; recipientMemberId: string; recipientPersonId: string; firstName: string; firstAsk: boolean; count: number; threadId: string;
   commit(tx: SQL): Promise<{ admission: OfferAdmission; offerId?: string; phase?: StoredOfferPhase; replayed: boolean; firstAsk: boolean }>;
 }
-export interface SettledOffer {
+interface SettledOffer {
   offerId: string; from: StoredOfferPhase; phase: StoredOfferPhase; changed: boolean; notice: OfferNotice; dueAt: number | null;
   viewLink?: string; senderPersonId: string; senderMemberId: string; recipientPersonId: string; recipientMemberId: string; threadId: string; count: number;
 }
 export interface DueNotice { offerId: string; app: AppId; threadId: string; senderPersonId: string; senderMemberId: string; recipientMemberId: string; notice: Exclude<OfferNotice, "NoNotice">; firstName: string }
-export interface PhotoAsk { offerId: string; senderMemberId: string; firstName: string; count: number; createdAt: number; answerBy: number }
-export interface RenewedViewLink { offerId: string; senderMemberId: string; threadId: string; count: number; link: string }
-export interface HeldPhoto { id: string; app: AppId; photoId: string; threadId: string; senderMemberId: string; recipientMemberId: string; offerId: string | null; createdAt: number; deadline: number }
+interface PhotoAsk { offerId: string; senderMemberId: string; firstName: string; count: number; createdAt: number; answerBy: number }
+interface RenewedViewLink { offerId: string; senderMemberId: string; threadId: string; count: number; link: string }
+interface HeldPhoto { id: string; app: AppId; photoId: string; threadId: string; senderMemberId: string; recipientMemberId: string; offerId: string | null; createdAt: number; deadline: number }
 
-export interface PhotoRelayOptions {
-  store: PhotoRelayStore; photos: PhotoService; sql: SQL; signingKey: string; hashKey: string; now?: () => number;
+interface PhotoRelayOptions {
+  store: PhotoRelayStore; photos: PhotoService; sql: SQL; signingKey: string; hashKey: string; now: () => number;
   screen: PhotoScreen;
   origin(app: AppId): string;
   authorize(input: { app: AppId; threadId: string; senderPersonId: string }, tx?: SQL): Promise<Omit<PhotoRelayParties, "threadId"> | undefined>;
   threads(app: AppId, senderPersonId: string): Promise<{ id: string; label: string }[]>;
 }
-export type PreparedSelection = { item: PhotoRelayItem; requestId: string; requestHash: string; selection: PhotoSelection };
+type PreparedSelection = { item: PhotoRelayItem; requestId: string; requestHash: string; selection: PhotoSelection };
 class SelectionConflict extends Error { constructor() { super("photo_selection_conflict"); } }
 const reviewerSafe = (reviewer: PhotoReviewer) => reviewer.roles.includes("safety");
 
@@ -231,11 +232,11 @@ export function photoSetSha(rows: readonly Pick<PhotoRow, "id" | "sha256">[]): s
 
 export class PhotoRelayService {
   private readonly now: () => number;
-  constructor(private readonly o: PhotoRelayOptions) { this.now = o.now ?? Date.now; }
+  constructor(private readonly o: PhotoRelayOptions) { this.now = o.now; }
   get enabled() { return this.o.photos.enabled; }
 
   private url(app: AppId, purpose: PhotoPagePurpose, token: string) { return `${this.o.origin(app).replace(/\/+$/, "")}${PHOTO_PAGE[purpose]}#${token}`; }
-  linkId(token: string) { return keyedHash(this.o.hashKey, `photo-page-link:${token}`); }
+  private linkId(token: string) { return keyedHash(this.o.hashKey, `photo-page-link:${token}`); }
   deviceId(cookie: string) { return keyedHash(this.o.hashKey, `photo-page-device:${cookie}`); }
 
   private async issueLink(tx: SQL, input: { personId: string; app: AppId; purpose: PhotoPagePurpose; draftId?: string; draftRevision?: number; offerId?: string; expiresAt: number | null }): Promise<string> {
@@ -434,7 +435,7 @@ export class PhotoRelayService {
     const unopened = pair.filter(o => (o.phase === "declined" || o.phase === "lapsed") && !o.wasReady);
     const lastUnopenedEndAt = unopened.reduce((m, o) => Math.max(m, o.noticeAt ?? o.changedAt), 0);
     const [{ n: photosLastDay }] = await db`select coalesce(sum(photo_count), 0)::int as n from platform.photo_offers
-      where app_id = ${app} and sender_person_id = ${senderPersonId}::uuid and created_at > ${new Date(at - DAY_MS)}`;
+      where app_id = ${app} and sender_person_id = ${senderPersonId}::uuid and created_at > ${new Date(at - DAY)}`;
     const [pref] = await db`select never from platform.photo_receive_prefs where person_id = ${recipientPersonId}::uuid and app_id = ${app}`;
     const [{ n: asked }] = await db`select count(*)::int as n from platform.photo_offers where app_id = ${app} and recipient_person_id = ${recipientPersonId}::uuid`;
     return {
@@ -530,8 +531,8 @@ export class PhotoRelayService {
 
   private async prepareItem(o: PhotoOfferRow, index: number, tx: SQL): Promise<PreparedSelection | undefined> {
     const photoId = o.photoIds[index]!, requestId = `${o.id}_${photoId}`;
-    const inputValid = /^[A-Za-z0-9_-]{16,80}$/.test(requestId) && this.enabled && /^ph_[a-f0-9]{24}$/.test(photoId) && o.threadId.length <= 200;
-    let selection = stepPhotoSelection(selectionInitial, { type: "checkSelection", inputValid, explicitConsent: inputValid && o.policyVersion === PHOTO_SEND_NOTICE.version });
+    const inputValid = /^[A-Za-z0-9_-]{16,80}$/.test(requestId) && /^ph_[a-f0-9]{24}$/.test(photoId) && o.threadId.length <= 200;
+    let selection = stepPhotoSelection(selectionInitial, { type: "checkSelection", inputValid, explicitConsent: o.policyVersion === PHOTO_SEND_NOTICE.version });
     if (!canCheckParties(selection)) return;
     const parties = await this.parties(o.app, o.threadId, o.senderPersonId, o.recipientPersonId, tx);
     selection = stepPhotoSelection(selection, {
@@ -544,7 +545,7 @@ export class PhotoRelayService {
     selection = stepPhotoSelection(selection, { type: "checkPhoto", currentPhoto: !!photo && photo.sha256 === o.photoSha256[index] });
     if (!photo || !canResolveNotice(selection)) return;
     const thread = (await this.o.threads(o.app, o.senderPersonId)).find(t => t.id === o.threadId);
-    selection = stepPhotoSelection(selection, { type: "resolveNotice", readyNotice: !!thread && PHOTO_SEND_NOTICE.text.includes("{{recipient}}") });
+    selection = stepPhotoSelection(selection, { type: "resolveNotice", readyNotice: !!thread });
     if (!thread || !canRecordSelection(selection)) return;
     const notice = PHOTO_SEND_NOTICE.text.replaceAll("{{recipient}}", firstNameOf(thread.label));
     const at = this.now();
@@ -552,7 +553,7 @@ export class PhotoRelayService {
     const item: PhotoRelayItem = {
       threadId: o.threadId, senderPersonId: o.senderPersonId, recipientPersonId: o.recipientPersonId, senderMemberId: o.senderMemberId, recipientMemberId: o.recipientMemberId,
       id: this.itemId(o.app, o.senderPersonId, requestId), app: o.app, photoId, sha256: photo.sha256, bytes: photo.bytes, contentType: photo.contentType,
-      consentId: `prc_${opaque()}`, consentedAt: o.consentedAt, expiresAt: at + PHOTO_RELAY_TTL, policyVersion: o.policyVersion, policyNotice: PHOTO_SEND_NOTICE.text,
+      consentId: `prc_${opaque()}`, consentedAt: o.consentedAt, expiresAt: at + relayItemTtlMs, policyVersion: o.policyVersion, policyNotice: PHOTO_SEND_NOTICE.text,
       notice, state, reviewId: null, reviewedAt: null, reviewerId: null, offerId: o.id, screenAttempts: 0, screenAt: state === "screening" ? at : null,
     };
     const requestHash = createHash("sha256").update(JSON.stringify({ offerId: o.id, photoId, threadId: o.threadId, consentId: o.consentId, sha256: photo.sha256, bytes: photo.bytes, contentType: photo.contentType, policyVersion: o.policyVersion })).digest("hex");
@@ -577,7 +578,7 @@ export class PhotoRelayService {
     let made = 0;
     for (const i of o.photoIds.keys()) {
       const prepared = await this.prepareItem(o, i, tx);
-      if (prepared && prepared.item.state === "screening" && await this.recordItem(prepared, tx)) made++;
+      if (prepared && await this.recordItem(prepared, tx)) made++;
     }
     if (made !== o.photoIds.length) { await this.revokeItems(tx, o.id, null); return { outcome: "ended", offer: await this.move(tx, o, endOffer(m)) }; }
     return { outcome: "taken", offer: await this.move(tx, o, answerYes(m, at)) };
@@ -656,11 +657,11 @@ export class PhotoRelayService {
       const keepLeft = () => tx`update platform.photo_offers set photo_ids = ${left.map(k => k[0])}::text[], photo_sha256 = ${left.map(k => k[1])}::text[],
         taken_back_ids = ${takenBack}::text[], changed_at = ${new Date(at)} where id = ${o.id}`;
       if (takeBack === "TakeBackOffer") {
+        if (!canRevokeOffer(m, own)) continue;
         if (o.phase !== "asking") await this.revokeItems(tx, o.id, hit);
         const live = o.phase === "asking" ? left.map(k => k[0])
           : (await this.o.store.ofOffer(o.id, tx)).filter(i => OPEN_ITEM_STATES.includes(i.state) && left.some(k => k[0] === i.photoId)).map(i => i.photoId);
         if (!live.length) {
-          if (!canRevokeOffer(m, own)) continue;
           await this.move(tx, o, revokeOffer(m, own), true);
           await tx`update platform.photo_offers set taken_back_ids = ${takenBack}::text[] where id = ${o.id}`;
         } else await keepLeft();
@@ -802,7 +803,7 @@ export class PhotoRelayService {
     const p = await this.parties(r.app, r.threadId, r.senderPersonId, r.recipientPersonId, tx);
     if (!p || !sameParties({ ...p, threadId: r.threadId }, r)) return;
     const photo = await this.o.photos.relayPhoto(r.senderPersonId, r.app, r.photoId, r, tx);
-    if (!this.enabled || r.expiresAt <= this.now()) return;
+    if (r.expiresAt <= this.now()) return;
     return photo;
   }
 

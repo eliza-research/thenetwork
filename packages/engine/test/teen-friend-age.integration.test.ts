@@ -16,7 +16,7 @@ import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, friendsPartnerEligible, planFrie
 import { activityById, type Venue } from "../src/packs/network/activities.ts";
 import { networkPack } from "../src/packs/network/index.ts";
 import { slopPack } from "../src/packs/slop/index.ts";
-import { buildPlanProbe, crewSessionPlan, planMemberReason, planPlaceOffered, teenPlanReason, type Crew, type Plan, type PlanEvidence } from "../src/plans.ts";
+import { buildPlanProbe, crewSessionPlan, planMemberReason, planPlaceOffered, teenPlanReason, venueAgesIn, type Crew, type Plan, type PlanEvidence } from "../src/plans.ts";
 import { relayItem, relayItemAsync, type RelayContext, type RelayItem, type RelayRecord } from "../src/relay.ts";
 import type { AttentionItem, EngineInput, Format, Role } from "../src/types.ts";
 import { World } from "../src/world.ts";
@@ -265,7 +265,20 @@ test("a teen pair has a daily relay limit of 10 and never fails open", async () 
     expect(down.decision).toBe("block");
     expect(down.reasons).toEqual(["classifier:unavailable"]);
     expect(down.rendered).toBe("");
+    expect(down.classifierError).toBe("Error");
   }
+});
+
+test("a photo relayed later in the history does not count toward the daily photo limit", () => {
+  const photoRow = (i: number, at: number): RelayRecord => ({
+    itemId: `p${i}`, opportunityId: "opp", app: "friends", kind: "photo", from: "t1", to: "t2", at,
+    decision: "pass", reasons: [], photoCount: 1, contactShared: false, ageSignal: false, policy: "relay-1.0.0",
+  });
+  const photo: RelayItem = { id: "i4", kind: "photo", from: "t1", to: "t2", at: NOW, photoIds: ["photo_abcdefgh"], consent: { kind: "photo", by: "t1", itemId: "i4", at: NOW, photoIds: ["photo_abcdefgh"] } };
+  const earlier = Array.from({ length: 6 }, (_, i) => photoRow(i, NOW - (i + 1) * HOUR));
+  const later = Array.from({ length: 6 }, (_, i) => photoRow(i, NOW + (i + 1) * HOUR));
+  expect(relayItem(photo, relayCtx({ teen: false, ages: [25, 26], history: earlier })).reasons).toContain("rate:photos");
+  expect(relayItem(photo, relayCtx({ teen: false, ages: [25, 26], history: later })).reasons).not.toContain("rate:photos");
 });
 
 test("a partner who turns 19 before the meeting ends is refused in the candidate check and in the probe", () => {
@@ -361,7 +374,7 @@ test("a crew session plan takes a teen crew only for an all-ages activity at an 
   expect(session).not.toBeNull();
   expect(session!.hostId).toBeUndefined();
   expect(session!.venueId).toBe(library.id);
-  expect(session!.place).toEqual({ name: library.name, area: library.area });
+  expect(session!.place).toEqual({ name: library.name, area: library.area, ages: { allAges: true, ageMin: 13, adultPlans: false } });
   expect(crewSessionPlan(adults, games, NOW, library, FRIENDS_PLANS)?.hostId).toBeDefined();
   expect(crewSessionPlan(teens, games, NOW, undefined, FRIENDS_PLANS)).toBeNull();
   expect(crewSessionPlan(teens, games, NOW, { ...library, allAges: false }, FRIENDS_PLANS)).toBeNull();
@@ -396,15 +409,20 @@ test.each([
   expect(relayItem(textItem(text), relayCtx({ teen: true })).reasons).not.toContain("teen:adult_age");
 });
 
-test("a teen pair text passes only after a classifier reads it cleanly", async () => {
+test("a text passes only after a classifier reads it cleanly, for a teen pair and for adults", async () => {
   const clean = async () => ({ flags: [] });
-  const unread = await relayItemAsync(textItem(CLEAN), relayCtx({ teen: true }));
-  expect(unread.decision).toBe("block");
-  expect(unread.reasons).toEqual(["teen:unclassified"]);
-  expect(unread.rendered).toBe("");
-  expect((await relayItemAsync(textItem(CLEAN), relayCtx({ teen: true }), { hook: clean })).decision).toBe("pass");
-  expect((await relayItemAsync(textItem(CLEAN), relayCtx({ teen: false, ages: [25, 26] }))).decision).toBe("pass");
-  const flagged = await relayItemAsync(textItem(CLEAN), relayCtx({ teen: true }), { hook: async () => ({ flags: ["grooming"], source: "clef" as const }) });
+  for (const ctx of [relayCtx({ teen: true }), relayCtx({ teen: false, ages: [25, 26] })]) {
+    const unread = await relayItemAsync(textItem(CLEAN), ctx);
+    expect(unread.decision).toBe("block");
+    expect(unread.reasons).toEqual(["classifier:unavailable"]);
+    expect(unread.rendered).toBe("");
+    expect(unread.classifierError).toBe("no_classifier");
+    const refused = await relayItemAsync(textItem(CLEAN), ctx, { hook: async () => ({ flags: [], unavailable: true }) });
+    expect(refused.reasons).toEqual(["classifier:unavailable"]);
+    expect(refused.classifierError).toBe("unavailable");
+    expect((await relayItemAsync(textItem(CLEAN), ctx, { hook: clean })).decision).toBe("pass");
+  }
+  const flagged = await relayItemAsync(textItem(CLEAN), relayCtx({ teen: true }), { hook: async () => ({ flags: ["grooming"] }) });
   expect(flagged.decision).toBe("block");
   expect(flagged.reasons).toEqual(["clef:grooming"]);
 });
@@ -528,16 +546,17 @@ test("friends plans a table of teens born within 2 years at board games at the l
     expect(nyMinute(option.start)).toBeGreaterThanOrEqual(600);
     expect(nyMinute(option.start) + (option.end - option.start) / 60_000).toBeLessThanOrEqual(1140);
   }
-  expect(teenPlanReason(w, plan, plan.options)).toBeNull();
-  const probe = buildPlanProbe(w, plan, trio[0], NY);
+  const atLibrary = venueAgesIn([library]);
+  expect(teenPlanReason(w, plan, atLibrary, plan.options)).toBeNull();
+  const probe = buildPlanProbe(w, plan, trio[0], NY, atLibrary);
   expect(probe).not.toBeNull();
   expect(probe).toContain("board games at the library");
   expect(probe).not.toContain(" near ");
   for (const id of trio) expect(probe).not.toContain(w.get(id)!.m.name.split(" ")[0]!);
   const evening = { start: SATURDAY_1930, end: SATURDAY_1930 + 2 * HOUR };
-  expect(teenPlanReason(w, { ...plan, window: evening }, [evening])).toBe("underage");
-  expect(teenPlanReason(w, { ...plan, activityId: "wine_bar" })).toBe("underage");
-  expect(teenPlanReason(w, { ...plan, hostId: trio[0] })).toBe("underage");
+  expect(teenPlanReason(w, { ...plan, window: evening }, atLibrary, [evening])).toBe("underage");
+  expect(teenPlanReason(w, { ...plan, activityId: "wine_bar" }, atLibrary)).toBe("underage");
+  expect(teenPlanReason(w, { ...plan, hostId: trio[0] }, atLibrary)).toBe("underage");
   expect(planPlaceOffered(true, activityById.get("library_games")!, library)).toBe(true);
   expect(planPlaceOffered(true, activityById.get("wine_bar")!, { ...library, activities: ["wine_bar"] })).toBe(false);
   expect(planPlaceOffered(true, activityById.get("library_games")!, { ...library, allAges: false })).toBe(false);
@@ -561,9 +580,13 @@ test("a teen table is refused with a person aged 19, at a wine bar, in the eveni
     window: { start: SATURDAY_11, end: SATURDAY_11 + 2 * HOUR }, invited: [...trio, ...extra.slice(0, 3)], alternates: [], partner: false,
     size: { min: 3, target: 6, max: 6 }, quorum: 3, probeDeadline: SATURDAY_11 - DAY, score: 0.5, u: {}, familiar: {}, createdAt: NOW, category: "social",
   };
-  expect(teenPlanReason(w, plan)).toBeNull();
-  expect(teenPlanReason(w, { ...plan, alternates: [extra[3]!] })).toBe("underage");
-  expect(teenPlanReason(w, { ...plan, invited: [...plan.invited, extra[3]!] })).toBe("underage");
+  const atLibrary = venueAgesIn([library]);
+  expect(teenPlanReason(w, plan, atLibrary)).toBeNull();
+  expect(teenPlanReason(w, { ...plan, venueId: "v_unknown_test" }, atLibrary)).toBe("underage");
+  expect(teenPlanReason(w, { ...plan, venueId: undefined }, atLibrary)).toBe("underage");
+  expect(teenPlanReason(w, plan, venueAgesIn([{ ...library, allAges: false }]))).toBe("underage");
+  expect(teenPlanReason(w, { ...plan, alternates: [extra[3]!] }, atLibrary)).toBe("underage");
+  expect(teenPlanReason(w, { ...plan, invited: [...plan.invited, extra[3]!] }, atLibrary)).toBe("underage");
 });
 
 test("an adult-only week is byte-identical with and without the all-ages entries", () => {

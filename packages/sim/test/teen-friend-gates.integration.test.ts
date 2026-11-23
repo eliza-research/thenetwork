@@ -7,14 +7,15 @@ import { venueAllAges } from "@thenetwork/engine/src/packs/network/activities.ts
 import { friendsMetrics, friendsOutboundLog, teenBreachesOf } from "../src/apps/friends/metrics.ts";
 import { engineInputOf, friendsPackMatcher, friendsTeenMatcher, planToProposal, slotIndexOf, teenProposalOf } from "../src/apps/friends/packMatcher.ts";
 import type { FriendsPlan } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { FRIENDS_START_DAY_KEY, FRIENDS_TEEN_WORLD, SLOTS, generateFriendsPersonas, type FriendsPersona } from "../src/apps/friends/persona.ts";
+import { FRIENDS_START_DAY_KEY, SLOTS, generateFriendsPersonas, type FriendsPersona } from "../src/apps/friends/persona.ts";
+import { TEEN_WORLD } from "../src/generator.ts";
 import { cuesOf, slotTime, type FriendsSnapshot } from "../src/apps/friends/snapshot.ts";
 import { VENUES, runFriendsWorld, runFriendsWorldAsync, type FriendsMatcher, type FriendsProposal, type FriendsWorld } from "../src/apps/friends/world.ts";
 
 type Cast = Record<"a16" | "b17" | "c18" | "d19" | "e15" | "poser" | "adult", string>;
 
 function cast(): { personas: FriendsPersona[]; ids: Cast } {
-  const personas = generateFriendsPersonas({ seed: 5, n: 80, ...FRIENDS_TEEN_WORLD });
+  const personas = generateFriendsPersonas({ seed: 5, n: 80, ...TEEN_WORLD });
   const used = new Set<string>();
   const pick = (statedKey: number) => {
     const claimedAge = ageOnDay(statedKey, FRIENDS_START_DAY_KEY);
@@ -82,7 +83,7 @@ test("friends world, teen introductions on by default: friendship pairs within 2
   const [teens, partner18, adult19, gap, plan, poser] = result.flows;
   expect([teens!.ruleOk, teens!.stage, [...teens!.going].sort()]).toEqual([true, "held", [ids.a16, ids.b17].sort()]);
   expect([partner18!.ruleOk, partner18!.stage]).toEqual([true, "held"]);
-  expect([adult19!.ruleOk, adult19!.declaredMinor, adult19!.stage, adult19!.probed]).toEqual([false, true, "dropped_policy", 0]);
+  expect([adult19!.ruleOk, adult19!.ageRuleBroken, adult19!.stage, adult19!.probed]).toEqual([false, true, "dropped_policy", 0]);
   expect(teenBreachesOf(adult19!.sides, adult19!)).toMatchObject({ adult: 1, gap: 0, lane: 0, switchOff: 0, place: 0 });
   expect([gap!.ruleOk, gap!.probed]).toEqual([false, 0]);
   expect(teenBreachesOf(gap!.sides, gap!)).toEqual({ ...NO_BREACH, gap: 1 });
@@ -104,7 +105,7 @@ test("friends world, teen introductions stopped: the same proposals never reach 
   const m = friendsMetrics(result);
   expect(m.safety.teen.proposals.switchOff).toBe(6);
   expect(m.safety.teen.minorContacts).toBe(0);
-  expect(m.safety.declaredMinorProposals).toBe(6);
+  expect(m.safety.ageRuleBrokenProposals).toBe(6);
 });
 
 test("friends world, teen groups: a table of 16, 17 and 18 at a library on Saturday morning meets; with a 19-year-old, at a wine bar, in the evening, with a contributor role or with 7 people it is refused and counted", () => {
@@ -194,7 +195,7 @@ test("friends world, planToProposal: a planner plan with minors keeps its 08:00 
 
 function teenSnapshots(seed: number, weeks: number): FriendsSnapshot[] {
   const seen: FriendsSnapshot[] = [];
-  runFriendsWorld({ seed, n: 160, weeks, ...FRIENDS_TEEN_WORLD, matcher: { name: "snapshot capture", propose: ctx => { seen.push(ctx.snapshot); return []; } } });
+  runFriendsWorld({ seed, n: 160, weeks, ...TEEN_WORLD, matcher: { name: "snapshot capture", propose: ctx => { seen.push(ctx.snapshot); return []; } } });
   return seen;
 }
 const minorsOf = (s: FriendsSnapshot) => new Set(s.members.filter(m => !canBeMatched(m.age)).map(m => m.id));
@@ -235,7 +236,7 @@ test("friends teen matcher: an engine proposal with a minor that carries a via o
   const via = teenProposalOf({ ...p, via: adult }, s)!;
   const viaBare = teenProposalOf({ ...bare, via: adult }, s)!;
   expect([event.options, event.anchor, via.via, via.options.length > 0, viaBare.via, viaBare.options]).toEqual([[], { type: "event", id: "event:street-fair" }, adult, true, adult, []]);
-  const result = runFriendsWorld({ seed, n: 160, weeks: 1, ...FRIENDS_TEEN_WORLD, matcher: fixedWeek([base, event, via, viaBare]) });
+  const result = runFriendsWorld({ seed, n: 160, weeks: 1, ...TEEN_WORLD, matcher: fixedWeek([base, event, via, viaBare]) });
   const [ok, ...breaches] = result.flows;
   expect([ok!.ruleOk, ok!.laneOk]).toEqual([true, true]);
   expect(teenBreachesOf(ok!.sides, ok!)).toEqual(NO_BREACH);
@@ -250,7 +251,7 @@ test("friends teen matcher: an engine proposal with a minor that carries a via o
 
 test("friends world, the stopped arm equals the reference arm (no member teen ready) byte for byte, metrics and outbound log", async () => {
   for (const seed of [5, 6]) {
-    const o = { seed, n: 160, weeks: 2, ...FRIENDS_TEEN_WORLD, matcher: friendsTeenMatcher() };
+    const o = { seed, n: 160, weeks: 2, ...TEEN_WORLD, matcher: friendsTeenMatcher() };
     const stopped = await runFriendsWorldAsync({ ...o, teenStop: true });
     const reference = await runFriendsWorldAsync({ ...o, teenBirthDates: false });
     expect(reference.world.personas.some(p => p.stated.claimedAge < 18)).toBe(true);

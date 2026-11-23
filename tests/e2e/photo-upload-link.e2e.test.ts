@@ -1,9 +1,3 @@
-// spec/photoUploadLink.md, "Story: Add my photos with a private one-time link"
-// The deployed path for slop.date photos: the signed gateway turn carries no media, so the member texts
-// ADD PHOTOS (through /internal/turn, as the Eliza gateway sends it), agrees to the photo consent, gets
-// one app-bound link, and the link page posts the photos through the site router to the backend. Before
-// this change ADD PHOTOS went on to the conversation and /api/photos/upload did not exist, so no photo
-// could arrive. Needs the dev Postgres on :54339.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
@@ -16,20 +10,18 @@ import { Browser, newPhone, pgAvailable, signIn, startStack, TURN_SECRET, webJoi
 const T = 120_000;
 
 
-describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date photos)", () => {
+describe.skipIf(!pgAvailable)("spec/photoUploadLink.md, \"Story: Add my photos with a private one-time link\", through the signed gateway turn and the site router", () => {
   let st: Stack, sql: SQL;
   beforeAll(async () => { st = await startStack(); sql = new SQL({ url: st.url, max: 2 }); }, T);
   afterAll(async () => { await sql?.close(); await st?.close(); });
 
   const chunk = (type: string, data: Uint8Array) => { const o = new Uint8Array(12 + data.length); new DataView(o.buffer).setUint32(0, data.length); o.set(new TextEncoder().encode(type), 4); o.set(data, 8); return o; };
-  /** A PNG; `bytes` pads the pixel chunk so the file is a phone-photo size. */
   const png = (tag: string, bytes = 0) => {
     const pixels = new Uint8Array(Math.max(0, bytes - 57) + `PIXELS-${tag}`.length); pixels.set(new TextEncoder().encode(`PIXELS-${tag}`));
     const parts = [Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", new Uint8Array(13)), chunk("IDAT", pixels), chunk("IEND", new Uint8Array(0))];
     const o = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let k = 0; for (const p of parts) { o.set(p, k); k += p.length; } return o;
   };
   let seq = 0;
-  /** A text from `phone` routed to slop, signed as the Eliza gateway signs /internal/turn. */
   const turn = async (phone: string, text: string) => {
     const messageId = `photo-link-${++seq}`;
     const body: TurnRequest = { messageId, channel: "blooio", from: phone, to: null, text, transport: "imessage", receivedAt: st.clock.now(), app: "slop" };
@@ -48,7 +40,6 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
   };
   const personOf = async (phone: string) => (await sql`select person_id from platform.phone_identities where e164 = ${phone}`)[0]!.person_id as string;
   const photoCount = async (phone: string) => (await sql`select count(*)::int as n from platform.photos where person_id = ${await personOf(phone)}`)[0]!.n as number;
-  /** A consenting adult with a fresh link. */
   const adultWithLink = async () => {
     const phone = newPhone();
     expect((await webJoin(st, "slop", phone, { age: 29 })).res.status).toBe(200);
@@ -71,10 +62,8 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     const again = await upload(token, [png("c")]);
     expect([again.status, ((await again.json()) as { error: string }).error]).toEqual([410, "link_unavailable"]);
     expect(await photoCount(phone)).toBe(2);
-    // The consent is recorded, so the next ADD PHOTOS answers with a link at once.
     const next = tokenIn((await turn(phone, "add photos")).replies);
     expect(next).toBeDefined();
-    // Five photos in one use are refused before the link is used.
     expect((await upload(next!, [1, 2, 3, 4, 5].map(i => png(`x${i}`)))).status).toBe(400);
     expect((await upload(next!, [png("d")])).status).toBe(200);
     expect(await photoCount(phone)).toBe(3);
@@ -88,7 +77,6 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     expect((await upload(fresh, [png("wrong-app")], { app: "ntwrk" })).status).toBe(410);
     expect((await upload(fresh, [png("after-wrong-app")])).status).toBe(410);
     expect(await photoCount(phone)).toBe(0);
-    // Another adult's signed-in session does not move the photos: they go to the link's own person.
     const other = newPhone(), b = new Browser();
     expect((await webJoin(st, "slop", other, { age: 31, browser: b })).res.status).toBe(200);
     await signIn(st, "slop", other, b);
@@ -133,13 +121,10 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
   const MiB = 1024 * 1024;
   test("a batch is bounded by 8 MiB in all, so the largest allowed batch passes the site router", async () => {
     const { phone, token } = await adultWithLink();
-    // Over the router's 9 MiB: refused at the edge, unread, and the link stays open.
     expect((await upload(token, [png("e1", 3.5 * MiB), png("e2", 3.5 * MiB), png("e3", 3.5 * MiB)])).status).toBe(413);
-    // Under the router's cap but over 8 MiB in all: refused before the link is used.
     const over = await upload(token, [png("o1", 2.9 * MiB), png("o2", 2.9 * MiB), png("o3", 2.9 * MiB)]);
     expect([over.status, ((await over.json()) as { error: string }).error]).toEqual([413, "too_large"]);
     expect(await photoCount(phone)).toBe(0);
-    // The largest batch the link text promises arrives through the router and is stored.
     const ok = await upload(token, [png("m1", 4 * MiB - 64 * 1024), png("m2", 4 * MiB - 64 * 1024)]);
     expect(ok.status, await ok.clone().text()).toBe(200);
     expect(await photoCount(phone)).toBe(2);
@@ -165,22 +150,15 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     const phone = newPhone();
     expect((await webJoin(st, "slop", phone, { age: 33 })).res.status).toBe(200);
     const personId = await personOf(phone);
-    // Asked before the hold, answered after it: before the fix the consent was written and the member got "Thanks".
     expect((await turn(phone, "ADD PHOTOS")).replies!.join(" ")).toContain("Reply YES PHOTOS");
     await sql.begin(tx => writeStaffHold(tx, personId, "slop", randomUUID(), st.clock.now()));
     const yes = await turn(phone, "YES PHOTOS");
     expect(yes.replies!.join(" ")).not.toContain("Thanks");
     expect((await st.svc.people.getMembership(personId, "slop"))?.profile.photoConsent).toBeUndefined();
-    // Before the fix a held member with no consent got the consent ask again.
     expect((await turn(phone, "ADD PHOTOS")).replies!.join(" ")).not.toContain("YES PHOTOS");
     expect((await sql`select 1 from platform.photo_upload_links where person_id = ${personId}`).length).toBe(0);
   }, T);
 
-  /**
-   * Holds the membership row in a transaction that restricts it (as the staff ban's restrictBannedMemberships
-   * does), starts `act`, waits until `act` waits on that row lock, then commits. Before the fix the consent
-   * write was a putMembership upsert of the row read before the ban, so it made the banned membership active.
-   */
   const banLandsDuring = async <R>(personId: string, act: () => Promise<R>): Promise<R> => {
     let result!: Promise<R>;
     await sql.begin(async tx => {
@@ -220,8 +198,7 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     expect([m?.state, m?.profile.photoConsent]).toEqual(["restricted", undefined]);
   }, T);
 
-  // spec/photoUploadLink.md, "A status check says whether a link can still upload, and does not use it"
-  test("the link page reads whether a link is open without using it, and gets the exact photo consent text", async () => {
+  test("\"A status check says whether a link can still upload, and does not use it\": the link page reads whether a link is open without using it, and gets the exact photo consent text", async () => {
     const phone = newPhone();
     expect((await webJoin(st, "slop", phone, { age: 28 })).res.status).toBe(200);
     const personId = await personOf(phone);
@@ -238,16 +215,13 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     const token = await issue();
     const open = { status: 200, cache: "no-store", body: { ok: true, consentRequired: true, consent: { version: PHOTO_CONSENT.version, text: PHOTO_CONSENT.text } } };
     expect(await status(token)).toEqual(open);
-    // A second check, and a check on another app's site, leave the link open.
     expect(await status(token)).toEqual(open);
     expect(await status(token, "ntwrk")).toEqual(closed);
     expect((await upload(token, [png("after-status")], { consent: true })).status).toBe(200);
     expect(await photoCount(phone)).toBe(1);
-    // A used link, an unknown token and a malformed token get closed answers that name nobody.
     expect(await status(token)).toEqual(closed);
     expect(await status("A".repeat(43))).toEqual(closed);
     expect((await status("not-a-token")).status).toBe(404);
-    // The consent is on file now; an expired link is closed.
     const next = await issue();
     expect((await status(next)).body).toMatchObject({ ok: true, consentRequired: false });
     st.clock.advance(15 * 60_000);
@@ -255,7 +229,6 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
   }, T);
 
   test("an unknown token is refused before the body is read", async () => {
-    // A body that is not even multipart: before the fix the server read and judged it (415); now the token is looked up first.
     const res = await st.site("slop", "/api/photos/upload", { method: "POST", body: "x".repeat(1024), headers: { "content-type": "text/plain", "x-photo-upload-link": "A".repeat(43) } });
     expect([res.status, ((await res.json()) as { error: string }).error]).toEqual([410, "link_unavailable"]);
   }, T);

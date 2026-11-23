@@ -1,10 +1,3 @@
--- Story F24: export and erasure requests sent to help@ntwrk.party, and the privacy replay after a restore.
---  1. platform.privacy_requests: one staff support request (spec/accountPrivacy.md, "Story: Staff carry out an
---     export or erasure request sent to support"). It keeps the keyed phone hash, never the number, and the
---     person the first step showed. The confirming step must name the same request, phone and person.
---  2. platform.privacy_replay: erasures, leaves and bans that a restore found in the source database after the
---     backup (spec/databaseRestore.md, "Story: Carry privacy changes made after the backup into the restored
---     database"). The restore command queues them; the staff replay route runs each one once.
 create table if not exists platform.privacy_requests (
   id           uuid primary key,
   operation    text not null check (operation in ('export', 'erase')),

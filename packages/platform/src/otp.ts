@@ -174,7 +174,7 @@ export class OtpService {
   private now() { return (this.opts.now ?? Date.now)(); }
 
   /** Rate-limit, then send. A provider error is logged and not shown (the response stays the same). */
-  async start(app: AppInfo, e164: string, ip: string, banned = false): Promise<OtpStart> {
+  async start(app: AppInfo, e164: string, ip: string, banned: boolean): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
     const hourLeft = HOUR - (at % HOUR);
     const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });

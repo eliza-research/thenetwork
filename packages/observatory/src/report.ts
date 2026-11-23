@@ -4,9 +4,6 @@
 // dispatch skips, fairness over time, the graph the Network learned, the review gate, and the
 // judge scorer's invariant, canary-leak and minor-contact counts).
 //   node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random]
-//       [--network consent|stub] [--judge stand-in|hold-every-item]
-// The review judge is the simulated stand-in (no model call). With --judge hold-every-item the judge holds every item and nobody
-// reviews the exceptions, so every queued opportunity expires unsent (a check of the gate).
 import { parseArgs } from "node:util";
 import { DAY } from "@thenetwork/core";
 import { scoreboard } from "./scoring.ts";

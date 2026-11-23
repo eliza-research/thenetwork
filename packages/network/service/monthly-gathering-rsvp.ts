@@ -1,4 +1,4 @@
-import { canBeMatched, type ParticipationState } from "@thenetwork/core";
+import type { ParticipationState } from "@thenetwork/core";
 import {
   gatheringInvitationPriority, gatheringRsvpAttendanceAllowed, gatheringRsvpGroupingAllowed,
   gatheringRsvpHasSeat, gatheringRsvpNeedsListingCheck, gatheringRsvpReplaces, gatheringRsvpRosterAllowed, gatheringRsvpWindow,
@@ -10,7 +10,8 @@ import type { AppInfo } from "../../platform/src/apps.ts";
 import type { MemberCommandOwner } from "./member-command.ts";
 import { gatheringVenueStillCurrent, type StoredGatheringVenue } from "./monthly-gatherings.ts";
 import { lockPublicEventCatalog } from "./public-events.ts";
-import { effectiveParticipation } from "./snapshot.ts";
+import { birthColumns, birthFieldsOf, effectiveAgeOf, effectiveParticipation, type AgeRow } from "./snapshot.ts";
+import { storedAgeReading, type StoredAgeFlags } from "./teen-roster.ts";
 
 export interface GatheringRsvpKey { id: string; revision: number }
 type Choice = "attending" | "grouping" | "withdrawn";
@@ -51,9 +52,10 @@ interface GatheringRow extends StoredGatheringVenue {
   city: string; status: string; revision: number; reviewed_at: Date | null;
 }
 interface RsvpRow { revision: number; choice: Choice; response_id: string; responded_at: Date }
-interface MemberRow {
+interface MemberRow extends AgeRow {
   person_id: string; home_city: string; age: number | null;
   participation_state: ParticipationState; participation_window: unknown;
+  minor_signal_at: Date | null; stored_flags: StoredAgeFlags | null;
 }
 
 function gathering(tx: SQL, app: AppInfo, key: GatheringRsvpKey, lock: boolean) {
@@ -69,9 +71,17 @@ async function currentRsvpListing(tx: SQL, event: GatheringRow, withdrawing: boo
 }
 
 async function ownerMembership(tx: SQL, accounts: RsvpAccounts, owner: MemberCommandOwner, lock: boolean) {
-  const [member] = await tx<MemberRow[]>`select person_id,home_city,age,participation_state,participation_window from network.members
-    where app_id=${owner.app.id} and id=${owner.memberId} and person_id is not null and account_status='active' and not opted_out
-    ${lock ? tx`for update` : tx``}`;
+  const [member] = await tx<MemberRow[]>`select m.person_id,m.home_city,m.age,m.participation_state,m.participation_window,
+      a.age as matching_age,a.minor_signal_at,${birthColumns(tx)},
+      jsonb_strip_nulls(to_jsonb(stored) - 'id') as stored_flags
+    from network.members m
+    left join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
+    left join lateral (select x.* from network.network_state saved
+      cross join jsonb_to_recordset(saved.state->'members') as x(id text,minor boolean,"minorSignal" boolean,"minorReported" boolean,
+        "ageConflict" boolean,"ageUnknown" boolean,"minorClearedAt" bigint)
+      where saved.app_id=m.app_id and x.id=m.id order by saved.id limit 1) stored on true
+    where m.app_id=${owner.app.id} and m.id=${owner.memberId} and m.person_id is not null and m.account_status='active' and not m.opted_out
+    ${lock ? tx`for update of m` : tx``}`;
   if (!member) return;
   const binding = await accounts.activeMembership(owner.app, { e164: owner.e164, personId: member.person_id });
   if (binding?.membership.memberId !== owner.memberId || binding.membership.joinedAt === null) return;
@@ -81,8 +91,9 @@ async function ownerMembership(tx: SQL, accounts: RsvpAccounts, owner: MemberCom
 async function eligible(accounts: RsvpAccounts, owner: MemberCommandOwner, city: string,
   membership: NonNullable<Awaited<ReturnType<typeof ownerMembership>>>, now: number): Promise<boolean> {
   const { binding, member } = membership;
-  const age = lowestAge(member.age, await accounts.lowestAge(owner.e164, binding.person));
-  return gatheringRsvpAttendanceAllowed(true, canBeMatched(age), member.home_city === city, effectiveParticipation(member, now).state !== "paused");
+  const age = lowestAge(member.age, await accounts.lowestAge(owner.e164, binding.person), effectiveAgeOf(member, now));
+  const { adult } = storedAgeReading(age, member.stored_flags ?? {}, birthFieldsOf(member, now).ageConflict === true, member.minor_signal_at?.getTime());
+  return gatheringRsvpAttendanceAllowed(true, adult, member.home_city === city, effectiveParticipation(member, now).state !== "paused");
 }
 export async function currentGatheringMember(tx: SQL, accounts: RsvpAccounts, owner: MemberCommandOwner, city: string, now: number): Promise<boolean> {
   if (owner.app.id !== "ntwrk" || city !== "nyc") return false;

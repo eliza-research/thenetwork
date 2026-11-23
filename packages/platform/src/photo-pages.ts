@@ -3,36 +3,33 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { photoPageLinkTtlMs, photoPickFor } from "../../core/src/generated/photoRelayItem.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
-import { PHOTO_RELAY_TIME_ZONE, PHOTO_SEND_NOTICE, photoDay, type PhotoPageLink, type PhotoRelayService } from "./photo-relay.ts";
+import { maskOf, numbersOf, PHOTO_RELAY_TIME_ZONE, PHOTO_SEND_NOTICE, photoDay, type PhotoPageLink, type PhotoRelayService } from "./photo-relay.ts";
 import type { PhotoService } from "./photos.ts";
 
 export const PHOTO_PAGE_API = "/api/photos/page/";
 export const PHOTO_PAGE_COOKIE = "__Host-photo-page";
-export const PHOTO_VIEW_COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60;
+const PHOTO_VIEW_COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60;
 const COOKIE_VALUE = /^[A-Za-z0-9_-]{43}$/;
 const BODY_CAP = 4096;
 
-export type CheckAnswerState = "offered" | "changed" | "lapsed" | "refused" | "proposed" | "cancelled";
-export interface PhotoPageActions {
+type CheckAnswerState = "offered" | "changed" | "lapsed" | "refused" | "proposed" | "cancelled";
+interface PhotoPageActions {
   consent(personId: string, app: AppId, draftId: string, revision: number): Promise<{ state: "offered" | "changed" | "lapsed" | "refused"; text?: string }>;
   takeBack(personId: string, app: AppId, numbers: number[], firstName: string): Promise<{ state: "taken_back" | "nothing_open" }>;
   report(recipientPersonId: string, app: AppId, offerId: string): Promise<{ state: "reported" } | undefined>;
 }
-export interface PhotoPagesOptions {
+interface PhotoPagesOptions {
   sql: SQL;
   relay: PhotoRelayService;
   photos: PhotoService;
-  now: () => number;
   actions: PhotoPageActions;
   timeZone?: string;
 }
 
 const HEADERS = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const;
-const json = (status: number, body: unknown, extra: Record<string, string> = {}) =>
+export const privateJson = (status: number, body: unknown, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", ...HEADERS, ...extra } });
-const fail = (status: number, error: string) => json(status, { ok: false, error });
-const maskOf = (numbers: readonly number[]) => numbers.reduce((m, n) => m | (1 << (n - 1)), 0);
-const numbersOf = (mask: number, count: number) => Array.from({ length: count }, (_, i) => i + 1).filter(n => (mask >> (n - 1)) & 1);
+const fail = (status: number, error: string) => privateJson(status, { ok: false, error });
 const exactKeys = (b: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []) =>
   required.every(k => k in b) && Object.keys(b).every(k => required.includes(k) || optional.includes(k));
 const numberList = (v: unknown, min: number, max: number, cap: number): number[] | undefined => {
@@ -53,8 +50,7 @@ export class PhotoPages {
   private readonly timeZone: string;
   constructor(private readonly o: PhotoPagesOptions) { this.timeZone = o.timeZone ?? PHOTO_RELAY_TIME_ZONE; }
 
-  async route(req: Request, path: string, app: AppId): Promise<Response | undefined> {
-    if (!path.startsWith(PHOTO_PAGE_API)) return undefined;
+  async route(req: Request, path: string, app: AppId): Promise<Response> {
     if (req.method !== "POST") return fail(405, "method");
     const action = path.slice(PHOTO_PAGE_API.length);
     if (action !== "open" && action !== "image" && action !== "answer") return fail(404, "not_found");
@@ -115,7 +111,7 @@ export class PhotoPages {
       if (!draft) return fail(410, "link_expired");
       const slots = await this.o.relay.slots(link.personId, link.app);
       const toFirstName = await this.o.relay.firstName(link.app, draft.recipientMemberId!);
-      return json(200, {
+      return privateJson(200, {
         ok: true, purpose: "check", toFirstName, notice: PHOTO_SEND_NOTICE.text.replaceAll("{{recipient}}", toFirstName), revision: draft.revision,
         photos: slots.map(s => ({ n: s.n, label: s.label, addedOn: photoDay(s.addedAt, this.timeZone), shared: s.sharedWith.includes(draft.recipientMemberId!) })),
         proposed: slots.filter(s => draft.proposedIds.includes(s.id)).map(s => s.n), until,
@@ -123,12 +119,12 @@ export class PhotoPages {
     }
     if (link.purpose === "mine") {
       const photos = await this.o.relay.holdings(link.personId, link.app, this.timeZone);
-      return json(200, { ok: true, purpose: "mine", photos: photos.map(p => ({ n: p.n, label: p.label, addedOn: p.addedOn, access: p.access })), until }, extra);
+      return privateJson(200, { ok: true, purpose: "mine", photos: photos.map(p => ({ n: p.n, label: p.label, addedOn: p.addedOn, access: p.access })), until }, extra);
     }
     const offer = await this.o.relay.offer(link.offerId!);
     if (!offer || offer.phase !== "ready") return fail(410, "link_expired");
     const items = await this.o.relay.viewItems(offer);
-    return json(200, { ok: true, purpose: "view", fromFirstName: await this.o.relay.firstName(link.app, offer.senderMemberId), count: items.length }, extra);
+    return privateJson(200, { ok: true, purpose: "view", fromFirstName: await this.o.relay.firstName(link.app, offer.senderMemberId), count: items.length }, extra);
   }
 
   private async image(link: PhotoPageLink, deviceHash: string, n: number): Promise<Response> {
@@ -139,7 +135,7 @@ export class PhotoPages {
       value = offer && offer.phase === "ready" ? await this.o.relay.viewBytes(offer, n) : undefined;
     } else value = await this.o.relay.ownBytes(link.personId, link.app, n);
     if (!value) return fail(404, "not_found");
-    return new Response(value.bytes as unknown as BodyInit, { status: 200, headers: {
+    return new Response(new Uint8Array(value.bytes), { status: 200, headers: {
       "content-type": value.contentType, ...HEADERS, "cache-control": "private, no-store", "content-security-policy": "default-src 'none'", "content-disposition": "inline",
     } });
   }
@@ -149,27 +145,27 @@ export class PhotoPages {
       if (!exactKeys(b, ["token", "revision", "answer"], ["numbers"]) || !Number.isInteger(b.revision)) return fail(400, "invalid");
       if (b.answer !== "send" && b.answer !== "cancel" && b.answer !== "pick") return fail(400, "invalid");
       if (b.answer !== "pick" && "numbers" in b) return fail(400, "invalid");
-      if (!this.o.relay.linkLive(link, deviceHash, true)) return json(200, { ok: true, state: "lapsed" satisfies CheckAnswerState });
+      if (!this.o.relay.linkLive(link, deviceHash, true)) return privateJson(200, { ok: true, state: "lapsed" satisfies CheckAnswerState });
       const { draft } = await this.draftRevisionLive(link);
-      if (!draft || b.revision !== draft.revision) return json(200, { ok: true, state: "changed" satisfies CheckAnswerState });
+      if (!draft || b.revision !== draft.revision) return privateJson(200, { ok: true, state: "changed" satisfies CheckAnswerState });
       if (b.answer === "send") {
         const r = await this.o.actions.consent(link.personId, link.app, draft.id, draft.revision);
-        return json(200, { ok: true, state: r.state, ...(r.text ? { text: r.text } : {}) });
+        return privateJson(200, { ok: true, state: r.state, ...(r.text ? { text: r.text } : {}) });
       }
       if (b.answer === "cancel") {
         await this.o.sql.begin(tx => this.o.relay.dropDraft(tx, link.personId, link.app));
-        return json(200, { ok: true, state: "cancelled" satisfies CheckAnswerState });
+        return privateJson(200, { ok: true, state: "cancelled" satisfies CheckAnswerState });
       }
       const slots = await this.o.relay.slots(link.personId, link.app);
       const numbers = numberList(b.numbers, 1, 3, slots.length);
       if (!numbers) return fail(400, "invalid");
       const shared = slots.filter(s => s.sharedWith.includes(draft.recipientMemberId!)).map(s => s.n);
       const pick = photoPickFor(true, false, false, false, 1, slots.length, true, numbers.length > 1, maskOf(numbers), 0, 0, maskOf(shared));
-      if (pick.pick !== "ProposePhotos") return json(200, { ok: true, state: "refused" satisfies CheckAnswerState });
+      if (pick.pick !== "ProposePhotos") return privateJson(200, { ok: true, state: "refused" satisfies CheckAnswerState });
       const proposed = numbersOf(pick.chosen, slots.length);
       const saved = await this.o.sql.begin(tx => this.o.relay.pickOnPage(tx, link, proposed.map(n => slots[n - 1]!.id)));
-      if (!saved) return json(200, { ok: true, state: "changed" satisfies CheckAnswerState });
-      return json(200, { ok: true, state: "proposed" satisfies CheckAnswerState, proposed, revision: saved.revision });
+      if (!saved) return privateJson(200, { ok: true, state: "changed" satisfies CheckAnswerState });
+      return privateJson(200, { ok: true, state: "proposed" satisfies CheckAnswerState, proposed, revision: saved.revision });
     }
     if (link.purpose === "mine") {
       if (!exactKeys(b, ["token", "answer", "numbers", "firstName"]) || b.answer !== "take_back" || typeof b.firstName !== "string" || b.firstName.length < 1 || b.firstName.length > 30) return fail(400, "invalid");
@@ -177,10 +173,10 @@ export class PhotoPages {
       if (!numbers) return fail(400, "invalid");
       if (await this.live(link, deviceHash) !== "live") return fail(410, "link_expired");
       const r = await this.o.actions.takeBack(link.personId, link.app, numbers, b.firstName);
-      return json(200, { ok: true, state: r.state });
+      return privateJson(200, { ok: true, state: r.state });
     }
     if (!exactKeys(b, ["token", "answer"]) || b.answer !== "report") return fail(400, "invalid");
     const r = await this.o.actions.report(link.personId, link.app, link.offerId!);
-    return r ? json(200, { ok: true, state: r.state }) : fail(410, "link_expired");
+    return r ? privateJson(200, { ok: true, state: r.state }) : fail(410, "link_expired");
   }
 }

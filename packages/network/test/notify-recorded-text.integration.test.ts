@@ -7,7 +7,6 @@ import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { Notifier } from "../../notify/src/scheduler.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 
-// spec/notificationAcknowledgement.md, "A delivered text can appear only once and its opportunity must still be current"
 test.skipIf(!pgAvailable)("SD-151: a Network text whose delivery write fails is never left pending for the scheduler", async () => {
   const url = await migratedDb("network_notify_recorded_text");
   const sql = new SQL(url);
@@ -21,12 +20,10 @@ test.skipIf(!pgAvailable)("SD-151: a Network text whose delivery write fails is 
   const input = { personId: person.id, app: "friends", eventType: "reminder", subjectId: "walk-sd151", urgency: "normal" as const, summary: "The walk is tomorrow." };
   const delivery = { deliveryId: "net:walk-sd151", channel: "imessage" as const, countsTowardCap: true, sentAt: now };
   try {
-    // The delivery insert fails after the item insert (a lost connection or a lock timeout in production).
     await sql.unsafe(`create function notify.sd151_fail() returns trigger language plpgsql as $$
       begin if new.delivery_id = 'net:walk-sd151' then raise exception 'delivery write failed'; end if; return new; end $$`);
     await sql.unsafe(`create trigger sd151_fail before insert on notify.deliveries for each row execute function notify.sd151_fail()`);
     await expect(notifier.recordSent(input, delivery)).rejects.toThrow("delivery write failed");
-    // The scheduler must not see the text as a pending item: it went out already.
     expect(await store.peopleWithPending(now + 1)).not.toContain(person.id);
 
     await sql.unsafe(`drop trigger sd151_fail on notify.deliveries`);

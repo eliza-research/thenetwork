@@ -10,9 +10,7 @@ Check send budgets, cooldowns, adult mutual romance opt-in, and mutual travel ra
 
 The [matching budgets spec](../matchingBudgets.md) generates the engine’s budget and cooldown predicates. The [dating radius spec](../datingRadius.md) generates the market and distance predicates.
 
-Changed (owner decision 2026-11-22): the invariant `pairAdultsOnly` is replaced by `teenFriendAgeRule`. The core pair prefix of `pairReason` now asks `pairAgeAllowed` ([friend introductions with a minor](../friendIntroAge.md)): an adult pair passes as before, and a pair with a minor passes only in a friends.help friendship category (`teenFriendCategory`: `social` or `hobby`; the model has the categories `social` and `romance` only, so `social` stands for both friendship categories and `romance` for every category that is not one), while staff have not stopped teen introductions, both sides teen ready, both aged 13 to 18, and birth dates at most 2 calendar years apart. `teenSwitchOffNoMinor` is the old invariant for every proposal made while they were stopped.
-
-Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start (`teenStopped` is false; `teenStop` and `teenResume` replace `setTeenIntros`), and the network pack offers them in its `social` lane, the Friend lane of The Network (`teenFriendCategory("ntwrk", "social")`), so `friendshipLane` no longer reads `friendsApp`. Teen readiness needs no staff step. The generator and shape checks of a candidate with a minor (`teenGenerator`, `teenIntroShape`) come after `pairReason` in `candidateAgeReason`; [candidate_pool](candidate_pool.md) models them.
+The core pair prefix of `pairReason` asks `pairAgeAllowed` ([friend introductions with a minor](../friendIntroAge.md)): an adult pair passes, and a pair with a minor passes only in a friendship category (`teenFriendCategory`: `social` or `hobby` on friends.help, `social` in the Friend lane of The Network), while staff have not stopped teen introductions (`teenStopped`, false at the start), with both sides teen ready (no staff step), both aged 13 to 18, and birth dates at most 2 calendar years apart. The model has the categories `social` and `romance` only, so `social` stands for every friendship category and `romance` for every category that is not one. `teenFriendAgeRule` states the rule, and `teenSwitchOffNoMinor` states it for every proposal made while teen introductions were stopped. The generator and shape checks of a candidate with a minor (`teenGenerator`, `teenIntroShape`) come after `pairReason` in `candidateAgeReason`; [candidate_pool](candidate_pool.md) models them. Changed (owner decision 2026-11-22, answers A1 to A5): a pair with a minor may pass in a friendship category, because the owner allowed teen friendship introductions on friends.help and ntwrk.party.
 
 Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -118,7 +116,7 @@ module engine_rules {
   pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
     adjustedMiles <= firstLimit and adjustedMiles <= secondLimit
 
-  // spec/memberAge.md ageOnDay; spec/friendIntroAge.md teenAgesOk, birthKeysWithinTwoYears, pairAgeAllowed.
+  // spec/memberAge.md ageOnDay; spec/friendIntroAge.md teenPartnerAge, birthKeysWithinTwoYears, pairAgeAllowed.
   pure def ageOnDay(birthKey: int, dayKey: int): int = if (dayKey >= birthKey) (dayKey - birthKey) / 10000 else -1
   pure def teenAgesOk(birthKey: int): bool = ageOnDay(birthKey, DAY) >= 13 and ageOnDay(birthKey, DAY) <= 18
   pure def withinTwoYears(x: int, y: int): bool = if (x >= y) x - y <= 20000 else y - x <= 20000

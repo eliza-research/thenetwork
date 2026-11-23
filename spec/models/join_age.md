@@ -10,9 +10,7 @@ Check membership creation, the age floor, under-13 erasure, and single-player ac
 
 The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and the signed turn journey cover the prepared Peon signup format.
 
-Changed (owner decision 2026-11-22): the person keeps age readings, and the join asks for the birthday ([member age](../memberAge.md), "Track age from a birth date"). The model abstracts a reading to the integer age it gives on the model's one day: `birthAge` is the age from the latest stated birth date (the youngest), and `ageHigh` and `floorHigh` are the highest stated ages of the person and of the phone floor (the lower bound of the readings). The readings agree when the youngest and the highest are the birth-date age. A member of friends.help or The Network aged 13 to 17 is a teen friend candidate only while staff have not stopped teen introductions and the readings agree ([friend introductions with a minor](../friendIntroAge.md) `teenReady`, `teenFriendCandidate`). `teenReadingsAgree` says that a teen candidate never stated an age that disagrees with the birth date (the pair and group rule `teenFriendAgeRule` is not in this model: it has one person; the [candidate pool](candidate_pool.md), [engine rules](engine_rules.md) and [opportunity](opportunity.md) models check it); `minorNeverMatched` stays the adult matching rule (a minor is never matchable in an adult lane, with the switch on or off), and `teenSwitchOffNoMinor` says that no minor is a teen candidate while teen introductions are stopped. Delete everything clears the birth date.
-
-Changed (owner decision 2026-11-22, answers A2 to A5): readiness is derived from the readings with no staff step, so `teenConfirm` and `teenConfirmedAge` are deleted, because the owner chose "On at launch, no extra checks". Teen introductions are on from the start (`teenStopped` is false); `teenStop` and `teenResume` replace `setTeenIntros`. A minor of The Network (ntwrk) is a teen candidate too (answer A2). `minorFriendsOnly` states answer A5 for the looking-for answer: an enroll never makes a minor a member of slop.date (the model's apps have no peon.biz; the code refuses both through the generated `otherAppAllowed`). The one notice to an existing slop.date or peon.biz minor (`minorScopeNoticeDue`) is outside this model; `text-join-birthday.integration.test.ts` covers it.
+The person keeps age readings, and the join asks for the birthday ([member age](../memberAge.md), "Track age from a birth date"). The model abstracts a reading to the integer age it gives on the model's one day: `birthAge` is the age from the latest stated birth date (the youngest), and `ageHigh` and `floorHigh` are the highest stated ages of the person and of the phone floor (the lower bound of the readings). The readings agree when the youngest and the highest are the birth-date age. A member of friends.help or The Network aged 13 to 17 is a teen friend candidate only while staff have not stopped teen introductions and the readings agree ([friend introductions with a minor](../friendIntroAge.md) `teenReady`, `teenFriendCandidate`); readiness needs no staff step. `teenReadingsAgree` says that a teen candidate never stated an age that disagrees with the birth date. The pair and group rule `teenFriendAgeRule` is not in this model, because it has one person; the [candidate pool](candidate_pool.md), [engine rules](engine_rules.md) and [opportunity](opportunity.md) models check it. `minorNeverMatched` is the adult matching rule: a minor is never matchable in an adult lane. The stop has no invariant here, because `teenCandidate` reads the stop directly; `teenStopTest` shows that a stop makes the teen single-player and a resume makes the teen a candidate again. `minorFriendsOnly` states answer A5 for the looking-for answer: an enroll never makes a minor a member of slop.date (the model's apps have no peon.biz; the code refuses both through the generated `otherAppAllowed`). Delete everything clears the birth date. The one notice to an existing slop.date or peon.biz minor (`minorScopeNoticeDue`) is outside this model; `text-join-birthday.integration.test.ts` covers it. Changed (owner decision 2026-11-22, answers A1 to A5): the join asks for the birth date, and a minor of friends.help or The Network becomes a teen friend candidate with no staff step, because the owner chose "On at launch, no extra checks".
 
 The [fractional age and conjunction rule](../memberAge.md#a-half-age-needs-age-wording-to-confirm-an-under-13-refusal) supplies the current age and its explicit flag. The model takes these fields as input. A signed-turn regression checks how the readers produce the fields.
 
@@ -72,20 +70,20 @@ Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) fo
 //    (SD-488, Q-join_age-1, SD-179, SD-125, SD-038), the unit age writes (SD-011: runtime.ts unit.ages and
 //    recordedAges exist), the welcome and interview for minors (SD-213, SD-065, SD-066), the first-contact
 //    notice (SD-276) and the age-0 floor (SD-383).
-// Line references below are to ad67275:
+// File abbreviations in the comments below:
 //   S = packages/network/service/service.ts, A = packages/platform/src/accounts.ts,
 //   PS = packages/platform/src/pg-store.ts, N = packages/network/src/network.ts,
 //   R = packages/network/service/runtime.ts.
 // Each SQL transaction (or one in-process unit of work of the ConsentNetwork) is one action. Between two
-// actions the process can crash (memory is lost: R:131 statedAges) or a step can throw (the turn's onFail
-// undo runs: S:1195). The text parser (parseJoinText, lookingFor), the network classifier and the
+// actions the process can crash (memory is lost: statedAges) or a step can throw (the turn's onFail
+// undo runs). The text parser (parseJoinText, lookingFor), the network classifier and the
 // presence check are oracles: a message carries their output as nondeterministic fields.
 //
 // Scope and abstractions: one phone, one person, three apps (ntwrk, slop, friends). Ages abstract to
-// {12, 15, 25} on the text path and {0, 12, 15, 25} on the web path (S:262 refuses 0 in text; A:87 accepts
-// it on the web). Join modes are the production values (AGENTS.md 2026-10-09: ntwrk invite-only on the web,
+// {12, 15, 25} on the text path and {0, 12, 15, 25} on the web path (the text path refuses 0;
+// the web path accepts it). Join modes are the production values (AGENTS.md 2026-10-09: ntwrk invite-only on the web,
 // slop and friends open). Every text turn is a signed gateway turn (AGENTS.md decision 2). One turn runs at
-// a time: text and web joins share the `join:<phone>` lock (S:1140, A:348), and the member path runs alone
+// a time: text and web joins share the `join:<phone>` lock, and the member path runs alone
 // here, so concurrent interleavings of two turns are not modelled. Stop, leave, holds, bans, photos and
 // suppression are in other modules.
 module join_age {
@@ -93,15 +91,15 @@ module join_age {
   pure val NONE = -1
   pure val APPS = Set("ntwrk", "slop", "friends")
   pure val OTHER_APPS = Set("slop", "friends")
-  // A membership that is a live member (not invited, not removed): the code's own filter (S:1442, A:357).
+  // A membership that is a live member (not invited, not removed): the code's own filter.
   pure val LIVE = Set("onboarding", "active", "paused")
   pure val TEXT_AGES = Set(NONE, 12, 15, 25)
   pure val WEB_AGES = Set(0, 12, 15, 25)
   pure val MAX_CRASHES = 1
   pure val MAX_FAILS = 1
 
-  // platform.apps.min_join_age: 13 on every app (migration 0007:141, AGENTS.md decision 1). Matching and
-  // dating stay 18+ (minMatchAge, the enroll filter at S:1479-1480).
+  // platform.apps.min_join_age: 13 on every app (migration 0007_friends_platform_safety, AGENTS.md decision 1). Matching and
+  // dating stay 18+ (minMatchAge, the enroll filter).
   pure def minJoin(a: str): int = 13
   // AGENTS.md founder decisions 2026-10-09 (1): slop, peon, friends open; ntwrk invite-only on the web.
   pure def joinMode(a: str): str = if (a == "ntwrk") "invite" else "open"
@@ -109,7 +107,7 @@ module join_age {
   // ------------------------------------------------------------------ types
   type Net = {
     exists: bool, mid: int, age: int, statedAge: int, minor: bool,
-    // N:243 stage, N:278 awaiting (only the interview kind matters here)
+    // stage, awaiting (only the interview kind matters here)
     stage: str, awaitInt: bool,
   }
   type Pend = { has: bool, app: str, age: int, name: bool }
@@ -126,7 +124,7 @@ module join_age {
   // One text message as the oracles read it: kw is a whole-message app keyword (keywordApp), age and name
   // from parseJoinText or the network classifier, wants from lookingFor, signal a minor signal with no age
   // ("i have homework"), long a text over 12 characters, explicit a first-person explicit age, badHome a home
-  // city that parseJoinText reads as invalid (invalidHome: the need_home step of decisions.ts joinStep).
+  // city that parseJoinText reads as invalid (invalidHome: the home-city question of NetworkService.join).
   type Msg = { kw: str, age: int, name: bool, wants: Set[str], signal: bool, long: bool, explicit: bool, badHome: bool }
   type Turn = {
     pc: str, kind: str, app: str, msg: Msg,
@@ -136,7 +134,7 @@ module join_age {
     // A repeated web join that completes a membership with no network member (Q-join_age-2).
     repeat: bool,
     // The member was already a minor in the Network when the text came, and was still at stage new (its first
-    // text gets the welcome, N:978-992): ghost reads for the invariants.
+    // text gets the welcome): ghost reads for the invariants.
     minorAt: bool, newAt: bool,
   }
   type Last = {
@@ -162,7 +160,7 @@ module join_age {
 
   // ------------------------------------------------------------------ state
   var db: Db       // durable rows (platform and network schemas)
-  var vol: Set[Vol] // R:131 statedAges: process memory, lost on a crash
+  var vol: Set[Vol] // statedAges: process memory, lost on a crash
   var turn: Turn   // the turn in flight (process memory)
   var g: Ghost     // history and markers for the invariants; the code never reads it
 
@@ -170,12 +168,12 @@ module join_age {
   // The lower of two ages, NONE is unknown (packages/platform/src/age.ts lowestAge).
   pure def lo(a: int, b: int): int = if (a < 0) b else if (b < 0) a else if (a < b) a else b
   pure def hi(a: int, b: int): int = if (a > b) a else b
-  // A.lowestAge (A:281): the person's lowest age (a live person only) and the phone's age floor.
+  // A.lowestAge: the person's lowest age (a live person only) and the phone's age floor.
   pure def effLowest(d: Db): int = lo(if (d.personExists) d.personLowest else NONE, d.floor)
   // packages/platform/src/age.ts joinAgeCheck: the stated age and the stored lowest; effective is the lower.
   pure def joinOk(stated: int, lowest: int, a: str): bool = stated >= 0 and lo(stated, lowest) >= minJoin(a)
   pure def live(d: Db, a: str): bool = LIVE.contains(d.mstate.get(a))
-  // Matching eligibility: N:3746 (no minor flag) and the matching view of migration 0038 (least of the
+  // Matching eligibility: (no minor flag) and the matching view of migration 0038 (least of the
   // member age, the person's lowest age and the phone's age floor), for an active membership.
   pure def matchable(d: Db, a: str): bool = {
     val n = d.net.get(a)
@@ -183,8 +181,8 @@ module join_age {
       and lo(lo(n.age, if (d.personExists) d.personLowest else NONE), d.floor) >= 18
   }
 
-  // A.recordAge (A:286-300): the phone floor keeps the least (PS:97), then in `finally` the person keeps the
-  // least (PS:111) and every app's member follows (S:775-783 ageLowered, for each membership that is not
+  // A.recordAge: the phone floor keeps the least, then in `finally` the person keeps the
+  // least and every app's member follows (ageLowered, for each membership that is not
   // removed). Migration 0043 lets the floor keep 0 (SD-383: the check was lowest_age > 0 and an age of 0 raised).
   pure def recordAge(d: Db, age: int): Db = {
     val floorVal = lo(age, if (d.personExists) d.personLowest else NONE)
@@ -230,21 +228,21 @@ module join_age {
     }
   }
 
-  // S:723-750 createMember: insert or update network.members by member id; the inbound turn's app and
-  // member are overwritten (S:747-750). A different id inserts a second row: the old one stays active.
+  // createMember: insert or update network.members by member id; the inbound turn's app and
+  // member are overwritten. A different id inserts a second row: the old one stays active.
   pure def createMember(d: Db, a: str, age: int): Db = {
     val n: Net = { exists: true, mid: d.mid.get(a), age: age, statedAge: NONE, minor: age < 18, stage: "new", awaitInt: false }
     d.with("net", d.net.set(a, n))
   }
   pure def dupMember(d: Db, a: str): bool = d.net.get(a).exists and d.net.get(a).mid != d.mid.get(a)
 
-  // N:978-992 welcome (also N:4825 welcomeJoined): a minor gets welcomeMinor and stage active; an adult
+  // welcome (also welcomeJoined): a minor gets welcomeMinor and stage active; an adult
   // gets the first interview question (stage q1, awaiting interview).
   pure def welcome(n: Net): Net =
     if (n.minor) n.with("stage", "active").with("awaitInt", false) else n.with("stage", "q1").with("awaitInt", true)
 
   // The ages a unit read go to the person and the phone's age floor in the unit's own save transaction
-  // (SD-011, f1dc7c7, runtime.ts writeUnit): the filter and the recorded age of statedAge (S:1294-1300).
+  // (SD-011, f1dc7c7, runtime.ts writeUnit): the filter and the recorded age of statedAge.
   // Network member ages follow only in the later statedAge step (ageLowered).
   pure def unitAges(d: Db, a: str, vs: Set[Vol]): Db = {
     val keep = vs.filter(v => v.explicit or v.declined or v.age < 18)
@@ -254,7 +252,7 @@ module join_age {
       .with("floorHigh", hi(d.floorHigh, rec)).with("ageHigh", if (d.personExists) hi(d.ageHigh, rec) else d.ageHigh)
   }
 
-  // One ConsentNetwork unit for a member's text (N:674-842, handleInbound), abstracted to the age policy,
+  // One ConsentNetwork unit for a member's text (handleInbound), abstracted to the age policy,
   // the welcome, the interview and the final disposition.
   type UnitOut = { n: Net, vol: Set[Vol], outcome: str, replied: bool, adultQToMinor: bool }
   pure def unitOf(n: Net, a: str, m: Msg): UnitOut = {
@@ -263,41 +261,41 @@ module join_age {
     val attestedUnder = attested >= 0 and attested < minJoin(a)
     val explicitUnder = m.explicit and m.age >= 0 and m.age < minJoin(a) and not(adultRecord)
     if (attestedUnder or explicitUnder) {
-      // N:694-695 declineUnderMinAge (N:897-905): onAgeStated(declined), the member is forgotten.
+      // declineUnderMinAge: onAgeStated(declined), the member is forgotten.
       val declAge = if (attestedUnder and explicitUnder) lo(attested, m.age) else if (attestedUnder) attested else m.age
       { n: NO_NET, vol: Set({ app: a, age: declAge, explicit: true, declined: true }), outcome: "declined", replied: true, adultQToMinor: false }
     } else {
-      // N:700 onAgeStated for any stated age.
+      // onAgeStated for any stated age.
       val v = if (m.age >= 0) Set({ app: a, age: m.age, explicit: m.explicit, declined: false }) else Set()
       val st = lo(n.statedAge, m.age)
       val ageMin = lo(attested, st)
       val becomes = (ageMin >= 0 and ageMin < 18 or m.signal) and not(n.minor)
       val n0 = n.with("statedAge", st).with("minor", n.minor or becomes)
-      // SD-213 (a4326bf, N:722): a member who becomes a minor in the interview (q1 to q3) goes to stage
+      // SD-213 (a4326bf): a member who becomes a minor in the interview (q1 to q3) goes to stage
       // active and the open interview question closes, as welcome() does for a minor.
       val n1 = if (becomes and (n0.stage == "q1" or n0.stage == "q2" or n0.stage == "q3")) n0.with("stage", "active").with("awaitInt", false) else n0
       if (becomes and minJoin(a) > 13) {
-        // N:723-727: an 18+ app opens a case, no reply.
+        // an 18+ app opens a case, no reply.
         { n: n1, vol: v, outcome: "handled", replied: false, adultQToMinor: false }
       } else if (becomes and n1.stage != "new") {
-        // N:728: minorNotice and return. stage and awaiting stay as they were.
+        // minorNotice and return. stage and awaiting stay as they were.
         { n: n1, vol: v, outcome: "handled", replied: true, adultQToMinor: false }
       } else if (n1.stage == "new") {
         { n: welcome(n1), vol: v, outcome: "handled", replied: true, adultQToMinor: false }
       } else if (n1.awaitInt and (n1.stage == "q1" or n1.stage == "q2")) {
-        // N:1081-1098 onInterviewAnswer: the next adult interview question (copy.interview).
+        // onInterviewAnswer: the next adult interview question (copy.interview).
         val nx = if (n1.stage == "q1") "q2" else "q3"
         { n: n1.with("stage", nx).with("awaitInt", true), vol: v, outcome: "handled", replied: true, adultQToMinor: n1.minor }
       } else if (n1.awaitInt and n1.stage == "q3") {
         { n: n1.with("stage", "active").with("awaitInt", false), vol: v, outcome: "handled", replied: true, adultQToMinor: false }
       } else {
-        // SD-065 (e94c1d8): the concierge branch (N:835) is gone: a minor's ordinary text is an open turn too.
+        // SD-065 (e94c1d8): the concierge branch is gone: a minor's ordinary text is an open turn too.
         { n: n1, vol: v, outcome: "open", replied: false, adultQToMinor: false }
       }
     }
   }
 
-  // S:957-981 route (one shared line; a whole-message keyword names the app). The apps a text can go to:
+  // route (one shared line; a whole-message keyword names the app). The apps a text can go to:
   // one app, or (rule 4, the newest open item or the last writer) any of the member's apps, or (a staff
   // invite) any invited app (`find` takes the first row).
   // 2026-11-22 (spec/lineRouting.md, "A block, a report and the answer to "Who do you mean?" go to the app where
@@ -322,7 +320,7 @@ module join_age {
     else if (mine(d).size() > 0) mine(d)
     else Set("ntwrk")
   }
-  // S:1124-1125 after bcd83b8: the apps the answer names, lookingFor plus a whole-message app word.
+  // after bcd83b8: the apps the answer names, lookingFor plus a whole-message app word.
   pure def wantsOf(m: Msg): Set[str] = m.wants.union(if (m.kw != "") Set(m.kw) else Set()).exclude(Set("ntwrk"))
 
   // The ages a durable row holds for this phone: person, floor, and a pending join age (it lives a day).
@@ -344,21 +342,21 @@ module join_age {
   }
 
   // ------------------------------------------------------------------ text turn: receive and route
-  // S:1012-1027 and route: the path is chosen here. The inbox admission of the turn first sweeps a stuck
+  // and route: the path is chosen here. The inbox admission of the turn first sweeps a stuck
   // turn of this sender to unresolved and deletes the notice row that names it (SD-276, 7b0cd6f,
-  // inbox.ts:92-95); nothing else is written.
+  // inbox.ts); nothing else is written.
   action receive(m: Msg, pick: str): bool = {
     val app = pick
     val member = db.net.get(app).exists
     val lf = member and app == "ntwrk" and db.pendLF
     val enroll = lf and wantsOf(m).size() > 0
-    // The answer of a member of The Network to "what are you looking for?" that names an app (S:1114-1117
+    // The answer of a member of The Network to "what are you looking for?" that names an app (
     // comment). A person whose ntwrk membership went (an under-13 decline) has no question to answer. A reply
     // that reads as a join answer to a join the person started or to a staff invite goes to that join first
-    // (route rule 3, S:949-953): that is the code's documented order, not a lost answer.
+    // (route rule 3): that is the code's documented order, not a lost answer.
     val misrouted = g.askOpen and db.pendLF and mine(db).contains("ntwrk") and wantsOf(m).size() > 0 and not(enroll)
       and not(m.kw == "" and (pendRoute(db, m) or inviteRoute(db, m)))
-      // The question is asked only to a person with no other app (S:1454-1461). A person who joined another app
+      // The question is asked only to a person with no other app. A person who joined another app
       // since then has a text with no app word routed by rule 4 (the newest open item, the last writer).
       and (m.kw != "" or mine(db) == Set("ntwrk"))
     all {
@@ -405,7 +403,7 @@ module join_age {
     val name = m.name or pend.name
     val ok = joinOk(age, effLowest(db), a)
     val floorUnder = effLowest(db) >= 0 and effLowest(db) < 13
-    // A reply with name and age to a staff invite of another app (S:1553-1563 invite text), when the person
+    // A reply with name and age to a staff invite of another app (the invite text), when the person
     // has no join of their own in progress (route rule 3 comes first: a join the person started).
     val invitedElsewhere = not(invited) and not(db.pendJoin.has)
       and OTHER_APPS.exists(y => y != a and db.mstate.get(y) == "invited") and m.kw == "" and m.age >= 0 and m.name
@@ -425,10 +423,10 @@ module join_age {
         db' = db.with("pendJoin", NO_PEND),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "under_age"), g' = g1,
       } else if (age < 0 and m.badHome) all {
-        // decisions.ts joinStep need_home with no age: the home-city question, no pending join, nothing stored.
+        // NetworkService.join, an invalid home with no age: the home-city question, no pending join, nothing stored.
         db' = db, turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"), g' = g1,
       } else if (age < 0) all {
-        // S:1408-1414: pending join with the name; the join question (S:1412, at most 3 a day).
+        // pending join with the name; the join question (at most 3 a day).
         db' = db.with("pendJoin", { has: true, app: a, age: NONE, name: name }),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"), g' = g1,
       } else if (not(ok)) all {
@@ -441,7 +439,7 @@ module join_age {
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"),
         g' = g1.with("everStated", g.everStated.union(Set(age))),
       } else if (not(name)) all {
-        // S:1428-1432: pending join with the age. SD-010: recordAge first, so the floor keeps it.
+        // pending join with the age. SD-010: recordAge first, so the floor keeps it.
         db' = recordAge(db, age).with("pendJoin", { has: true, app: a, age: age, name: false }),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"),
         g' = g1.with("everStated", g.everStated.union(Set(age))),
@@ -455,7 +453,7 @@ module join_age {
     }
   }
 
-  // S:1417-1424: under the join age: recordAge, declineUnderAge (SD-014, b6a1489), delete the pending join,
+  // under the join age: recordAge, declineUnderAge (SD-014, b6a1489), delete the pending join,
   // the decline.
   action underStep = all {
     turn.pc == "j_under",
@@ -463,7 +461,7 @@ module join_age {
     turn' = turn.with("pc", "j_underNotice").with("replied", true).with("outcome", "under_age"),
     vol' = vol, g' = g.with("everStated", g.everStated.union(Set(turn.age))),
   }
-  // S:1146: under the join age, the notice row is deleted (its own statement).
+  // under the join age, the notice row is deleted (its own statement).
   action underNoticeStep = all {
     turn.pc == "j_underNotice",
     db' = db.with("noticeRow", false),
@@ -471,20 +469,20 @@ module join_age {
     vol' = vol, g' = g,
   }
 
-  // S:1435-1436: delete the pending join; a new person (or a revived tombstone) with the effective age.
+  // delete the pending join; a new person (or a revived tombstone) with the effective age.
   action personStep = all {
     turn.pc == "j_person",
     db' = (if (db.personExists) db else db.with("personExists", true).with("personLowest", turn.lowest)).with("pendJoin", NO_PEND),
     turn' = turn.with("pc", "j_age"),
     vol' = vol, g' = g,
   }
-  // S:1437 recordAge.
+  // recordAge.
   action ageStep = all {
     turn.pc == "j_age",
     db' = recordAge(db, turn.age), turn' = turn.with("pc", "j_member"),
     vol' = vol, g' = g.with("everStated", g.everStated.union(Set(turn.age))),
   }
-  // S:1440-1447: putMembership and the opt-in. SD-127 (541e045): a membership that is not removed (invited or
+  // putMembership and the opt-in. SD-127 (541e045): a membership that is not removed (invited or
   // live) keeps its member id.
   action memberStep = {
     val a = turn.app
@@ -500,7 +498,7 @@ module join_age {
       vol' = vol, g' = if (replaced) g.with("flags", flag("midReplaced")) else g,
     }
   }
-  // S:1450 createMember with min(age, effective).
+  // createMember with min(age, effective).
   action createStep = {
     val a = turn.app
     all {
@@ -510,7 +508,7 @@ module join_age {
       vol' = vol, g' = if (dupMember(db, a)) g.with("flags", flag("dupMember")) else g,
     }
   }
-  // S:1452 memberMessage: the join text is the member's first message (welcome). Its unit writes the ages it
+  // memberMessage: the join text is the member's first message (welcome). Its unit writes the ages it
   // read (SD-011); no statedAge call follows.
   action welcomeStep = {
     val a = turn.app
@@ -524,7 +522,7 @@ module join_age {
         .with("everStated", if (turn.msg.age >= 0) g.everStated.union(Set(turn.msg.age)) else g.everStated),
     }
   }
-  // S:1454-1461: the link notice, or (ntwrk, no keyword, not invited) the looking-for question.
+  // the link notice, or (ntwrk, no keyword, not invited) the looking-for question.
   action afterStep = {
     val ask = not(turn.others) and turn.app == "ntwrk" and not(turn.invited)
     all {
@@ -534,7 +532,7 @@ module join_age {
       vol' = vol, g' = g,
     }
   }
-  // S:1462 the looking_for pending row.
+  // the looking_for pending row.
   action lfPendStep = all {
     turn.pc == "j_lfpend",
     db' = db.with("pendLF", true),
@@ -550,7 +548,7 @@ module join_age {
     turn' = turn.with("pc", "unit"),
     vol' = vol, g' = g,
   }
-  // S:1124 memberMessage: one network unit; its save transaction also writes the ages it read (SD-011).
+  // memberMessage: one network unit; its save transaction also writes the ages it read (SD-011).
   action unitStep = {
     val a = turn.app
     val u = unitOf(db.net.get(a), a, turn.msg)
@@ -564,7 +562,7 @@ module join_age {
         .with("declineOpen", g.declineOpen or u.vol.exists(v => v.declined)),
     }
   }
-  // S:1293-1301 statedAge: takeAges (memory), then recordAge of the lowest recorded age (it lowers every
+  // statedAge: takeAges (memory), then recordAge of the lowest recorded age (it lowers every
   // app's member); a decline also deletes the phone's pending text join (Q-join_age-3, this branch). For
   // the looking-for answer, enroll follows (SD-038).
   action flushStep = {
@@ -606,7 +604,7 @@ module join_age {
   }
 
   // ------------------------------------------------------------------ looking-for enroll
-  // S:1471-1478: the person, the ntwrk membership, the lowest age (after statedAge); slop only for 18+.
+  // the person, the ntwrk membership, the lowest age (after statedAge); slop only for 18+.
   action enrollStart = {
     val ok = db.personExists and db.mstate.get("ntwrk") != "none"
     val lowest = effLowest(db)
@@ -619,7 +617,7 @@ module join_age {
       g' = if (not(turn.askOpenAt)) g.with("flags", flag("lateEnroll")) else g,
     }
   }
-  // S:1482-1491: one app of the answer: putMembership and the opt-in (one step), then createMember.
+  // one app of the answer: putMembership and the opt-in (one step), then createMember.
   action enrollApp(a: str): bool = {
     val existing = db.mstate.get(a)
     val isLive = LIVE.contains(existing)
@@ -641,7 +639,7 @@ module join_age {
       g' = if (not(isLive) and ageOk and a == "slop" and turn.lowest < 18) g.with("flags", flag("minorEnrolledSlop")) else g,
     }
   }
-  // createMember names the new member in the turn (S:747-750).
+  // createMember names the new member in the turn.
   action enrollCreate = {
     val a = turn.cur
     all {
@@ -655,7 +653,7 @@ module join_age {
     turn.pc == "e_app", turn.todo.size() == 0,
     db' = db, turn' = turn.with("pc", "e_end"), vol' = vol, g' = g,
   }
-  // S:1496-1500 after the fixes: the turn gets back The Network's app and member (SD-125, 26b760a), the
+  // after the fixes: the turn gets back The Network's app and member (SD-125, 26b760a), the
   // question is deleted, and the confirmation is collected when something joined. The turn's outcome is the
   // unit's (b3f9868).
   action enrollEnd = all {
@@ -671,7 +669,7 @@ module join_age {
     turn' = IDLE.with("pc", "w_check").with("kind", "web").with("app", a).with("age", age),
     db' = db, vol' = vol, g' = g,
   }
-  // A:352-370: a repeat join (an age statement), invite-only, the age check. An under_age answer runs
+  // a repeat join (an age statement), invite-only, the age check. An under_age answer runs
   // declineUnderAge (SD-014; on this branch through recordAge and onAgeLowered). A repeat join that passes
   // runs the join hook again (Q-join_age-2); the hook does nothing for an inactive membership or a network
   // member that exists (joinLocked AwaitingRepair, JA-3 fixed).
@@ -715,7 +713,7 @@ module join_age {
     db' = recordAge(db, turn.age), turn' = turn.with("pc", "w_member"), vol' = vol,
     g' = g.with("everStated", g.everStated.union(Set(turn.age))),
   }
-  // A:374-384: putMembership, the opt-in, attachPerson.
+  // putMembership, the opt-in, attachPerson.
   action webMember = {
     val a = turn.app
     val newMid = if (turn.invited) db.mid.get(a) else db.nextId
@@ -726,7 +724,7 @@ module join_age {
       turn' = turn.with("pc", "w_create"), vol' = vol, g' = g,
     }
   }
-  // S:788-793 joined: createMember (its own commit).
+  // joined: createMember (its own commit).
   action webCreate = {
     val a = turn.app
     all {
@@ -736,7 +734,7 @@ module join_age {
       g' = if (dupMember(db, a)) g.with("flags", flag("dupMember")) else g,
     }
   }
-  // S:794 welcomeJoined unit; it may throw (any error in the unit or the delivery). On a new join and on a
+  // welcomeJoined unit; it may throw (any error in the unit or the delivery). On a new join and on a
   // repeated join that repairs the member, the catch undoes the join (undoFailedJoin, JA-4 fixed).
   action webWelcome(throws: bool): bool = {
     val a = turn.app
@@ -747,7 +745,7 @@ module join_age {
       vol' = vol, g' = g,
     }
   }
-  // A:388-400: the catch: onForget (SD-015: the network member goes), forgetMembership, an opt-out.
+  // the catch: onForget (SD-015: the network member goes), forgetMembership, an opt-out.
   action webCatch = all {
     turn.pc == "w_catch",
     db' = db.with("net", db.net.set(turn.app, NO_NET)).with("mstate", db.mstate.set(turn.app, "removed")),
@@ -771,9 +769,9 @@ module join_age {
           kind: turn.kind, app: a, replied: turn.replied, outcome: turn.outcome,
           minor: n.exists and n.minor, long: turn.msg.long,
           other: turn.msg.wants.size() == 0 and turn.msg.age < 0 and turn.msg.kw == "", minorAt: turn.minorAt, newAt: turn.newAt,
-          // R:704-706: a context only for an active membership of a live person (A:302-312 activeMembership).
+          // A context only for an active membership of a live person (activeMembership).
           ctx: n.exists and db.mstate.get(a) == "active" and db.personExists and db.mid.get(a) == n.mid,
-          // R:732 singlePlayer: not present in the city, a member the Network holds as a minor (SD-066,
+          // singlePlayer: not present in the city, a member the Network holds as a minor (SD-066,
           // 0170505), or not matchable by A.lowestAge.
           single: not(present) or n.minor or effLowest(db) < 0 or effLowest(db) < 18,
           turnApp: if (turn.turnApp == "") a else turn.turnApp,
@@ -799,7 +797,7 @@ module join_age {
     g' = g.with("fails", g.fails + 1).with("last", NO_LAST.with("kind", "fail")),
   }
 
-  // S:1556-1563 / A:334-342 a staff invite: a person (lowest null when new) and an invited membership.
+  // / a staff invite: a person (lowest null when new) and an invited membership.
   action staffInvite(a: str): bool = all {
     turn.pc == "idle",
     db.mstate.get(a) == "none" or db.mstate.get(a) == "removed",
@@ -807,14 +805,14 @@ module join_age {
       .with("mstate", db.mstate.set(a, "invited")).with("mid", db.mid.set(a, db.nextId)).with("nextId", db.nextId + 1),
     vol' = vol, turn' = turn, g' = g,
   }
-  // S:119 PENDING_MS: a pending text flow is forgotten after a day.
+  // PENDING_MS: a pending text flow is forgotten after a day.
   action pendingExpire = all {
     turn.pc == "idle", db.pendJoin.has or db.pendLF,
     db' = db.with("pendJoin", NO_PEND).with("pendLF", false),
     vol' = vol, turn' = turn, g' = g.with("askOpen", false),
   }
-  // A:415-427 delete everything: the floor keeps the person's lowest age, every member is forgotten,
-  // memberships and pending rows are deleted, the person becomes a tombstone (PS:304-325).
+  // delete everything: the floor keeps the person's lowest age, every member is forgotten,
+  // memberships and pending rows are deleted, the person becomes a tombstone.
   action deleteAll = all {
     turn.pc == "idle", db.personExists,
     db' = db.with("floor", lo(db.floor, db.personLowest)).with("personExists", false).with("personLowest", NONE)
@@ -876,9 +874,9 @@ module join_age {
   // ------------------------------------------------------------------ invariants
   val idle = turn.pc == "idle"
 
-  // AGENTS.md platform decision 1 and A:4-6: "the lowest age ever stated or recorded wins". Every age the
+  // AGENTS.md platform decision 1: "the lowest age ever stated or recorded wins". Every age the
   // backend read from this phone is kept (person, floor, or a pending join that lives a day). An under-13
-  // statement from an attested adult is recorded as 13 (S:1296-1299 comment, audit network-service-1).
+  // statement from an attested adult is recorded as 13 (audit network-service-1).
   // The rule binds once the phone has a person or a stored age (a stranger who never joined has nothing).
   // Failed at ad67275: SD-010, SD-011, SD-038, SD-383. Failed on this branch until 2026-11-21: JA-1, JA-2.
   val lowestWins = idle implies ((db.personExists or durableLowest(db) >= 0) implies
@@ -886,7 +884,7 @@ module join_age {
 
   // AGENTS.md decision 1 and code invariant "minors never matched" in the adult pools (`matchable`; the teen
   // friendship pool under teenFriendAgeRule is `teenCandidate`): a person who ever stated an age under
-  // 18 is matchable in no app (N:3746, migration 0038). Failed at ad67275: SD-010, SD-011, SD-038, SD-383.
+  // 18 is matchable in no app (migration 0038). Failed at ad67275: SD-010, SD-011, SD-038, SD-383.
   // Failed on this branch until 2026-11-21: JA-1, JA-2.
   val minorNeverMatched = idle implies (g.everStated.exists(a => a < 18) implies APPS.forall(a => not(matchable(db, a))))
 
@@ -896,13 +894,11 @@ module join_age {
   // adult age is a reading only when the backend records it (an explicit statement); then exactBirth fails too.
   val teenReadingsAgree = idle implies (teenCandidate(db) implies
     (g.everStated.forall(a => a < 18 implies hi(a, 13) == db.birthAge) and db.birthAge >= 13 and db.birthAge < 18))
-  // While teen introductions are stopped no minor is a teen friend candidate (single-player, as before the decision).
-  val teenSwitchOffNoMinor = idle implies (db.teenStopped implies not(teenCandidate(db)))
   // Owner decision 2026-11-22, answer A5 (spec/textEnrollment.md otherAppAllowed, lawMinorEnrollsOnlyInFriendApps):
   // the looking-for answer of a minor enrolls friends only, never slop.date.
   val minorFriendsOnly = not(g.flags.contains("minorEnrolledSlop"))
 
-  // core/src/policy.ts:2 and A:7 "under 13: cannot join, nothing is stored" (only the age floor):
+  // core/src/policy.ts and "under 13: cannot join, nothing is stored" (only the age floor):
   // no live membership, no network member and no pending join row for a phone whose lowest age is under 13.
   pure def under13Clean(d: Db): bool = effLowest(d) >= 0 and effLowest(d) < 13 implies
     (APPS.forall(a => not(live(d, a)) and not(d.net.get(a).exists)) and not(d.pendJoin.has))
@@ -915,44 +911,44 @@ module join_age {
   // nothing (JA-5 fixed).
   val under13StoresNothing = idle implies (not(g.declineOpen) implies under13Clean(db))
 
-  // S:719-722 createMember comment: the network member is the member of an active membership. A network
+  // createMember comment: the network member is the member of an active membership. A network
   // member never outlives its membership (failed at ad67275: SD-015, and again as JA-4 until 2026-11-21).
   val noOrphanMember = idle implies APPS.forall(a => db.net.get(a).exists implies (live(db, a) and db.net.get(a).mid == db.mid.get(a)))
 
-  // A:11-12 "parallel joins make one person, one membership, one member and one opt-in": an active
+  // "parallel joins make one person, one membership, one member and one opt-in": an active
   // membership has its network member. Not in `safety`: a crash between putMembership and createMember leaves
   // an active membership with no member until the next join of that app (SD-128, refuted in the register:
   // the next text join completes it; since 29331d4 the web retry completes it too, Q-join_age-2). The
   // run test q2WebJoinRepairTest shows the window and its repair.
   val activeImpliesMember = idle implies APPS.forall(a => db.mstate.get(a) == "active" implies db.net.get(a).exists)
 
-  // A:11-12 and Q-join_age-2: a join never answers success (joined, or member on a repeat) while its active
+  // and Q-join_age-2: a join never answers success (joined, or member on a repeat) while its active
   // membership has no network member (failed at ad67275: the web retry answered member with no member).
   val joinSuccessHasMember = idle implies ((g.last.kind == "web" or g.last.kind == "text")
     and (g.last.outcome == "joined" or g.last.outcome == "member") and db.mstate.get(g.last.app) == "active"
     implies db.net.get(g.last.app).exists)
 
-  // A:11-12 one member per app: a live membership never gets a new member id, and no second network
+  // one member per app: a live membership never gets a new member id, and no second network
   // member row is made for the same app (failed at ad67275: SD-127, and again as JA-6 until 2026-11-21).
   val oneMemberPerApp = not(g.flags.contains("midReplaced")) and not(g.flags.contains("dupMember"))
 
-  // core/src/policy.ts:3 and N:985: a minor gets no adult onboarding interview (failed at ad67275: SD-213,
+  // core/src/policy.ts: a minor gets no adult onboarding interview (failed at ad67275: SD-213,
   // fixed).
   val minorNoAdultQuestion = not(g.flags.contains("adultQToMinor"))
 
   // The notice row and the completed reply become visible together (SD-276).
   val noticeSpentImpliesDelivered = db.noticeRow implies g.noticeDelivered
 
-  // S:1464-1470 enroll comment: "The Network confirms in one text": an answer to the question gets a reply
+  // enroll comment: "The Network confirms in one text": an answer to the question gets a reply
   // (SD-126 at ad67275). Since b3f9868 the answer is a member message first: the Network replies, or the
   // turn is open and the agent replies.
   val enrollAnswered = idle implies (g.last.kind == "enroll" implies (g.last.replied or g.last.outcome == "open"))
 
-  // AGENTS.md decision 2 (open{app, memberId} come from the backend) and S:1012: the turn names the app
+  // AGENTS.md decision 2 (open{app, memberId} come from the backend): the turn names the app
   // whose member the reply is from (failed at ad67275: SD-125, fixed).
   val enrollTurnApp = idle implies (g.last.kind == "enroll" implies g.last.turnApp == "ntwrk")
 
-  // S:1114 comment "the answer to The Network's what are you looking for?": an enroll (an opt-in to new
+  // comment "the answer to The Network's what are you looking for?": an enroll (an opt-in to new
   // apps) comes only from the answer to the question, not from a later text (failed at ad67275: SD-179,
   // fixed).
   val enrollOnlyFromAnswer = not(g.flags.contains("lateEnroll"))
@@ -961,23 +957,23 @@ module join_age {
   // Failed at ad67275: Q-join_age-1 (fixed).
   val lookingForAnswerEnrolls = not(g.flags.contains("lfMisrouted"))
 
-  // S:1550-1552 invite comment: "The person's reply with name and age is the join" of the invited app
+  // invite comment: "The person's reply with name and age is the join" of the invited app
   // (failed at ad67275: SD-488, fixed).
   val inviteReplyJoinsInvitedApp = not(g.flags.contains("invitedMisrouted"))
 
-  // AGENTS.md decision 1 and R:732: a member the network treats as a minor is single-player in the open
+  // AGENTS.md decision 1: a member the network treats as a minor is single-player in the open
   // turn context (failed at ad67275: SD-066, fixed).
   val minorIsSinglePlayer = idle implies (g.last.outcome == "open" and g.last.ctx and g.last.minor implies g.last.single)
 
   // AGENTS.md code invariants: a member aged 13-17 can use the agent for themselves (chat): a minor's
   // ordinary text reaches the agent (failed at ad67275: SD-065, fixed). It binds for a member the Network
   // already held as a minor and had welcomed: the first text after a member becomes a minor gets the minor
-  // notice (N:728), and the first text of a member made without a welcome (enroll) gets the welcome.
+  // notice, and the first text of a member made without a welcome (enroll) gets the welcome.
   val minorChatReachesAgent = idle implies (g.last.kind == "member" and g.last.minorAt and not(g.last.newAt) and g.last.long
     and g.last.other and g.last.outcome != "declined" implies g.last.outcome == "open")
 
   val safety = and {
-    lowestWins, minorNeverMatched, teenReadingsAgree, teenSwitchOffNoMinor, minorFriendsOnly, under13StoresNothing, noOrphanMember, joinSuccessHasMember,
+    lowestWins, minorNeverMatched, teenReadingsAgree, minorFriendsOnly, under13StoresNothing, noOrphanMember, joinSuccessHasMember,
     oneMemberPerApp, minorNoAdultQuestion, noticeSpentImpliesDelivered, enrollAnswered, enrollTurnApp,
     enrollOnlyFromAnswer, lookingForAnswerEnrolls, inviteReplyJoinsInvitedApp, minorIsSinglePlayer,
     minorChatReachesAgent,
@@ -1260,7 +1256,7 @@ module join_age {
       .then(recoverDecline)
       .expect(db.floor == 12 and under13StoresNothingStrict and not(g.declineOpen) and safety)
 
-  // need_home (decisions.ts joinStep): "Sam 25, Boston" keeps the age and asks for the home city; no pending
+  // The home-city question (NetworkService.join): "Sam 25, Boston" keeps the age and asks for the home city; no pending
   // join and no membership. The next "Sam 25" (a valid home) joins at 25.
   run needHomeKeepsAgeTest =
     init.then(receive(M_SAM25.with("badHome", true), "ntwrk")).then(noticeStep).then(joinStep).then(doneStep(true))

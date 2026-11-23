@@ -36,7 +36,8 @@ const flatEmbed = (): number[] => [1];
 export interface Faults { count: number; first?: string }
 export const noFaults = (): Faults => ({ count: 0 });
 export const fault = (f: Faults, what: string): void => { f.count++; f.first ??= what; };
-const show = (f: Faults): string => (f.count ? `${f.count} faults; first: ${f.first}` : "0 faults");
+export const mergeFaults = (all: readonly Faults[]): Faults => ({ count: all.reduce((t, f) => t + f.count, 0), first: all.find(f => f.first)?.first });
+export const show = (f: Faults): string => (f.count ? `${f.count} faults; first: ${f.first}` : "0 faults");
 
 export function checkSearchCost(f: Faults, p: MatchProfile, result: SearchResult, at: string): void {
   const budget = laneLimits(p.lane).searchBudget;
@@ -51,7 +52,7 @@ interface Oracle { searches: number; hits: number; wanted: number; regret: numbe
 const noOracle = (): Oracle => ({ searches: 0, hits: 0, wanted: 0, regret: 0 });
 export interface Rung {
   readonly world: PlantedWorld; readonly app: AppId; readonly lane: MatchLane; readonly n: number;
-  profiles: number; exact: number; checkClosed: number; touchClosed: number; checks: number; touches: number; ms: number;
+  profiles: number; exact: number; checkClosed: number; touchClosed: number; checks: number; touches: number; segmentShare: number; ms: number;
   readonly core: SearchTally;
   readonly gaps: number[]; notFull: number;
   readonly budgeted: { window: number; ranges: number; shortest: number; partnerSegments: number };
@@ -189,7 +190,7 @@ function measureRung(app: AppId, lane: MatchLane, n: number, world: PlantedWorld
   const results = profiles.map(p => w.match.candidates(p));
   const ms = Math.round(performance.now() - t);
   const r: Rung = {
-    world, app, lane, n, profiles: profiles.length, exact: 0, checkClosed: 0, touchClosed: 0, checks: 0, touches: 0, ms,
+    world, app, lane, n, profiles: profiles.length, exact: 0, checkClosed: 0, touchClosed: 0, checks: 0, touches: 0, segmentShare: 0, ms,
     core: w.match.tally(), gaps: [], notFull: 0, budgeted: { window: 0, ranges: 0, shortest: 0, partnerSegments: 0 },
     sample: { profiles: 0, window: 0, feasible: 0, touches: 0, bounds: 0, checks: 0, capped: 0, cappedChecks: 0, cappedNeed: 0, maskRefused: 0, refusals: new Map(), exact: noOracle(), budgeted: noOracle() },
     faults: { cost: noFaults(), oracle: noFaults(), bound: noFaults(), segment: noFaults(), mask: noFaults(), replica: noFaults() },
@@ -201,9 +202,10 @@ function measureRung(app: AppId, lane: MatchLane, n: number, world: PlantedWorld
     const result = results[i]!;
     checkSearchCost(r.faults.cost, p, result, at);
     r.checks += result.checks; r.touches += result.touches;
+    const block = partnerBlock(w.match.index, p);
+    if (block) r.segmentShare += block.reachableSegments(p.segment?.partners).reduce((t, span) => t + span.end - span.start, 0) / block.profiles.length;
     if (result.exact) { r.exact++; continue; }
     if (result.checks >= searchBudget) r.checkClosed++; else r.touchClosed++;
-    const block = partnerBlock(w.match.index, p);
     if (block) {
       const counts = searchWindowMetrics(block, p);
       r.budgeted.window += counts.window; r.budgeted.ranges += counts.ranges; r.budgeted.shortest += counts.shortest;
@@ -250,8 +252,8 @@ const laneSlopes = (rungs: readonly Rung[]): Record<Work, Slope> => {
   return { touches: logSlope(points("touches")), bounds: logSlope(points("bounds")), checks: logSlope(points("checks")) };
 };
 
-const fixed = (x: number | undefined, digits = 1): string => (x !== undefined && Number.isFinite(x) ? x.toFixed(digits) : "-");
-const pct = (x: number, n: number): string => (n ? `${((100 * x) / n).toFixed(1)}%` : "-");
+export const fixed = (x: number | undefined, digits = 1): string => (x !== undefined && Number.isFinite(x) ? x.toFixed(digits) : "-");
+export const pct = (x: number, n: number): string => (n ? `${((100 * x) / n).toFixed(1)}%` : "-");
 const per = (x: number | undefined, n: number): string => (x === undefined ? "-" : fixed(x / Math.max(1, n)));
 const quantile = (xs: readonly number[], q: number): number => {
   if (!xs.length) return NaN;
@@ -278,20 +280,20 @@ export function printLadder(rungs: readonly Rung[]): void {
   markdown(
     ["lane", "N", "profiles", "exact", "budgeted by checks / by walk", "checks", "touches", "bounds", "after settled", "bound viol.", "memo hits",
       "core refusals", "gap p50 / p90 / max", "window", "feasible", "window refusals", "uncapped touches / bounds / checks",
-      "recall exact / budgeted", "regret exact / budgeted", "budgeted checks / uncapped need", "budgeted: window / tag-range entries / shortest / partner segments", "search ms"],
+      "recall exact / budgeted", "regret exact / budgeted", "budgeted checks / uncapped need", "budgeted: window / tag-range entries / shortest / partner segments", "segment window share", "search ms"],
     rungs.map(r => {
       const s = r.sample, budgeted = r.profiles - r.exact;
       return [
         r.lane, String(r.n), String(r.profiles), pct(r.exact, r.profiles), `${pct(r.checkClosed, r.profiles)} / ${pct(r.touchClosed, r.profiles)}`,
-        per(r.checks, r.profiles), per(r.touches, r.profiles), per(r.core.bounds, r.profiles), r.core.checksAfterSettled === undefined ? "-" : String(r.core.checksAfterSettled),
-        r.core.boundViolations === undefined ? "-" : String(r.core.boundViolations), per(r.core.memoHits, r.profiles), reasons(r.core.refusals),
+        per(r.checks, r.profiles), per(r.touches, r.profiles), per(r.core.bounds, r.profiles), String(r.core.checksAfterSettled),
+        String(r.core.boundViolations), per(r.core.memoHits, r.profiles), reasons(r.core.refusals),
         budgeted ? `${fixed(quantile(r.gaps, 0.5), 0)} / ${fixed(quantile(r.gaps, 0.9), 0)} / ${fixed(quantile(r.gaps, 1), 0)}${r.notFull ? ` (${r.notFull} not full)` : ""}` : "-",
         per(s.window, s.profiles), pct(s.feasible, s.window), reasons(s.refusals),
         `${fixed(perSample(r, "touches"))} / ${fixed(perSample(r, "bounds"))} / ${fixed(perSample(r, "checks"))}`,
         `${recall(s.exact)} / ${recall(s.budgeted)}`, `${regret(s.exact)} / ${regret(s.budgeted)}`,
         s.capped ? `${per(s.cappedChecks, s.capped)} / ${per(s.cappedNeed, s.capped)}` : "-",
         budgeted ? [r.budgeted.window, r.budgeted.ranges, r.budgeted.shortest, r.budgeted.partnerSegments].map(x => per(x, budgeted)).join(" / ") : "-",
-        String(r.ms),
+        pct(r.segmentShare, r.profiles), String(r.ms),
       ];
     }));
   const lanes = [...new Set(rungs.map(r => r.lane))];
@@ -305,10 +307,7 @@ export function printLadder(rungs: readonly Rung[]): void {
 }
 
 const slopePass = (sl: Record<Work, Slope>): boolean => sl.checks.slope < CHECK_SLOPE && sl.touches.slope < TOUCH_SLOPE;
-const merged = (rungs: readonly Rung[], pick: (r: Rung) => Faults): Faults => {
-  const all = rungs.map(pick);
-  return { count: all.reduce((t, f) => t + f.count, 0), first: all.find(f => f.first)?.first };
-};
+const merged = (rungs: readonly Rung[], pick: (r: Rung) => Faults): Faults => mergeFaults(rungs.map(pick));
 
 export function ladderGates(b: Block, id: string, rungs: readonly Rung[]): void {
   if (!rungs.length) return;
@@ -319,9 +318,9 @@ export function ladderGates(b: Block, id: string, rungs: readonly Rung[]): void 
     `${sampled} exact searches compared; ${show(oracle)}`);
   const bound = merged(rungs, r => r.faults.bound);
   const coreCount = (k: "boundViolations" | "packBoundViolations" | "classCapViolations"): string => {
-    const total = rungs.reduce((t, r) => t + (r.core[k] ?? 0), 0);
+    const total = rungs.reduce((t, r) => t + r.core[k], 0);
     if (total) fault(bound, `core ${k} ${total}`);
-    return rungs.some(r => r.core[k] !== undefined) ? String(total) : "-";
+    return String(total);
   };
   const counts = `core boundViolations ${coreCount("boundViolations")}, packBoundViolations ${coreCount("packBoundViolations")}, classCapViolations ${coreCount("classCapViolations")}`;
   b.gate(`${id}: no pair value above its bound, and no budgeted search omits a partner above its reported bound (sampled profiles; core counts)`,
@@ -331,9 +330,8 @@ export function ladderGates(b: Block, id: string, rungs: readonly Rung[]): void 
   const mask = merged(rungs, r => r.faults.mask);
   b.gate(`${id}: acceptance masks never refuse a pair the pack rules admit (sampled profiles)`, mask.count === 0,
     `${rungs.reduce((t, r) => t + r.sample.maskRefused, 0)} mask refusals checked; ${show(mask)}`);
-  const settled = rungs.map(r => r.core.checksAfterSettled);
-  b.track(`${id}: no pair check after no touched candidate can still enter the kept list (core checksAfterSettled)`,
-    settled.every(x => x === 0), settled.some(x => x !== undefined) ? `${settled.reduce<number>((t, x) => t + (x ?? 0), 0)} checks` : "- (not reported by the core)");
+  const settled = rungs.reduce((t, r) => t + r.core.checksAfterSettled, 0);
+  b.gate(`${id}: no pair check after no touched candidate can still enter the kept list (core checksAfterSettled)`, settled === 0, `${settled} checks`);
   const replica = merged(rungs, r => r.faults.replica);
   b.track(`${id}: the uncapped count equals the search's checks and touches on every sampled exact search`, replica.count === 0, show(replica));
   for (const lane of [...new Set(rungs.map(r => r.lane))]) {

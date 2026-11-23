@@ -1,14 +1,14 @@
 // The tools. app_info and start_signup need no sign-in and return public facts only.
 // check_status and get_updates need membership:read and return only the signed-in person's own state
 // or updates in the one app the client is bound to. No tool takes a phone number, a code or an age, and every
-// input schema refuses properties it does not list.
+// input schema refuses properties it does not list. prepare_signup alone takes approved Join name/home city.
 import {
   initial as initialDraftPreparation, signupDraftDeadline, signupDraftLifetimeMs,
   signupDraftRequestAllowed, step as stepDraftPreparation,
 } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
   type Connection, type GrantOwnerDecision, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
-  callPhotoTool, canCallCheckStatus, canCallGetUpdates, canCallLookingForTool, canCallPhotoTool, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
+  callLookingForTool, callPhotoTool, canCallCheckStatus, canCallGetUpdates, canCallLookingForTool, canCallPhotoTool, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
   decideGrantOwner, initial as connectionInitial, nextStepFor, resultShowsLookingFor, scopeFor, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
@@ -57,7 +57,7 @@ export function canCallTool(c: Connection, tool: ToolName): boolean {
   }
 }
 
-export const STANDING_REF = /^INT-[A-P]{12}$/;
+const STANDING_REF = /^INT-[A-P]{12}$/;
 export const STANDING_INPUT_REF = /^(?:INT-[A-P]{12}|I-[A-F0-9]{12})$/;
 
 /** An update reference from a Network text (packages/notify task tokens): a pointer, never a credential. */
@@ -415,8 +415,9 @@ export interface CallContext {
   hooks: PlatformHooks;
   grant: Grant | null;
   scopes: readonly Scope[];
-  store?: OAuthStore;
-  now?: number;
+  store: OAuthStore;
+  now: number;
+  log: (line: string) => void;
   /** Which assistant the OAuth client is (by its redirect hosts): chatgpt, claude, grok, or web. */
   assistant?: AssistantKind;
 }
@@ -543,10 +544,9 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
     }
     case "prepare_signup": {
       const g = c.grant, store = c.store;
-      const connection = stepDraftPreparation(initialDraftPreparation, { type: "observeConnection", grantReady: !!g && !!store && c.now !== undefined, guardReady: !!c.hooks.signupAgeAllowed });
-      if (connection.phase === "GrantRefused" || !g || !store || c.now === undefined) return { kind: "invalid_grant" };
-      if (connection.phase !== "CheckAge" || !c.hooks.signupAgeAllowed) return { kind: "error", message: "Drafts cannot be saved here. Follow this app's signup instructions in your agent." };
-      const aged = stepDraftPreparation(connection, { type: "observeAge", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app) });
+      const connection = stepDraftPreparation(initialDraftPreparation, { type: "observeConnection", grantReady: !!g });
+      if (connection.phase !== "CheckAge" || !g) return { kind: "invalid_grant" };
+      const aged = stepDraftPreparation(connection, { type: "observeAge", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app, c.now) });
       if (aged.phase !== "CheckOwner") return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
       const owner = await checkGrantOwner(c.hooks, g);
       const refusal = grantOwnerRefusal(owner);
@@ -559,7 +559,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: signupDraftDeadline(c.now + signupDraftLifetimeMs, g.expiresAt) }, c.now);
       const written = stepDraftPreparation(member, { type: "observeWrite", saved });
       if (written.phase !== "RecheckAge") return { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
-      const finished = stepDraftPreparation(written, { type: "observeAgeAfterWrite", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app) });
+      const finished = stepDraftPreparation(written, { type: "observeAgeAfterWrite", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app, c.now) });
       if (finished.phase !== "Prepared") {
         await store.deleteSignupDrafts(g.phoneKey, g.app);
         return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
@@ -575,8 +575,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
       const a = c.apps[g.app];
       const personId = g.personId;
-      const minor = personId !== null && (await c.hooks.minorMember?.(personId, g.app, g.phoneKey)) === true;
-      const notice = personId !== null && minor
+      const notice = personId !== null && await c.hooks.minorMember(personId, g.phoneKey)
         ? (await c.hooks.minorNotice?.(personId, g.app, g.phoneKey)) ?? minorNoticeFor(a.id, false, false, false, true)
         : undefined;
       return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a, notice), manage_url: a.links.support } };
@@ -587,7 +586,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
       if (refusal) return refusal;
       try {
-        const fields = g.personId ? await c.hooks.readProfile?.(g.personId, g.app, g.phoneKey) : undefined;
+        const fields = g.personId ? await c.hooks.readProfile(g.personId, g.app, g.phoneKey) : undefined;
         return { kind: "ok", data: { app: g.app, profile: savedProfileResult(fields, [g.phoneKey, g.personId ?? ""]) } };
       } catch {
         return { kind: "grant_unavailable" };
@@ -602,7 +601,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const a = c.apps[g.app];
       const { submitProfile, profileSubmissionFingerprint } = c.hooks;
       const store = c.store;
-      if (!submitProfile || !profileSubmissionFingerprint || !store || c.now === undefined) return { kind: "error", message: "Profiles cannot be sent here yet." };
+      if (!submitProfile || !profileSubmissionFingerprint) return { kind: "error", message: "Profiles cannot be sent here." };
       const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
       if (person === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
@@ -627,7 +626,14 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         return unresolved;
       }
       const reads = resultShowsLookingFor(c.scopes.includes("profile:read"));
-      const view = await c.hooks.lookingFor?.(person, g.app, g.phoneKey).catch(() => undefined);
+      let view: LookingForView | undefined;
+      try {
+        view = await c.hooks.lookingFor?.(person, g.app, g.phoneKey);
+      } catch (e) {
+        c.log(`[mcp] ${g.app} submit_profile looking_for read failed grant=${g.id}: ${(e as Error).message}`);
+        return { kind: "ok", data: { app: a.id, submitted: true, looking_for: [], check_with_person: [],
+          next_step: `${a.name} has it. What is active for the person could not be read now: call list_looking_for later to check. Change nothing unless they ask.` } };
+      }
       const shown = shownLookingFor(view, [g.phoneKey, person]);
       return { kind: "ok", data: { app: a.id, submitted: true, looking_for: reads ? shown.looking_for : [], check_with_person: reads ? shown.check_with_person : [],
         next_step: !shown.check_with_person.length ? `${a.name} has it. It may text the person a short question or two.`
@@ -640,19 +646,22 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
       if (refusal) return refusal;
       const a = c.apps[g.app];
-      if (!c.hooks.lookingFor) return { kind: "error", message: "This list is not available here yet." };
+      const hook = c.hooks.lookingFor;
+      if (!hook) return { kind: "error", message: "This list is not available here." };
       const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
-      if (g.personId === null || !toolAllowedFor("ListLookingForTool", memberStatus[status]))
+      const connection = { ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] };
+      if (g.personId === null || callLookingForTool(connection, "ListLookingForTool", true, false).lastResult === "LookingForUnavailable")
         return { kind: "ok", data: { app: a.id, looking_for: [], closed_recently: [], next_step: nextStep(status, a) } };
       let view: LookingForView | undefined;
       try {
-        view = await c.hooks.lookingFor(g.personId, g.app, g.phoneKey);
-      } catch {
-        return { kind: "grant_unavailable" };
+        view = await hook(g.personId, g.app, g.phoneKey);
+      } catch (e) {
+        c.log(`[mcp] ${g.app} list_looking_for read failed grant=${g.id}: ${(e as Error).message}`);
+        return { kind: "error", message: "The list cannot be read right now. Try again shortly." };
       }
       if (!view) {
-        const now: PublicStatus = await c.hooks.status(g.personId, g.app, g.phoneKey);
-        return { kind: "ok", data: { app: a.id, looking_for: [], closed_recently: [], next_step: nextStep(now, a) } };
+        const current: PublicStatus = await c.hooks.status(g.personId, g.app, g.phoneKey);
+        return { kind: "ok", data: { app: a.id, looking_for: [], closed_recently: [], next_step: nextStep(current, a) } };
       }
       const shown = shownLookingFor(view, [g.phoneKey, g.personId]);
       return { kind: "ok", data: { app: a.id, looking_for: shown.looking_for, closed_recently: shown.closed_recently,
@@ -666,22 +675,26 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
       if (refusal) return refusal;
       const a = c.apps[g.app];
-      if (!c.hooks.changeLookingFor) return { kind: "error", message: "Changes are not available here yet." };
+      const hook = c.hooks.changeLookingFor;
+      if (!hook) return { kind: "error", message: "Changes are not available here." };
       const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
-      if (g.personId === null || !toolAllowedFor(connectorTool[name], memberStatus[status]))
+      const connection = { ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] };
+      if (g.personId === null || callLookingForTool(connection, connectorTool[name], true, false).lastResult === "LookingForUnavailable")
         return { kind: "ok", data: { app: a.id, changed: false, item: null, reason: "not_member", next_step: nextStep(status, a) } };
       const change = name === "pause_looking_for" ? "pause" : "resume";
       let result: LookingForResult;
       try {
-        result = await c.hooks.changeLookingFor(g.personId, g.app, g.phoneKey, g.id, chk.ref!, change);
-      } catch {
+        result = await hook(g.personId, g.app, g.phoneKey, g.id, chk.ref!, change);
+      } catch (e) {
+        c.log(`[mcp] ${g.app} ${name} failed grant=${g.id}: ${(e as Error).message}`);
         return { kind: "error", message: "The change is unconfirmed. Call list_looking_for to check before trying again." };
       }
       if (result.kind === "refused")
         return { kind: "ok", data: { app: a.id, changed: false, item: null, reason: result.reason, next_step: LOOKING_FOR_REFUSED[result.reason](a) } };
       const [item] = resultShowsLookingFor(c.scopes.includes("profile:read"))
         ? shownLookingFor({ entries: [result.entry], closedRecently: [], checkWithPerson: [] }, [g.phoneKey, g.personId]).looking_for : [];
-      return { kind: "ok", data: { app: a.id, changed: result.kind === "applied", item: item ?? null, reason: null,
+      const changed = callLookingForTool(connection, connectorTool[name], true, result.kind === "applied").lastResult === "LookingForChanged";
+      return { kind: "ok", data: { app: a.id, changed, item: item ?? null, reason: null,
         next_step: result.kind === "unchanged" ? "No change: it was already in that state."
           : change === "pause" ? `Paused. ${a.name} texted the person a confirmation. They can reply UNDO to turn it back on, or CLOSE to close it for good.`
           : `Turned back on. ${a.name} texted the person a confirmation.` } };
@@ -695,7 +708,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const hook = name === "my_photos" ? c.hooks.photoHoldings : c.hooks.photoRequest;
       if (!hook) return { kind: "error", message: "Photos are not available here." };
       const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
-      const adult = g.personId !== null && (await c.hooks.minorMember?.(g.personId, g.app, g.phoneKey)) === false;
+      const adult = g.personId !== null && !await c.hooks.minorMember(g.personId, g.phoneKey);
       const forbidden = [g.phoneKey, g.personId ?? ""];
       const called = callPhotoTool({ ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] }, connectorTool[name], g.personId !== null, adult);
       if (g.personId === null || called.lastResult === "PhotoToolUnavailable") {
@@ -706,8 +719,9 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         let view: PhotoHoldingsView | undefined;
         try {
           view = await c.hooks.photoHoldings!(g.personId, g.app, g.phoneKey);
-        } catch {
-          return { kind: "grant_unavailable" };
+        } catch (e) {
+          c.log(`[mcp] ${g.app} my_photos read failed grant=${g.id}: ${(e as Error).message}`);
+          return { kind: "error", message: "The photo list cannot be read right now. Try again shortly." };
         }
         if (!view) return { kind: "ok", data: { app: a.id, text: PHOTO_UNAVAILABLE_TEXT, photos: [] } };
         return { kind: "ok", data: { app: a.id, ...shownPhotos(view, forbidden) } };
@@ -716,7 +730,8 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         const answer = await c.hooks.photoRequest!(g.personId, g.app, g.phoneKey, chk.words!);
         const text = answer.text && photoTextClean(answer.text, forbidden) ? answer.text : PHOTO_REQUEST_TEXT[answer.status];
         return { kind: "ok", data: { app: a.id, status: answer.status, text } };
-      } catch {
+      } catch (e) {
+        c.log(`[mcp] ${g.app} photo_request failed grant=${g.id}: ${(e as Error).message}`);
         return { kind: "error", message: "The photo request is unconfirmed. The person can text MY PHOTOS to check before trying again." };
       }
     }

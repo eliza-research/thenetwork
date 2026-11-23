@@ -1,12 +1,12 @@
 import { isDeepStrictEqual } from "node:util";
-// The network block: the consent-first ConsentNetwork in the simulated NYC world (data/synthetic/v1).
-// Pinned: invariants on seed 3 over 10 days; consent vs push on seeds 1-3
+// The network block: the consent-first ConsentNetwork in the simulated NYC world (data/synthetic/v1),
+// with the simulated reviewer. Pinned: invariants on seed 3 over 10 days; consent vs push on seeds 1-3
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
-import { canBeMatched, DAY, earliestDayKeyOf, hash32, HOUR, latestDayKeyOf, Rng as SimRng, SimClock, type AgeSide, type MemberId, type NetworkContext, type NetworkUnderTest, type SimMessage } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, earliestDayKeyOf, hash32, HOUR, latestDayKeyOf, Rng as SimRng, SimClock, type MemberId, type NetworkContext, type NetworkUnderTest, type SimMessage } from "../../packages/core/src/index.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -25,14 +25,16 @@ import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { vouchPeriodGate } from "./capital.ts";
 import { conformance, teenConformance } from "./conformance.ts";
-import { birthKeyForAgeOn, generatePersonas, giveStatedBirthDates } from "../../packages/sim/src/generator.ts";
+import { teenJudgeGates } from "./teen-judge.ts";
+import { birthKeyForAgeOn, generatePersonas, TEEN_WORLD } from "../../packages/sim/src/generator.ts";
 import { DEFAULT_START } from "../../packages/sim/src/world.ts";
 import { ageOnDay } from "../../packages/core/src/generated/memberAge.ts";
-import { groupAgeAllowed, rosterHasMinor, teenFriendCandidate, teenFriendMaxAge, teenFriendRole, teenIntroShape, teenPartnerAge, teenReady, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
-import { teenFriendApp, teenFriendCategory, teenFriendLane, teenGenerator } from "../../packages/core/src/generated/matchLane.ts";
+import { teenFriendCandidate, teenFriendMaxAge, teenPartnerAge, teenReady, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
+import { teenFriendApp, teenFriendCategory } from "../../packages/core/src/generated/matchLane.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { Block, digest, expect } from "./gate.ts";
-import { overlap, pairedLine } from "../../packages/sim/src/paired.ts";
+import { meanInterval, overlap, pairedLine } from "../../packages/sim/src/paired.ts";
+import { teenShape } from "../../packages/sim/src/teen.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
@@ -74,22 +76,19 @@ const standInJudge = (exceptions: boolean): NetworkOptions => ({ inlineJudge: si
 async function world(days: number, seed = 3, network: NetworkOptions = standInJudge(false), staffDesk = true) {
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
-  giveStatedBirthDates(personas, seed, start);
   // The NYC world is one market.
   const net = new ConsentNetwork({ seed, ...network, engine: { cities: ["nyc"], ...network.engine } });
   const records: RunRecord[] = [];
-  const w = new World({ seed, personas, days, start, writeLog: false, network: staffDesk ? simulatedStaffDesk(net) : net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
+  const w = new World({ seed, personas, days, start, app: net.app.id, writeLog: false, network: staffDesk ? simulatedStaffDesk(net) : net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
   await w.begin();
   return { w, net, records, start, personas: new Map(w.personaList().map(p => [p.id, p])) };
 }
 
-export const NTWRK_TEEN_WORLD = { minorShare: 0.15, minorLiarShare: 0.2, adultPoserShare: 0.02 } as const;
-
 async function ntwrkTeenArm(seed: number, days: number, stopAfterDays?: number) {
-  const personas = generatePersonas({ n: 240, seed: `ntwrk-teen:${seed}`, cityWeights: { nyc: 1, sf: 0 }, ...NTWRK_TEEN_WORLD, idPrefix: "t" });
+  const personas = generatePersonas({ n: 240, seed: `ntwrk-teen:${seed}`, cityWeights: { nyc: 1, sf: 0 }, ...TEEN_WORLD, idPrefix: "t" });
   const net = new ConsentNetwork({ seed, ...standInJudge(false), engine: { cities: ["nyc"] } });
   const records: RunRecord[] = [];
-  const w = new World({ seed, personas, days, start: DEFAULT_START, writeLog: false, network: simulatedStaffDesk(net), agent: new PolicyPersonaAgent(DEFAULT_START), onRecord: r => records.push(r) });
+  const w = new World({ seed, personas, days, start: DEFAULT_START, app: net.app.id, writeLog: false, network: simulatedStaffDesk(net), agent: new PolicyPersonaAgent(DEFAULT_START), onRecord: r => records.push(r) });
   await w.begin();
   if (stopAfterDays !== undefined) {
     await w.advanceTo(DEFAULT_START + stopAfterDays * DAY);
@@ -124,9 +123,20 @@ type StatedPersona = { public: { claimedAge: number; birthKey?: number } };
 const statedMinorAt = (p: StatedPersona | undefined, t: number): boolean =>
   !!p && (p.public.birthKey !== undefined ? ageOnDay(p.public.birthKey, earliestDayKeyOf(t)) < 18 : p.public.claimedAge < 18);
 
-const statedSideAt = (p: StatedPersona | undefined, t: number): AgeSide => ({
-  adult: !!p && !statedMinorAt(p, t), ready: teenReady(p?.public.birthKey !== undefined, false, false, false, false, false), birthKey: p?.public.birthKey ?? 0,
-});
+const birthAgeOn = (birthKey: number, dayKey: number): number => Math.floor((dayKey - birthKey) / 10_000);
+
+function teenAgeOracleFault(roster: readonly string[], personas: ReadonlyMap<string, StatedPersona>, t: number, until: number): string | undefined {
+  const born = roster.map(id => personas.get(id)?.public.birthKey).filter((k): k is number => k !== undefined);
+  if (born.length !== roster.length) return "a member without a stated birth date";
+  const minDay = earliestDayKeyOf(t), maxDay = latestDayKeyOf(until);
+  const minors = born.filter(k => birthAgeOn(k, minDay) < 18);
+  if (minors.length === 0) return undefined;
+  if (roster.length > 6) return `${roster.length} members`;
+  if (born.some(k => birthAgeOn(k, maxDay) >= 19)) return "a member aged 19 or more";
+  if (born.some(k => birthAgeOn(k, minDay) < 13)) return "a member under 13";
+  for (const m of minors) if (born.some(k => Math.abs(k - m) > 20_000)) return "a pair with a minor born more than 2 calendar years apart";
+  return undefined;
+}
 
 const loggedRoster = (l: Log): string[] => {
   const proposal = l.detail.proposal as { participants?: unknown; alternates?: unknown } | undefined;
@@ -136,11 +146,7 @@ const loggedRoster = (l: Log): string[] => {
 
 function teenShapeHolds(app: string, x: NetOpp): boolean {
   const roster = teenRosterOf(x);
-  const friendshipLane = teenFriendCategory(app, x.category) && (x.lane === undefined || teenFriendLane(app, x.lane));
-  const everyRoleTeen = roster.every(id => { const role = x.roles?.[id]; return role !== undefined && teenFriendRole(role); });
-  return teenGenerator(app, x.generator) && x.format !== undefined
-    && teenIntroShape(friendshipLane, x.format, everyRoleTeen, x.via !== undefined, x.anchor?.type === "event")
-    && teenRosterSizeAllowed(true, roster.length);
+  return teenShape(app, roster, x).laneOk && teenRosterSizeAllowed(true, roster.length);
 }
 
 const recordedApprover = (approver: unknown, reviewer: unknown) =>
@@ -420,10 +426,9 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       const opp = proposal?.id !== undefined ? run.net.opps.get(proposal.id) : undefined;
       if (opp?.teenRuleAt !== undefined) {
         const roster = [...new Set([...loggedRoster(r), ...(opp.plan?.hostId ? [opp.plan.hostId] : [])])];
-        const sides = roster.map(id => statedSideAt(run.personas.get(id), r.t));
-        const maxDay = latestDayKeyOf(Math.max(r.t, opp.plan?.window.end ?? r.t));
-        expect([opp.id, groupAgeAllowed(true, teenFriendCategory(run.net.app.id, opp.category), earliestDayKeyOf(r.t), maxDay, sides), teenRosterSizeAllowed(rosterHasMinor(sides), roster.length)])
-          .toEqual([opp.id, true, true]);
+        const withMinor = roster.some(id => statedMinorAt(run.personas.get(id), r.t));
+        expect([opp.id, teenAgeOracleFault(roster, run.personas, r.t, Math.max(r.t, opp.plan?.window.end ?? r.t)), !withMinor || teenFriendCategory(run.net.app.id, opp.category)])
+          .toEqual([opp.id, undefined, true]);
         continue;
       }
       expect((proposal?.alternates ?? []).filter(id => minors.has(id))).toEqual([]);
@@ -789,6 +794,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
   await teenConformance(b, networkPack, { world: ntwrkTeenWorld, seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
   await ntwrkTeenGates(b, o);
+  await teenJudgeGates(b);
 }
 
 async function ntwrkTeenGates(b: Block, o: { quick: boolean }): Promise<void> {
@@ -807,13 +813,20 @@ async function ntwrkTeenGates(b: Block, o: { quick: boolean }): Promise<void> {
     const rubric = judgedApprovalFaults(records);
     const probed = new Set(logs(records, "probe_started").map(l => String((l.detail.proposal as { id?: unknown } | undefined)?.id ?? l.detail.oppId)).filter(id => net.opps.get(id)?.teenRuleAt !== undefined));
     const meetings = records.filter(r => r.type === "meeting_scheduled" && r.participants.some(minor)).length;
-    return { seed, m, outsideShape, reviewed: reviewed.length, wrongReviewer, rubric, probed: probed.size, meetings };
+    const ageFaults = teenOpps.flatMap(x => {
+      const fault = teenAgeOracleFault(teenRosterOf(x), personas, x.createdAt, Math.max(x.createdAt, x.plan?.window.end ?? x.createdAt));
+      return fault ? [`${x.id}: ${fault}`] : [];
+    });
+    return { seed, m, outsideShape, reviewed: reviewed.length, wrongReviewer, rubric, probed: probed.size, meetings, teenItems: teenOpps.length, ageFaults };
   });
   b.gate("ntwrk teen world: judge 0 invariant violations, minor contacts, canary leaks and errors, every seed",
     per.every(x => x.m.invariants.total === 0 && x.m.safety.minorContacts === 0 && x.m.privacy.canaryLeaks === 0 && x.m.errors === 0),
     per.map(x => `seed ${x.seed}: ${JSON.stringify(x.m.invariants.byRule)}, minor ${x.m.safety.minorContacts}, leaks ${x.m.privacy.canaryLeaks}, errors ${x.m.errors}`).join("; "));
   b.gate("ntwrk teen world: every item with a stated minor is a reviewed Friend-lane pair or circle of 2 to 6 from a teen generator, with a friendship format and a friendship role for everyone (no plan, gathering, via or event), every seed",
     per.every(x => x.outsideShape.length === 0), per.map(x => `seed ${x.seed}: ${x.outsideShape.slice(0, 5).join(",") || "none"}`).join("; "));
+  b.gate("ntwrk teen world: every item with a stated minor meets the age oracle from the stated birth dates (pairs with a minor at most 2 calendar years apart, nobody 19 or more, at most 6 members), and the run checks at least one such item",
+    per.every(x => x.ageFaults.length === 0) && (o.quick || per.reduce((n, x) => n + x.teenItems, 0) > 0),
+    per.map(x => `seed ${x.seed}: ${x.teenItems} items checked, faults ${x.ageFaults.slice(0, 3).join("; ") || "none"}`).join("; "));
   b.gate("ntwrk teen world: every item with a stated minor carries the teen rule; every approval is the simulated judge's applied judgment or sim-staff's on a held item, every seed",
     per.every(x => x.wrongReviewer.length === 0), per.map(x => `seed ${x.seed}: ${x.wrongReviewer.slice(0, 5).join(",") || "none"}`).join("; "));
   b.gate("ntwrk teen world: minor roster approved with adult rubric = 0 and approval for a stale packet = 0, every seed",
@@ -821,14 +834,9 @@ async function ntwrkTeenGates(b: Block, o: { quick: boolean }): Promise<void> {
     per.map(x => `seed ${x.seed}: adult rubric ${x.rubric.adultRubricMinor.slice(0, 5).join(",") || "none"}, stale ${x.rubric.stalePacket.slice(0, 5).join(",") || "none"}`).join("; "));
   b.gate("ntwrk teen world: positive control, a teen friendship item reaches approval and a probe", per.reduce((n, x) => n + x.reviewed, 0) > 0 && per.reduce((n, x) => n + x.probed, 0) > 0,
     per.map(x => `seed ${x.seed}: ${x.reviewed} approved, ${x.probed} probed, ${x.meetings} meetings with a minor`).join("; "), !o.quick);
-  const ci = (xs: number[]) => {
-    const mean = xs.reduce((a, c) => a + c, 0) / xs.length;
-    const se = xs.length > 1 ? Math.sqrt(xs.reduce((a, c) => a + (c - mean) ** 2, 0) / (xs.length - 1) / xs.length) : 0;
-    return `${mean.toFixed(2)} per seed (95% CI ${(mean - 1.96 * se).toFixed(2)} to ${(mean + 1.96 * se).toFixed(2)}, n ${xs.length} seeds)`;
-  };
-  b.track("ntwrk teen world: tracked teen items approved (simulated judge with the strict rubric, or sim-staff on a held item)", true, ci(per.map(x => x.reviewed)));
-  b.track("ntwrk teen world: tracked meetings with a minor", true, ci(per.map(x => x.meetings)));
-  b.track("ntwrk teen world: tracked meetings, all members", true, ci(per.map(x => x.m.meetings.held)));
+  b.track("ntwrk teen world: tracked teen items approved (simulated judge with the strict rubric, or sim-staff on a held item)", true, meanInterval(per.map(x => x.reviewed)));
+  b.track("ntwrk teen world: tracked meetings with a minor", true, meanInterval(per.map(x => x.meetings)));
+  b.track("ntwrk teen world: tracked meetings, all members", true, meanInterval(per.map(x => x.m.meetings.held)));
   b.track("ntwrk teen world: fingerprint", true, digest(per.map(x => ({ seed: x.seed, byRule: x.m.invariants.byRule, reviewed: x.reviewed, probed: x.probed, meetings: x.meetings }))));
 
   const stopAfterDays = o.quick ? 3 : 7;

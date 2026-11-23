@@ -50,6 +50,12 @@ export function lawCloudDeadlineCapsSession(createdAt: number, startedAt: number
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 //@ pure
+export function sessionRowLive(sameApp: boolean, expiresAt: number, revoked: boolean, revokedAt: number, now: number): boolean {
+  return sameApp && expiresAt > now && !(revoked && revokedAt <= now);
+}
+
+/** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
+//@ pure
 export function canReadToken(flow: SessionFlow): boolean {
   return flow.phase === "Beginning";
 }

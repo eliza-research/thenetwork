@@ -1,6 +1,6 @@
 # peon.biz Hire lane: the role-level gap, an offline optimum and congestion (2026-11-22)
 
-This report is hand-written. Each number is copied by hand from the output of the commands below. No run called an LLM (the sim clears the provider keys). The peon world uses a simulated reviewer (`review: "auto"`).
+This report is hand-written. Each number is copied by hand from the output of the commands below. No run called an LLM (the sim clears the provider keys). The peon world used the simulated reviewer (`review: "auto"`). These runs predate the review judge (owner decisions D15 to D17 of 2026-11-22): they used the removed simulated reviewer that approved every item, and the simulator now uses the deterministic stand-in judge.
 
 ## Commands and runs
 

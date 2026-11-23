@@ -2,8 +2,8 @@
 
 The Network uses Eliza to help people find dates, friends, work, and things
 to do. Four apps share one backend, one phone identity, one text line, and a
-staff console. People aged 13 or older may join. Adults may match after
-an automated review and consent.
+staff console. People aged 13 or older may join. Adults may match, and
+teens may get friendship introductions, after an automated review and consent.
 
 [Product specification](spec/product/README.md) ·
 [User stories](spec/product/stories.md) ·

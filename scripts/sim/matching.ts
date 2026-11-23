@@ -20,8 +20,8 @@ import {
 import { bestPacking, packingValue } from "./circleOracle.ts";
 import { Block } from "./gate.ts";
 import {
-  checkSearchCost, fault, hardWorlds, LADDER_FULL, LADDER_QUICK, ladderGates, lanesOf, noFaults, packOf, PRIMARY_LANE, printLadder,
-  runLadder, shippedConfig, type Faults, type Rung,
+  checkSearchCost, fault, fixed, hardWorlds, LADDER_FULL, LADDER_QUICK, ladderGates, lanesOf, mergeFaults, noFaults, packOf, pct, PRIMARY_LANE, printLadder,
+  runLadder, shippedConfig, show, type Faults, type Rung,
 } from "./scale.ts";
 
 interface Plan {
@@ -354,9 +354,7 @@ function valueQuality(w: World, truth: PlantedTruth, s: LaneStats): void {
   if (good > 0 && good < scored.length) { s.valueAuc.push(rankAuc(scored)); s.keptRecall.push(goodKept / good); }
 }
 
-const pct = (x: number, n: number): string => (n ? `${((100 * x) / n).toFixed(1)}%` : "-");
-const fixed = (x: number, digits = 3): string => (Number.isFinite(x) ? x.toFixed(digits) : "-");
-const versus = (a: readonly number[], b: readonly number[]): string => `${fixed(mean(a))} / ${fixed(mean(b))}`;
+const versus = (a: readonly number[], b: readonly number[]): string => `${fixed(mean(a), 3)} / ${fixed(mean(b), 3)}`;
 const oracleShare = (s: LaneStats): number => {
   const best = s.oracle.best.reduce((t, x) => t + x, 0);
   return best > 0 ? s.oracle.greedy.reduce((t, x) => t + x, 0) / best : NaN;
@@ -405,11 +403,7 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
 function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: Plan, ladder: readonly Rung[]): void {
   const id = `matching ${pack.id}`;
   const runs = `${plan.seeds.length} seeds`;
-  const merged = (...picks: ((s: LaneStats) => Faults)[]): Faults => {
-    const all = lanes.flatMap(s => picks.map(pick => pick(s)));
-    return { count: all.reduce((t, f) => t + f.count, 0), first: all.find(f => f.first)?.first };
-  };
-  const show = (f: Faults): string => (f.count ? `${f.count} faults; first: ${f.first}` : "0 faults");
+  const merged = (...picks: ((s: LaneStats) => Faults)[]): Faults => mergeFaults(lanes.flatMap(s => picks.map(pick => pick(s))));
   const perLane = (f: (s: LaneStats) => string): string => lanes.map(s => `${s.lane} ${f(s)}`).join("; ");
 
   const setup = merged(s => s.empty, s => s.minors, s => s.unprofiled);
@@ -429,8 +423,7 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
   b.gate(`${id}: segments never refuse a pair the pack rules admit (exactness worlds)`, superset.count === 0,
     `segment refusals checked ${perLane(s => String(s.segmentRefused))}; ${show(superset)}`);
 
-  const cost = merged(s => s.searchCost);
-  for (const r of ladder) if (r.faults.cost.count) { cost.count += r.faults.cost.count; cost.first ??= r.faults.cost.first; }
+  const cost = mergeFaults([merged(s => s.searchCost), ...ladder.map(r => r.faults.cost)]);
   b.gate(`${id}: each search stays within searchBudget checks and ${searchTouchesPerCheck} × searchBudget touches (N ${plan.exactN.join("/")} and the ladder N ${[...new Set(ladder.map(r => r.n))].join("/")})`, cost.count === 0,
     `${perLane(s => ladder.filter(r => r.lane === s.lane).map(r => `N ${r.n} ${fixed(r.checks / Math.max(1, r.profiles), 1)} checks, ${fixed(r.touches / Math.max(1, r.profiles), 1)} touches per profile, ${r.ms}ms`).join(", "))}; ${show(cost)}`);
 

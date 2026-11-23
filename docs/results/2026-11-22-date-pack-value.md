@@ -25,6 +25,8 @@ Command: `node node_modules/vitest/vitest.mjs run --project integration packages
 | Largest pack value at which a partner with no shared tag misses the Date floor | 933 |
 | Share of pairs at or below 933: value, pair bound, class cap, untouched class cap (94,376 untouched pairs) | 0.991, 0.953, 0.404, 0.771 |
 
+The test now asserts only the violation counts and the 933 floor. The slack and the shares are from the run of 2026-11-22.
+
 The floor arithmetic: with the Date weights complement 3, affinity 2, pack 3 and no closeness for slop, an untagged partner has the utility `3 x pack / 8`, and `3 x 933 / 8 = 349 < 350` while `3 x 934 / 8 = 350`. The old bound counted the pack term at 1000, which gives 375.
 
 On slop world profiles (seed 13, 879 adults, `world-share.txt`): 0 violations of each bound in week 0 and in week 3. In week 0 the untouched class cap is at or below 933 for 0.940 of untouched pairs and for every untouched class of 84.0% of seekers; in week 3, when 84 members have post-date ratings, the shares are 0.837 and 76.5%. The class cap without the untouched condition is at or below 933 for 0.618 (week 0) and 0.400 (week 3) of pairs. These are shares of pairs, not a measured speedup: the match core does not call the bounds yet.

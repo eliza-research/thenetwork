@@ -9,6 +9,7 @@ import type { RichnessTier } from "../../sources.ts";
 import { CITY_ANCHOR_ZIP, SLOP_CITIES, zipInfo, zipsIn, type SlopCity } from "./geo.ts";
 import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
 import type { DatingStatement } from "../../../../core/src/generated/mutualOpenness.ts";
+import { datingStatementOf } from "@thenetwork/engine/src/packs/slop/profile.ts";
 
 export type { RichnessTier };
 
@@ -412,12 +413,5 @@ export const identityGroupOf = (p: SlopPersona): string =>
 
 export function statedDating(p: SlopPersona): DatingStatement {
   const S = p.stated;
-  const G = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" } as const;
-  const O = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans" } as const;
-  return {
-    gender: G[S.matchGender], trans: S.transDisclosed ? "StatedTrans" : "TransNotStated",
-    seeksWomen: S.seeks.includes("woman"), seeksMen: S.seeks.includes("man"), seeksNonbinary: S.seeks.includes("nonbinary"),
-    shownToWomenSeekers: S.shownTo.includes("woman"), shownToMenSeekers: S.shownTo.includes("man"),
-    transOpenness: S.transOpenness ? O[S.transOpenness] : "TransUnanswered",
-  };
+  return datingStatementOf({ is: S.matchGender, seeks: S.seeks, trans: S.transDisclosed ? "yes" : undefined, transOpenness: S.transOpenness, shownTo: S.shownTo });
 }

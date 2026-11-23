@@ -14,7 +14,8 @@ const { CloudChannelAdapter } = await import("../../packages/network/service/clo
 const { BlooioAdapter } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
-const { catalogMetrics, createOps, lineMetrics, PgAlertStore, runtimeProbe, turnWatchMetrics } = await import("./ops.ts");
+const { catalogMetrics, createOps, lineMetrics, PgAlertStore, runtimeProbe } = await import("./ops.ts");
+const { turnWatchMetrics } = await import("../../packages/network/service/turn-watch.ts");
 const { createPublicEventRefresh } = await import("./public-events.ts");
 const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
 const { setLeakLabelKey } = await import("../../packages/core/src/guard.ts");
@@ -51,7 +52,8 @@ async function main() {
   const raterEnv = await photoRaterFromEnv(process.env, { log: s => log.warn(s) });
   const photoRater = raterEnv.rater;
   const raterLog = { status: raterEnv.status, rater: photoRater?.id ?? "off", weights: raterEnv.weights ?? null, detail: raterEnv.detail ?? null };
-  if (raterEnv.status === "refused_weights") log.error("photo rater", raterLog); else log.info("photo rater", raterLog);
+  if (raterEnv.status === "refused_weights") throw new Error(`refusing to start: CLEF_WEIGHTS_PATH was refused (${raterEnv.detail ?? "no detail"})`);
+  log.info("photo rater", raterLog);
   const svc = await NetworkService.fromDatabase({
     photoRater,
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
@@ -62,15 +64,14 @@ async function main() {
     publicApi: { hostMap: c.hostMap, ipOf, trustForwardedHost: false },
     log: s => log.info(s),
     adapter: c.channel === "eliza_cloud" ? (_net,rt)=>new CloudChannelAdapter({clock,from:resolveSenderLine(),app:rt.app.id,city:rt.city,env:process.env,
-      origin:process.env.NETWORK_CLOUD_DELIVERY_ORIGIN!,secret:process.env.SERVICE_TURN_SECRET!}) : c.channel === "blooio" ? (net, rt) => {
+      origin:process.env.NETWORK_CLOUD_DELIVERY_ORIGIN!,secret:process.env.SERVICE_TURN_SECRET!}) : c.channel === "blooio" ? (_net, rt) => {
       const from = resolveSenderLine();
-      return new BlooioAdapter({ net, provider: new ProviderAdapter(new BlooioClient({ apiKey: process.env.BLOOIO_API_KEY! }), from), clock, memberOf: rt.memberOf, from, app: rt.app.id, city: rt.city });
+      return new BlooioAdapter({ provider: new ProviderAdapter(new BlooioClient({ apiKey: process.env.BLOOIO_API_KEY! }), from), clock, from, app: rt.app.id, city: rt.city });
     } : undefined,
   });
   const mcp = await createServiceMcp(svc, { databaseUrl: c.databaseUrl, proxySecret: c.proxySecret, log: s => log.info(s), migrate: !c.deployed });
   log.info("mcp", { enabled: !!mcp });
   log.info("photo relay", { enabled: c.photoStorage });
-  if (c.deployed && !mcp) throw new Error("refusing to start: the MCP server is off, so the agent signup connector would answer 404");
   await svc.start();
   svc.publicApi.accounts.onPhoneChanged(async () => {
     for (const rt of svc.runtimes.values()) await rt.identities().catch(e => log.warn("identities refresh failed", { network: rt.id, error: (e as Error).message }));

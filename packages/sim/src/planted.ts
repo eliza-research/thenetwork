@@ -20,13 +20,13 @@ import { NEIGHBORHOODS as FRIENDS_NEIGHBORHOODS } from "@thenetwork/engine/src/p
 import { FRIENDS_SLOTS, FT, VERIFY_PASS } from "@thenetwork/engine/src/packs/friends/info.ts";
 import { FRIENDS_ACTIVITY_TAGS } from "@thenetwork/engine/src/packs/friends/vectors.ts";
 import { appearanceFacet } from "@thenetwork/engine/src/packs/slop/appearance.ts";
-import { SLOTS as DATE_SLOTS } from "@thenetwork/engine/src/packs/slop/profile.ts";
+import { SLOTS as DATE_SLOTS, datingFactsOf, datingStatementOf } from "@thenetwork/engine/src/packs/slop/profile.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import {
   cofounderIntentDetails, cofounderIntentObjective, unstatedCofounderFacts, type CofounderCommitment, type CofounderFacts, type CofounderIdea, type CofounderImportance, type CofounderRole,
 } from "../../core/src/generated/cofounderIntent.ts";
 import { laneOffered } from "../../core/src/generated/matchLane.ts";
-import type { DatingStatement, FriendStatement, StatedGender, TransOpenness } from "../../core/src/generated/mutualOpenness.ts";
+import type { DatingStatement, FriendStatement, StatedGender } from "../../core/src/generated/mutualOpenness.ts";
 import { FIRST_NAMES, NEIGHBORHOODS } from "./taxonomy.ts";
 import { plantedPeonHire } from "./planted-peon.ts";
 
@@ -216,7 +216,6 @@ function cofounderFactTags(seed: number | string, circle: number, position: numb
   return tags;
 }
 const STATED_GENDER: Readonly<Record<string, StatedGender>> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
-const TRANS_ANSWER: Readonly<Record<string, TransOpenness>> = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans" };
 const COFOUNDER_ROLE: Readonly<Record<string, CofounderRole>> = { technical: "TechnicalCofounder", business: "BusinessCofounder", both: "BothRoles" };
 const COFOUNDER_COMMITMENT: Readonly<Record<string, CofounderCommitment>> = { full_time_now: "FullTimeNow", part_time: "PartTimeNow", full_time_later: "FullTimeLater" };
 const COFOUNDER_IDEA: Readonly<Record<string, CofounderIdea>> = { has_idea: "HasIdea", open: "OpenToIdea", either: "IdeaEither" };
@@ -226,14 +225,7 @@ export function statedOpenness(input: EngineInput): { dating: Map<MemberId, Dati
   const dating = new Map<MemberId, DatingStatement>(), friend = new Map<MemberId, FriendStatement>(), cofounder = new Map<MemberId, CofounderFacts>();
   for (const [id, ts] of tags) {
     const all = (pre: string) => ts.filter(t => t.startsWith(pre)).map(t => t.slice(pre.length));
-    const seeks = all("romance:seeks:"), shown = all("romance:shown_to:");
-    dating.set(id, {
-      gender: STATED_GENDER[all("romance:is:")[0] ?? ""] ?? "GenderUnstated",
-      trans: all("romance:trans:")[0] === "yes" ? "StatedTrans" : all("romance:trans:")[0] === "no" ? "StatedNotTrans" : "TransNotStated",
-      seeksWomen: seeks.includes("woman"), seeksMen: seeks.includes("man"), seeksNonbinary: seeks.includes("nonbinary"),
-      shownToWomenSeekers: shown.includes("woman"), shownToMenSeekers: shown.includes("man"),
-      transOpenness: TRANS_ANSWER[all("romance:open_trans:")[0] ?? ""] ?? "TransUnanswered",
-    });
+    dating.set(id, datingStatementOf(datingFactsOf(ts)));
     const open = all(FT.openGender)[0];
     friend.set(id, { friendGender: STATED_GENDER[all(FT.gender)[0] ?? ""] ?? "GenderUnstated", friendOpenness: open === "women" ? "FriendsWithWomen" : open === "men" ? "FriendsWithMen" : "FriendsWithAnyone" });
     const importance = (field: string): CofounderImportance => (ts.includes(`cofounder:must:${field}`) ? "MustHave" : ts.includes(`cofounder:prefer:${field}`) ? "Preference" : "DoNotMind");

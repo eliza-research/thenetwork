@@ -4,7 +4,7 @@ import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import type { NetworkEvent } from "@thenetwork/core";
 import { evidenceOwner, preparedItemCommits, preparedRunUsable } from "../../core/src/generated/runtimeUnit.ts";
 
-export interface EngineRequest { key: string; input: EngineInput; config: EngineConfigInput; deps: EngineDeps }
+interface EngineRequest { key: string; input: EngineInput; config: EngineConfigInput; deps: EngineDeps }
 export type EngineStep = (request: EngineRequest) => Promise<EngineResult>;
 
 export const inlineEngine: EngineStep = request => runEngine(request.input, request.config, request.deps);
@@ -16,10 +16,6 @@ export class EngineRunDue extends Error {
 export const captureEngine: EngineStep = async request => {
   throw new EngineRunDue({ ...request, input: structuredClone(request.input) });
 };
-
-export async function computeEngine(request: EngineRequest): Promise<{ request: EngineRequest; result: EngineResult }> {
-  return { request, result: await inlineEngine(request) };
-}
 
 const eventOwner = (id: string) => `event\0${id}`;
 

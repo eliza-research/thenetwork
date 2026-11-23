@@ -1,17 +1,17 @@
 // GENERATED from spec/photoRelayReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 export type ReviewState = "ScreeningReview" | "PendingReview" | "ApprovedReview" | "RejectedReview" | "RevokedReview" | "ExpiredReview";
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 export type SelectionPhase = "Selecting" | "CheckingParties" | "CheckingPhoto" | "ResolvingNotice" | "ReadyToStore" | "StoredSelection" | "SelectionRefused";
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 export interface PhotoSelection { phase: SelectionPhase; review: ReviewState }
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 export type ScreenVerdict = "ScreenClean" | "ScreenFlagged" | "ScreenUnusable" | "ScreenCannotRun";
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 export type ScreenOutcome = "ReleasePhoto" | "HoldForStaff" | "RetryScreen";
-/** Story: Choose one photo and let an automatic check clear it / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item (spec/photoRelayReview.md) */
 export type ReviewChoice = "ApprovePhoto" | "RejectPhoto" | "KeepPending";
 
 /** One variant per transition in the spec. */
@@ -26,13 +26,13 @@ export type Event =
   | { type: "revokeSelection"; ownerMatches: boolean }
   | { type: "expireSelection"; now: number; deadline: number };
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 export const photoScreenCleanBelow: number = 100;
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 export const photoScreenRetryMax: number = 5;
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 export const relayItemTtlMs: number = 43200000;
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 export const initial: PhotoSelection = { phase: "Selecting", review: "ScreeningReview" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -41,7 +41,7 @@ export function inv(current: PhotoSelection): boolean {
   return alwaysSelectionStartsScreening(current);
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function checkSelection(s: PhotoSelection, inputValid: boolean, explicitConsent: boolean): PhotoSelection {
   //@ ensures (inv(s) && canCheckSelection(s)) ==> alwaysSelectionStartsScreening(\result)
@@ -53,13 +53,13 @@ export function checkSelection(s: PhotoSelection, inputValid: boolean, explicitC
   return { ...s, phase: inputValid && explicitConsent ? "CheckingParties" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function canCheckParties(s: PhotoSelection): boolean {
   return s.phase === "CheckingParties";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function checkParties(s: PhotoSelection, senderMatches: boolean, differentPeople: boolean, differentMembers: boolean): PhotoSelection {
   //@ ensures (inv(s) && canCheckParties(s)) ==> alwaysSelectionStartsScreening(\result)
@@ -71,13 +71,13 @@ export function checkParties(s: PhotoSelection, senderMatches: boolean, differen
   return { ...s, phase: senderMatches && differentPeople && differentMembers ? "CheckingPhoto" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function canCheckPhoto(s: PhotoSelection): boolean {
   return s.phase === "CheckingPhoto";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function checkPhoto(s: PhotoSelection, currentPhoto: boolean): PhotoSelection {
   //@ ensures (inv(s) && canCheckPhoto(s)) ==> alwaysSelectionStartsScreening(\result)
@@ -89,13 +89,13 @@ export function checkPhoto(s: PhotoSelection, currentPhoto: boolean): PhotoSelec
   return { ...s, phase: currentPhoto ? "ResolvingNotice" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function canResolveNotice(s: PhotoSelection): boolean {
   return s.phase === "ResolvingNotice";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function resolveNotice(s: PhotoSelection, readyNotice: boolean): PhotoSelection {
   //@ ensures (inv(s) && canResolveNotice(s)) ==> alwaysSelectionStartsScreening(\result)
@@ -107,13 +107,13 @@ export function resolveNotice(s: PhotoSelection, readyNotice: boolean): PhotoSel
   return { ...s, phase: readyNotice ? "ReadyToStore" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function canRecordSelection(s: PhotoSelection): boolean {
   return s.phase === "ReadyToStore";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function recordSelection(s: PhotoSelection): PhotoSelection {
   //@ ensures (inv(s) && canRecordSelection(s)) ==> alwaysSelectionStartsScreening(\result)
@@ -125,43 +125,43 @@ export function recordSelection(s: PhotoSelection): PhotoSelection {
   return { ...s, phase: "StoredSelection" };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function alwaysSelectionStartsScreening(s: PhotoSelection): boolean {
   return !(s.phase !== "StoredSelection") || s.review === "ScreeningReview";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer (spec/photoRelayReview.md) */
 //@ pure
 export function canCheckSelection(s: PhotoSelection): boolean {
   return s.phase === "Selecting";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function photoScreenRetryDelayMs(attempts: number): number {
   return attempts <= 0 ? 60000 : (attempts === 1 ? 300000 : (attempts === 2 ? 900000 : 3600000));
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function photoScreenVerdictFor(usable: boolean, answered: boolean, riskPerMille: number): ScreenVerdict {
   return !usable ? "ScreenUnusable" : (!answered || riskPerMille < 0 || riskPerMille > 1000 ? "ScreenCannotRun" : (riskPerMille < photoScreenCleanBelow ? "ScreenClean" : "ScreenFlagged"));
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function photoScreenOutcomeFor(verdict: ScreenVerdict, attempts: number): ScreenOutcome {
   return verdict === "ScreenClean" ? "ReleasePhoto" : (verdict === "ScreenFlagged" || verdict === "ScreenUnusable" ? "HoldForStaff" : (exact_photoRelayReview(attempts + 1) >= photoScreenRetryMax ? "HoldForStaff" : "RetryScreen"));
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function canScreenSelection(s: PhotoSelection, now: number, deadline: number): boolean {
   return s.phase === "StoredSelection" && s.review === "ScreeningReview" && now < deadline;
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function screenSelection(s: PhotoSelection, screenOutcome: ScreenOutcome, now: number, deadline: number): PhotoSelection {
   //@ ensures (inv(s) && canScreenSelection(s, now, deadline)) ==> alwaysSelectionStartsScreening(\result)
@@ -173,79 +173,79 @@ export function screenSelection(s: PhotoSelection, screenOutcome: ScreenOutcome,
   return { ...s, review: screenOutcome === "ReleasePhoto" ? "ApprovedReview" : (screenOutcome === "HoldForStaff" ? "PendingReview" : "ScreeningReview") };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function lawRetryWaits(attempts: number): boolean {
   //@ ensures \result === true
   return photoScreenRetryDelayMs(attempts) > 0;
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function stepOnlyTheScreenLeavesTheCheck(before: PhotoSelection, via: string, after: PhotoSelection): boolean {
   return !(before.review === "ScreeningReview" && after.review !== "ScreeningReview") || (via === "screenSelection" || via === "revokeSelection" || via === "expireSelection");
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function sometimesScreening(s: PhotoSelection): boolean {
   return s.phase === "StoredSelection" && s.review === "ScreeningReview";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function sometimesHeldForStaff(s: PhotoSelection): boolean {
   return s.phase === "StoredSelection" && s.review === "PendingReview";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function lawOnlyACleanScreenReleases(verdict: ScreenVerdict, attempts: number): boolean {
   //@ ensures \result === true
   return !(photoScreenOutcomeFor(verdict, attempts) === "ReleasePhoto") || verdict === "ScreenClean";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function lawAScreenThatCannotRunNeverReleases(attempts: number): boolean {
   //@ ensures \result === true
   return photoScreenOutcomeFor("ScreenCannotRun", attempts) !== "ReleasePhoto";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function lawFlaggedPhotosGoToStaff(attempts: number): boolean {
   //@ ensures \result === true
   return photoScreenOutcomeFor("ScreenFlagged", attempts) === "HoldForStaff" && photoScreenOutcomeFor("ScreenUnusable", attempts) === "HoldForStaff";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function lawRetriesEndAtStaff(attempts: number): boolean {
   //@ ensures \result === true
   return !(exact_photoRelayReview(attempts + 1) >= photoScreenRetryMax) || photoScreenOutcomeFor("ScreenCannotRun", attempts) === "HoldForStaff";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff (spec/photoRelayReview.md) */
 //@ pure
 export function lawCleanNeedsAnAnswer(usable: boolean, riskPerMille: number): boolean {
   //@ ensures \result === true
   return photoScreenVerdictFor(usable, false, riskPerMille) !== "ScreenClean";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function photoReviewable(s: PhotoSelection): boolean {
   return s.phase === "StoredSelection" && (s.review === "PendingReview" || s.review === "ApprovedReview");
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function reviewNeedsCurrent(choice: ReviewChoice): boolean {
   return choice === "ApprovePhoto";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function recordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAuthorized: boolean, currentItem: boolean, itemLive: boolean): PhotoSelection {
   //@ ensures (inv(s) && canRecordReview(s, choice, reviewerAuthorized, currentItem, itemLive)) ==> alwaysSelectionStartsScreening(\result)
@@ -257,37 +257,37 @@ export function recordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAu
   return { ...s, review: choice === "ApprovePhoto" ? "ApprovedReview" : (s.review === "ApprovedReview" ? "RevokedReview" : "RejectedReview") };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function stepOnlyReviewApproves(before: PhotoSelection, via: string, after: PhotoSelection): boolean {
   return !(before.review !== "ApprovedReview" && after.review === "ApprovedReview") || (via === "recordReview" || via === "screenSelection");
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function photoReviewMayProceed(s: PhotoSelection, choice: ReviewChoice, reviewerAuthorized: boolean, itemLive: boolean): boolean {
   return photoReviewable(s) && reviewerAuthorized && itemLive && (choice === "RejectPhoto" || (choice === "ApprovePhoto" && s.review === "PendingReview"));
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function canRecordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAuthorized: boolean, currentItem: boolean, itemLive: boolean): boolean {
   return photoReviewMayProceed(s, choice, reviewerAuthorized, itemLive) && (!reviewNeedsCurrent(choice) || currentItem);
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function photoHeldForReview(s: PhotoSelection): boolean {
   return s.phase === "StoredSelection" && s.review === "PendingReview";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function canRevokeSelection(s: PhotoSelection, ownerMatches: boolean): boolean {
   return s.phase === "StoredSelection" && ownerMatches;
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function revokeSelection(s: PhotoSelection, ownerMatches: boolean): PhotoSelection {
   //@ ensures (inv(s) && canRevokeSelection(s, ownerMatches)) ==> alwaysSelectionStartsScreening(\result)
@@ -299,43 +299,43 @@ export function revokeSelection(s: PhotoSelection, ownerMatches: boolean): Photo
   return { ...s, review: "RevokedReview" };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function stepRevocationIsFinal(before: PhotoSelection, after: PhotoSelection): boolean {
   return !(before.review === "RevokedReview") || after.review === "RevokedReview";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function sometimesApproved(s: PhotoSelection): boolean {
   return s.review === "ApprovedReview";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function sometimesRevoked(s: PhotoSelection): boolean {
   return s.review === "RevokedReview";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function reviewPreviewAllowed(s: PhotoSelection, reviewerAuthorized: boolean, itemLive: boolean): boolean {
   return photoHeldForReview(s) && reviewerAuthorized && itemLive;
 }
 
-/** Story: Choose one photo and let an automatic check clear it / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function reviewAuthorizationCurrent(s: PhotoSelection, configured: boolean, reviewerAuthorized: boolean, itemLive: boolean, samePolicy: boolean): boolean {
   return photoReviewable(s) && configured && reviewerAuthorized && itemLive && samePolicy;
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
 //@ pure
 export function canExpireSelection(s: PhotoSelection, now: number, deadline: number): boolean {
   return s.phase === "StoredSelection" && (s.review === "PendingReview" || s.review === "ScreeningReview") && now >= deadline;
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
 //@ pure
 export function expireSelection(s: PhotoSelection, now: number, deadline: number): PhotoSelection {
   //@ ensures (inv(s) && canExpireSelection(s, now, deadline)) ==> alwaysSelectionStartsScreening(\result)
@@ -347,19 +347,19 @@ export function expireSelection(s: PhotoSelection, now: number, deadline: number
   return { ...s, review: "ExpiredReview" };
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
 //@ pure
 export function stepOnlyDeadlineExpires(before: PhotoSelection, via: string, after: PhotoSelection): boolean {
   return !(before.review !== "ExpiredReview" && after.review === "ExpiredReview") || via === "expireSelection";
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
 //@ pure
 export function stepExpiredStaysUndelivered(before: PhotoSelection, after: PhotoSelection): boolean {
   return !(before.review === "ExpiredReview") || (after.review === "ExpiredReview" || after.review === "RevokedReview");
 }
 
-/** Story: Choose one photo and let an automatic check clear it / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
+/** Story: Let an automatic check clear each photo of my offer / A photo that is not cleared by its deadline expires, and its offer settles (spec/photoRelayReview.md) */
 //@ pure
 export function sometimesExpired(s: PhotoSelection): boolean {
   return s.review === "ExpiredReview";

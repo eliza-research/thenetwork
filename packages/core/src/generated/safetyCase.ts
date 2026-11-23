@@ -1,5 +1,7 @@
 // GENERATED from spec/safetyCase.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { type AgeSide as friendIntroAge_AgeSide, teenRosterMaximum as friendIntroAge_teenRosterMaximum, teenFriendMinAge as friendIntroAge_teenFriendMinAge, teenBirthGap as friendIntroAge_teenBirthGap, teenFriendMaxAge as friendIntroAge_teenFriendMaxAge, teenReady as friendIntroAge_teenReady, teenBarOnConflict as friendIntroAge_teenBarOnConflict, teenFriendRole as friendIntroAge_teenFriendRole, teenFriendFormat as friendIntroAge_teenFriendFormat, teenRosterSizeAllowed as friendIntroAge_teenRosterSizeAllowed, teenPlaceAllowed as friendIntroAge_teenPlaceAllowed, allAgesMarkValid as friendIntroAge_allAgesMarkValid, teenActivityOffered as friendIntroAge_teenActivityOffered, relayKindAllowed as friendIntroAge_relayKindAllowed, singlePlayerMember as friendIntroAge_singlePlayerMember, minorSignalOpens as friendIntroAge_minorSignalOpens, friendsVerifyPasses as friendIntroAge_friendsVerifyPasses, birthKeysWithinTwoYears as friendIntroAge_birthKeysWithinTwoYears, rosterHasMinor as friendIntroAge_rosterHasMinor, teenIntroShape as friendIntroAge_teenIntroShape, lawTeenReadyNeedsExactBirthDate as friendIntroAge_lawTeenReadyNeedsExactBirthDate, lawContributorRolesAreNotTeenRoles as friendIntroAge_lawContributorRolesAreNotTeenRoles, lawTeenRosterIsSmall as friendIntroAge_lawTeenRosterIsSmall, lawAdultRosterSizeUnchanged as friendIntroAge_lawAdultRosterSizeUnchanged, lawTeenReadyWithoutStaffStep as friendIntroAge_lawTeenReadyWithoutStaffStep, lawTeenPlaceIsAllAges as friendIntroAge_lawTeenPlaceIsAllAges, lawAdultPlaceUnchanged as friendIntroAge_lawAdultPlaceUnchanged, lawAllAgesNeverABarOrHome as friendIntroAge_lawAllAgesNeverABarOrHome, lawAllAgesOpensAtThirteen as friendIntroAge_lawAllAgesOpensAtThirteen, lawAdultPlansKeepTheirCatalog as friendIntroAge_lawAdultPlansKeepTheirCatalog, lawTeenGroupsGetOnlyAllAges as friendIntroAge_lawTeenGroupsGetOnlyAllAges, lawNoNumberOrPhotoWithAMinor as friendIntroAge_lawNoNumberOrPhotoWithAMinor, lawAdultRelayUnchanged as friendIntroAge_lawAdultRelayUnchanged, lawAdultIsNeverSinglePlayerByAge as friendIntroAge_lawAdultIsNeverSinglePlayerByAge, lawAdultRecordOpensOnEvidence as friendIntroAge_lawAdultRecordOpensOnEvidence, lawAgreeingMinorStatementOpensNothing as friendIntroAge_lawAgreeingMinorStatementOpensNothing, lawAnyDoubtMakesUnready as friendIntroAge_lawAnyDoubtMakesUnready, lawTeenReadyNeedsNoStaffVerify as friendIntroAge_lawTeenReadyNeedsNoStaffVerify, lawUnreadyNeedsStaffVerify as friendIntroAge_lawUnreadyNeedsStaffVerify, teenPartnerAge as friendIntroAge_teenPartnerAge, viaAllowedForRoster as friendIntroAge_viaAllowedForRoster, teenSideFits as friendIntroAge_teenSideFits, lawTeenShapeNeedsFriendshipLane as friendIntroAge_lawTeenShapeNeedsFriendshipLane, lawTeenShapeNeverAnEvent as friendIntroAge_lawTeenShapeNeverAnEvent, lawTeenShapeNeverVia as friendIntroAge_lawTeenShapeNeverVia, teenFriendCandidate as friendIntroAge_teenFriendCandidate, teenPairAllowed as friendIntroAge_teenPairAllowed, lawViaNeverWithAMinor as friendIntroAge_lawViaNeverWithAMinor, lawStoppedMinorIsSinglePlayer as friendIntroAge_lawStoppedMinorIsSinglePlayer, lawUnreadyMinorIsSinglePlayer as friendIntroAge_lawUnreadyMinorIsSinglePlayer, pairAgeAllowed as friendIntroAge_pairAgeAllowed, lawTeenPairWitness as friendIntroAge_lawTeenPairWitness, lawNineteenEdgeRefused as friendIntroAge_lawNineteenEdgeRefused, sidesAllowed as friendIntroAge_sidesAllowed, lawAdultPairUnchanged as friendIntroAge_lawAdultPairUnchanged, lawStoppedIsTheAdultRule as friendIntroAge_lawStoppedIsTheAdultRule, lawMinorPairOnlyInFriendshipLanes as friendIntroAge_lawMinorPairOnlyInFriendshipLanes, lawMinorPartnerIsThirteenToEighteen as friendIntroAge_lawMinorPartnerIsThirteenToEighteen, lawNineteenNeverWithAMinor as friendIntroAge_lawNineteenNeverWithAMinor, lawMinorPairWithinTwoYears as friendIntroAge_lawMinorPairWithinTwoYears, lawMinorPairNeedsReadySides as friendIntroAge_lawMinorPairNeedsReadySides, lawPairAgeSymmetric as friendIntroAge_lawPairAgeSymmetric, sideAllowedWithAll as friendIntroAge_sideAllowedWithAll, groupAgeAllowed as friendIntroAge_groupAgeAllowed, lawGroupNineteenNeverWithAMinor as friendIntroAge_lawGroupNineteenNeverWithAMinor, lawGroupMinorWithinTwoYearsOfEveryone as friendIntroAge_lawGroupMinorWithinTwoYearsOfEveryone, lawGroupWithMinorEverySideFits as friendIntroAge_lawGroupWithMinorEverySideFits, lawGroupWithMinorHoldsOnlyTeenAges as friendIntroAge_lawGroupWithMinorHoldsOnlyTeenAges, lawGroupStoppedAdultsOnly as friendIntroAge_lawGroupStoppedAdultsOnly } from "./friendIntroAge.ts";
+import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings } from "./memberAge.ts";
 
 /** Story: Review a safety case without removing a hold by accident / An event opens a case or adds to its current record (spec/safetyCase.md) */
 export type CasePhase = "NoCase" | "CaseOpen" | "CaseHeld" | "CaseLifted" | "CaseClosed";
@@ -269,35 +271,48 @@ export function minorClearResult(actorPresent: boolean, memberKnown: boolean, ha
 
 /** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
 //@ pure
-export function teenDoubtClearResult(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, barred: boolean, olderOrLyingReport: boolean): StaffActionResult {
-  return !actorPresent ? "ActorRequired" : (!memberKnown ? "UnknownMember" : (!hasDoubt ? "NoMinorSignal" : (!birthExact || !birthTeen ? "AgeUnknown" : (barred ? "TeenBarred" : (olderOrLyingReport ? "TeenOlderReported" : "AllowedAction")))));
+export function teenDoubtClearResult(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthKey: number, minDay: number, maxDay: number, barred: boolean, olderOrLyingReport: boolean): StaffActionResult {
+  return !actorPresent ? "ActorRequired" : (!memberKnown ? "UnknownMember" : (!hasDoubt ? "NoMinorSignal" : (!birthExact || !friendIntroAge_teenPartnerAge(birthKey, minDay, maxDay) ? "AgeUnknown" : (barred ? "TeenBarred" : (olderOrLyingReport ? "TeenOlderReported" : "AllowedAction")))));
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
 //@ pure
-export function lawTeenDoubtClearNeverClearsABar(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, olderOrLyingReport: boolean): boolean {
+export function lawTeenDoubtClearNeverClearsABar(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthKey: number, minDay: number, maxDay: number, olderOrLyingReport: boolean): boolean {
   //@ ensures \result === true
-  return teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, true, olderOrLyingReport) !== "AllowedAction";
+  return teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthKey, minDay, maxDay, true, olderOrLyingReport) !== "AllowedAction";
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
 //@ pure
-export function lawTeenDoubtClearNeverClearsOlderReport(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, barred: boolean): boolean {
+export function lawTeenDoubtClearNeverClearsOlderReport(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthKey: number, minDay: number, maxDay: number, barred: boolean): boolean {
   //@ ensures \result === true
-  return teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, barred, true) !== "AllowedAction";
+  return teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthKey, minDay, maxDay, barred, true) !== "AllowedAction";
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
 //@ pure
-export function lawTeenDoubtClearNeedsExactTeenBirth(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, barred: boolean, olderOrLyingReport: boolean): boolean {
+export function lawTeenDoubtClearNeedsExactTeenBirth(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthKey: number, minDay: number, maxDay: number, barred: boolean, olderOrLyingReport: boolean): boolean {
   //@ ensures \result === true
-  return !(teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, barred, olderOrLyingReport) === "AllowedAction") || (actorPresent && memberKnown && hasDoubt && birthExact && birthTeen && !barred && !olderOrLyingReport);
+  return !(teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthKey, minDay, maxDay, barred, olderOrLyingReport) === "AllowedAction") || (actorPresent && memberKnown && hasDoubt && birthExact && friendIntroAge_teenPartnerAge(birthKey, minDay, maxDay) && !barred && !olderOrLyingReport);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
+//@ pure
+export function lawTeenDoubtClearRefusesAnAdultBirth(barred: boolean): boolean {
+  //@ ensures \result === true
+  return teenDoubtClearResult(true, true, true, true, 19950101, 20261122, 20261122, barred, false) === "AgeUnknown";
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
 //@ pure
 export function personMinorSignalOpen(signalKnown: boolean, signalAt: number, clearedKnown: boolean, clearedAt: number): boolean {
   return signalKnown && (!clearedKnown || signalAt > clearedAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function personMinorSignalEndsEverywhere(everyMembershipCleared: boolean, signalAt: number, earliestClearAt: number): boolean {
+  return everyMembershipCleared && !personMinorSignalOpen(true, signalAt, true, earliestClearAt);
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
@@ -330,19 +345,6 @@ export function lawNoSignalHoldsNobody(signalAt: number, clearedKnown: boolean, 
 
 /** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
 //@ pure
-export function personMinorSignalEndsEverywhere(everyMembershipCleared: boolean, signalAt: number, earliestClearAt: number): boolean {
-  return everyMembershipCleared && !personMinorSignalOpen(true, signalAt, true, earliestClearAt);
-}
-
-/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
-//@ pure
-export function lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: number, earliestClearAt: number): boolean {
-  //@ ensures \result === true
-  return !(earliestClearAt >= signalAt) || personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
-}
-
-/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
-//@ pure
 export function lawAnUnclearedMembershipKeepsThePersonSignal(signalAt: number, earliestClearAt: number): boolean {
   //@ ensures \result === true
   return !personMinorSignalEndsEverywhere(false, signalAt, earliestClearAt);
@@ -353,6 +355,13 @@ export function lawAnUnclearedMembershipKeepsThePersonSignal(signalAt: number, e
 export function lawASignalAfterTheEarliestClearStays(signalAt: number, earliestClearAt: number): boolean {
   //@ ensures \result === true
   return !(signalAt > earliestClearAt) || !personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: number, earliestClearAt: number): boolean {
+  //@ ensures \result === true
+  return !(earliestClearAt >= signalAt) || personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */

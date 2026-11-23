@@ -13,7 +13,6 @@ import { bookedReminderKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
-import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const calendarJourney = "a signed calendar request downloads the current booking with no participant details";
 const expiredBookingNotice = "an original booking notice cannot send or replay once the meeting starts";
@@ -83,7 +82,7 @@ test.skipIf(!pgAvailable).each([
       members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const rt = service.runtimes.get("friends:nyc")!;
-    const world = new Mini(members, { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
+    const world = new Mini(members, { app: "friends", plans: false, growth: false });
     world.clock.set(clock.now());
     const ids = members.map(member => member.id);
     await world.onboard(...ids);

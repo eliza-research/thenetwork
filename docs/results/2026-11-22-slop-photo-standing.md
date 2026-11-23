@@ -1,6 +1,6 @@
 # slop.date: honest private photo standing
 
-Hand-written. Every number is copied from a saved output file. The saved outputs are not in the repository; they are in the run directory `/Users/nubs/tn-work/w1-clef/` (the base run is `/Users/nubs/tn-work/base/sim-slop.txt`). Each table and list names its file.
+Hand-written. Every number is copied from a saved output file. The saved outputs are not in the repository; they are in the run directory `<run dir>/w1-clef/` (the base run is `<run dir>/base/sim-slop.txt`). Each table and list names its file.
 
 ## What changed
 
@@ -62,7 +62,7 @@ The 12-seed bootstrap of the branch gives a 95% interval of 0.886 to 0.979. A 4-
 - `packages/network/test/slop-standing-monitor.integration.test.ts`: 60 rated adults join slop by text on a real ConsentNetwork. 30 dates with large percentile gaps are checked in, 30 introductions with gap 0 get a probe no, and 4 introductions replace a no with an alternate. The monitor must count 34 positive and 30 negative outcomes and turn the standing off, and the report must carry the alert line and no member id or rating. Before the monitor fix it failed with 0 positive outcomes (`test-monitor-old.txt`); after it, it passed (`test-monitor-fix2.txt`). Before the fix, production had no outcomes at all: a check-in record is "completed" or "no_show" with no `acceptedBy`, and a probe no closes as "expired" with no `declinedBy`.
 - `packages/engine/test/slop-standing.integration.test.ts`: the production rater answers through a stand-in at the Workers AI HTTP boundary, and the photo count and spread reach the Date profile. It also checks the percentile, the small pool, the monitor in both directions and the identity topics of the question bank.
 - `packages/network/test/bias-date-window.integration.test.ts`: staff see the monitor's counts and decision on `/bias`, and no member id or rating.
-- `packages/sim/test/slop-relay-templates.integration.test.ts`: every scam and harassment template of the simulator stops on its content alone.
+- The relay block gate "relay: every scam and harassment template of the slop world stops on its content alone" (`scripts/sim/relay.ts`): every scam and harassment template of the simulator stops on its content alone.
 
 ## Decisions made
 

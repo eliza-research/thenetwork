@@ -10,6 +10,7 @@ import { FT, friendsPack, VERIFY_PASS } from "../src/packs/friends/index.ts";
 import { PEON_ENGINE_CONFIG, peonPack } from "../src/packs/peon/index.ts";
 import { emptyOnboarding, extractSlopProfile, slopPack, SLOP_ENGINE_DEFAULTS, slopOnboardTags } from "../src/packs/slop/index.ts";
 import { nextOnboardingPrompt } from "../src/packs/slop/onboard.ts";
+import { datingFactsOf } from "../src/packs/slop/profile.ts";
 import { baseMember, emptyInput, facet } from "../src/testkit.ts";
 import type { EngineInput } from "../src/types.ts";
 import { World } from "../src/world.ts";
@@ -58,6 +59,11 @@ describe("Date mutual openness", () => {
   ] as const)("%s and %s: open %s, both ways", (a, b, expected) => {
     expect(open(a, b)).toBe(expected);
     expect(open(b, a)).toBe(expected);
+  });
+
+  it("reads an unknown gender, trans or openness tag as not stated", () => {
+    expect(datingFactsOf(["romance:is:robot", "romance:seeks:robot", "romance:seeks:man", "romance:trans:maybe", "romance:open_trans:sometimes"]))
+      .toEqual({ is: undefined, seeks: ["man"], trans: undefined, transOpenness: undefined, shownTo: [] });
   });
 
   it("the Date segment never refuses a pair the pair rules admit", () => {

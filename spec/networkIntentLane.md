@@ -1,6 +1,6 @@
 # The Network intent lanes
 
-The Network uses a member's current [standing intent](standingIntent.md) to choose one [relationship lane](matchLane.md). The app shell recognizes an explicit lane tag or the wording of the ask. Adult eligibility, category consent, reciprocal fit and human review still apply before a proposal can reach anyone.
+The Network uses a member's current [standing intent](standingIntent.md) to choose one [relationship lane](matchLane.md). The app shell recognizes an explicit lane tag or the wording of the ask. Age eligibility (`teenFriendAgeRule` of [friend introductions with a minor](friendIntroAge.md) in the Friend lane, adults only in every other lane), category consent, reciprocal fit and the approval of the review judge still apply before a proposal can reach anyone. Changed (owner decisions 2026-11-22, D1 and D2): adult eligibility and human review applied -> the Friend lane admits teen friendship pairs under the age rule, and the review judge approves each proposal, because the owner allowed teen friendship introductions and removed human review.
 
 ## Story: Use my request as the purpose of the introduction
 

@@ -10,6 +10,12 @@ export declare const turnWatchComplianceAfterMs: number;
 export declare const turnWatchReplyAfterMs: number;
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
 export declare const turnWatchWindowMs: number;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare const judgeCannotRunAlertAbove: number;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare const judgeRateMinDecisions: number;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare const judgeRateMarginBp: number;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
 export declare const initial: AlertDispatch;
 /** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
@@ -86,6 +92,16 @@ export declare function lawRecentScanIsQuiet(scanAgeMs: number, uptimeMs: number
 export declare function lawMissedDayAndRetryAlerts(uptimeMs: number): boolean;
 /** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
 export declare function lawNewProcessWaitsForFirstScan(scanAgeMs: number): boolean;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function judgeDownRaises(cannotRun: number): boolean;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function judgeRateRaises(approved: number, held: number, qualified: boolean, qualifiedRateBp: number): boolean;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawFewDecisionsAreQuiet(approved: number, held: number, qualifiedRateBp: number): boolean;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawNoRecordIsQuiet(approved: number, held: number, qualifiedRateBp: number): boolean;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawTenCannotRunIsQuiet(cannotRun: number): boolean;
 /** Do the rules allow this event in this state? @throws {never} */
 export declare function enabled(current: AlertDispatch, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

@@ -12,9 +12,7 @@ Imported from `quint/console_privacy.qnt` at `30d950e`. See [model index](README
 
 Production chooses its view class with [Observatory staff permissions](../staffPermissions.md). This standalone model covers the field-level effects.
 
-Compared again with `vibestack-matching` on 2026-11-18, and on 2026-11-19 (no change in `shape.ts`, `people.ts`, `apps.tsx` or the member keys that `sources/real.ts` writes; `countsMember` still keeps `declined`, `weekly` and `community: "declined"`). Compared again 2026-11-21 (audit COV08): `shape.ts` (`viewClass`, `countsMember`, `countsOpp`, `stripOracle`), `people.ts` (`summary`, `restricted`, `origin`), `apps.tsx` (the reason gate, `canOpenPerson`) and `server.ts` (`recheck` sets `w.cls` again, `PERSON_REASON_MIN` 5, `truthFor`) have not changed; no drift. Open defect: `countsMember` in `packages/observatory/src/shape.ts` drops the age fields, but it keeps `declined` (set by `packages/observatory/src/sources/real.ts` for a member declined at join, that is under 13, with `community: "declined"`) and `weekly` (never set for members aged 13-17). A counts-class caller can read these age facts. `countsGetNoAgeFacts` states the rule; it is not part of `safety`, and `declinedLeaksTest` replays the defect.
-
-Compared again 2026-11-22 after the fix of PRIV-COUNTS: `countsMember` in `packages/observatory/src/shape.ts` now drops `declined`, `weekly`, `calendar` (added later on 2026-11-22) and `community` with the age fields, `memberFieldLevel` puts them in the full class, `countsGetNoAgeFacts` is part of `safety`, and `declinedLeaksTest` checks the fixed field use. `packages/observatory/test/staff.test.ts` ("an analyst's members carry no age band") is the boundary case.
+`countsMember` in `packages/observatory/src/shape.ts` drops `declined`, `weekly`, `calendar` and `community` with the age fields, and `memberFieldLevel` puts them in the full class, so a counts-class caller reads no age fact (`countsGetNoAgeFacts` in `safety`, `declinedLeaksTest`). `packages/observatory/test/staff.test.ts` ("an analyst's members carry no age band") is the boundary case.
 
 ```quint
 // -*- mode: Bluespec; -*-

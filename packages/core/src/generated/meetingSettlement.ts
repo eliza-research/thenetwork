@@ -452,15 +452,15 @@ export function checkInReading(cueRead: boolean, urgentCue: boolean, concernRead
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function checkInSafetyStep(reading: CheckInReading, appFilesEveryCue: boolean, adultPair: boolean, teenPair: boolean): CheckInSafetyStep {
-  return reading === "CheckInFine" ? "CheckInNoStep" : (appFilesEveryCue && reading !== "CheckInConcern" ? "CheckInFileNow" : (!(adultPair || teenPair) ? "CheckInNoStep" : (reading === "CheckInUrgent" ? "CheckInFileNow" : "CheckInAsk")));
+export function checkInSafetyStep(reading: CheckInReading, groupPlan: boolean, adultPair: boolean, teenPair: boolean): CheckInSafetyStep {
+  return reading === "CheckInFine" || groupPlan ? "CheckInNoStep" : (reading === "CheckInUrgent" ? "CheckInFileNow" : (!(adultPair || teenPair) ? "CheckInNoStep" : "CheckInAsk"));
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function lawFineAnswerAsksNothing(appFilesEveryCue: boolean, adultPair: boolean, teenPair: boolean): boolean {
+export function lawFineAnswerAsksNothing(groupPlan: boolean, adultPair: boolean, teenPair: boolean): boolean {
   //@ ensures \result === true
-  return checkInSafetyStep("CheckInFine", appFilesEveryCue, adultPair, teenPair) === "CheckInNoStep";
+  return checkInSafetyStep("CheckInFine", groupPlan, adultPair, teenPair) === "CheckInNoStep";
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
@@ -472,44 +472,51 @@ export function lawNoCueAndNoConcernIsFine(urgentCue: boolean): boolean {
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function lawUrgentCueFilesAtOnceInAnAdultPair(appFilesEveryCue: boolean): boolean {
+export function lawUrgentCueFilesAtOnceOutsideAPlan(adultPair: boolean, teenPair: boolean): boolean {
   //@ ensures \result === true
-  return checkInSafetyStep("CheckInUrgent", appFilesEveryCue, true, false) === "CheckInFileNow";
+  return checkInSafetyStep("CheckInUrgent", false, adultPair, teenPair) === "CheckInFileNow";
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function lawUrgentCueIsNeverAsked(appFilesEveryCue: boolean, adultPair: boolean, teenPair: boolean): boolean {
+export function lawUrgentCueIsNeverAsked(groupPlan: boolean, adultPair: boolean, teenPair: boolean): boolean {
   //@ ensures \result === true
-  return checkInSafetyStep("CheckInUrgent", appFilesEveryCue, adultPair, teenPair) !== "CheckInAsk";
+  return checkInSafetyStep("CheckInUrgent", groupPlan, adultPair, teenPair) !== "CheckInAsk";
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function lawCuesStillFileWhereTheyDid(reading: CheckInReading, adultPair: boolean, teenPair: boolean): boolean {
+export function lawNonUrgentCueAsksInAPair(adultPair: boolean, teenPair: boolean): boolean {
   //@ ensures \result === true
-  return !(reading === "CheckInCue" || reading === "CheckInUrgent") || checkInSafetyStep(reading, true, adultPair, teenPair) === "CheckInFileNow";
+  return !(adultPair || teenPair) || checkInSafetyStep("CheckInCue", false, adultPair, teenPair) === "CheckInAsk";
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function lawQuestionNeedsAnAdultPair(reading: CheckInReading, appFilesEveryCue: boolean): boolean {
+export function lawQuestionNeedsAPair(reading: CheckInReading, groupPlan: boolean): boolean {
   //@ ensures \result === true
-  return checkInSafetyStep(reading, appFilesEveryCue, false, false) !== "CheckInAsk";
+  return checkInSafetyStep(reading, groupPlan, false, false) !== "CheckInAsk";
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function lawConcernAsksInAnAdultPair(appFilesEveryCue: boolean): boolean {
+export function lawGroupPlanGetsNoStep(reading: CheckInReading, adultPair: boolean, teenPair: boolean): boolean {
   //@ ensures \result === true
-  return checkInSafetyStep("CheckInConcern", appFilesEveryCue, true, false) === "CheckInAsk";
+  return checkInSafetyStep(reading, true, adultPair, teenPair) === "CheckInNoStep";
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
 //@ pure
-export function lawTeenPairGetsTheAdultPairStep(reading: CheckInReading, appFilesEveryCue: boolean): boolean {
+export function lawConcernAsksInAPair(teenPair: boolean): boolean {
   //@ ensures \result === true
-  return checkInSafetyStep(reading, appFilesEveryCue, false, true) === checkInSafetyStep(reading, appFilesEveryCue, true, false);
+  return checkInSafetyStep("CheckInConcern", false, true, teenPair) === "CheckInAsk" && checkInSafetyStep("CheckInConcern", false, teenPair, true) === "CheckInAsk";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawTeenPairGetsTheAdultPairStep(reading: CheckInReading): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep(reading, false, false, true) === checkInSafetyStep(reading, false, true, false);
 }
 
 /** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */

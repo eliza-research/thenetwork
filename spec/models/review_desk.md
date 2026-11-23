@@ -2,29 +2,28 @@
 
 ## Story: Staff review desk
 
-A reviewer needs each decision to apply to the selected opportunity and its drafts before the deadline.
+Staff need each decision on an item that the judge held to apply to that item and its drafts before the deadline.
 
 ### Safety rules and reachability
 
-Check selection, repeat actions, deadline, direction, and draft ownership. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
+Check selection, repeat actions, deadline, direction, draft ownership, the judge's approval and the teen stop. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Imported from `quint/review_desk.qnt` at `30d950e`. Compared with `vibestack-matching` on 2026-11-18 and rewritten around the generated controller. See [model index](README.md) for scope and commands.
+Imported from `quint/review_desk.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
-The browser calls the [staff review controller](../staffReview.md) for selected card, mode, draft scope, and response ownership. The pure defs in this model have the names of that spec. The standalone model also explores server races and the matching switch.
+The browser calls the [staff review controller](../staffReview.md) for selected card, mode, draft scope, and response ownership. The pure defs in this model have the names of that spec. The model also has the server decisions (`ConsentNetwork.decide`, `reviewBlock`, `stopApproved`, the teen stop) and the matching switch as an environment.
 
-Compared again 2026-11-19: `review.tsx`, `store.ts` and `admin.tsx` have not changed since the 2026-11-18 comparison; the server side (`ConsentNetwork.decide`, `reviewBlock`, `POST /review/:oppId` with its required revision) still agrees with `serverApply`. The only new code is the launch scope of the matching switch, which this model leaves out (see OUTSIDE THE MODEL).
+The [automated review](../automatedReview.md) decides every item on the server. An arrived item waits for the review judge (`AwaitingJudge`). The judge approves it (`judgeApprove`, approver `judge`; a roster with a minor is read with the strict rubric, `teenRosterIsJudgedStrictly`), holds it for staff (`judgeHold`: a flag, an unsure reply or a judge that cannot run), gives no judgment in time (`judgeOverdue`: the network tick holds it while matching is on), or answers for an old revision (`judgeStale`: nothing changes). A judge approval whose gates fail closes the item (`invalidated`). The page queue shows only held items (`HeldForStaff`). Staff approve, edit or re-roll only a held item (`not_held_for_staff` otherwise) and reject any open item; a re-roll puts the new revision back to the judge. Every staff approve, edit or re-roll needs a named staff member: no reviewer is refused (`reviewer_required`), and the judge's own name, `JUDGE_REVIEWER`, is refused (`reviewer_reserved`). Staff stop an approved item before its reveal (`stopApproved`); a stop refuses only a missing reviewer (`reviewer_required`), as `ConsentNetwork.stopApproved` and the automated review spec do. `heldItemNeedsStaff` states that a held revision is approved only by staff and that staff approve only a held revision; `noContactWithoutApprover` states that a probe goes out only after an approval that names its approver and was not stopped. Changed (owner decisions D15 to D17 of 2026-11-22): the judge replaces the staff reviewer, and staff decide only the items that it holds.
 
-Compared again 2026-11-21 (audit COV08): `review.tsx` (`ReviewQueue`, `onKey`, `approveBlock`, `act`, `ReviewActions`), `store.ts` (`decide`, `canAct`, `canReview`), `admin.tsx` (`Config`) and the generated `staffReview` controller have not changed since 2026-11-19. On the server, `POST /review/:oppId` (`service.ts`, role reviewer, a required integer revision) and `ConsentNetwork.decide` and `reviewBlock` (`network.ts`) still agree with `serverApply`: the deadline first (`review_expired`, and the item expires), then `review_stale` for another revision, then `reviewBlock` (a minor, declined or unknown participant, or matching paused, refuses approve and edit). Three server refusals are outside the model and do not change its traces: `note_required` (the page asks for the note first, `requireReviewNote`), and `staff_review_required` and `gathering_repeat_fixed_pair` for a monthly gathering repeat, which this model's queue does not hold. The key handler uses `store.canReview()` (reviewer role) and `approveBlock` uses `store.canAct()`; the model has one constant `CAN_ACT` for both. The key-repeat defect below is still in the code (`onKey` reads no `e.repeat`).
+The server approves a roster with a minor only while teen introductions are not stopped and only when the roster passes `teenFriendAgeRule` of [friend introductions with a minor](../friendIntroAge.md) (here an oracle set of allowed teen pairs; the rule itself is in the [opportunity](opportunity.md) and [candidate pool](candidate_pool.md) models). Readiness is derived: a person with an exact birth date and no doubt is teen ready (`teenReadyOf`); this model has no doubt, and the [opportunity](opportunity.md) and [oauth_mcp](oauth_mcp.md) models cover a readiness loss. The [teen introduction stop](../teenIntroSwitch.md) is the state `teenStopped`, false at the start. One `admin` or `safety` staff member stops teen introductions (`teenStop`) and one `admin` turns them on again (`teenResume`); each step writes an audit row. The stop expires every item with a minor that is in review and closes every approved item with a minor that is not revealed (`teenSwitchOffNoMinor`). This model has one network and pairs only; the [opportunity](opportunity.md) model has the groups that close as a whole. Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start with one staff stop, because the owner chose "On at launch, no extra checks".
 
-Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`ReviewQueue`, `onKey`) does not ignore key-repeat events. A held `a` approves the selected card. When the accepted answer moves the selection, the next repeat event approves the next card. `repeatNeverDecides` states the rule.
+The convention of [staff_console](staff_console.md) applies: the intended action is in `step` and `safety` checks it; a `*Code` action outside `step` follows the code where it differs.
 
-Changed (owner decision 2026-11-22, D15 to D17): human review is removed. The [automated review](../automatedReview.md) decides every item on the server. An arrived item waits for the review judge (`AwaitingJudge`). The judge approves it (`judgeApprove`, approver `judge`; a roster with a minor is read with the strict rubric, `teenRosterIsJudgedStrictly`), or holds it for staff (`judgeHold`: a flag, an unsure reply or a judge that cannot run), or gives no judgment in time (`judgeOverdue`, the network tick holds it while matching is on), or answers for an old revision (`judgeStale`, nothing changes). A judge approval whose gates fail closes the item (`invalidated`). The page queue shows only held items (`HeldForStaff`). Staff approve, edit or re-roll only a held item; an approve of any other item is refused (`not_held_for_staff`); staff reject any open item. A re-roll puts the new revision back to the judge. A staff member stops an approved item before its reveal (`stopApproved`); the code refuses only a stop with no reviewer (`reviewer_required`), so the model guard is `who != NO_REVIEWER` (changed 2026-11-23 after review: the earlier guard `STAFF.contains(who)` was stricter than `ConsentNetwork.stopApproved` and was drift). The approve needs a named staff member (`reviewer_required` for none, `reviewer_reserved` for the judge's own name, `JUDGE_REVIEWER`). `teenReviewerNamed`, `teenApprovalNamesAPerson` and the simulated reviewer (`AUTO_REVIEWER`) are deleted. New invariants: `heldItemNeedsStaff` (an item held at a revision is approved at that revision only by staff, and staff approve only a held revision) and `noContactWithoutApprover` (a probe goes out only after an approval that names its approver and was not stopped).
+Known drift:
 
-Changed 2026-11-22 (audit STAFF-models-convention): this model now uses the convention of [staff_console](staff_console.md). Before, the code action was in `step` and the rule was outside `safety`, so `safety` did not check the intended design. The intended `keyPress` in `step` ignores a repeat event, and `repeatNeverDecides` is in `safety`. `keyPressCode` (one `keyPressBy(code, ...)` body) follows the code and is outside `step`: `heldKeyDecidesTest` shows the rule fail after it, and `heldKeyIgnoredTest` shows the intended handler. The fix is a web change (frontend agent).
+- REVIEW-KEYREPEAT (web): `onKey` in `ReviewQueue` (`packages/observatory/web/review.tsx`) does not ignore key-repeat events, so a held `a` approves the next card when the answer moves the selection. The intended `keyPress` in `step` ignores a repeat event, and `repeatNeverDecides` is in `safety`. `keyPressCode` follows the code: `heldKeyDecidesTest` shows the rule fail, and `heldKeyIgnoredTest` shows the intended handler.
+- REVIEW-TEENPAGE (web): `approveBlock` in `review.tsx` blocks every known minor, so the page never sends an approve for a held teen item; staff approve it through the server route (`otherReviewerOf`). The page must show the `teen` review details and let staff approve.
 
-Changed (owner decision 2026-11-22): the server side has the teen friendship rules of [friend introductions with a minor](../friendIntroAge.md) and [the teen introduction stop](../teenIntroSwitch.md). The server approves an item with a minor only while teen introductions are not stopped and only when the roster passes `teenFriendAgeRule` (here an oracle set of allowed teen pairs; the rule itself is in the [opportunity](opportunity.md) and [candidate pool](candidate_pool.md) models). `teenSwitchOffNoMinor` is the earlier rule for the stopped case. Open web drift (another session owns the page): `approveBlock` in `review.tsx` still blocks every known minor, so the desk page never sends an approve for a teen item; a reviewer approves it through the server route (`otherReviewerOf`). The page must show the `teen` review details and let a reviewer approve.
-
-Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start. The stored stop (`teenStop`, [teen introduction stop](../teenIntroSwitch.md) `teenIntrosStoredOn`) is the state `teenStopped`, false at the start. One `admin` or `safety` staff member stops them (`teenStop`), and one `admin` turns them on again (`teenResume`); each step writes an audit row. A stop expires every item in review with a minor. The two-admin step, its decision reference and window, the staff confirm step and the safety-role approval are deleted, because the owner chose "On at launch, no extra checks". Readiness is derived: a person with an exact birth date and no doubt is teen ready (`teenReadyOf`); this model has no doubt, and the [opportunity](opportunity.md) and [oauth_mcp](oauth_mcp.md) models cover a readiness loss. This model has one network and pairs only; one stop call acts on every network that offers teen introductions, and the [opportunity](opportunity.md) model has the groups that close as a whole.
+Outside the model: the server refusals `note_required` (the page asks for the note first, `requireReviewNote`) and `gathering_repeat_fixed_pair` (a monthly gathering repeat, which this queue does not hold), and the launch scope of the matching switch.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -80,10 +79,10 @@ Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on
 //   - Errors and toasts, the score disclosure, the app and sign-in scope of a response, popovers.
 //   - The registry gate of the matching switch (spec/runtimeUnit.md, setMatching refuses "on" when the registry
 //     row does not allow matching). This model's network is allowed; staff_console models the refusal.
-//   - The approval re-check after approve (approvalCheck, review_invalidated) and edit leak checks
+//   - The approval re-check after a staff approve (approvalCheck, review_invalidated) and edit leak checks
 //     (editBlock). The model keeps decision "approve" with the version it was approved at.
 //   - The server refusals note_required (the page asks for the note first) and gathering_repeat_fixed_pair
-//     (monthly gathering repeats, not in this queue). Compared 2026-11-21.
+//     (monthly gathering repeats, not in this queue).
 //   - The judge packet, its hash, the call limits and the claim of the judge worker (spec/automatedReview.md
 //     proves judgeCallDecision and judgeClaimDecision). Here a judgment is one atomic step.
 module review_desk {
@@ -100,7 +99,6 @@ module review_desk {
   // (reviewer_required); JUDGE_REVIEWER: the judge's own reviewer name (reviewer_reserved). Neither is staff.
   pure val STAFF = Set(1, 2, 3, 4)
   pure val SAFETY = Set(1, 3)
-  pure val PAGE_STAFF = 4
   pure val NO_REVIEWER = 0
   pure val JUDGE_REVIEWER = 9
   pure val REVIEWERS = STAFF.union(Set(NO_REVIEWER, JUDGE_REVIEWER))
@@ -361,7 +359,8 @@ module review_desk {
     any { probeOf(id), revealOf(id) }
   }
 
-  // Staff stop an approved item before its reveal (stopApproved, canStopApproved).
+  // Staff stop an approved item before its reveal (stopApproved, canStopApproved). A stop with no reviewer
+  // is refused (reviewer_required); a stop only makes contact less likely, so no other name is refused.
   action stopApprovedOf(id: int, who: int): bool = all {
     who != NO_REVIEWER,
     s.srv.get(id).decision == "approve", s.srv.get(id).approver != "none", not(s.srv.get(id).revealed),
@@ -621,8 +620,9 @@ module review_desk {
 
   // ---------------------------------------------------------------- the teen stop (server, POST /teen-intros)
   // spec/teenIntroSwitch.md: teen introductions are on from the start. One admin or safety staff member stops
-  // them: every open item with a minor (awaiting the judge or held) expires unsent. One admin turns them on
-  // again (the key is deleted).
+  // them: every item with a minor in review (awaiting the judge or held) expires unsent, and every approved item
+  // with a minor that is not revealed closes (teenSweep, teen_intros_off). After the reveal the model has no
+  // further step. One admin turns them on again (the key is deleted).
   // Each step writes one audit row. Abstraction: the model takes a stop only while on and a resume only while
   // stopped, so that the audit list stays short.
   action teenStop(a: int): bool = all {
@@ -630,6 +630,8 @@ module review_desk {
     s' = { ...s, teenStopped: true, teenAudit: s.teenAudit.append({ by: a, on: false }),
            srv: ITEMS.mapBy(i => if (reviewOpen(s.srv.get(i)) and hasMinor(s.srv.get(i).parts))
                                    { ...s.srv.get(i), phase: "Decided", decision: "expired" }
+                                 else if (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts) and not(s.srv.get(i).revealed))
+                                   { ...s.srv.get(i), phase: "Stopped", decision: "stopped" }
                                  else s.srv.get(i)) },
   }
   action teenResume(a: int): bool = all {
@@ -699,11 +701,13 @@ module review_desk {
   val teenFriendAgeRule = ITEMS.forall(i => (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)) implies
     (s.srv.get(i).teenOnAtApproval and TEEN_PAIRS.contains(s.srv.get(i).parts)
       and s.srv.get(i).parts.foldl(true, (b, p) => b and teenReadyOf(p))))
-  // While teen introductions are stopped no item with a minor is approved, and no item with a minor is in review:
-  // the stop expires each one, and the proposal path and the re-roll add none while they are stopped.
+  // While teen introductions are stopped no item with a minor is approved, no item with a minor is in review, and
+  // no approved item with a minor waits for its reveal: the stop closes each one, and the proposal path and the
+  // re-roll add none while they are stopped.
   val teenSwitchOffNoMinor = and {
     ITEMS.forall(i => (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)) implies s.srv.get(i).teenOnAtApproval),
     s.teenStopped implies ITEMS.forall(i => not(reviewOpen(s.srv.get(i)) and hasMinor(s.srv.get(i).parts))),
+    s.teenStopped implies ITEMS.forall(i => not(s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts) and not(s.srv.get(i).revealed))),
   }
   // spec/teenIntroSwitch.md lawTeenRosterIsJudgedStrictly: the judge reads a roster with a minor with the strict rubric.
   val teenRosterIsJudgedStrictly = ITEMS.forall(i =>
@@ -902,6 +906,12 @@ module review_desk {
   run stopNoReviewerTest = initWith(true)
     .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1))
     .then(stopApprovedOf(1, NO_REVIEWER)).fail()
+  // The stop closes an approved teen item after its first probe: no reveal follows.
+  run teenStopClosesApprovedTest = teenOnItem
+    .then(judgeApproveOf(1)).then(probeOf(1)).then(teenStop(3))
+    .then(all { assert(s.srv.get(1).decision == "stopped" and safety), s' = s })
+  run teenStopNoRevealTest = teenOnItem
+    .then(judgeApproveOf(1)).then(probeOf(1)).then(teenStop(3)).then(revealOf(1)).fail()
   // While teen introductions are stopped, a teen pair does not enter review.
   run teenStoppedTest = initWith(true).then(teenStop(3)).then(arriveItem(1, 4, [5, 6])).fail()
   // A reviewer without the admin or safety role cannot stop; a safety staff member cannot resume.

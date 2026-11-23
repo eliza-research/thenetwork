@@ -21,6 +21,7 @@ function restoredTextStatus(status: string): RestoredTextStatus {
   return "SettledText";
 }
 
+// spec/databaseRestore.md, "A restored text that is not settled takes the source's outcome, or ends"
 async function settleRestoredTexts(tx: SQL, src: SQL | undefined, at: Date): Promise<RestoredTextsResult> {
   const unsettled = await tx`select id, status from platform.outbound where status = any(${UNSETTLED}::text[]) order by id` as { id: string; status: string }[];
   const ids = unsettled.map(r => r.id);
@@ -61,10 +62,11 @@ async function copyMissing(source: SQL, target: SQL, table: "consent_events" | "
   const have = new Set((await target.unsafe(`select ${key}::text as k from platform.${table}`) as { k: string }[]).map(r => r.k));
   const rows = (await source.unsafe(`select to_jsonb(t) as row from platform.${table} t order by ${key}`) as { row: Row }[])
     .map(r => r.row).filter(row => replaysSourceRow(have.has(String(row[key])))).map(adjust).filter(keep);
-  if (rows.length) await target.unsafe(`insert into platform.${table} select * from jsonb_populate_recordset(null::platform.${table}, $1::jsonb)`, [rows as never]);
+  if (rows.length) await target.unsafe(`insert into platform.${table} select * from jsonb_populate_recordset(null::platform.${table}, $1::jsonb)`, [JSON.stringify(rows)]);
   return rows;
 }
 
+// spec/databaseRestore.md, "A source row that the restored database lacks is replayed"; spec/databaseRestore.md, "An erasure after the backup is replayed"; spec/databaseRestore.md, "A leave after the backup is replayed"; spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers"
 export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; queuedAt: Date }): Promise<PrivacyReplayResult> {
   const source = new SQL({ url: o.sourceUrl, max: 1, connection: { application_name: "network-restore-replay" } });
   const target = new SQL({ url: o.targetUrl, max: 1, connection: { application_name: "network-restore-replay" } });
@@ -108,7 +110,7 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
 
         const stop: MembershipRow[] = [];
         for (const e164 of new Set(consent.filter(e => e.state === "opted_out").map(e => String(e.e164)))) {
-          const scopes = new Set(consent.filter(e => e.state === "opted_out" && e.e164 === e164).map(e => (e.app_id ?? null) as string | null));
+          const scopes = new Set(consent.filter(e => e.state === "opted_out" && e.e164 === e164).map(e => typeof e.app_id === "string" ? e.app_id : null));
           const members = await tx<MembershipRow[]>`select m.person_id::text, m.app_id, m.member_id, m.state from platform.phone_identities p
             join platform.people person on person.id = p.person_id and person.deleted_at is null
             join platform.memberships m on m.person_id = p.person_id where p.e164 = ${e164} order by m.app_id`;

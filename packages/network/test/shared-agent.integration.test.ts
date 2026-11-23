@@ -44,7 +44,7 @@ const start = async (routePolicy?: Record<string, unknown>, collectedQueue = fal
       a.direct = async () => { escaped++; return "dry_run"; };
       a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({ id: r.id, status: "dry_run" })); };
       return a;
-    },log:(l:string)=>{if(process.env.DEBUG_LOG)console.log(l);},
+    },log:()=>{},
   });
   await service.start();
   server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>new URL(req.url).pathname.startsWith("/api/")?service.publicFetch(req):service.fetch(req)});
@@ -448,7 +448,6 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   expect(await service.accounts.optedIn("slop",phone)).toBe(false);
   const rows=await sql`select status,inbound_id from network.messages where app_id='slop' and inbound_id='msg:blooio:member-stop'`;
   expect(rows.length).toBe(1);expect(rows[0].status).toBe("collected");
-  // A dry-run backend keeps the collected confirmation as thread history only: "collected" is never a status the queue drains.
   expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status:"collected",line:"dry-run"}]);
   const ack:TurnReceiptRequest={channel:input.channel,messageId:input.messageId,replyIds:body.replyIds,outcome:"unknown",providerMessageIds:[],historyRecorded:false};
   expect((await receipt({...ack,replyIds:["unrelated-output"]})).status).toBe(409);
@@ -484,9 +483,6 @@ const joinFriendsByText = async (phone: string, prefix: string) => {
   return {join, joined};
 };
 
-// spec/signedInbox.md, "A stored ordinary reply goes out only while the number stays admitted"
-// spec/signedInbox.md, "A replayed open turn answers with the current context"
-// spec/signedInbox.md, "Every collected reply passes the line's leak guard"
 test("a signed replay answers with current consent and context, and dry-run collected replies join the thread history", async () => {
   const phone = "+12125550174", before = escaped;
   const {join, joined} = await joinFriendsByText(phone, "replay");
@@ -511,7 +507,6 @@ test("a signed replay answers with current consent and context, and dry-run coll
   expect(escaped).toBe(before);
 }, 60_000);
 
-// spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
 test("a member with more than fifty shareable facts gets the newest fifty in the open context", async () => {
   const phone = "+12125550175";
   const {joined} = await joinFriendsByText(phone, "facets");
@@ -530,13 +525,10 @@ test("a member with more than fifty shareable facts gets the newest fifty in the
   expect(open.context.facets.every((fact: string) => fact.length <= 300)).toBe(true);
 }, 60_000);
 
-// spec/sharedContext.md, "A member whose context is unavailable still gets an answer"
-// spec/signedInbox.md, "Every collected reply passes the line's leak guard"
 test("a member whose context is withheld gets the fixed handled reply, never silence", async () => {
   const phone = "+12125550177", before = escaped;
   const {joined} = await joinFriendsByText(phone, "withheld");
   const member = joined.memberId as string;
-  // A first name that fails the output check withholds the whole context (spec/sharedContext.md).
   await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
   const answer = await post(turn("withheld-open", phone, "Tell me something about the weather", "friends"));
   expect(answer.status).toBe(200);
@@ -584,7 +576,6 @@ test("an admitted number whose membership no longer binds gets the fixed reply, 
   expect(escaped).toBe(before);
 }, 60_000);
 
-// spec/baseProfileShare.md, "UNSHARE revokes every live grant to or from this app"
 test("UNSHARE takes a SHARE back, so a later grant read copies nothing", async () => {
   const phone = "+12125550193", before = escaped;
   const slopCopy = copyFor(brandOf(APPS.slop));
@@ -621,7 +612,6 @@ test("UNSHARE takes a SHARE back, so a later grant read copies nothing", async (
   expect(escaped).toBe(before);
 }, 60_000);
 
-// spec/textEnrollment.md, "An active membership gets its welcome and at most one follow-up"
 test("a no-keyword join answers with the welcome and the looking-for question in the same handled turn", async () => {
   const phone = "+12125550176", before = escaped;
   expect((await post(turn("network-join-start", phone, "hey there"))).status).toBe(200);

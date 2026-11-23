@@ -18,7 +18,7 @@ If the person asked you to read this file and follow it, they want to join. Star
 
 peon.biz introduces people looking for work to teams that are hiring, by text message. It is
 open to join today. Introductions have not started yet. Software only suggests possible fits.
-A person on the team reviews every introduction, and the team that hires makes every hiring decision. Candidates never pay a fee.
+Every introduction is checked automatically before anyone is contacted, and the team that hires makes every hiring decision. Candidates never pay a fee.
 
 peon.biz's text line is +18087881821. Its MCP server is at https://peon.biz/mcp.
 
@@ -89,8 +89,9 @@ You help the person sign themselves up, in this conversation:
    when it still says peon and `onboarding` or `active`. Otherwise say the save is unconfirmed.
    To show what peon.biz is looking for for the person, call `list_looking_for`. Sending a profile
    only adds; leaving something out never removes it. If the person asks to pause one thing, call
-   `pause_looking_for` with its ref; to close it for good they reply CLOSE to the text they get. Never
-   pause or resume anything the person did not ask about.
+   `pause_looking_for` with its ref; to turn a paused thing back on, call `resume_looking_for` with its
+   ref; to close it for good they reply CLOSE to the text they get. Never pause or resume anything the
+   person did not ask about.
 4. No agent at hand: the person can text "peon" or "peon.biz" as their first message to +18087881821
    and answer the agent there.
 

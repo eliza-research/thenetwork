@@ -229,7 +229,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   }, T);
 
   // spec/standingIntent.md, "Changed matching evidence starts another standing intent search"
-  test("a new eligible member rechecks standing intents on the same day and queues human review", async () => {
+  test("a new eligible member rechecks standing intents on the same day and queues the proposal for the review judge", async () => {
     await reset();
     await sql`update network.members set account_status = 'invited' where id <> 'a'`;
     const clock = new SimClock(START);
@@ -390,8 +390,8 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const clock = new SimClock(START);
     const delivered: SendRequest[] = [];
     const s = service(clock, "public-events", {
-      adapter: (net, runtime) => new BlooioAdapter({
-        net, memberOf: runtime.memberOf, from: "+12125550190", clock, env: {}, log: () => {},
+      adapter: () => new BlooioAdapter({
+        from: "+12125550190", clock, env: {}, log: () => {},
         provider: { kind: "sim", send: async request => {
           delivered.push(request);
           return { providerMessageId: `public-event-${delivered.length}`, status: "queued" };
@@ -709,13 +709,13 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await y.tick()).toBe(true);
   }, T);
 
-  test("Blooio adapter: with no live flag set the provider gets the message through the queue (owner decision 2026-11-22)", async () => {
-    const run = async (env: Record<string, string | undefined>, more?: (s: NetworkService, clock: SimClock) => Promise<void>) => {
+  test("the Blooio adapter sends through the queue", async () => {
+    const run = async (more?: (s: NetworkService, clock: SimClock) => Promise<void>) => {
       await reset();
       const clock = new SimClock(START);
       const sent: SendRequest[] = [];
       const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-      const s = service(clock, "blooio", { adapter: (net, svc) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: svc.memberOf, env, log: () => {} }) });
+      const s = service(clock, "blooio", { adapter: () => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, log: () => {} }) });
       await s.start();
       await say(s, clock, "a", "hi!");
       await more?.(s, clock);
@@ -723,15 +723,13 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
       await s.close();
       return result;
     };
-    for (const env of [{}, { BLOOIO_ALLOW_SEND: "0", NTWRK_LIVE_APPROVED: "0" }]) {
-      const live = await run(env);
-      expect(live.sent.length).toBe(1);
-      expect(live.sent[0]).toMatchObject({ to: phone("a"), text: live.rows[0].body, idempotencyKey: `tn:${live.rows[0].id}` });
-      expect(live.rows[0].status).toBe("accepted");
-      expect(live.health.refusals.channel).toEqual({});
-    }
+    const live = await run();
+    expect(live.sent.length).toBe(1);
+    expect(live.sent[0]).toMatchObject({ to: phone("a"), text: live.rows[0].body, idempotencyKey: `tn:${live.rows[0].id}` });
+    expect(live.rows[0].status).toBe("accepted");
+    expect(live.health.refusals.channel).toEqual({});
     // An under-13 decline: the one kind decline reaches the provider; nothing about the member is stored.
-    const declined = await run({}, async (s, clock) => { await say(s, clock, "u", "hi"); await say(s, clock, "u", "I am 12 years old"); });
+    const declined = await run(async (s, clock) => { await say(s, clock, "u", "hi"); await say(s, clock, "u", "I am 12 years old"); });
     expect(declined.sent.filter(r => r.to === phone("u")).length).toBe(2);
     expect((await outbound("u")).length).toBe(0);
   }, T);

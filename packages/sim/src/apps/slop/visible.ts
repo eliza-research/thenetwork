@@ -4,7 +4,8 @@ import { canBeMatched, type Facet, type MemberId } from "@thenetwork/core";
 import { distanceBucket, zipInfo, zipMiles, CITY_ANCHOR_ZIP, type DistanceBucket, type SlopCity } from "./geo.ts";
 import { SLOTS, TASTE_DIMS, type DateActivity, type Dealbreaker, type Goal, type LocationScope, type MatchGender, type Slot } from "./persona.ts";
 import type { SlopSnapshot } from "./snapshot.ts";
-import { mutuallyOpen, type DatingStatement, type StatedGender, type TransOpenness } from "../../../../core/src/generated/mutualOpenness.ts";
+import { mutuallyOpen, type DatingStatement } from "../../../../core/src/generated/mutualOpenness.ts";
+import { datingFactsOf, datingStatementOf } from "@thenetwork/engine/src/packs/slop/profile.ts";
 
 export interface VisibleProfile {
   id: MemberId; name: string; age: number; matchable: boolean; paused: boolean;
@@ -25,17 +26,6 @@ export interface VisibleProfile {
 export const UNKNOWN_DEFAULTS = { ageSpread: 7, maxMiles: 25 };
 
 const num = (t: string) => Number(t.slice(t.indexOf("=") + 1));
-
-const STATED_GENDER: Readonly<Record<string, StatedGender>> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
-const OPENNESS: Readonly<Record<string, TransOpenness>> = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans" };
-function datingFromTags(is: string | undefined, seeks: string[], trans: string | undefined, open: string | undefined, shownTo: string[]): DatingStatement {
-  return {
-    gender: STATED_GENDER[is ?? ""] ?? "GenderUnstated", trans: trans === "yes" ? "StatedTrans" : trans === "no" ? "StatedNotTrans" : "TransNotStated",
-    seeksWomen: seeks.includes("woman"), seeksMen: seeks.includes("man"), seeksNonbinary: seeks.includes("nonbinary"),
-    shownToWomenSeekers: shownTo.includes("woman"), shownToMenSeekers: shownTo.includes("man"),
-    transOpenness: OPENNESS[open ?? ""] ?? "TransUnanswered",
-  };
-}
 
 export function visibleProfiles(s: SlopSnapshot): Map<MemberId, VisibleProfile> {
   const byMember = new Map<MemberId, Facet[]>();
@@ -61,7 +51,7 @@ export function visibleProfiles(s: SlopSnapshot): Map<MemberId, VisibleProfile> 
       id: m.id, name: m.name, age: m.age, matchable: canBeMatched(m.age) && m.prefs.romanceOptIn, paused: m.state === "paused",
       homeZip: zip, homeCity: (zipInfo.get(zip)?.city ?? m.homeCity) as SlopCity,
       matchGender: has("romance:is:")[0] as MatchGender | undefined, seeks: has("romance:seeks:") as MatchGender[],
-      dating: datingFromTags(has("romance:is:")[0], has("romance:seeks:"), has("romance:trans:")[0], has("romance:open_trans:")[0], has("romance:shown_to:")),
+      dating: datingStatementOf(datingFactsOf(tags.map(x => x.t))),
       ageRange: age ? (age.split("-").map(Number) as [number, number]) : undefined,
       scope, maxMiles: has("slop:max_miles:")[0] ? Number(has("slop:max_miles:")[0]) : undefined,
       goal: has("slop:goal:")[0] as Goal | undefined, values,

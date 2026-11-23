@@ -18,6 +18,7 @@ import { Rng, hash32 } from "@thenetwork/core";
 import { signature } from "./coins.ts";
 import { Scheduler, type RunMode } from "./scheduler.ts";
 import { buildSnapshot, quietHoursOf } from "./snapshot.ts";
+import { giveStatedBirthDates } from "./generator.ts";
 import { nextLocalHour } from "./time.ts";
 import { planEnjoyment, type PlanAgentOptions } from "./plans.ts";
 
@@ -36,7 +37,7 @@ export interface WorldOptions {
   personas: Persona[];
   days: number;
   network: NetworkUnderTest;
-  app?: AppId;
+  app: AppId;
   /** Optional matching engine; called nightly per city, proposals handed to network.submitProposal. */
   engine?: Engine;
   agent?: PersonaAgent;
@@ -130,6 +131,7 @@ export class World {
 
   constructor(private opts: WorldOptions) {
     this.start = opts.start ?? DEFAULT_START;
+    giveStatedBirthDates(opts.personas, opts.seed, this.start);
     this.clock = new SimClock(this.start);
     this.channel = new SimChannel(this.clock, { seed: opts.seed, failureRate: opts.failureRate });
     this.personas = new Map(opts.personas.map(p => [p.id, p]));
@@ -297,6 +299,7 @@ export class World {
   /** Add a persona mid-run (growth); they join at `joinAt` (sim ms). */
   spawn(p: Persona, joinAt: number) {
     if (this.personas.has(p.id)) return;
+    giveStatedBirthDates([p], this.opts.seed, this.start);
     this.personas.set(p.id, p);
     this.memories.set(p.id, newMemory());
     this.oracle.addPersona(p);
@@ -357,7 +360,7 @@ export class World {
     s.on<{ day: number }>("day", ev => { this.opts.onDay?.(ev.data.day); });
 
     this.rec({ type: "run_start", runId: this.runId, seed: this.opts.seed, start: this.start, config: {
-      days, personas: this.opts.personas.length, network: network.name, app: this.opts.app ?? null, engine: this.opts.engine?.name ?? null,
+      days, personas: this.opts.personas.length, network: network.name, app: this.opts.app, engine: this.opts.engine?.name ?? null,
       agent: this.agent.mode, mode: this.opts.mode ?? "discrete", tickMinutes: this.opts.tickMinutes ?? 60,
     } });
     for (const p of this.opts.personas) {

@@ -88,7 +88,6 @@ describe("config", () => {
 
   // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
   test("a deployed backend refuses to start without the signup connector, the shared line or the staff API (audit OPS29, PER33)", () => {
-    // Each of these booted green before: /mcp answered 404, /internal/turn 503 no_secret, every staff route 401.
     for (const k of ["TURNSTILE_SITE_KEY", "NETWORK_SERVICE_TOKENS", "SERVICE_TURN_SECRET", "NETWORK_PUBLIC_EVENTS_DATABASE_URL"]) {
       expect(() => loadConfig({ ...DEPLOYED, [k]: undefined }), k).toThrow(k);
       expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", [k]: undefined }), k).toThrow(k);
@@ -96,9 +95,7 @@ describe("config", () => {
     expect(() => loadConfig({ ...DEPLOYED, TURNSTILE_SITE_KEY: "  " })).toThrow("TURNSTILE_SITE_KEY");
     expect(() => loadConfig({ ...DEPLOYED, SERVICE_TURN_SECRET: "t".repeat(31) })).toThrow(/SERVICE_TURN_SECRET of at least 32/);
     expect(() => loadConfig({ ...DEPLOYED, NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)},reviewer@slop:short-token` })).toThrow(/every NETWORK_SERVICE_TOKENS token/);
-    // Production entries name their app (the service's own rule, checked before the service starts).
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", NETWORK_SERVICE_TOKENS: `admin:${"a".repeat(40)}` })).toThrow(/names no app/);
-    // Dev keeps its shortcuts: none of these is required there.
     const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" });
     expect(dev.warnings.join(" ")).toMatch(/NETWORK_SERVICE_TOKENS is not set/);
   });
@@ -150,19 +147,11 @@ describe("config", () => {
   });
 
   // spec/bootPolicy.md, "A deployed backend keeps photos in private storage"
-  test("a deployed backend needs private photo storage, and the four photo relay variables no longer exist", () => {
+  test("a deployed backend needs private photo storage", () => {
     for (const PHOTO_STORAGE of [undefined, "", "local", "R2"]) {
       expect(() => loadConfig({ ...DEPLOYED, PHOTO_STORAGE }), String(PHOTO_STORAGE)).toThrow("PHOTO_STORAGE=r2 (private photo storage) on a deployed backend");
     }
     expect(loadConfig(DEPLOYED).photoStorage).toBe(true);
-    const relay = {
-      NETWORK_PHOTO_RELAY_NOTICE_VERSION: "photo-notice-v1", NETWORK_PHOTO_RELAY_NOTICE: "Send this photo to {{recipient}} after a safety review.",
-      NETWORK_PHOTO_RELAY_REVIEWERS: "token:safety#0123abcd", NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test",
-    };
-    const withOld = loadConfig({ ...DEPLOYED, ...relay });
-    expect(withOld.photoStorage).toBe(true);
-    expect(Object.keys(withOld)).not.toContain("photoRelay");
-    expect(() => loadConfig({ ...DEPLOYED, NETWORK_PHOTO_DELIVERY_ORIGIN: "http://backend.example.test" })).not.toThrow();
     const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" });
     expect(dev.photoStorage).toBe(false);
     expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", PHOTO_STORAGE: "local" }).photoStorage).toBe(true);
@@ -190,10 +179,10 @@ describe("config", () => {
     const blooio = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" };
     const cloud = { ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+15550100" };
     expect(loadConfig(DEPLOYED).channel).toBe("dry-run");
-    expect(loadConfig({ ...DEPLOYED, BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100", BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "Blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" }).channel).toBe("dry-run");
+    expect(loadConfig({ ...DEPLOYED, BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" }).channel).toBe("dry-run");
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "Blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" })).toThrow(/NETWORK_CHANNEL/);
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza-cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+15550100" })).toThrow(/NETWORK_CHANNEL/);
     expect(loadConfig(blooio).channel).toBe("blooio");
-    expect(loadConfig({ ...blooio, BLOOIO_ALLOW_SEND: "0", NTWRK_LIVE_APPROVED: "0" }).channel).toBe("blooio");
     expect(loadConfig(cloud).channel).toBe("eliza_cloud");
     expect(loadConfig(blooio, ["--dry-run"]).channel).toBe("dry-run");
     expect(loadConfig(blooio, ["--dry-run"]).warnings.join(" ")).toMatch(/stay dry-run/);
@@ -206,7 +195,6 @@ describe("config", () => {
     expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" }).channel).toBe("dry-run");
   });
 
-  // owner decision 2026-11-22, "Live from first deploy"
   test("the production start command has no dry-run option: eliza_cloud owns inbound and every queued send is real from the first deploy", async () => {
     const { readFile } = await import("node:fs/promises");
     const toml = await readFile(new URL("./railway.toml", import.meta.url), "utf8");
@@ -225,11 +213,11 @@ describe("config", () => {
   // spec/bootPolicy.md, "A deployed entry refuses a partial Workers AI setup, and production needs Workers AI" (owner decisions 2026-11-22, D18)
   test("a deployed backend refuses a Workers AI token without its account, and production refuses a start without Workers AI", () => {
     expect(() => loadConfig({ ...DEPLOYED, CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/CLOUDFLARE_ACCOUNT_ID/);
-    expect(loadConfig({ ...DEPLOYED }).channel).toBe("dry-run");
-    expect(loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined }).channel).toBe("dry-run");
-    expect(loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined, CLOUDFLARE_ACCOUNT_ID: undefined }).channel).toBe("dry-run");
-    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", CLOUDFLARE_AI_TOKEN: "t" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production" }).channel).toBe("dry-run");
+    expect(() => loadConfig({ ...DEPLOYED })).not.toThrow();
+    expect(() => loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined })).not.toThrow();
+    expect(() => loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined, CLOUDFLARE_ACCOUNT_ID: undefined })).not.toThrow();
+    expect(() => loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", CLOUDFLARE_AI_TOKEN: "t" })).not.toThrow();
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production" })).not.toThrow();
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_AI_TOKEN: undefined })).toThrow(/CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_AI_TOKEN: undefined, CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/relay classifier/);
@@ -396,7 +384,7 @@ describe("routing", () => {
   });
 
   // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
-  test("with the Eliza gateway as the inbound owner, neither port serves the legacy Blooio webhook (audit SHA43)", async () => {
+  test("with the Eliza gateway as the inbound owner, neither port serves the direct Blooio webhook (audit SHA43)", async () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg({ blooioWebhook: false }), log: silent, ping: async () => true });
     for (const path of ["/webhooks/blooio", "/webhooks/blooio/slop"]) {
@@ -405,7 +393,6 @@ describe("routing", () => {
       expect([pub.status, (await pub.json()).error, staff.status, (await staff.json()).error]).toEqual([404, "webhook_not_served", 404, "webhook_not_served"]);
     }
     expect(calls).toEqual([]);
-    // The signed turn route stays open: it is how the gateway hands the backend each message.
     expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "{}" }))).status).toBe(200);
     expect((await b.staffFetch(new Request("http://10.0.0.2:4848/review"))).status).toBe(200);
   });
@@ -658,8 +645,7 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       await owner.unsafe(`create role ${role} login nosuperuser nobypassrls`);
       await owner.unsafe(`grant network_service to ${role}`);
       await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
-      // The catalog ingest login, and a fresh catalog, so the first tick round does not reach the real feed.
-      await owner.unsafe(`drop role if exists ${role}_events`).catch(() => {});
+      await owner.unsafe(`drop role if exists ${role}_events`);
       await owner.unsafe(`create role ${role}_events login nosuperuser nobypassrls`);
       await owner.unsafe(`grant network_public_event_ingest to ${role}_events`);
       await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}_events`);
@@ -742,14 +728,14 @@ describe.skipIf(!pgAvailable)("public event catalog refresh (dev Postgres, the i
         starttime: "2026-10-09T18:00:00.000", endtime: "2026-10-09T19:00:00.000", coordinates: "40.7206,-73.9518",
         link: { url: "https://www.nycgovparks.org/events/2026/10/09/climbing" } }]);
     };
-    const events = await (async () => {
-      await owner.unsafe(`drop role if exists ${role}`).catch(() => {});
+    let created = false, events: SQL | undefined;
+    try {
+      await owner.unsafe(`drop role if exists ${role}`);
       await owner.unsafe(`create role ${role} login nosuperuser nobypassrls`);
+      created = true;
       await owner.unsafe(`grant network_public_event_ingest to ${role}`);
       await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
-      return new SQL({ url: Object.assign(new URL(url), { username: role }).toString(), max: 2 });
-    })();
-    try {
+      events = new SQL({ url: Object.assign(new URL(url), { username: role }).toString(), max: 2 });
       const refresh = createPublicEventRefresh({ sql: events, clock, request: feed });
       expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
       expect(await refresh()).toEqual({ kind: "not_due" });
@@ -758,7 +744,6 @@ describe.skipIf(!pgAvailable)("public event catalog refresh (dev Postgres, the i
       clock.advance(1);
       expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
       expect(feedCalls).toBe(2);
-      // A failed scan keeps the last publication, and the next attempt waits for the retry interval.
       clock.advance(DAY);
       feedDown = true;
       await expect(refresh()).rejects.toThrow(/HTTP 503/);
@@ -770,7 +755,6 @@ describe.skipIf(!pgAvailable)("public event catalog refresh (dev Postgres, the i
       feedDown = false;
       clock.advance(1);
       expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
-      // Another process holds the lease: this one does not scan, and scans once the lease is free.
       clock.advance(DAY);
       await owner`select pg_advisory_lock(hashtext('thenetwork-public-events-refresh'))`;
       expect(await refresh()).toEqual({ kind: "lease_held" });
@@ -778,8 +762,8 @@ describe.skipIf(!pgAvailable)("public event catalog refresh (dev Postgres, the i
       expect(feedCalls).toBe(4);
       expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
     } finally {
-      await events.close();
-      await owner.unsafe(`drop owned by ${role}`).catch(() => {});
+      await events?.close();
+      if (created) await owner.unsafe(`drop owned by ${role}`);
       await owner.close();
     }
   }, 30_000);

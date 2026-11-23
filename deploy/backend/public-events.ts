@@ -3,11 +3,12 @@ import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { publicEventRefreshDue } from "../../packages/core/src/generated/publicEventCatalog.ts";
 import { importPublicEvents } from "../../packages/network/service/import-public-events.ts";
 
-export type PublicEventRefresh =
+type PublicEventRefresh =
   | { kind: "lease_held" }
   | { kind: "not_due" }
   | { kind: "scanned"; published: boolean; events: number };
 
+// spec/publicEventCatalog.md, "The backend scans once a day, at most one process at a time, and waits after a failed attempt"
 export function createPublicEventRefresh(o: { sql: SQL; clock: Clock; request?: typeof fetch }): () => Promise<PublicEventRefresh> {
   let attemptedAt: number | undefined;
   return async () => {

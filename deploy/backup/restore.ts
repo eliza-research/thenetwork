@@ -10,16 +10,18 @@ import { pgEnv } from "./backup.ts";
 import { endRestoredTexts, replayPrivacy, type PrivacyReplayResult, type RestoredTextsResult } from "./privacy-replay.ts";
 import { backupBucketFromEnv, backupKey, compareCounts, decryptFile, pgBin, redactUrls, rowCounts, run, safeDbName, sameServer, withDatabase, type BackupKey, type Manifest } from "./lib.ts";
 
-export interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; privacy?: PrivacyReplayResult; texts?: RestoredTextsResult; ms: number }
+interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; privacy?: PrivacyReplayResult; texts?: RestoredTextsResult; ms: number }
 
 export async function restore(o: { serverUrl: string; db: string; dir: string; keepPrivileges?: boolean; roles?: boolean; replayFrom?: string; sourceLost?: boolean; log?: (msg: string, f?: Record<string, unknown>) => void }): Promise<RestoreResult> {
   const t0 = performance.now();
+  // spec/databaseRestore.md, "The target must be a valid scratch database name"
   let state = step(initial, { type: "checkName", name: o.db, validName: safeDbName(o.db) });
   if (state.phase !== "ReadingManifest") throw new Error(`refusing to restore into "${o.db}": use a new scratch name such as restore_drill_<date>`);
   const manifest = JSON.parse(await fileAt(join(o.dir, "manifest.json")).text()) as Manifest;
   state = step(state, { type: "checkVersion", versionOne: manifest.version === 1 });
   if (state.phase !== "CheckingSource") throw new Error(`unknown manifest version ${manifest.version}`);
   const target = pgEnv(withDatabase(o.serverUrl, o.db));
+  // spec/databaseRestore.md, "Manifest admission refuses source writes and unavailable dump files"
   state = step(state, { type: "checkManifest", manifest: {
     sourceKnown: Boolean(manifest.source),
     sameServer: Boolean(manifest.source && sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! })),
@@ -56,12 +58,12 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   const mismatches = compareCounts(manifest.rowCounts, got);
   state = step(state, { type: "recordCounts", countsAgree: mismatches.length === 0 });
   let privacy: PrivacyReplayResult | undefined;
-  if (state.phase === "ReplayingPrivacy" && o.replayFrom) {
-    privacy = await replayPrivacy({ sourceUrl: o.replayFrom, targetUrl: url, queuedAt: new Date() });
+  if (state.phase === "ReplayingPrivacy") {
+    privacy = await replayPrivacy({ sourceUrl: o.replayFrom!, targetUrl: url, queuedAt: new Date() });
     state = step(state, { type: "recordPrivacyReplay" });
   }
   if (state.phase !== "Finished") throw new Error("restore did not complete the row-count check and the privacy replay");
-  const texts = o.sourceLost && !o.replayFrom ? await endRestoredTexts({ targetUrl: url, at: new Date() }) : undefined;
+  const texts = o.sourceLost && !state.replayPrivacy ? await endRestoredTexts({ targetUrl: url, at: new Date() }) : undefined;
   return { db: o.db, url, manifest, mismatches, ...(privacy ? { privacy } : {}), ...(texts ? { texts } : {}), ms: Math.round(performance.now() - t0) };
 }
 

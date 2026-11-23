@@ -91,3 +91,5 @@ type WebhookAnswer = StoredWebhookAnswer | StoredWebhookFailure | WaitForRetry
 pure def webhookAnswer(done: bool, failed: bool): WebhookAnswer =
   if (done) StoredWebhookAnswer else if (failed) StoredWebhookFailure else WaitForRetry
 ```
+
+Conformance. test/fixtures/webhookInboxWorker.ts runs one handling attempt of one received row for each key, with its own sender and database, because a drain takes every sender. startWebhook receives the row, fails it the counted number of times, and holds the next attempt in the handler (RunningWebhook). A STOP row arrives after an ordinary row that is pending, so that its completion can cancel a row. The drain refuses an ordinary row that failed five times. The worker holds the completion with a transaction that locks the row, so CompleteWebhook and CancelEarlier are a completion write that waits on the lock; a failed completion write is that statement cancelled. The worker reads the attempt count from the row.

@@ -197,15 +197,14 @@ export async function evalsBlock(b: Block): Promise<void> {
 
   type Routing = { kind: "first" | "join" | "lookingFor"; text: string; reading: Record<string, unknown> };
   const routing = await jsonl<Routing>("network/line-routing.jsonl");
-  const lineCommand = { stop: "LineStop", stop_all: "LineStopAll", help: "LineHelp", start: "LineStart" } as const;
-  const appWords = Object.values(APPS).flatMap(a => [a.id, ...a.domain.split(".")]);
+  const lineCommand = { stop: "LineStop", stop_all: "LineStop", help: "LineHelp", start: "LineStart" } as const;
   const routingReading = (row: Routing): Record<string, unknown> => {
     if (row.kind === "first") {
       const keyword = detectKeyword(row.text);
       return { command: keyword ? lineCommand[keyword] : "LineNoCommand", app: keywordApp(row.text) ?? null };
     }
     if (row.kind === "join") {
-      const said = parseJoinText(row.text, appWords, true, BIRTHDAY_DAY);
+      const said = parseJoinText(row.text, APP_WORDS, true, BIRTHDAY_DAY);
       return { age: said.age ?? null, ...("name" in row.reading ? { name: said.name } : {}) };
     }
     return { ...lookingForReading(row.text) };
@@ -248,6 +247,7 @@ export async function evalsBlock(b: Block): Promise<void> {
 }
 
 const BIRTHDAY_DAY = 20261122;
+const APP_WORDS = Object.values(APPS).flatMap(a => [a.id, ...a.domain.split(".")]);
 
 type BirthdayRow =
   | { kind: "answer" | "stated"; text: string; birthDate: number | null }
@@ -256,12 +256,11 @@ type BirthdayRow =
 
 async function birthdayBlock(b: Block): Promise<void> {
   const rows = await jsonl<BirthdayRow>("birthdays.jsonl");
-  const appWords = Object.values(APPS).flatMap(a => [a.id, ...a.domain.split(".")]);
   const reading = (row: BirthdayRow): unknown => {
     if (row.kind === "answer") return birthDateAnswer(row.text, BIRTHDAY_DAY) ?? null;
     if (row.kind === "stated") return birthDateStated(row.text, BIRTHDAY_DAY) ?? null;
     if (row.kind === "self") return classify(row.text).oldestAge ?? null;
-    const said = parseJoinText(row.text, appWords, true, BIRTHDAY_DAY);
+    const said = parseJoinText(row.text, APP_WORDS, true, BIRTHDAY_DAY);
     return { age: said.age ?? null, birthDate: said.birthDate ?? null, name: said.name ?? null };
   };
   const want = (row: BirthdayRow): unknown => row.kind === "join" ? row.reading : row.kind === "self" ? row.oldestAge : row.birthDate;

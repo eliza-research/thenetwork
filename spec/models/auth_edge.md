@@ -8,7 +8,7 @@ A member needs to confirm their phone and use their own session. The service nee
 
 Check banned numbers, session ownership, OTP and Cloud authentication, and signed proxy requests. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [OTP spec](../otpLimits.md) generates the current request and verification transitions. The [web session spec](../webSession.md) generates session lifetime, rotation, and fresh sign-in decisions. This imported model uses seconds and scales the global send limit for reachability. The current runtime reads the four OTP buckets in order and counts a start in all four or in none in one store transaction that locks only those four buckets (PeopleStore.hitAll), and schedules the old token's grace expiry before writing its replacement. The imported model's transaction and concurrency assumptions describe the original branch.
+The [OTP spec](../otpLimits.md) generates the current request and verification transitions. The [web session spec](../webSession.md) generates session lifetime, rotation, and fresh sign-in decisions. This imported model uses seconds and scales the global send limit for reachability. The current runtime reads the four OTP buckets in order and counts a start in all four or in none in one store transaction that locks only those four buckets (PeopleStore.hitAll), and schedules the old token's grace expiry before writing its replacement.
 
 Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -23,8 +23,8 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 // proxy-secret-rotation (M-131).
 //
 // The model was written for branch wave2/auth_edge (ad67275 with the fixes for SD-013, SD-054, SD-181,
-// SD-380 and SD-491). None of those fix commits is in branch vibestack-matching. The comparison of
-// 2026-11-18 with this branch found (locations are by function name):
+// SD-380 and SD-491). The fixes landed on branch vibestack-matching on 2026-11-21. The comparison with
+// this branch found (locations are by function name):
 //  - SD-380 (defect AE-1, closed 2026-11-21): OtpService.start (otp.ts) calls store.hitAll, which in one
 //    transaction locks the four buckets, reads them, and counts the request in all four only when
 //    otpSendDecision of spec/otpLimits.md permits it (startBuckets, otpRefusedNotCounted).
@@ -218,7 +218,8 @@ module auth_edge {
     val n = if (cur.start == start) cur.n else 0
     b.put(key, { start: start, n: n + 1, last: at })
 
-  // sessions.ts authenticate (the checks before rotation; decisions.ts sessionLive).
+  // SessionService.authenticate (the checks before rotation; spec/webSession.md readRow, "Only a live token on the
+  // requested app can authenticate").
   def liveSession(s: Sess, sid: int, at: int): bool =
     sid != NONE and s.rows.keys().contains(sid) and
     (s.rows.get(sid).revoked == NONE or s.rows.get(sid).revoked > at) and
@@ -613,8 +614,8 @@ module auth_edge {
                    suppressed: world.suppressed.union(Set(s.phone)) },
         ghost' = { ...ghost, actedUnvalidated: ghost.actedUnvalidated or unvalidated, foreignActs: if (foreign) ghost.foreignActs.union(Set(act)) else ghost.foreignActs },
       } else {
-        // op == "join": api.ts, accounts.ts with joinPlan (decisions.ts; one lock
-        // per phone: one action). The order of joinPlan: a ban refuses; then the age decides, for a
+        // op == "join": api.ts, Accounts.joinLocked (one lock
+        // per phone: one action). The order of joinLocked: a ban refuses; then the age decides, for a
         // member too (a member under the app age is "under_age"); then a member is "existing".
         val banned = world.banned.contains(s.phone)
         val oldFloor = world.floor.get(s.phone)
@@ -1134,7 +1135,7 @@ module auth_edge {
       .expect(world.floor.get("X") == 10 and world.alive == Set() and sess.rows == Map()
               and sess.jar.get("alice") == NONE and ghost.under13At.keys() == Set("X") and safety)
 
-  // A member's repeated web join under 13 is "under_age" (joinPlan checks the age before "existing"):
+  // A member's repeated web join under 13 is "under_age" (joinLocked checks the age before "existing"):
   // the floor drops and declineUnderAge forgets the membership; the session keeps its person.
   // Once the number is banned, the session refuses an export at authentication.
   run repeatJoinUnderAgeTest =

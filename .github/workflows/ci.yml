@@ -91,9 +91,12 @@ jobs:
           path: .cache/typecheck
           key: typecheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json') }}-${{ github.sha }}
           restore-keys: typecheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json') }}-
-      - name: Typecheck (pnpm run typecheck, every TypeScript project)
-        run: pnpm run typecheck
-        timeout-minutes: 10
+      - name: Typecheck (packages, deploy, tests, scripts/sim)
+        run: pnpm exec tsc --noEmit -p .
+        timeout-minutes: 5
+      - name: Typecheck (sites, scripts)
+        run: pnpm exec tsc --noEmit -p sites/tsconfig.json
+        timeout-minutes: 5
       - name: Save TypeScript incremental state
         if: steps.type-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

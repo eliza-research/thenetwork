@@ -46,7 +46,7 @@ test("a person block made on another app calls off a booked meeting of the pair 
 }, T);
 
 test("a check-in report closes the pair's other open item and counts toward the subject's trust score", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { inlineJudge: holdEveryItem.inline, hooks: { postDateReports: true } });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { inlineJudge: holdEveryItem.inline });
   await w.onboard("a", "b", "c");
   await meetAndWaitForFeedback(w, ["a", "b"]);
   await w.say("b", "It was great, we really clicked.");

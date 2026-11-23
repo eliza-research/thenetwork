@@ -1,6 +1,6 @@
-# Paired, low-variance evaluation: common random numbers, A/A arms and expected value (2026-11-22)
+# Paired, low-variance evaluation: common random numbers, A/A arms and expected value (2026-11-17)
 
-This report measures what the simulator can detect when two engines are compared on the same seeds. It is hand-written from saved command output (each table names its files). The simulator makes no model call: it clears the provider keys. The reviewer is simulated (`review: "auto"`). No real member data is in this report. The problem statement is [R9-test-data-quality.md](../research/2026-11-17-matching-optimization/R9-test-data-quality.md) (plan item 2).
+This report measures what the simulator can detect when two engines are compared on the same seeds. It is hand-written from saved command output (each table names its files). The runs were made on 2026-11-21 and the report was written on 2026-11-22; the file name keeps the date of the plan. The simulator makes no model call: it clears the provider keys. The reviewer is simulated (`review: "auto"`). These runs predate the review judge (owner decisions D15 to D17 of 2026-11-22): they used the removed simulated reviewer that approved every item, and the simulator now uses the deterministic stand-in judge. No real member data is in this report. The problem statement is [R9-test-data-quality.md](../research/2026-11-17-matching-optimization/R9-test-data-quality.md) (plan item 2).
 
 ## What changed
 
@@ -35,7 +35,7 @@ This report measures what the simulator can detect when two engines are compared
 | Model | None. Simulated reviewer. |
 | Variance | Each run is deterministic for a seed. The A/A SDs come from 3 or 4 seeds; a 3-seed SD has a 95% interval of about 0.5x to 6x its value. Read them as orders of magnitude. |
 
-Output files (on the build machine, `/Users/nubs/tn-work/`): before blocks `base/sim-<block>.txt`; after blocks `w1-eval/after2-<block>.txt`; before A/A `w1-eval/aa-base-<block>.txt` and `.json`.
+Output files (not in the repository; `<run dir>` is the wave's run directory on the build machine): before blocks `base/sim-<block>.txt`; after blocks `w1-eval/after2-<block>.txt`; before A/A `w1-eval/aa-base-<block>.txt` and `.json`.
 
 ## A/A results: before and after CRN
 
@@ -187,7 +187,7 @@ corepack pnpm@10.24.0 run sim --only network
 corepack pnpm@10.24.0 run sim --only audit,safety,ops,pipeline,pipeline-slop,relay,peon-seats
 corepack pnpm@10.24.0 run sim --only matching --quick
 node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration packages/sim/test
-node --import tsx --conditions eliza-source /Users/nubs/tn-work/w1-eval/scratch/holds-seeds.mts "$PWD" 16,17,18,19,20,21,22,23
+node --import tsx --conditions eliza-source <run dir>/w1-eval/scratch/holds-seeds.mts "$PWD" 16,17,18,19,20,21,22,23   # a scratch script, not in the repository
 ```
 
 ## Not done

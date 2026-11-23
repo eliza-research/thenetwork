@@ -1,14 +1,15 @@
-import { classifyYesNo, DAY, type MemberId } from "@thenetwork/core";
+import { classifyYesNo, type MemberId } from "@thenetwork/core";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { photoAskAnswerFor, photoDraftReplyFor, photoOfferCooldownMs, type PhotoPick, type PhotoPickResult } from "../../core/src/generated/photoRelayItem.ts";
 import { isValidTimeZone } from "../../blooio/src/quiet-hours.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import {
-  firstNameOf, PHOTO_RELAY_TIME_ZONE, PHOTO_SEND_NOTICE, photoSetSha,
+  firstNameOf, maskOf, PHOTO_RELAY_TIME_ZONE, PHOTO_SEND_NOTICE, photoSetSha,
   type DraftInput, type DraftPrompt, type DueNotice, type PhotoDraft, type PhotoHolding, type PhotoRelayService, type PreparedOffer,
 } from "../../platform/src/photo-relay.ts";
 import type { PhotoService } from "../../platform/src/photos.ts";
-import { readPhotoMessage, type PhotoReading, type PhotoSlot, type ReaderDraft, type ReaderThread } from "./photoReference.ts";
+import type { PhotoHoldingsView } from "../../mcp/src/hooks.ts";
+import { localDay, readPhotoMessage, type PhotoReading, type PhotoSlot, type ReaderDraft, type ReaderThread } from "./photoReference.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
 const LINK = "\u0000photo-check-link\u0000";
@@ -83,7 +84,7 @@ export const PHOTO_RELAY_TEXT = {
   closed: "Thanks for telling me. I closed the photo.",
 } as const;
 
-export interface PhotoRelayFlowDeps {
+interface PhotoRelayFlowDeps {
   sql: SQL;
   relay: PhotoRelayService;
   photos: Pick<PhotoService, "rows" | "remove" | "mayTake">;
@@ -97,8 +98,10 @@ export interface PhotoRelayFlowDeps {
 }
 
 export type PhotoRequestStatus = "texted" | "done" | "refused" | "unavailable";
-export type PhotoCheckAnswer = { state: "offered" | "changed" | "lapsed" | "refused"; text: string };
-export interface PhotoHoldingsView { text: string; photos: { number: number; name: string | null; addedOn: string; sharedWith: PhotoHolding["access"] }[] }
+export interface PhotoRelayAnswer { status: PhotoRequestStatus; text: string }
+export type PhotoRelayFinish = (tx: SQL) => Promise<(answer: PhotoRelayAnswer) => Promise<void>>;
+type TextCommit = (tx: SQL) => Promise<(text: string) => Promise<void>>;
+type PhotoCheckAnswer = { state: "offered" | "changed" | "lapsed" | "refused"; text: string };
 
 interface Who { rt: NetworkRuntime; app: AppId; personId: string; memberId: string }
 interface Scene {
@@ -113,14 +116,8 @@ class PhotoAskWithdrawn extends Error { constructor() { super("photo_ask_withdra
 class PhotoOfferNotReportable extends Error { constructor() { super("photo_offer_not_reportable"); this.name = "PhotoOfferNotReportable"; } }
 const askKey = (requestKey: string) => `photo-ask:${requestKey}`;
 
-function dayKey(at: number, zone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(at);
-  const get = (type: string) => Number(parts.find(p => p.type === type)?.value);
-  return Date.UTC(get("year"), get("month") - 1, get("day"));
-}
-
 function dayWords(at: number, now: number, zone: string): string {
-  const gap = Math.round((dayKey(now, zone) - dayKey(at, zone)) / DAY);
+  const gap = localDay(now, zone).n - localDay(at, zone).n;
   if (gap === 0) return "today";
   if (gap === 1) return "yesterday";
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: zone, weekday: "short", day: "numeric", month: "short" }).formatToParts(at);
@@ -135,7 +132,6 @@ function timeWords(at: number, zone: string): string {
 }
 
 const inboundRowOf = (rowId: string) => `msg:${rowId.replace(/^in:/, "")}`;
-const maskOf = (slots: readonly PhotoSlot[]) => slots.reduce((m, s) => m | (1 << (s.n - 1)), 0);
 
 export class PhotoRelayFlow {
   constructor(private readonly d: PhotoRelayFlowDeps) {}
@@ -220,15 +216,25 @@ export class PhotoRelayFlow {
     return true;
   }
 
-  async relay(input: { app: AppId; personId: string; memberId: string; text: string; threadId: string | null; inboundId: string; photoAsked: boolean }): Promise<{ status: PhotoRequestStatus; text: string } | undefined> {
+  async relay(input: { app: AppId; personId: string; memberId: string; text: string; threadId: string | null; inboundId: string; photoAsked: boolean; finish: PhotoRelayFinish }): Promise<PhotoRelayAnswer | undefined> {
+    let finished = false;
+    const commit = (status: PhotoRequestStatus): TextCommit => async tx => {
+      const done = await input.finish(tx);
+      return async text => { await done({ status, text }); finished = true; };
+    };
+    const settle = async (answer: PhotoRelayAnswer): Promise<PhotoRelayAnswer> => {
+      if (!finished) await this.d.sql.begin(async tx => (await input.finish(tx))(answer));
+      return answer;
+    };
     const rt = await this.d.runtimeOfMember(input.app, input.memberId);
-    if (!rt) return input.photoAsked ? { status: "unavailable", text: PHOTO_RELAY_TEXT.unavailable } : undefined;
+    if (!rt) return input.photoAsked ? settle({ status: "unavailable", text: PHOTO_RELAY_TEXT.unavailable }) : undefined;
     const who: Who = { rt, app: input.app, personId: input.personId, memberId: input.memberId };
     const scene = await this.scene(who, input.text, input.threadId);
-    const spoken = scene.reading.kind === "send" || scene.reading.kind === "take_back" ? await this.answerReading(who, scene) : undefined;
-    if (!spoken) return input.photoAsked ? { status: "refused", text: PHOTO_RELAY_TEXT.sayWhich } : undefined;
-    const text = await this.speak(who, spoken, { via: "turn", inboundId: input.inboundId, key: `relay:${input.inboundId}` });
-    return { status: spoken.unavailable ? "unavailable" : spoken.draft ? "texted" : scene.reading.kind === "take_back" && !spoken.asked ? "done" : "refused", text };
+    const spoken = scene.reading.kind === "send" || scene.reading.kind === "take_back" ? await this.answerReading(who, scene, commit("done")) : undefined;
+    if (!spoken) return input.photoAsked ? settle({ status: "refused", text: PHOTO_RELAY_TEXT.sayWhich }) : undefined;
+    const status: PhotoRequestStatus = spoken.unavailable ? "unavailable" : spoken.draft ? "texted" : scene.reading.kind === "take_back" && !spoken.asked ? "done" : "refused";
+    const text = await this.speak(who, spoken, { via: "turn", inboundId: input.inboundId, key: `relay:${input.inboundId}` }, commit(status));
+    return settle({ status, text });
   }
 
   async connector(input: { app: AppId; personId: string; memberId: string; words: string }): Promise<{ status: PhotoRequestStatus; text: string }> {
@@ -391,7 +397,7 @@ export class PhotoRelayFlow {
     return { recipientMemberId: draft.recipientMemberId, shown: numbers(draft.shownIds), proposed: numbers(draft.proposedIds), wantsSet: draft.wantsSet, listed: draft.listed };
   }
 
-  private async answerReading(who: Who, scene: Scene): Promise<Spoken | undefined> {
+  private async answerReading(who: Who, scene: Scene, commit?: TextCommit): Promise<Spoken | undefined> {
     const r = scene.reading;
     switch (r.kind) {
       case "send": {
@@ -422,7 +428,7 @@ export class PhotoRelayFlow {
         return { text: r.reason === "format" ? PHOTO_RELAY_TEXT.nameFormat : r.reason === "looks" ? PHOTO_RELAY_TEXT.nameLooks
           : r.reason === "which" ? PHOTO_RELAY_TEXT.nameWhich : this.takenText(scene, null) };
       case "delete": return this.pickText(scene, "delete", null, r.result, false);
-      case "take_back": return this.withdraw(who, scene, r.threadId, r.numbers);
+      case "take_back": return this.withdraw(who, scene, r.threadId, r.numbers, commit);
       case "draft": case "none": case "photos_ok": case "no_more_photos": return undefined;
       default: { const _exhaustive: never = r; return _exhaustive; }
     }
@@ -500,8 +506,8 @@ export class PhotoRelayFlow {
 
   private async rechosen(who: Who, scene: Scene, draft: PhotoDraft): Promise<Spoken> {
     const kept = this.slotsOf(scene, draft.proposedIds);
-    const result: PhotoPickResult = kept.length ? { pick: "ProposePhotos", chosen: maskOf(kept) }
-      : scene.slots.length ? { pick: "ListPhotos", chosen: maskOf(scene.slots) } : { pick: "AddPhotosFirst", chosen: 0 };
+    const result: PhotoPickResult = kept.length ? { pick: "ProposePhotos", chosen: maskOf(kept.map(s => s.n)) }
+      : scene.slots.length ? { pick: "ListPhotos", chosen: maskOf(scene.slots.map(s => s.n)) } : { pick: "AddPhotosFirst", chosen: 0 };
     return this.redraft(who, scene, draft, result, draft.wantsSet);
   }
 
@@ -561,7 +567,7 @@ export class PhotoRelayFlow {
     return row?.last ? new Date(row.last).getTime() + photoOfferCooldownMs : at;
   }
 
-  private async withdraw(who: Who, scene: Scene, threadId: string | null, numbers: number[] | null): Promise<Spoken> {
+  private async withdraw(who: Who, scene: Scene, threadId: string | null, numbers: number[] | null, commit?: TextCommit): Promise<Spoken> {
     const ids = numbers === null ? null : scene.slots.filter(s => numbers.includes(s.n)).map(s => s.id);
     if (ids !== null && !ids.length) return { text: PHOTO_RELAY_TEXT.noneToWithdraw };
     const draft = scene.draft?.purpose === "send" ? scene.draft : undefined;
@@ -573,7 +579,8 @@ export class PhotoRelayFlow {
       if (threads.length > 1) return { text: PHOTO_RELAY_TEXT.takeBackWhich(threads.map(t => t.firstName)), asked: true };
     }
     const dropDraft = !!draft && threads.some(t => t.threadId === draft.threadId) && (ids === null || draft.proposedIds.some(id => ids.includes(id)));
-    const r = await this.d.sql.begin(async tx => {
+    return this.d.sql.begin(async tx => {
+      const done = commit ? await commit(tx) : undefined;
       let revoked = 0;
       const viewing: string[] = [];
       for (const t of threads) {
@@ -582,16 +589,22 @@ export class PhotoRelayFlow {
         if (out.viewing && out.revoked > 0) viewing.push(t.firstName);
       }
       if (dropDraft) await this.d.relay.dropDraft(tx, who.personId, who.app);
-      return { revoked, viewing };
+      const text = viewing.length ? PHOTO_RELAY_TEXT.withdrawnViewing(viewing.join(" and "))
+        : revoked > 0 || dropDraft ? PHOTO_RELAY_TEXT.withdrawn : PHOTO_RELAY_TEXT.noneToWithdraw;
+      if (done) await done(text);
+      return { text };
     });
-    if (r.viewing.length) return { text: PHOTO_RELAY_TEXT.withdrawnViewing(r.viewing.join(" and ")) };
-    return { text: r.revoked > 0 || dropDraft ? PHOTO_RELAY_TEXT.withdrawn : PHOTO_RELAY_TEXT.noneToWithdraw };
   }
 
-  private async speak(who: Who, spoken: Spoken, prompt: DraftPrompt): Promise<string> {
+  private async speak(who: Who, spoken: Spoken, prompt: DraftPrompt, commit?: TextCommit): Promise<string> {
     if (!spoken.draft) return spoken.text;
-    const saved = await this.d.sql.begin(tx => this.d.relay.saveDraft(tx, { ...spoken.draft!, personId: who.personId, app: who.app, prompt }));
-    return spoken.link && saved.link ? spoken.text.replaceAll(LINK, saved.link) : spoken.text;
+    return this.d.sql.begin(async tx => {
+      const done = commit ? await commit(tx) : undefined;
+      const saved = await this.d.relay.saveDraft(tx, { ...spoken.draft!, personId: who.personId, app: who.app, prompt });
+      const text = spoken.link && saved.link ? spoken.text.replaceAll(LINK, saved.link) : spoken.text;
+      if (done) await done(text);
+      return text;
+    });
   }
 
   private slotsOf(scene: Scene, ids: string[]): PhotoSlot[] {

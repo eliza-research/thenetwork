@@ -47,6 +47,12 @@ export function involvedMembers(c: Pick<Candidate, "participants" | "alternates"
   return [...c.participants, ...(c.alternates ?? []), ...(c.via ? [c.via] : [])];
 }
 
+const friendshipLaneOf = (w: World, category: Category, lane: MatchLane | undefined): boolean =>
+  teenFriendCategory(w.pack.id, category) && (lane === undefined || teenFriendLane(w.pack.id, lane));
+
+const belowMatchAge = (w: World, age: number): boolean =>
+  isMinorAge(age) || !(age >= w.cfg.ageMin) || !(age >= w.pack.eligibility.minMatchAge);
+
 export function teenCandidateIn(w: World, id: MemberId, category: Category): boolean {
   const mi = w.get(id);
   if (!mi) return false;
@@ -68,18 +74,20 @@ function rosterAgeReason(w: World, ids: readonly MemberId[], friendshipLane: boo
 const meetingMaxDay = (w: World, ends: readonly (number | undefined)[]): number =>
   latestDayKeyOf(Math.max(w.now, ...ends.filter((end): end is number => end !== undefined)));
 
-export type AgeCheckedCandidate = Pick<Candidate, "participants" | "alternates" | "via" | "category" | "roles" | "format" | "generator">
-  & Partial<Pick<Candidate, "window" | "fixedWindow" | "anchor" | "lane">>;
+export type AgeCheckedCandidate = Pick<Candidate, "participants" | "alternates" | "category">
+  & Partial<Pick<Candidate, "via" | "roles" | "format" | "generator" | "window" | "fixedWindow" | "anchor" | "lane">>;
 
 export function candidateAgeReason(w: World, c: AgeCheckedCandidate): "underage" | null {
   const roster = [...new Set([...c.participants, ...c.alternates])];
   if (c.via !== undefined && !viaAllowedForRoster(ageSidesOf(w, [...roster, c.via]))) return "underage";
-  const friendshipLane = teenFriendCategory(w.pack.id, c.category) && (c.lane === undefined || teenFriendLane(w.pack.id, c.lane));
+  const friendshipLane = friendshipLaneOf(w, c.category, c.lane);
   const reason = rosterAgeReason(w, roster, friendshipLane, meetingMaxDay(w, [c.window?.end, c.fixedWindow?.end]));
   if (reason !== null || !rosterHasMinor(ageSidesOf(w, roster))) return reason;
-  const everyRoleTeen = roster.every(id => { const role = c.roles[id]; return role !== undefined && teenFriendRole(role); });
-  return teenGenerator(w.pack.id, c.generator)
-    && teenIntroShape(friendshipLane, c.format, everyRoleTeen, c.via !== undefined, c.anchor?.type === "event")
+  const { roles, format, generator } = c;
+  if (roles === undefined || format === undefined || generator === undefined) return "underage";
+  const everyRoleTeen = roster.every(id => { const role = roles[id]; return role !== undefined && teenFriendRole(role); });
+  return teenGenerator(w.pack.id, generator)
+    && teenIntroShape(friendshipLane, format, everyRoleTeen, c.via !== undefined, c.anchor?.type === "event")
     && teenRosterSizeAllowed(true, roster.length) ? null : "underage";
 }
 
@@ -91,7 +99,7 @@ export function teenGroupReason(w: World, ids: readonly MemberId[], category: Ca
 }
 
 const teenSeat = (w: World, id: MemberId, c: Pick<MemberCheck, "category" | "lane" | "role" | "format">): boolean =>
-  teenCandidateIn(w, id, c.category) && (c.lane === undefined || teenFriendLane(w.pack.id, c.lane)) && teenFriendRole(c.role) && teenFriendFormat(c.format);
+  teenCandidateIn(w, id, c.category) && friendshipLaneOf(w, c.category, c.lane) && teenFriendRole(c.role) && teenFriendFormat(c.format);
 
 /** Member-level hard constraints for taking part in a candidate with a given role. */
 export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReason | null {
@@ -99,7 +107,7 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReas
   const mi = w.get(id);
   if (!mi) return "unknown_member";
   const m = mi.m;
-  if (!teenSeat(w, id, c) && (isMinorAge(m.age) || !(m.age >= cfg.ageMin) || !(m.age >= w.pack.eligibility.minMatchAge))) return "underage";
+  if (!teenSeat(w, id, c) && belowMatchAge(w, m.age)) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (m.state === "paused") return "state_paused";
   // Pack rules in order (networkPack: packs/network/rules.ts, the pre-refactor order).
@@ -122,7 +130,7 @@ export function romanceMutual(w: World, a: MemberId, b: MemberId): boolean {
 /** Pair-level hard constraints. Completed / positive history never blocks (ME-005). */
 export function pairReason(w: World, a: MemberId, b: MemberId, category: Category, lane?: MatchLane): FilterReason | null {
   if (a === b) return "duplicate_participant";
-  if (rosterAgeReason(w, [a, b], teenFriendCategory(w.pack.id, category) && (lane === undefined || teenFriendLane(w.pack.id, lane)))) return "underage";
+  if (rosterAgeReason(w, [a, b], friendshipLaneOf(w, category, lane))) return "underage";
   // Core prefix: blocks win (either direction).
   if (w.blocked.has(pairKey(a, b))) return "blocked";
   const ma = w.get(a), mb = w.get(b);
@@ -395,12 +403,12 @@ function presenceReason(w: World, c: Candidate): FilterReason | null {
  *  - a block (either direction) with anyone else still in the opportunity.
  * `optedOut` lets the caller add channel-level opt-outs (STOP) that the World doesn't model.
  */
-export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean, lane?: Category): FilterReason | "opted_out" | null {
+export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean, category?: Category): FilterReason | "opted_out" | null {
   const mi = w.get(id);
   if (!mi) return "unknown_member";
-  if (!(lane !== undefined && teenCandidateIn(w, id, lane)) && (isMinorAge(mi.m.age) || !(mi.m.age >= w.cfg.ageMin) || !(mi.m.age >= w.pack.eligibility.minMatchAge))) return "underage";
+  if (!(category !== undefined && teenCandidateIn(w, id, category)) && belowMatchAge(w, mi.m.age)) return "underage";
   const roster = others.filter(o => o !== id);
-  if (roster.length > 0 && rosterAgeReason(w, [id, ...roster], lane !== undefined && teenFriendCategory(w.pack.id, lane))) return "underage";
+  if (roster.length > 0 && rosterAgeReason(w, [id, ...roster], category !== undefined && teenFriendCategory(w.pack.id, category))) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (mi.m.state === "paused") return "state_paused";
   if (optedOut?.(id)) return "opted_out";

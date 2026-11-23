@@ -1,3 +1,6 @@
+alter table network.relay_records drop constraint if exists relay_records_decision_check;
+alter table network.relay_records drop constraint if exists relay_records_review_check;
+
 update network.relay_records
 set decision = case when decision = 'hold' then 'block' else decision end,
     reasons = (select coalesce(array_agg(distinct r order by r), '{}'::text[]) from unnest(reasons || array['review:closed']) as u(r)),
@@ -6,9 +9,7 @@ set decision = case when decision = 'hold' then 'block' else decision end,
     reviewed_at = case when review = 'held' then now() else reviewed_at end
 where decision = 'hold' or review = 'held';
 
-alter table network.relay_records drop constraint if exists relay_records_decision_check;
 alter table network.relay_records add constraint relay_records_decision_check check (decision in ('pass', 'block'));
-alter table network.relay_records drop constraint if exists relay_records_review_check;
 alter table network.relay_records add constraint relay_records_review_check check (review in ('released', 'rejected', 'expired'));
 drop index if exists network.relay_records_held;
 

@@ -48,7 +48,7 @@ describe.skipIf(!pgAvailable)("birth dates and age readings (PostgreSQL)", () =>
     for (const birthdate of ["2010-02-30", "2010-13-01", "2026-11-23", "1899-12-31"]) {
       const e164 = phone();
       expect([birthdate, await joinWith(a, e164, { birthdate })]).toEqual([birthdate, { ok: false, error: "invalid_birthdate" }]);
-      expect([birthdate, await store.ageFloor(a.phoneHash(e164))]).toEqual([birthdate, undefined]);
+      expect([birthdate, await store.ageFloorRecord(a.phoneHash(e164))]).toEqual([birthdate, undefined]);
     }
     expect(body({ birthdate: "2010-03-15", age: 16 })).toBeUndefined();
     expect(body({})).toBeUndefined();

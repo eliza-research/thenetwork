@@ -1,21 +1,3 @@
-// The slop world on the real message path (mvp-gaps section 4.1): 30 simulated days of slop.date
-// through a signed /webhooks/blooio into NetworkService, the persisted outbound queue
-// (platform.outbound) and the Blooio adapter out to a fake provider that records every request, on a
-// throwaway Postgres database on the dev cluster (:54339). The clock is SimClock (the production
-// RealClock swapped out); nothing leaves the machine.
-//
-// Daters join by texting "slop" and "Name, age", answer the onboarding questions in their own words,
-// are matched, probe each other and book dates from the offered slots. Around the world: the person cap (across apps), quiet hours, a
-// STOP in the middle of a probe, "leave slop" in the middle of a scheduled match, a ban in the middle
-// of a relay thread (the signed /internal/turn + /internal/relay wire), a restart with a row waiting
-// for the morning, and a minor who joins but is never matched.
-//
-// Blocking gates: 30 days ran; 0 lost or duplicated outbound messages; every outbound row ends in a
-// terminal status; every probe had a review approval before it went; no proactive or transactional
-// send outside quiet hours; no member above the person cap; 0 sends after STOP except compliance;
-// 0 sends after leave except the leave confirmation; a banned member's in-flight relayed text never
-// reaches them; no probe, proposal or participation for a minor; the restart's waiting row goes out
-// once in the morning.
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { ADULT_AGE, DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { RELAY_PATH, TURN_PATH } from "../../packages/core/src/svc/contract.ts";

@@ -109,7 +109,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       minVerifyMs: 0,
       log: (line: string) => logs.push(line),
     };
-    let api = createPublicApi(options);
+    const api = createPublicApi(options);
     const http = await serveHttp({
       hostname: "127.0.0.1",
       port: 0,
@@ -140,10 +140,6 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       expect(requests.length).toBe(before);
       expect(await store.latestChallenge("friends", p)).toBeUndefined();
       expect(() => createPublicApi({ ...options, turnstile: undefined })).toThrow("Turnstile");
-      api = createPublicApi({ ...options, env: { ...options.env, PLATFORM_PHONE_OTP_ONLY_APPS: "friends" } });
-      const leftOver = await call("friends.help", "/api/auth/otp/start", { phone: p });
-      expect([leftOver.status, await leftOver.json()]).toEqual([400, { ok: false, error: "turnstile" }]);
-      expect(requests.length).toBe(before);
       expect((await call("slop.date", "/api/auth/otp/start", { phone: p })).status).toBe(400);
       const start = await call("friends.help", "/api/auth/otp/start", { phone: p, turnstileToken: "ok" });
       expect(start.status).toBe(200);
@@ -230,23 +226,23 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     }
     mode = "no-chat";
     const legacy = phone();
-    await service(provider()).start(APPS.peon, legacy, legacy);
+    await service(provider()).start(APPS.peon, legacy, legacy, false);
     expect(await store.latestChallenge("peon", legacy)).toHaveProperty("providerChatId", null);
     expect(await service(provider()).verify("peon", legacy, requests.at(-1)!.code, legacy)).toBe(true);
   });
 
   test("expiry, wrong attempts, rate limits and provider switches cannot consume another provider's challenge", async () => {
     mode = "queued"; const otp = service(provider());
-    let p = phone(); await otp.start(APPS.peon, p, p); let code = requests.at(-1)!.code;
+    let p = phone(); await otp.start(APPS.peon, p, p, false); let code = requests.at(-1)!.code;
     const other = service({ name: "twilio_verify", send: async () => ({}), check: async () => true });
     expect(await other.verify("peon", p, code)).toBe(false);
     expect((await store.latestChallenge("peon", p))!.attempts).toBe(0);
     expect(await otp.verify("peon", p, code)).toBe(true);
-    p = phone(); await otp.start(APPS.peon, p, p); code = requests.at(-1)!.code;
+    p = phone(); await otp.start(APPS.peon, p, p, false); code = requests.at(-1)!.code;
     const prior = requests.length;
-    expect((await otp.start(APPS.peon, p, p)).ok).toBe(false); expect(requests.length).toBe(prior);
+    expect((await otp.start(APPS.peon, p, p, false)).ok).toBe(false); expect(requests.length).toBe(prior);
     now += 600001; expect(await otp.verify("peon", p, code)).toBe(false);
-    p = phone(); await otp.start(APPS.peon, p, p); code = requests.at(-1)!.code;
+    p = phone(); await otp.start(APPS.peon, p, p, false); code = requests.at(-1)!.code;
     const wrong = code === "000000" ? "999999" : "000000";
     for (let i = 0; i < 5; i++) expect(await otp.verify("peon", p, wrong, p)).toBe(false);
     expect(await otp.verify("peon", p, code, p)).toBe(false);
@@ -258,7 +254,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
   test("rejected, malformed and uncertain sends never create a usable challenge or try another provider", async () => {
     for (mode of ["reject", "failed", "missing-id", "missing-status", "unknown", "timeout"]) {
       const p = phone(), count = requests.length, logCount = logs.length;
-      expect(await service(provider()).start(APPS.peon, p, p)).toEqual({ ok: true });
+      expect(await service(provider()).start(APPS.peon, p, p, false)).toEqual({ ok: true });
       expect(requests.length).toBe(count + 1);
       expect(await store.latestChallenge("peon", p)).toBeUndefined();
       const diagnostic = mode === "reject" ? "failure=blocked, http=403" : mode === "failed" ? "failure=unknown, http=none" : mode === "timeout" ? "failure=retryable, http=none" : mode === "missing-id" ? "failure=retryable, http=200" : "failure=retryable, http=201";
@@ -273,9 +269,9 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     const ledger = new CostLedger({ clock: { now: () => now }, rates: costRatesFromEnv({ COST_SMS_USD: "0.009" }),
       sink: { write(rows: CostRow[]) { const write = sink.write(rows); writes.push(write); return write; }, totals: day => sink.totals(day) } });
     mode = "queued";
-    await service(ledger.meterOtp(provider())).start(APPS.peon, phone(), "cost-accepted");
+    await service(ledger.meterOtp(provider())).start(APPS.peon, phone(), "cost-accepted", false);
     mode = "reject";
-    await service(ledger.meterOtp(provider())).start(APPS.peon, phone(), "cost-rejected");
+    await service(ledger.meterOtp(provider())).start(APPS.peon, phone(), "cost-rejected", false);
     await Promise.all(writes);
     const rows = await sql`select app_id, kind, provider, cost_usd::float8 as cost, estimated, detail from network.cost_ledger`;
     expect(rows).toHaveLength(1);
@@ -285,13 +281,12 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     expect(JSON.stringify(rows)).not.toContain("+1212");
   });
 
-  test("every app keeps the browser check and the standard address limit; a left-over PLATFORM_PHONE_OTP_ONLY_APPS changes nothing", async () => {
+  test("every app keeps the browser check and the standard address limit", async () => {
     mode = "queued";
     now = Date.UTC(2026, 10, 2);
     const api = createPublicApi({
-      // A longer send timeout than provider(): this case makes many sends on a shared machine.
       store, otp: new BlooioOtpProvider(ENV, { baseUrl: `http://127.0.0.1:${server.port}/v4`, timeoutMs: 5000 }),
-      env: { PLATFORM_ENV: "production", PLATFORM_PHONE_OTP_ONLY_APPS: "friends" }, hashKey: KEY, sessionSecret: `session-${KEY}`,
+      env: { PLATFORM_ENV: "production" }, hashKey: KEY, sessionSecret: `session-${KEY}`,
       turnstile: { verify: async (token: string | undefined) => token === "ok" }, now: () => now, ipOf: () => "198.51.100.77", minStartMs: 0, minVerifyMs: 0, log: line => logs.push(line),
     });
     const call = async (host: string, path: string, body: unknown) =>

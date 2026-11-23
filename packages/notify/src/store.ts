@@ -50,10 +50,6 @@ export interface NotifyStore {
   markSeen(personId: string, surface: Surface, now: number, ids?: string[]): Promise<string[]>;
 
   recordDelivery(d: DeliveryRecord, weeklyCap: number): Promise<boolean>;
-  /**
-   * A message another sender already delivered: add its item (or find it by dedupe key) and, when the item is not
-   * notified yet, record the delivery, in one transaction. The item is never pending without its delivery.
-   */
   addDelivered(input: InboxItemInput, d: Omit<DeliveryRecord, "itemIds" | "personId" | "outcome" | "outcomeAt" | "assistantLink">): Promise<{ item: InboxItem; created: boolean }>;
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
   /** Send times of cap-counting deliveries to a person at or after `since`. */

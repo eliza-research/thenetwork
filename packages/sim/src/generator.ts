@@ -153,9 +153,10 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
   }
   if (opts.richness) attachKnowledge(personas, root.fork("richness"), opts.richness === true ? DEFAULT_RICHNESS_MIX : opts.richness, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
   statedTeenAges(personas, opts.seed, opts.minorLiarShare ?? 0, opts.adultPoserShare ?? 0);
-  giveStatedBirthDates(personas, opts.seed, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
   return { personas, latent };
 }
+
+export const TEEN_WORLD = { minorShare: 0.15, minorLiarShare: 0.2, adultPoserShare: 0.02 } as const;
 
 const POSER_AGES: [number, number] = [19, 40];
 const LIAR_AGES: [number, number] = [18, 21];

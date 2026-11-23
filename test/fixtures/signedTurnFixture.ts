@@ -1,19 +1,18 @@
 import { fetchWithHost } from "../../packages/core/src/runtime/fetch.ts";
 import { serveHttp, type HttpServer } from "../../packages/core/src/runtime/http.ts";
-import { randomUUID } from "node:crypto";
-import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { HOUR, SimClock } from "../../packages/core/src/index.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../packages/core/src/svc/contract.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
-import { applySchema, DEV_PG_PORT } from "../../packages/observatory/db/dev-pg.ts";
 import { holdEveryItem, type ReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
+import { withConformanceDatabaseUrl } from "./conformanceDatabase.ts";
 
 export type FixtureApp = "slop" | "friends";
 export type FixtureMember = { phone: string; personId: string };
 type FixtureTurn = Pick<TurnRequest, "app" | "receivedAt"> & { observeDryRunSideEffects?: boolean };
+type FixtureOptions = { friendsReview?: boolean; reviewJudge?: ReviewJudge; env?: Record<string, string> };
 type FixtureSignup = { firstName?: string; age?: number; apps?: readonly FixtureApp[]; interests?: string[]; neighborhood?: string };
 
 export type SignedTurnFixture = {
@@ -28,10 +27,11 @@ export type SignedTurnFixture = {
   openPeer(reviewJudge: ReviewJudge): Promise<NetworkService>;
 };
 
-export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>, options: { friendsReview?: boolean; reviewJudge?: ReviewJudge; env?: Record<string, string> } = {}) {
-  const database = `network_journey_${randomUUID().replaceAll("-", "")}`;
-  const address = `postgres://${encodeURIComponent(process.env.USER || "postgres")}@127.0.0.1:${DEV_PG_PORT}`;
-  const url = `${address}/${database}`;
+export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>, options: FixtureOptions = {}) {
+  await withConformanceDatabaseUrl("network_journey", url => serveFixture(url, run, options));
+}
+
+async function serveFixture(url: string, run: (fixture: SignedTurnFixture) => Promise<void>, options: FixtureOptions) {
   const secret = "synthetic-signed-turn-journey-secret";
   const reviewer = "synthetic-friends-review-journey-token";
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
@@ -39,35 +39,28 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
   let phoneCounter = 0;
   let messageCounter = 0;
   let adapterCalls = 0;
-  const admin = new SQL({ url: `${address}/postgres`, max: 1 });
-  let created = false;
-  let service: NetworkService | undefined;
+  const build = (instance: string, reviewJudge: ReviewJudge) => new NetworkService({
+    url, clock, instance, photoStorage: null, reviewJudge,
+    env: {
+      PLATFORM_ENV: "dev",
+      PLATFORM_HASH_KEY: "synthetic-signed-turn-conformance-key", SERVICE_TURN_SECRET: secret,
+      ...options.env,
+    },
+    networks: [
+      { id: "ntwrk:nyc", matchingEnabled: false },
+      { id: "slop:nyc", matchingEnabled: false },
+      { id: "friends:nyc", matchingEnabled: options.friendsReview === true },
+    ],
+    ...(options.friendsReview ? { devMatching: ["friends:nyc"], tokens: `reviewer@friends:${reviewer}` } : {}),
+    network: { seed: 1, ...(options.friendsReview ? { maxNewPerDay: 0, plans: false, growth: false } : {}) },
+    publicApi: { minStartMs: 0, minVerifyMs: 0, otp: { name: "fixture", send: async () => ({ code: "314159" }) } },
+    adapter: () => new DryRunAdapter(() => { adapterCalls++; }),
+    log: () => {},
+  });
+  const app = build("signed-turn-conformance", options.reviewJudge ?? holdEveryItem.judge);
   const peers: NetworkService[] = [];
   let server: HttpServer | undefined;
   try {
-    await admin.unsafe(`create database ${database}`);
-    created = true;
-    await applySchema(url, { lockTimeout: "5s" });
-    const build = (instance: string, reviewJudge: ReviewJudge) => new NetworkService({
-      url, clock, instance, photoStorage: null, reviewJudge,
-      env: {
-        PLATFORM_ENV: "dev",
-        PLATFORM_HASH_KEY: "synthetic-signed-turn-conformance-key", SERVICE_TURN_SECRET: secret,
-        ...options.env,
-      },
-      networks: [
-        { id: "ntwrk:nyc", matchingEnabled: false },
-        { id: "slop:nyc", matchingEnabled: false },
-        { id: "friends:nyc", matchingEnabled: options.friendsReview === true },
-      ],
-      ...(options.friendsReview ? { devMatching: ["friends:nyc"], tokens: `reviewer@friends:${reviewer}` } : {}),
-      network: { seed: 1, ...(options.friendsReview ? { maxNewPerDay: 0, plans: false, growth: false } : {}) },
-      publicApi: { minStartMs: 0, minVerifyMs: 0, otp: { name: "fixture", send: async () => ({ code: "314159" }) } },
-      adapter: () => new DryRunAdapter(() => { adapterCalls++; }),
-      log: () => {},
-    });
-    service = build("signed-turn-conformance", options.reviewJudge ?? holdEveryItem.judge);
-    const app = service;
     await app.start();
     const http = await serveHttp({
       hostname: "127.0.0.1", port: 0,
@@ -155,12 +148,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
     });
   } finally {
     await server?.stop(true);
-    try {
-      for (const peer of peers) await peer.close();
-      await service?.close();
-      if (created) await admin.unsafe(`drop database ${database}`);
-    } finally {
-      await admin.close();
-    }
+    for (const peer of peers) await peer.close();
+    await app.close();
   }
 }

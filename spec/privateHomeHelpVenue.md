@@ -83,18 +83,19 @@ case, including a person outside the roster, a missing yes, a changed roster,
 a revoked address and expiry, gets the same closed answer. The reply to a
 recorded yes names this command. The requester learns only that the whole
 roster agreed, which the private page needs, and never who answered or how.
-Changed on 2026-11-17 (audit CRI12): before this rule no message told a
-participant that the address step existed, so a reviewed plan could not reach
-the private page.
+Changed (audit CRI12): no message told a participant that the address step
+existed -> the reply to a recorded yes names the command, because an approved plan could not reach the
+private page.
 The private page reads the same step for the signed-in participant through a
 status action of the site call. An open step answers with the person's role,
 requester or helper, and whether an address is saved, and never with the
 address, the other people or the reason. A closed step gets the closed answer
 of the other actions. A revocation marker for the plan also closes the
-requester's step, because a submit then stores nothing. Changed on 2026-11-22
-(owner decision, one-purpose pages): the page could not know the role or a
-saved address before it acted, and after a revocation the reply still asked
-the requester to add an address that the page then refused.
+requester's step, because a submit then stores nothing. Changed (owner
+decision 2026-11-22, D7): the page could not know the role or a saved address
+before it acted -> a status action tells it, and a revocation closes the step,
+because the reply still asked the requester to add an address that the page
+then refused.
 
 ```quint
 type HomeHelpAddressStep = AddressStepClosed | RequesterAddsAddress | RequesterAddressSaved | HelperReadsAddress

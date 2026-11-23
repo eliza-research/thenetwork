@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, isMinor, normalizeFractionalAgeInitialism, parseIsoBirthDate, parseReply, quoteStillOpen, validAge, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, isMinor, birthKeyOfParts, normalizeFractionalAgeInitialism, parseReply, quoteStillOpen, validAge, type Category } from "@thenetwork/core";
 import { ageOnDay, birthKeyUsable } from "../../core/src/generated/memberAge.ts";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
@@ -445,13 +445,10 @@ const STATED_RX = DATE_FORMS.map(form => ({
 }));
 const FOUND_RX = DATE_FORMS.map(form => ({ form, rx: new RegExp(`(?:${BIRTH_LEAD}\\s*)?${bounded(form.source)}`, "gi") }));
 
-const dateKey = (year: number, month: number, day: number): number | undefined =>
-  parseIsoBirthDate(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
-
 function calendarKey(form: DateForm, g: DateGroups): number | undefined {
   if (form.numeric && numericDateAmbiguous(Number(g[1]), Number(g[2]))) return undefined;
   const [year, month, day] = form.parts(g);
-  return dateKey(year, month, day);
+  return birthKeyOfParts(year, month, day);
 }
 
 const usableKey = (key: number | undefined, dayKey: number): number | undefined =>
@@ -462,7 +459,7 @@ export type UnclearBirthDate = { monthFirst: string; dayFirst: string };
 function unclearOf(form: DateForm, g: DateGroups, dayKey: number): UnclearBirthDate | undefined {
   const first = Number(g[1]), second = Number(g[2]), year = Number(g[3]);
   if (!form.numeric || !numericDateAmbiguous(first, second)) return undefined;
-  if (usableKey(dateKey(year, first, second), dayKey) === undefined || usableKey(dateKey(year, second, first), dayKey) === undefined) return undefined;
+  if (usableKey(birthKeyOfParts(year, first, second), dayKey) === undefined || usableKey(birthKeyOfParts(year, second, first), dayKey) === undefined) return undefined;
   return { monthFirst: `${MONTH_WORDS[first - 1]} ${second}, ${year}`, dayFirst: `${MONTH_WORDS[second - 1]} ${first}, ${year}` };
 }
 

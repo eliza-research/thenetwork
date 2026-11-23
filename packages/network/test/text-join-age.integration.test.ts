@@ -1,10 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { existsSync } from "node:fs";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
-import { findExecutable } from "../../core/src/runtime/process.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
@@ -12,19 +10,10 @@ import { brandOf, copyFor } from "../src/copy.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
-const USER = process.env.USER ?? "postgres";
-const DB = `text_join_age_test_${process.pid}`;
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
-const URL_ = `postgres://${USER}@localhost:${DEV_PG_PORT}/${DB}`;
 const SECRET = "whsec_shared", APP_SECRET = "whsec_app";
 const NETS = [{ id: "ntwrk:nyc" }, { id: "friends:nyc" }, { id: "slop:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }];
 
-async function admin(q: string) {
-  const sql = new SQL({ url: ADMIN_URL, max: 1 });
-  try { await sql.unsafe(q); } finally { await sql.close(); }
-}
-
+let url: string;
 let sql: SQL;
 let phoneSeq = 0;
 let evt = 0;
@@ -34,7 +23,7 @@ const newPhone = () => `+121255502${String(10 + ++phoneSeq).padStart(2, "0")}`;
 function service(clock: SimClock) {
   const directs: { app: string; to: string; body: string }[] = [];
   const s = new NetworkService({
-    url: URL_, clock, instance: "text-join-age", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
+    url, clock, instance: "text-join-age", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
     tokens: "admin:adm-tok,reviewer:rev-tok", webhookSecret: SECRET, webhookSecrets: { friends: APP_SECRET, slop: APP_SECRET },
     network: { seed: 1 },
     adapter: (_net, rt) => {
@@ -47,24 +36,12 @@ function service(clock: SimClock) {
   return { s, directs };
 }
 
-async function text(s: NetworkService, clock: SimClock, from: string, body: string, o: { app?: AppId } = {}) {
+async function text(s: NetworkService, clock: SimClock, from: string, body: string, o: { app?: AppId; line?: string } = {}) {
   const n = ++evt;
   const raw = JSON.stringify({ id: `evt_${n}`, type: "message.received", api_version: "2026-10-01", created_at: clock.now(), organization_id: "org_test",
-    data: { message_id: `msg_${n}`, sender: from, chat_id: from, text: body, protocol: "imessage" } });
+    data: { message_id: `msg_${n}`, sender: from, chat_id: from, text: body, protocol: "imessage", ...(o.line ? { recipient: o.line } : {}) } });
   const res = await s.fetch(new Request(`http://127.0.0.1${WEBHOOK_PATH}${o.app ? `/${o.app}` : ""}`, {
     method: "POST", headers: { "content-type": "application/json", "x-blooio-signature": signBlooioPayload(o.app ? APP_SECRET : SECRET, raw, Math.floor(clock.now() / 1000)) }, body: raw,
-  }));
-  expect(res.status).toBe(200);
-  clock.advance(MINUTE);
-  return (await res.json()).result as string;
-}
-
-async function textOn(s: NetworkService, clock: SimClock, from: string, body: string, line: string) {
-  const n = ++evt;
-  const raw = JSON.stringify({ id: `evt_${n}`, type: "message.received", api_version: "2026-10-01", created_at: clock.now(), organization_id: "org_test",
-    data: { message_id: `msg_${n}`, sender: from, chat_id: from, text: body, protocol: "imessage", recipient: line } });
-  const res = await s.fetch(new Request(`http://127.0.0.1${WEBHOOK_PATH}`, {
-    method: "POST", headers: { "content-type": "application/json", "x-blooio-signature": signBlooioPayload(SECRET, raw, Math.floor(clock.now() / 1000)) }, body: raw,
   }));
   expect(res.status).toBe(200);
   clock.advance(MINUTE);
@@ -81,18 +58,16 @@ const pendingJoins = async () => (await sql`select count(*)::int as n from platf
 
 describe.skipIf(!pgAvailable)("text join and age through the inbound path (Postgres)", () => {
   beforeAll(async () => {
-    await devPgUp();
-    await admin(`drop database if exists ${DB} with (force)`);
-    await admin(`create database ${DB}`);
-    sql = new SQL({ url: URL_, max: 2 });
+    url = await testDb();
+    sql = new SQL({ url, max: 2 });
   }, T);
   afterEach(async () => { for (const s of open.splice(0)) await s.close().catch(() => {}); });
   afterAll(async () => {
     for (const s of open) await s.close().catch(() => {});
     await sql?.close();
-    await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
+    await dropTestDb();
   });
-  const fresh = async () => { await applySchema(URL_, { reset: true, lockTimeout: "5s" }); };
+  const fresh = async () => { await testDb(); };
 
   test("JA-1 spec/textEnrollment.md, \"Confirm age before creating a member\": an age sent with no name outlives the pending join, so a later older age joins at the lowest age", async () => {
     await fresh();
@@ -133,7 +108,7 @@ describe.skipIf(!pgAvailable)("text join and age through the inbound path (Postg
     const NLINE = "+12125550778";
     await sql`insert into platform.app_lines (line_e164, app_id, city, provider, env) values (${NLINE}, 'ntwrk', 'nyc', 'blooio', 'dev')`;
     const p = newPhone();
-    expect(await textOn(s, clock, p, "Sam 15", NLINE)).toBe("invite_only");
+    expect(await text(s, clock, p, "Sam 15", { line: NLINE })).toBe("invite_only");
     expect(directs.at(-1)!.body).toBe(APPS.ntwrk.brand.inviteOnly);
     expect(await pendingJoins()).toBe(0);
     expect(await text(s, clock, p, "Sam 25", { app: "friends" })).toBe("joined");

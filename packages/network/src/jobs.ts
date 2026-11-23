@@ -158,7 +158,7 @@ export const POSTING_COPY = {
   dropped: "OK, I didn't post anything.",
   askTitle: "What's the job title?",
   askPay: "What's the pay range for the role (for example $90k-$120k)? We only show jobs with a posted pay range.",
-  saved: (title: string) => `Posted: ${title}. A person on our team reviews every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
+  saved: (title: string) => `Posted: ${title}. An automatic check approves every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
   readBack: (d: PostingDraft) => {

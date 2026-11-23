@@ -2,7 +2,6 @@ import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
-import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
@@ -14,8 +13,6 @@ async function meetAndWaitForFeedback(w: Mini, keep?: (booked: BookedOpp) => voi
   const pair: [string, string] = ["a", "b"];
   await w.onboard(...pair);
   const id = w.propose(pair);
-  expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === id))).toBe(true);
-  expect(w.net.review(id, "approve", { reviewer: "staff" })).toBe(true);
   await w.answerProbes(pair);
   keep?.(structuredClone(w.net.exportState().opps.find(o => o.id === id)!));
   const booked = w.mark();
@@ -33,7 +30,7 @@ const reports = (w: Mini) => w.net.safetyReports().map(r => [r.kind, r.source, r
 const blocked = (w: Mini) => w.net.exportState().blocks.includes("a|b");
 
 test("ntwrk: a check-in answer that describes a problem without report words asks once, and 'report' opens the case about the person met", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   const id = await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "He made me really uncomfortable.");
@@ -51,7 +48,7 @@ test("ntwrk: a check-in answer that describes a problem without report words ask
 }, T);
 
 test("ntwrk: a no-show said in the check-in asks once, and 'block' blocks the pair without a report", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "He never showed up.");
@@ -66,7 +63,7 @@ test("ntwrk: a no-show said in the check-in asks once, and 'block' blocks the pa
 }, T);
 
 test("ntwrk: 'no' to the check-in question opens nothing and closes the question", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "Something felt off the whole time.");
@@ -78,7 +75,7 @@ test("ntwrk: 'no' to the check-in question opens nothing and closes the question
 }, T);
 
 test("ntwrk: a positive or a chemistry-only answer asks nothing", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "It was great, we really clicked.");
@@ -90,7 +87,7 @@ test("ntwrk: a positive or a chemistry-only answer asks nothing", async () => {
 }, T);
 
 test("ntwrk: the question is asked once; an unclear answer opens no case and a later 'report' is not read as its answer", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "He made me uncomfortable, honestly.");
@@ -103,7 +100,7 @@ test("ntwrk: the question is asked once; an unclear answer opens no case and a l
 }, T);
 
 test("ntwrk: an urgent check-in answer opens the case at once without a question", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   const id = await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "He was creepy and aggressive with me.");
@@ -115,7 +112,7 @@ test("ntwrk: an urgent check-in answer opens the case at once without a question
 }, T);
 
 test("the check-in question survives a restart, and the answer after it opens the case", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   const id = await meetAndWaitForFeedback(w);
   await w.say("a", "I felt uneasy around him.");
   w.restart();
@@ -126,7 +123,7 @@ test("the check-in question survives a restart, and the answer after it opens th
 }, T);
 
 test("an answer more than a day after the question lapses: no case, and the feedback stays", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   const id = await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "He made me uncomfortable.");
@@ -139,8 +136,8 @@ test("an answer more than a day after the question lapses: no case, and the feed
   expect(w.net.exportState().feedback.filter(f => f.from === "a" && f.opportunityId === id)).toHaveLength(1);
 }, T);
 
-test("slop: a concern without a report kind asks once, where before it was kept as feedback only", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline, hooks: { postDateReports: true } });
+test("with post-date reports on, a concern without a report kind asks once", async () => {
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   const id = await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "Something felt off and he made me uncomfortable.");
@@ -156,7 +153,7 @@ test.each([
   "Should I report him?",
   "No, we both moved on",
 ])("a refusal, a question or a 'both' inside a sentence opens nothing: %s", async answer => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "He made me really uncomfortable.");
@@ -169,7 +166,7 @@ test.each([
 }, T);
 
 test("a report that names someone else goes to the ordinary flow and files nothing about the person asked about", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   await meetAndWaitForFeedback(w);
   const mark = w.mark();
   await w.say("a", "He made me really uncomfortable.");
@@ -181,7 +178,7 @@ test("a report that names someone else goes to the ordinary flow and files nothi
 }, T);
 
 test("a bare 'no' to a day-of check-in that is open with the question cancels that meeting, and the question stays open", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   let snapshot: BookedOpp | undefined;
   const id = await meetAndWaitForFeedback(w, booked => { snapshot = booked; });
   const mark = w.mark();

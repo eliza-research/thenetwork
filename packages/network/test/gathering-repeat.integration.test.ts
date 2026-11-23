@@ -2,18 +2,18 @@ import { expect, test } from "vitest";
 import type { InitialInviteReceipt } from "@thenetwork/core";
 import { gatheringRepeatOppId, gatheringRepeatProbeKey, type GatheringRepeatSource } from "../src/network.ts";
 import { Mini } from "./mini.ts";
-import { holdEveryItem, simulatedReviewJudge, type InlineReviewJudge } from "../../engine/src/reviewJudge.ts";
+import { holdEveryItem, type InlineReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const source: GatheringRepeatSource = {
   gatheringId: "79defc40-f749-4a7c-b39f-9eb86279d2b9", revision: 1, groupReviewId: "884bda9d-50c9-4261-999b-bed198b7ad39",
   members: ["a", "b"], consentVersion: "2".repeat(64),
 };
 
-async function world(judge: InlineReviewJudge = simulatedReviewJudge({ exceptions: false })) {
+async function world(judge?: InlineReviewJudge) {
   const w = new Mini([
     { id: "a", name: "Ari Birch", age: 30, area: "Greenpoint" },
     { id: "b", name: "Bea Cedar", age: 31, area: "Greenpoint" },
-  ], { inlineJudge: judge, probes: false, growth: false });
+  ], { ...(judge ? { inlineJudge: judge } : {}), probes: false, growth: false });
   await w.onboard(...source.members);
   for (const member of source.members) w.net.noteGatheringFollowupReply(member);
   return w;
@@ -64,7 +64,6 @@ test("a gathering pair is approved by the review judge and needs fresh responses
   expect(w.net.exportState().opps.find(opp => opp.id === id)?.stage).toBe("scheduled");
 });
 
-// spec/gatheringRepeat.md, "A current exact mutual choice can enter review once per gathering pair"
 test("a held gathering pair keeps its fixed pair for staff", async () => {
   const w = await world(holdEveryItem.inline);
   const id = gatheringRepeatOppId(source);

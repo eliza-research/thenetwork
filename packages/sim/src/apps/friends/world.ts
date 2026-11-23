@@ -1,34 +1,16 @@
-// The friends.help harness: weekly rounds over ~400 New Yorkers. Each week:
-//   0. the opt-in weekly check-in ("what's your week like?") is answered (visible as stated windows);
-//   1. the matcher reads ONLY the snapshot and returns proposals: new plans (groups of 3-6, or an
-//      activity pair), "same table again" repeats, crew offers and crew sessions;
-//   2. probes are anonymous, activity-first, with 1-3 time options; each member answers with the
-//      options they are truly free for; a plan books the option most yes-sayers picked once quorum
-//      is reached (alternates are probed to backfill); a pair is asked first-then-second;
-//   3. the reveal is the booked plan (names exchanged: this is a "contact"); a member may back out;
-//   4. attendance, enjoyment (least misery), harms, private "see again?" answers, hours together;
-//   5. crews: an offer is opted into person by person (>= 3 form it); sessions weekly; after 3
-//      sessions the crew is handed to its own group chat and keeps meeting on its own (decaying);
-//   6. pairs who both want to see each other again also meet on their own (hidden hangouts).
-// Caps (attention v1.2 + plans v1.1 founder decisions, carried to every app, PRD 40.4): at most 1
-// new-plan invite per member per week (plan allowance; repeats count, crew sessions and crew offers
-// do not), at most 2 booked meetups per member per week and never two in one slot. Proposals past a
-// cap lose that member silently. A proposal whose roster breaks the stated-age rule for minors
-// (spec/friendIntroAge.md) is dropped and counted (must be 0).
-import { ageSideOf, canBeMatched, earliestDayKeyOf, latestDayKeyOf, localParts, type AgeSide, type Category, type Member, type MemberId } from "@thenetwork/core";
+import { canBeMatched, earliestDayKeyOf, latestDayKeyOf, type AgeSide, type Category, type Member, type MemberId } from "@thenetwork/core";
 import { ageOnDay } from "../../../../core/src/generated/memberAge.ts";
-import { groupAgeAllowed, rosterHasMinor, teenFriendRole, teenIntroShape, teenPlaceAllowed, teenRosterSizeAllowed } from "../../../../core/src/generated/friendIntroAge.ts";
-import { teenFriendCategory, teenGenerator } from "../../../../core/src/generated/matchLane.ts";
-import { teenMeetingAllowed } from "../../../../core/src/generated/teenIntroSwitch.ts";
+import { groupAgeAllowed, rosterHasMinor, teenPlaceAllowed, teenRosterSizeAllowed } from "../../../../core/src/generated/friendIntroAge.ts";
 import type { Crew } from "@thenetwork/engine/src/plans.ts";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { activityAllAges, activityById, venueAllAges } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { SLOT_TIME, hood, nycVenues } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { Rng, hash32 } from "@thenetwork/core";
 import { Coins, signature } from "../../coins.ts";
+import { ageSideOrUnknown, teenMinutesAllowed, teenShape, teenWindowAllowed } from "../../teen.ts";
 import { FriendsOracle, ORACLE_PARAMS, type HarmEvent, type OracleParams } from "./oracle.ts";
-import { FRIEND_ACTIVITIES, SLOTS, generateFriendsPersonas, isReal, type FriendsGenOptions, type FriendsPersona } from "./persona.ts";
-import { NYC_TZ, buildFriendsSnapshot, emptyFriendsState, slotDay, slotTime, weekTime, type CrewState, type FriendsNetworkState, type FriendsSnapshot } from "./snapshot.ts";
+import { FRIEND_ACTIVITIES, NYC_TZ, SLOTS, generateFriendsPersonas, isReal, type FriendsGenOptions, type FriendsPersona } from "./persona.ts";
+import { buildFriendsSnapshot, emptyFriendsState, slotDay, slotTime, weekTime, type CrewState, type FriendsNetworkState, type FriendsSnapshot } from "./snapshot.ts";
 
 export type ProposalKind = "plan" | "partner" | "repeat" | "crew_offer" | "crew_session";
 export interface FriendsProposal {
@@ -69,7 +51,7 @@ export interface FlowRecord extends RosterAge {
   additionalTable?: true;
   stage: "dropped_policy" | "no_quorum" | "backout" | "no_show" | "held" | "crew_declined";
   probed: number; yes: number; replied: number; going: MemberId[]; booked: MemberId[]; attended: MemberId[];
-  declaredMinor: boolean; harms: HarmEvent[]; capDrops: number;
+  ageRuleBroken: boolean; harms: HarmEvent[]; capDrops: number;
   expected: number;
   meetAt?: number;
 }
@@ -78,44 +60,22 @@ export interface RosterAge {
   teenIntros: boolean; minDay: number; maxDay: number;
   laneOk: boolean; placeOk: boolean; ruleOk: boolean;
 }
-const UNKNOWN_SIDE: AgeSide = { adult: false, ready: false, birthKey: 0 };
+type RosterProposal = Pick<FriendsProposal, "category" | "generator" | "format" | "roles" | "via" | "anchor" | "activity" | "options" | "venueId" | "times">;
 
-export type TeenShapeProposal = Pick<FriendsProposal, "category" | "generator" | "format" | "roles" | "via" | "anchor">;
-export type RosterProposal = TeenShapeProposal & Pick<FriendsProposal, "activity" | "options" | "venueId" | "times">;
-
-export function teenLaneOf(ids: readonly MemberId[], pr: TeenShapeProposal): { lane: boolean; laneOk: boolean } {
-  const lane = pr.category !== undefined && teenFriendCategory("friends", pr.category);
-  const everyRoleTeen = ids.every(id => { const role = pr.roles?.[id]; return role !== undefined && teenFriendRole(role); });
-  const laneOk = lane && pr.generator !== undefined && teenGenerator("friends", pr.generator)
-    && pr.format !== undefined && teenIntroShape(lane, pr.format, everyRoleTeen, pr.via !== undefined, pr.anchor?.type === "event");
-  return { lane, laneOk };
-}
-
-export const slotStartMinute = (slot: number): number => Math.round(SLOT_TIME[SLOTS[slot]!].hour * 60);
-
-export function teenSlotAllowed(slot: number, durationMin: number): boolean {
-  const start = slotStartMinute(slot);
-  return teenMeetingAllowed(true, false, start, start + durationMin, false);
-}
-
-export function teenTimeAllowed(start: number, end: number): boolean {
-  const local = localParts(start, NYC_TZ);
-  const startMinute = local.hour * 60 + local.minute;
-  return teenMeetingAllowed(true, false, startMinute, startMinute + Math.ceil((end - start) / 60_000), false);
-}
+export const teenSlotAllowed = (slot: number, durationMin: number): boolean => teenMinutesAllowed(Math.round(SLOT_TIME[SLOTS[slot]!].hour * 60), durationMin);
 
 export function rosterAge(s: FriendsSnapshot, members: ReadonlyMap<MemberId, Member>, ids: readonly MemberId[], pr: RosterProposal, week: number): RosterAge {
-  const sides = ids.map(id => { const m = members.get(id); return m ? ageSideOf(m) : UNKNOWN_SIDE; });
+  const sides = ids.map(id => ageSideOrUnknown(members.get(id)));
   const activity = activityById.get(pr.activity);
   const durationMin = activity?.durationMin ?? 120;
   const meetingEnd = Math.max(s.now, ...pr.options.map(o => slotTime(week, o) + durationMin * 60_000), ...(pr.times ?? []).map(t => t.end));
   const minDay = earliestDayKeyOf(s.now), maxDay = latestDayKeyOf(meetingEnd);
   const teenIntros = s.teenIntros === true;
-  const { lane, laneOk } = teenLaneOf(ids, pr);
+  const { lane, laneOk } = teenShape("friends", ids, pr);
   const venue = pr.venueId === undefined ? undefined : VENUE_BY_ID.get(pr.venueId);
   const placeOk = teenPlaceAllowed(true, activity !== undefined, activity !== undefined && activityAllAges(activity), venue !== undefined && venueAllAges(venue))
     && pr.options.every(o => teenSlotAllowed(o, durationMin))
-    && (pr.times === undefined ? pr.options.length > 0 : pr.times.length > 0 && pr.times.every(t => teenTimeAllowed(t.start, t.end)));
+    && (pr.times === undefined ? pr.options.length > 0 : pr.times.length > 0 && pr.times.every(t => teenWindowAllowed(NYC_TZ, t.start, t.end)));
   const ruleOk = !rosterHasMinor(sides) || (teenIntros && laneOk && placeOk && teenRosterSizeAllowed(true, ids.length)
     && groupAgeAllowed(teenIntros, lane, minDay, maxDay, sides));
   return { roster: [...ids], sides, ...(pr.category ? { category: pr.category } : {}), teenIntros, minDay, maxDay, laneOk, placeOk, ruleOk };
@@ -226,10 +186,10 @@ function* friendsWeeks(o: FriendsRunOptions, world: FriendsWorld, matcherName: s
       const key = `w${week}:${idx}:${pr.kind}`;
       const everyone = [...pr.invited, ...pr.alternates, ...(pr.hostId !== undefined && !pr.invited.includes(pr.hostId) ? [pr.hostId] : [])];
       const age = rosterAge(snapshot, membersById, everyone, pr, week);
-      const f: FlowRecord = { key, week, kind: pr.kind, invited: [...pr.invited], stage: "dropped_policy", probed: 0, yes: 0, replied: 0, going: [], booked: [], attended: [], declaredMinor: false, harms: [], capDrops: 0, expected: 0, ...age };
+      const f: FlowRecord = { key, week, kind: pr.kind, invited: [...pr.invited], stage: "dropped_policy", probed: 0, yes: 0, replied: 0, going: [], booked: [], attended: [], ageRuleBroken: false, harms: [], capDrops: 0, expected: 0, ...age };
       flows.push(f);
       if (everyone.some(id => !oracle.byId.has(id))) return;
-      if (!age.ruleOk) { f.declaredMinor = true; return; }
+      if (!age.ruleOk) { f.ageRuleBroken = true; return; }
       if (!pr.options.length || !activityById.has(pr.activity)) return;
       // Initial invites: new plans use the plan allowance, one-to-one partner intros the intro cap.
       // Repeats and crew offers ride on the member's own post-meetup answer; crew sessions are opted in.

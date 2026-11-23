@@ -179,6 +179,32 @@ export function lawNoAgeSignalStartsNoMinorsPolicy(senderMarkedMinor: boolean): 
   return !relayStartsMinorPolicy(false, senderMarkedMinor);
 }
 
+/** Story: Keep unsafe items from reaching a match / The desk reads the sender's stated age before the engine reads the text (spec/relayDecision.md) */
+//@ pure
+export function relayAgeStatementRead(hasText: boolean, teenPair: boolean, saysYounger: boolean): boolean {
+  return hasText && (!teenPair || saysYounger);
+}
+
+/** Story: Keep unsafe items from reaching a match / The desk reads the sender's stated age before the engine reads the text (spec/relayDecision.md) */
+//@ pure
+export function relayAgeStatementRefuses(statedMinorAge: boolean, teenPair: boolean, senderMarkedMinor: boolean): boolean {
+  return statedMinorAge && (!teenPair || senderMarkedMinor);
+}
+
+/** Story: Keep unsafe items from reaching a match / The desk reads the sender's stated age before the engine reads the text (spec/relayDecision.md) */
+//@ pure
+export function lawAnAdultPairTextIsAlwaysRead(saysYounger: boolean): boolean {
+  //@ ensures \result === true
+  return relayAgeStatementRead(true, false, saysYounger);
+}
+
+/** Story: Keep unsafe items from reaching a match / The desk reads the sender's stated age before the engine reads the text (spec/relayDecision.md) */
+//@ pure
+export function lawNoStatedAgeRefusesNothing(teenPair: boolean, senderMarkedMinor: boolean): boolean {
+  //@ ensures \result === true
+  return !relayAgeStatementRefuses(false, teenPair, senderMarkedMinor);
+}
+
 /** Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case (spec/relayDecision.md) */
 //@ pure
 export function relaySevereBlockCaseEvent(verdict: RelayVerdict, severeReason: boolean): boolean {

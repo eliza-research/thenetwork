@@ -50,7 +50,7 @@ const open=async(messageId:string,text:string,phone=a):Promise<RelaySendRequest>
 const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId,toId],pairId="relay-pair")=>service.runtimeFor(app)!.unitOfWork(n=>{
   // Explicit canonical mutual-consent fixture. This case qualifies relay, not engine matching or human review.
   const state=n.exportState();state.opps=state.opps.filter(op=>op.id!==pairId);
-  const op:NetworkState["opps"][number]={id:pairId,origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:pair,alternates:[],primed:[],status:pair.map(id=>[id,"yes"]),explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:pair,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
+  const op:NetworkState["opps"][number]={id:pairId,origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:pair,alternates:[],primed:[],status:pair.map(id=>[id,"yes"]),explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",approver:"staff",reviewer:"fixture"},sameDay:false,contacted:pair,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
   state.opps.push(op);n.importState(state);
 });
 /** The pair as the stored state holds it now (a close commits before its own delivery, which waits for the held dispatch). */
@@ -277,10 +277,8 @@ test("a relayed text that only the classifier flags as a minor's words is blocke
   expect((await sql`select person_id::text from platform.person_minor_signals where person_id=${person.id}::uuid`).map((x:any)=>x.person_id)).toEqual([person.id]);
 },60_000);
 
-// spec/relayDecision.md, "A relay names its match when the member has more than one live match"; spec/sharedContext.md, "Active items list only the member's live matches with a safe summary"
 test("with two live matches the open context offers both; an unnamed relay asks which one and sends nothing; a named one reaches only that match",async()=>{
   clock.advance(11*MINUTE);await fixturePair();clock.advance(MINUTE);
-  // A second live match for Ari (with Cy), newer than the one with Sam.
   await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState(),base=st.opps.find(op=>op.id==="relay-pair")!;
     st.opps.push({...base,id:"relay-pair-cy",participants:[fromId,thirdId],status:[[fromId,"yes"],[thirdId,"yes"]],contacted:[fromId,thirdId],createdAt:clock.now()});n.importState(st);});
   try {
@@ -292,27 +290,23 @@ test("with two live matches the open context offers both; an unnamed relay asks 
     expect(await(await post(RELAY_PATH,unnamed)).json()).toEqual({decision:"none",senderNotice:"You have more than one match, so I didn't send that. Send it again and say who it's for.",delivered:false,replayed:false});
     expect(posts).toBe(before);expect(classifications).toBe(calls);
     expect((await sql`select item_id from network.relay_records where from_member=${fromId} and at>${new Date(clock.now()-MINUTE)}`).length).toBe(0);
-    // An answer that only names the match is not a relay request: the desk kept no unnamed item to send.
     const answer=await open("two-matches-answer","Sam");
     expect(await(await post(RELAY_PATH,{...answer,itemId:"relay-pair"})).json()).toEqual({decision:"none",senderNotice:"",delivered:false,replayed:false});expect(posts).toBe(before);
-    // spec/relayDecision.md, "A number ask with several live matches is never scored as abuse"
     const net=service.runtimeFor("friends")!.net,trustBefore=net.trust.get(fromId).score;
     const ask=await open("two-matches-number","can I get her number?");expect(net.trust.get(fromId).score).toBe(trustBefore);
     expect(await(await post(RELAY_PATH,ask)).json()).toEqual({decision:"none",senderNotice:"",delivered:false,replayed:false});expect(posts).toBe(before);
     const named=await open("two-matches-named","tell Sam I'm on my way");
     expect(await(await post(RELAY_PATH,{...named,itemId:"relay-pair"})).json()).toMatchObject({decision:"pass",delivered:true});
     expect(posts).toBe(before+1);expect(sent.at(-1)).toMatchObject({to:b,text:'Ari says: "I\'m on my way"'});
-    // A named match that closed after the turn opened: the member hears that this match is closed, not that they have none.
     const late=await open("two-matches-closed","tell Cy I'm on my way");
     await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState(),op=st.opps.find(x=>x.id==="relay-pair-cy")!;op.stage="closed";op.closedFrom="scheduled";n.importState(st);});
     expect(await(await post(RELAY_PATH,{...late,itemId:"relay-pair-cy"})).json()).toEqual({decision:"block",senderNotice:"That match is closed, so I can't pass anything on to them.",delivered:false,replayed:false});
     expect(posts).toBe(before+1);
   } finally {
-    await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState();st.opps=st.opps.filter(op=>op.id!=="relay-pair-cy");n.importState(st);});
+    await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState(),op=st.opps.find(x=>x.id==="relay-pair-cy");if(op){op.stage="closed";op.closedFrom="scheduled";n.importState(st);}});
   }
 },60_000);
 
-// spec/sharedContext.md, "Active item summaries are distinct"
 test("two live matches with the same first name get distinct summaries, or none when the day is shared too, so the agent never guesses",async()=>{
   const d="+12125550214";
   for(const [i,text] of ["friends.help","Sam, 31","I enjoy climbing and films","Sunday mornings work for me","Small groups are good"].entries()){
@@ -334,12 +328,11 @@ test("two live matches with the same first name get distinct summaries, or none 
     expect((await post(RELAY_PATH,{...(await open("same-name-guess","tell Sam I'm on my way")),itemId:"relay-pair"})).status).toBe(403);
     expect(posts).toBe(before);
   } finally {
-    await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState();st.opps=st.opps.filter(op=>op.id!=="relay-pair-sam2");n.importState(st);});
+    await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState(),op=st.opps.find(x=>x.id==="relay-pair-sam2");if(op){op.stage="closed";op.closedFrom="scheduled";n.importState(st);}});
     await fixturePair();
   }
 },60_000);
 
-// spec/relayLifecycle.md, "A first decision blocks or admits an item" (owner decision 2026-11-22, D18): migration 0086 closes the holds stored before the change
 test("relay holds stored before the change are closed: their records say block, the stored state keeps no held item or text, staff cannot release them, and nothing reaches the other member",async()=>{
   clock.advance(11*MINUTE);await fixturePair();
   const before=posts,at=new Date(clock.now()),item="legacy-held-1",rate="legacy-rate-1";

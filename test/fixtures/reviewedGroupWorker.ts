@@ -63,6 +63,7 @@ function groupEffects(messages: Mini["sent"]): GroupEffect[] {
 // spec/reviewedGroupJourney.md, "Story: Join a reviewed public hike only after the group agrees"
 await serveJourney<Event>({
   async reset() {
+    judge = () => null;
     world = new Mini(Object.values(people).map(person => ({
       // Neighbors of the venue: a member's known trip must fit the travel limit (spec/planFormation.md).
       ...person, area: "Inwood", interests: ["hiking"], shareable: true,
@@ -77,7 +78,6 @@ await serveJourney<Event>({
         await world.say(people[hiker].id, reply);
       }
     }
-    judge = () => null;
     await world.run(HOUR);
     const reviews = world.net.exportState().opps.filter(item => item.origin === "planner" && item.stage === "review");
     const [review] = reviews;
@@ -102,8 +102,7 @@ await serveJourney<Event>({
       case "judgeGroup": {
         if (current.stage !== "review" || current.review?.exception !== undefined) return "refused";
         judge = event.approved ? simulatedReviewJudge({ exceptions: false }) : holdEveryItem.inline;
-        await world.net.tick(world.clock.now());
-        judge = () => null;
+        try { await world.net.tick(world.clock.now()); } finally { judge = () => null; }
         break;
       }
       case "staffDecideGroup": {

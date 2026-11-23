@@ -1,21 +1,21 @@
-# Scale ladder and the no-n² gates (2026-11-21)
+# Scale ladder and the no-n² gates (2026-11-17)
 
 This report gives the first run of the scale ladder of the matching block (plan item 1 of
 [R12-ranked-plan.md](../research/2026-11-17-matching-optimization/R12-ranked-plan.md)). It is hand-written from saved
-command output. The table rows are copied from that output. The numbers come from the simulator with pinned seeds and
+command output of runs made from 2026-11-18 to 2026-11-21; the file name keeps the date of the plan. The table rows are copied from that output. The numbers come from the simulator with pinned seeds and
 no model calls. No real member data and no LLM call is in this report.
 
 Every number below comes from one of these saved output files (outside the repository, on the build machine):
 
 | File | What it holds |
 |---|---|
-| `/Users/nubs/tn-work/base/sim-matching-quick.txt` | the baseline quick matching block (before) |
-| `/Users/nubs/tn-work/w1-bench/sim-matching-quick-4-slop.txt` | the quick matching block, slop (after) |
-| `/Users/nubs/tn-work/w1-bench/sim-matching-quick-4-friends.txt` | the quick matching block, friends (after) |
-| `/Users/nubs/tn-work/w1-bench/sim-matching-quick-4-peon.txt` | the quick matching block, peon (after) |
-| `/Users/nubs/tn-work/w1-bench/sim-matching-quick-4-ntwrk.txt` | the quick matching block, ntwrk (after) |
-| `/Users/nubs/tn-work/w1-bench/hard-worlds-1.txt` | the harder worlds to N 20,000 (by hand) |
-| `/Users/nubs/tn-work/w1-bench/digest-base.txt`, `digest-bench.txt` | the default-world digests before and after |
+| `<run dir>/base/sim-matching-quick.txt` | the baseline quick matching block (before) |
+| `<run dir>/w1-bench/sim-matching-quick-4-slop.txt` | the quick matching block, slop (after) |
+| `<run dir>/w1-bench/sim-matching-quick-4-friends.txt` | the quick matching block, friends (after) |
+| `<run dir>/w1-bench/sim-matching-quick-4-peon.txt` | the quick matching block, peon (after) |
+| `<run dir>/w1-bench/sim-matching-quick-4-ntwrk.txt` | the quick matching block, ntwrk (after) |
+| `<run dir>/w1-bench/hard-worlds-1.txt` | the harder worlds to N 20,000 (by hand) |
+| `<run dir>/w1-bench/digest-base.txt`, `digest-bench.txt` | the default-world digests before and after |
 
 ## What the ladder measures
 
@@ -198,11 +198,11 @@ Every exact search equals brute force (recall 100.0%, regret 0.0) in every world
   ladder rungs (the sum of the "search ms" column) take 996.1 s in slop, 816.8 s in friends, 108.1 s in peon and
   37.1 s in ntwrk; the largest rungs are slop Date at N 20,000 (460,895 ms) and friends Friend at N 20,000 (456,838
   ms). The rest is the exactness and engine gates (also in the baseline) and the 200-profile sample. A CPU-time
-  profile of one rung (friends Friend, N 5,000, `/Users/nubs/tn-work/w1-bench/review/phases-friends-5000.txt`) gives
+  profile of one rung (friends Friend, N 5,000, `<run dir>/w1-bench/review/phases-friends-5000.txt`) gives
   4 s for the searches and 4.5 s for the sample (1.5 s pair values, 1.4 s pair-gate reasons for segment refusals,
   1.5 s brute force, 0.1 s other refusals). The core package removes the wasted checks of finding 2 (friends Friend
   checks per profile at N 20,000 fall from 271.0 to 12.2, with the same exact share 55.97% and the same 3,230.9
-  touches, in `/Users/nubs/tn-work/w1-core/bench-oldbase-4.txt` and `bench-newbase-4.txt`). Capping the ladder at
+  touches, in `<run dir>/w1-core/bench-oldbase-4.txt` and `bench-newbase-4.txt`). Capping the ladder at
   10,000 would hide the sizes where exactness falls. Measure the block time again on an idle machine after the core
   merge.
 - **The slope gates stay tracked.** They fail today in friends Friend, slop Date and peon Hire, as the task expects.

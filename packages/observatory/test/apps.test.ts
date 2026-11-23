@@ -90,9 +90,7 @@ describe("roles per app", () => {
     expect(healthAlerts({ ...base, reviewOpen: [item], sla: { app: "ntwrk", hours: 12 } }).find(a => a.key === "review_app_sla")).toBeUndefined();
   });
 
-  // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran": a lab run is a local
-  // simulation, where peon may match too.
-  test("lab runs match for the Slop pack and for Peon", () => {
+  test("lab runs match for the Slop pack and for Peon (spec/runtimeUnit.md: a lab run is a local simulation)", () => {
     expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).not.toContain("--max-new");
     expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).not.toContain("--max-new");
   });
@@ -179,8 +177,6 @@ describe("the console for four apps (game mode)", () => {
     const all = await (await as("adm", "/api/apps/health")).json() as { apps: AppHealth[] };
     expect(all.apps.map(a => a.app)).toEqual(["ntwrk", "slop", "peon", "friends"]);
     expect(all.apps.find(a => a.app === "peon")?.available).toBe(false); // its world was never opened
-    // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran": the registry row
-    // alone decides, so peon may match in a game world as in production (peon-matching-scope.integration.test.ts).
     const peon = await post("adm", "/api/control?app=peon", { type: "matching", on: true });
     expect([peon.status, (await peon.json()).ok]).toEqual([200, true]);
   }, T);

@@ -8,17 +8,17 @@ The [outbound queue model](models/outbound_queue.md) covers queue admission, opt
 
 ### A provider receipt advances through acceptance, send, delivery, and read
 
-The provider's queued response means accepted. Subsequent status updates advance accepted, sent, delivered, and read in that order. A failure update can end an accepted or sent message. A delivered or read message ignores a later failure. A legacy row stored as queued can advance on send, delivery, or read, and keeps its existing failure behavior.
+The provider's queued response means accepted. Subsequent status updates advance accepted, sent, delivered, and read in that order. A failure update can end an accepted or sent message. A delivered or read message ignores a later failure. A row that the provider queued before the queue recorded its own acceptance (`QueuedBeforeAcceptance`) can advance on send, delivery, or read, and keeps its existing failure behavior. Changed (2026-11-23): only the name of this phase changed, from `LegacyQueued`, because the new name says what the state is.
 
 ```quint
-type ReceiptPhase = Sending | LegacyQueued | ProviderAccepted | ProviderSent | ProviderDelivered | ProviderRead | ProviderFailed |
+type ReceiptPhase = Sending | QueuedBeforeAcceptance | ProviderAccepted | ProviderSent | ProviderDelivered | ProviderRead | ProviderFailed |
   AcceptanceUnknown | AcceptanceExpired | RetryScheduled | WaitingForReply | ProviderBlocked | OutsideReceipt
 type ReceiptLifecycle = { phase: ReceiptPhase }
 
 pure val initial: ReceiptLifecycle = { phase: Sending }
 
 pure def receiptRank(phase: ReceiptPhase): int =
-  if (phase == ProviderAccepted or phase == LegacyQueued) 1
+  if (phase == ProviderAccepted or phase == QueuedBeforeAcceptance) 1
   else if (phase == ProviderSent) 2
   else if (phase == ProviderDelivered) 3
   else if (phase == ProviderRead) 4
@@ -26,7 +26,7 @@ pure def receiptRank(phase: ReceiptPhase): int =
 
 pure def canRecordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): bool =
   (outbound.phase == Sending or outbound.phase == AcceptanceUnknown) and
-    ((receiptRank(providerPhase) > 0 and providerPhase != LegacyQueued) or providerPhase == ProviderFailed)
+    ((receiptRank(providerPhase) > 0 and providerPhase != QueuedBeforeAcceptance) or providerPhase == ProviderFailed)
 
 pure def recordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): ReceiptLifecycle =
   { phase: providerPhase }
@@ -129,7 +129,7 @@ pure def lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): bool =
 
 ### A gateway reply with no final receipt ends after the receipt deadline
 
-A reply that the gateway took in a signed turn waits for the turn receipt, as does a reply whose receipt said unknown. The gateway may have sent it, so the queue never sends it. When no accepted or rejected receipt came before the deadline of an unknown acceptance, counted from when the reply was collected, the reply ends as an expired acceptance (failed unknown). It keeps its text and returns no person-cap slot. A turn receipt names only the replies of its own turn, so a receipt that comes after the deadline still records what the gateway did: an accepted receipt makes the expired reply sent, with its send time, its place in the thread history and its count in the unanswered streak, and a rejected receipt makes it refused. An expired reply records its send at the time it was collected, not at the time the late receipt came, because the gateway sends the replies of a turn when the turn ends; the unanswered streak then does not count a reply that the member answered before the receipt came. A late unknown receipt changes nothing. Changed 2026-11-21: nothing ended such a reply (SD-100), so a reply whose receipt never came stayed open with no end. Changed 2026-11-22: the queue dropped a late accepted receipt, so a booking notice that the gateway sent never counted as received, its reminder, cancellation and feedback request were refused, and the leak guard's thread check did not read the text. Changed 2026-11-22: a late accepted receipt recorded the send at the time the receipt came, hours after the real send, so a reply that the member had already answered counted in the unanswered streak.
+A reply that the gateway took in a signed turn waits for the turn receipt, as does a reply whose receipt said unknown. The gateway may have sent it, so the queue never sends it. When no accepted or rejected receipt came before the deadline of an unknown acceptance, counted from when the reply was collected, the reply ends as an expired acceptance (failed unknown). It keeps its text and returns no person-cap slot. A turn receipt names only the replies of its own turn, so a receipt that comes after the deadline still records what the gateway did: an accepted receipt makes the expired reply sent, with its send time, its place in the thread history and its count in the unanswered streak, and a rejected receipt makes it refused. An expired reply records its send at the time it was collected, not at the time the late receipt came, because the gateway sends the replies of a turn when the turn ends; the unanswered streak then does not count a reply that the member answered before the receipt came. A late unknown receipt changes nothing. Changed (audit SD-100): nothing ended such a reply, the queue dropped a late accepted receipt, and a late receipt recorded the send at its own time -> the reply expires at the deadline and a late final receipt still records it at the time it was collected, because a reply stayed open forever, a sent booking notice never counted as received, and a reply that the member had answered counted in the unanswered streak.
 
 ```quint
 pure def gatewayReplyPhase(pastLimit: bool): ReceiptPhase = if (pastLimit) AcceptanceExpired else AcceptanceUnknown
@@ -152,12 +152,13 @@ pure def lawReplySendTimeNotAfterReceipt(replyStatus: str, collectedAt: int, rec
 pure def lawLateUnknownReceiptKeepsExpiredReply(replyStatus: str): bool =
   replyStatus == "failed_unknown" implies not(gatewayReceiptApplies(replyStatus, "unknown"))
 
-pure def lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus: str, delivery: str): bool =
-  gatewayReceiptApplies(replyStatus, delivery) implies
-    (replyStatus == "collected" or replyStatus == "send_unknown" or replyStatus == "failed_unknown")
+pure def lawGatewayReceiptNeverChangesAFinalReply(delivery: str): bool =
+  not(gatewayReceiptApplies("sent", delivery)) and not(gatewayReceiptApplies("accepted", delivery))
 
-pure def lawGatewayReplyEndsOnlyPastLimit(pastLimit: bool): bool =
-  (gatewayReplyPhase(pastLimit) == AcceptanceExpired) iff pastLimit
+pure def lawLateFinalReceiptEndsAnExpiredReply(delivery: str): bool =
+  delivery != "unknown" implies gatewayReceiptApplies("failed_unknown", delivery)
 
 pure def lawExpiredGatewayReplyKeepsSlot(pastLimit: bool): bool = not(returnsPersonSlot(gatewayReplyPhase(pastLimit)))
 ```
+
+Conformance. test/fixtures/outboundReceiptWorker.ts queues one compliance text for each key, each on its own line and clock. The provider holds each send until an event decides it, so Sending is the row that the queue claimed and leased. Receipts come through the status and receipt-lookup paths of the queue. A receipt event for a phase that has no provider delivery status sends nothing.

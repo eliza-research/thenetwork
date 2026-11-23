@@ -1,24 +1,3 @@
-// The relay block: the engine's relay policy (packages/engine/src/relay.ts) and the photo in the
-// probe (packs/slop/plan.ts probePhotoRefs, copy.ts slopProbeMessage), critical path item 7.
-//   corpus     evals/relay/: hand-written honest messages, scams, harassment, contact attempts and
-//              rating probes (relay.jsonl, relay-paraphrases.jsonl, relay-heldout-1.jsonl: blocking;
-//              relay-heldout-2.jsonl: tracked, never tuned on), member requests (requests.jsonl),
-//              and the Network's benign adult phrasing as a second false-hold check
-//   scenarios  scripted items against the policy: minors, state, blocks, consent, photos, leaks,
-//              rate limits, the log, the LLM hook, and the photo-in-probe rule
-//   clef       the Clef relay classifier (engine relayClef.ts) against a fake Workers AI fetch: the
-//              hook contract (raise only, never lower), clef-flash default, timeouts and failures block
-//              the text (classifier:unavailable), no body in events or records; and the
-//              rules + Clef arm scored from RECORDED answers (evals/relay/clef-answers.jsonl) when that
-//              cache exists. No Clef call is ever made here; without the cache the arm is skipped
-//              and tracked. The rules-only gates above are unchanged.
-//   adversarial the relay and photo adversarial scenarios inside the slop world (packages/sim/src/apps/
-//              slop/adversarial.ts; #11 sims-and-e2e) on seeds 13-16: a scam after the reveal, a number
-//              swap before both yeses, a leak of the other member's details, a minor in the relay, and
-//              the photo in the probe with the flag off, no consent, a minor or a held member; then
-//              the same cases on the live path (the slop probe hook with SLOP_PROBE_PHOTOS, the desk).
-// The relay inside the slop world (adversary personas exchanging items after the reveal) is gated in
-// the slop block (scripts/sim/slop.ts, "relay world" gates), on the pinned seeds.
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { findLeaks } from "../../packages/core/src/index.ts";
 import { appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
@@ -31,9 +10,10 @@ import type { ClefFetch } from "../../packages/engine/src/packs/slop/clef.ts";
 import { baseCtx, textItem as text, cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES } from "../relay-clef-lib.ts";
 import { RelayDesk, withdrawsSwap, type RelayHost, type RelayMatch, type RelayMember } from "../../packages/network/src/relay.ts";
 import { newPhotoId } from "../../packages/platform/src/photos.ts";
-import { isOpaquePhotoId } from "../../packages/engine/src/relay.ts";
+import { isOpaquePhotoId, simulatedRelayClassifier } from "../../packages/engine/src/relay.ts";
 import { slopRelayAdversarial, type AdversarialResult } from "../../packages/sim/src/apps/slop/adversarial.ts";
-import { appWiring, SLOP_PROBE_PHOTOS } from "../../packages/network/service/packs.ts";
+import { SLOP_RELAY_TEMPLATES } from "../../packages/sim/src/apps/slop/relay.ts";
+import { appWiring } from "../../packages/network/service/packs.ts";
 import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dirname}/../../evals`;
@@ -213,7 +193,7 @@ export async function relayBlock(b: Block): Promise<void> {
     let calls = 0;
     const hook = async () => { calls++; return { flags: ["scam"] }; };
     const flagged = await relayItemAsync(text("see you at 7"), baseCtx(), { hook });
-    expect([flagged.decision, flagged.reasons, flagged.rendered, flagged.senderNotice]).toEqual(["block", ["llm:scam"], "", "I didn't send that, so it didn't reach them."]);
+    expect([flagged.decision, flagged.reasons, flagged.rendered, flagged.senderNotice]).toEqual(["block", ["clef:scam"], "", "I didn't send that, so it didn't reach them."]);
     expect((await relayItemAsync(text("venmo me 50"), baseCtx(), { hook })).decision).toBe("block");
     expect(calls).toBe(1);
     const boom = async () => { throw new Error("down"); };
@@ -225,6 +205,13 @@ export async function relayBlock(b: Block): Promise<void> {
     }
     const clean = await relayItemAsync(text("see you at 7"), baseCtx(), { hook: async () => ({ flags: [] }) });
     expect([clean.decision, clean.rendered, clean.senderNotice]).toEqual(["pass", 'Sam says: "see you at 7"', "Sent."]);
+  });
+
+  await b.run("relay: every scam and harassment template of the slop world stops on its content alone", () => {
+    const T = SLOP_RELAY_TEMPLATES;
+    const texts = [...T.harassment, ...T.scam.offplatform_move, ...T.scam.money_ask, ...T.scam.financial_loss];
+    expect(texts.length).toBeGreaterThan(0);
+    expect(texts.filter((t, i) => relayItem(text(t, `t${i}`), baseCtx()).decision === "pass")).toEqual([]);
   });
 
   await clefGates(b);
@@ -303,7 +290,6 @@ async function clefGates(b: Block): Promise<void> {
     const flagged = await relayItemAsync(text("venmo me 50 for the tickets"), baseCtx(), { hook });
     expect([flagged.decision, flagged.reasons.some(r => r.startsWith("scam:"))]).toEqual(["block", true]);
     expect(f.calls.length).toBe(0);
-    // Every corpus row: rules + Clef (Clef says yes or no to everything) never passes an item the rules stop.
     const yes = fakeClef(() => Object.fromEntries(Object.keys(RELAY_CLEF_QUESTIONS).map(k => [k, 0.99])));
     const no = fakeClef(() => ({ ordinary: 1 }));
     for (const file of [...TUNING_FILES, HELDOUT_FILE]) for (const row of await loadCorpus(file)) {
@@ -329,7 +315,7 @@ async function clefGates(b: Block): Promise<void> {
         expect([name, t, r.decision, r.reasons, r.rendered, r.senderNotice]).toEqual([name, t, "block", ["classifier:unavailable"], "", "I couldn't check that message just now, so I didn't send it. Please try again in a few minutes."]);
       }
     }
-    expect(down.calls.length).toBe(2); // the error hook was asked for each text; the offline hook never calls
+    expect(down.calls.length).toBe(2);
     expect(events.map(e => e.outcome)).toContain("timeout");
     expect(events.map(e => e.outcome)).toContain("error");
     expect(events.map(e => e.outcome)).toContain("miss");
@@ -357,8 +343,8 @@ async function clefGates(b: Block): Promise<void> {
     const clef = await relayItemAsync(text("see you saturday, cant wait"), baseCtx(), { hook: clefRelayClassifier({ token: "t", accountId: "acct", fetch: f.fetch }) });
     expect([clef.decision, clef.reasons, clef.record.ageSignal]).toEqual(["block", ["clef:minor_signal"], true]);
     const severe = await relayItemAsync(text("see you sunday then"), baseCtx(), { hook: async () => ({ flags: [], block: ["Minor_Signal"] }) });
-    expect([severe.decision, severe.reasons, severe.record.ageSignal]).toEqual(["block", ["llm_severe:minor_signal"], true]);
-    const scam = await relayItemAsync(text("see you sunday then"), baseCtx(), { hook: async () => ({ flags: ["scam"], source: "clef" as const }) });
+    expect([severe.decision, severe.reasons, severe.record.ageSignal]).toEqual(["block", ["clef_severe:minor_signal"], true]);
+    const scam = await relayItemAsync(text("see you sunday then"), baseCtx(), { hook: async () => ({ flags: ["scam"] }) });
     expect([scam.decision, scam.reasons, scam.record.ageSignal]).toEqual(["block", ["clef:scam"], false]);
     const plain = await relayItemAsync(text("see you sunday then"), baseCtx(), { hook: async () => ({ flags: [] }) });
     expect([plain.decision, plain.record.ageSignal]).toEqual(["pass", false]);
@@ -388,7 +374,7 @@ async function clefGates(b: Block): Promise<void> {
     const s = scoreArm(arm), tracked = file === HELDOUT_FILE;
     b.gate(`relay + Clef ${file}: never passes an item the rules stop`, lowered === 0, `${lowered} lowered`);
     b.gate(`relay + Clef ${file}: recorded answers cover the rows Clef sees (weights ${weights.version})`, missed === 0, `${asked - missed}/${asked}`, !tracked);
-    b.gate(`relay + Clef ${file}: honest held <= 5% (n ${s.counts.honest})`, s.falseHold <= 0.05, pct(s.falseHold), !tracked);
+    b.gate(`relay + Clef ${file}: honest blocked <= 5% (n ${s.counts.honest})`, s.falseHold <= 0.05, pct(s.falseHold), !tracked);
     b.track(`relay + Clef ${file}: recall scam ${pct(s.recall.scam)}, harassment ${pct(s.recall.harassment)}, contact ${pct(s.recall.contact)}, rating ${pct(s.recall.rating)}`, Math.min(s.recall.scam, s.recall.harassment) >= 0.9, tracked ? "heldout-2: never fitted on" : "tuning set");
   }
 }
@@ -410,6 +396,7 @@ function fakeHost(over: { ratesPhotos?: boolean; members?: Partial<Record<"a" | 
     send: (to, body, o) => { h.sent.push({ to, body, key: o.key, ...(o.contact ? { contact: o.contact } : {}) }); h.sendOptions.push(Object.keys(o).sort()); return "sent"; },
     minorSignal: id => { h.minorSignals.push(id); const m = members.get(id); if (m) members.set(id, { ...m, markedMinor: true }); },
     severeBlock: id => { h.severeBlocks.push(id); },
+    classifierFailed: () => {},
   };
   return h;
 }
@@ -419,10 +406,10 @@ const contactOf = (id: string) => phones[id];
 async function deskGates(b: Block): Promise<void> {
   await b.run("relay desk: an honest text passes and only the engine's rendered wording goes out (outbound id relay:<item>)", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
-    const r = await d.request({ itemId: "t1", from: "a", kind: "text", text: "running 10 min late, see you at the cafe" });
+    const r = await d.request({ itemId: "t1", from: "a", kind: "text", text: "running 10 min late, see you at the cafe" }, { hook: simulatedRelayClassifier });
     expect(r).toMatchObject({ decision: "sent", reason: "Sent." });
     expect(h.sent).toEqual([{ to: "b", body: 'Sam says: "running 10 min late, see you at the cafe"', key: "relay:t1" }]);
-    expect(await d.request({ itemId: "t1", from: "a", kind: "text", text: "running 10 min late, see you at the cafe" })).toMatchObject({ decision: "sent", replayed: true });
+    expect(await d.request({ itemId: "t1", from: "a", kind: "text", text: "running 10 min late, see you at the cafe" }, { hook: simulatedRelayClassifier })).toMatchObject({ decision: "sent", replayed: true });
     expect(h.sent.length).toBe(1);
     const log = JSON.stringify(d.records());
     expect(log).not.toContain("running");
@@ -431,15 +418,15 @@ async function deskGates(b: Block): Promise<void> {
   await b.run("relay desk: a scam or an off-platform move is blocked at once with its notice (nothing sent, no text kept; owner decision 2026-11-22, D18)", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
     const scam = "can you venmo me 200 for the tickets? my card got frozen";
-    expect(await d.request({ itemId: "s1", from: "a", kind: "text", text: scam })).toEqual({ itemId: "s1", decision: "refused", reason: "I didn't send that, so it didn't reach them." });
-    expect(await d.request({ itemId: "s2", from: "a", kind: "text", text: "add me on telegram, it's easier" }))
+    expect(await d.request({ itemId: "s1", from: "a", kind: "text", text: scam }, { hook: simulatedRelayClassifier })).toEqual({ itemId: "s1", decision: "refused", reason: "I didn't send that, so it didn't reach them." });
+    expect(await d.request({ itemId: "s2", from: "a", kind: "text", text: "add me on telegram, it's easier" }, { hook: simulatedRelayClassifier }))
       .toEqual({ itemId: "s2", decision: "refused", reason: "I didn't send that. I don't pass on contact details, handles, addresses or other apps inside a message." });
     expect(h.sent).toEqual([]);
     expect(d.records().map(x => [x.itemId, x.decision])).toEqual([["s1", "block"], ["s2", "block"]]);
     const state = d.exportState();
     expect(Object.keys(state).sort()).toEqual(["log", "swaps", "threads"]);
     for (const word of ["venmo", "telegram", "frozen"]) expect(JSON.stringify(state)).not.toContain(word);
-    expect(await d.request({ itemId: "s1", from: "a", kind: "text", text: scam }))
+    expect(await d.request({ itemId: "s1", from: "a", kind: "text", text: scam }, { hook: simulatedRelayClassifier }))
       .toEqual({ itemId: "s1", decision: "refused", delivered: false, reason: "I didn't send that, so it didn't reach them.", replayed: true });
     expect(h.sent).toEqual([]);
   });
@@ -455,15 +442,15 @@ async function deskGates(b: Block): Promise<void> {
     expect(h.sent.map(x => x.key)).toEqual(["relay:u2"]);
   });
 
-  await b.run("relay desk: a teen-pair text that no classifier read is blocked, and a text the classifier cleared is sent (owner decision 2026-11-22, D18)", async () => {
+  await b.run("relay desk: a teen-pair text that the classifier cannot read is blocked, and a text the classifier cleared is sent (owner decision 2026-11-22, D18)", async () => {
     const h = fakeHost({ members: { a: { age: 16 }, b: { age: 17 } } }), d = new RelayDesk(h);
     h.teenPair = () => true;
-    const unread = await d.request({ itemId: "tp1", from: "a", kind: "text", text: "see you at the climbing gym on saturday" });
-    expect(unread).toEqual({ itemId: "tp1", decision: "refused", reason: "I didn't send that, so it didn't reach them." });
+    const unread = await d.request({ itemId: "tp1", from: "a", kind: "text", text: "see you at the climbing gym on saturday" }, { hook: async () => { throw new Error("down"); } });
+    expect(unread).toEqual({ itemId: "tp1", decision: "refused", reason: "I couldn't check that message just now, so I didn't send it. Please try again in a few minutes." });
     expect(h.sent).toEqual([]);
-    expect(d.records().at(-1)).toMatchObject({ itemId: "tp1", decision: "block", reasons: ["teen:unclassified"] });
+    expect(d.records().at(-1)).toMatchObject({ itemId: "tp1", decision: "block", reasons: ["classifier:unavailable"] });
     h.t += 60_000;
-    const read = await d.request({ itemId: "tp2", from: "a", kind: "text", text: "see you at the climbing gym on saturday" }, { hook: async () => ({ flags: [], block: [], source: "clef" as const }) });
+    const read = await d.request({ itemId: "tp2", from: "a", kind: "text", text: "see you at the climbing gym on saturday" }, { hook: async () => ({ flags: [], block: [] }) });
     expect(read).toMatchObject({ decision: "sent", reason: "Sent." });
     expect(h.sent.map(x => x.key)).toEqual(["relay:tp2"]);
   });
@@ -471,23 +458,23 @@ async function deskGates(b: Block): Promise<void> {
   await b.run("relay desk: a text that the send rules refuse answers the same notice when it is asked again", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
     h.send = () => "refused";
-    const first = await d.request({ itemId: "sr1", from: "a", kind: "text", text: "see you at 7!" });
+    const first = await d.request({ itemId: "sr1", from: "a", kind: "text", text: "see you at 7!" }, { hook: simulatedRelayClassifier });
     expect(first).toEqual({ itemId: "sr1", decision: "refused", reason: "I couldn't pass that on right now." });
     expect(d.records().at(-1)).toMatchObject({ itemId: "sr1", decision: "block", reasons: ["send:refused"] });
-    expect(await d.request({ itemId: "sr1", from: "a", kind: "text", text: "see you at 7!" }))
+    expect(await d.request({ itemId: "sr1", from: "a", kind: "text", text: "see you at 7!" }, { hook: simulatedRelayClassifier }))
       .toEqual({ itemId: "sr1", decision: "refused", delivered: false, reason: "I couldn't pass that on right now.", replayed: true });
   });
 
   await b.run("relay desk: a number is shared only after both members asked; each gets the other's, once", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
-    const first = await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    const first = await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     expect(first.decision).toBe("waiting");
     expect(h.sent.length).toBe(1);
     expect(h.sent[0]!.to).toBe("b");
     expect(h.sent[0]!.body).not.toContain(phones.a!);
     expect(h.sent[0]!.body).not.toMatch(/\d{7,}/);
     h.t += 60_000;
-    const second = await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf });
+    const second = await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     expect(second.decision).toBe("sent");
     const shares = h.sent.slice(1);
     expect(shares.map(x => [x.to, x.contact])).toEqual([["b", phones.a], ["a", phones.b]]);
@@ -496,22 +483,22 @@ async function deskGates(b: Block): Promise<void> {
     expect(d.contactShareFrom("relay:c1")).toBe("a");
     expect(d.contactShareFrom("relay:t9")).toBeUndefined();
     h.t += 60_000;
-    expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).not.toBe("sent");
+    expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).not.toBe("sent");
     expect(h.sent.length).toBe(3);
     expect(JSON.stringify(d.records())).not.toContain("555");
     // One side only: nothing goes.
     const h2 = fakeHost(), d2 = new RelayDesk(h2);
-    await d2.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    await d2.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     h2.t += 73 * 3_600_000;
-    await d2.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf });
+    await d2.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     expect(h2.sent.some(x => x.body.includes(phones.a!))).toBe(false);
   });
 
   await b.run("relay desk: a swapped number is never kept in the thread (stored state, classifier context); the Clef prompt is PII-masked", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
-    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     h.t += 60_000;
-    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("sent");
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).toBe("sent");
     const threads = JSON.stringify(d.exportState().threads);
     expect(threads).toContain("shared their number.");
     for (const p of Object.values(phones)) { expect(threads).not.toContain(p); expect(threads).not.toContain(p.slice(-4)); }
@@ -527,9 +514,9 @@ async function deskGates(b: Block): Promise<void> {
   await b.run("relay desk: a swap request lasts only as long as the engine's consent (never backdated) and can be taken back", async () => {
     // 16 minutes between the two requests: the first consent is stale, nothing is shared, the second request waits instead.
     const h = fakeHost(), d = new RelayDesk(h);
-    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     h.t += 16 * 60_000;
-    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("waiting");
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).toBe("waiting");
     expect(h.sent.some(x => x.contact)).toBe(false);
     // Withdrawn: "don't send my number" (or the relay action's cancel) removes the pending request.
     for (const t of ["actually don't send my number", "cancel the number swap", "never mind about my number"]) expect(withdrawsSwap(t)).toBe(true);
@@ -542,39 +529,39 @@ async function deskGates(b: Block): Promise<void> {
       "I don't mind waiting, but don't send my number yet", "don't worry, cancel the swap", "I don't mind, but I'd rather keep my number", "no worries, I'll keep my number to myself", "no, not my number", "hmm not sure about sharing my number", "please keep my number private"]) expect([t, withdrawsSwap(t)]).toEqual([t, true]);
     expect(d.cancelSwaps("b")).toBe(1);
     h.t += 60_000;
-    expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("waiting");
+    expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).toBe("waiting");
     expect(h.sent.some(x => x.contact)).toBe(false);
   });
 
   await b.run("relay desk: a number swap never goes one way: a refused first share stops the second, and neither is logged as shared", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
     h.send = (to, body, o) => { if (o.contact && to === "b") return "refused"; h.sent.push({ to, body, key: o.key, ...(o.contact ? { contact: o.contact } : {}) }); return "sent"; };
-    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     h.t += 60_000;
-    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("refused");
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).toBe("refused");
     expect(h.sent.some(x => x.contact)).toBe(false);
     expect([d.contactShareFrom("relay:c1"), d.contactShareFrom("relay:c2")]).toEqual([undefined, undefined]);
     expect(d.records().filter(r => r.contactShared)).toEqual([]);
     // A replay of either request never answers "Sent.".
-    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).not.toBe("sent");
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).not.toBe("sent");
   });
 
   await b.run("relay desk: a minor's number (or words) is never relayed; the desk carries no photo", async () => {
     const h = fakeHost({ members: { a: { age: undefined } } }), d = new RelayDesk(h);
-    const r = await d.request({ itemId: "p1", from: "a", kind: "contact_share" }, { contactOf });
+    const r = await d.request({ itemId: "p1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
     expect(r.decision).toBe("refused");
-    const t = await d.request({ itemId: "t1", from: "a", kind: "text", text: "hey!" });
+    const t = await d.request({ itemId: "t1", from: "a", kind: "text", text: "hey!" }, { hook: simulatedRelayClassifier });
     expect(t.decision).toBe("refused");
     expect(h.sent).toEqual([]);
     const h2 = fakeHost(), d2 = new RelayDesk(h2);
-    const said = await d2.request({ itemId: "t2", from: "a", kind: "text", text: "im 16 is that ok" });
+    const said = await d2.request({ itemId: "t2", from: "a", kind: "text", text: "im 16 is that ok" }, { hook: simulatedRelayClassifier });
     expect(said).toEqual({ itemId: "t2", decision: "refused", reason: "I didn't send that, so it didn't reach them." });
     expect(d2.records()[0]!.ageSignal).toBe(true);
     expect(h2.minorSignals).toEqual(["a"]);
     expect(h2.severeBlocks).toEqual([]);
     expect(h2.sent).toEqual([]);
     const h3 = fakeHost(), d3 = new RelayDesk(h3);
-    const plain = await d3.request({ itemId: "p2", from: "a", kind: "text", text: "see you at 7!" });
+    const plain = await d3.request({ itemId: "p2", from: "a", kind: "text", text: "see you at 7!" }, { hook: simulatedRelayClassifier });
     expect(plain.decision).toBe("sent");
     expect(h3.sent.map(x => x.key)).toEqual(["relay:p2"]);
     expect(h3.sendOptions).toEqual([["from", "key", "matchId"]]);
@@ -582,7 +569,7 @@ async function deskGates(b: Block): Promise<void> {
 
   await b.run("relay desk: a minor signal that only the classifier finds starts the minors policy at once, blocks the text and keeps no text", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
-    const hook = async () => ({ flags: ["minor_signal"], source: "clef" as const });
+    const hook = async () => ({ flags: ["minor_signal"] });
     const r = await d.request({ itemId: "m1", from: "a", kind: "text", text: "see you saturday, cant wait" }, { hook });
     expect(r).toEqual({ itemId: "m1", decision: "refused", reason: "I didn't send that, so it didn't reach them." });
     expect(h.sent).toEqual([]);
@@ -596,9 +583,9 @@ async function deskGates(b: Block): Promise<void> {
 
   await b.run("relay desk: a block for the sender's severe words reaches the sender's safety case at once; a block for other reasons does not", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
-    expect((await d.request({ itemId: "v1", from: "a", kind: "text", text: "can you venmo me 200 for the tickets? my card got frozen" })).decision).toBe("refused");
+    expect((await d.request({ itemId: "v1", from: "a", kind: "text", text: "can you venmo me 200 for the tickets? my card got frozen" }, { hook: simulatedRelayClassifier })).decision).toBe("refused");
     expect(h.severeBlocks).toEqual([]);
-    expect((await d.request({ itemId: "v2", from: "a", kind: "text", text: "answer me or else, watch your back" })).decision).toBe("refused");
+    expect((await d.request({ itemId: "v2", from: "a", kind: "text", text: "answer me or else, watch your back" }, { hook: simulatedRelayClassifier })).decision).toBe("refused");
     expect(h.severeBlocks).toEqual(["a"]);
     expect(h.minorSignals).toEqual([]);
     expect(h.sent).toEqual([]);
@@ -607,7 +594,7 @@ async function deskGates(b: Block): Promise<void> {
   await b.run("relay desk: appearance and rating talk never passes on an app that rates photos", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
     for (const [i, t] of ["you two have similar looks apparently", "what did the app rate me?", "you seem petite, love that"].entries()) {
-      const r = await d.request({ itemId: `a${i}`, from: "a", kind: "text", text: t });
+      const r = await d.request({ itemId: `a${i}`, from: "a", kind: "text", text: t }, { hook: simulatedRelayClassifier });
       expect([t, r.decision, r.reason]).toEqual([t, "refused", "I didn't send that. I can't share anything like that, and I don't pass questions about it on."]);
     }
     expect(h.sent).toEqual([]);
@@ -616,25 +603,25 @@ async function deskGates(b: Block): Promise<void> {
 
   await b.run("relay desk: a burst is rate-limited (blocked with the rate notice) and the limit survives a restart", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
-    for (let i = 0; i < 6; i++) { h.t += 1000; expect((await d.request({ itemId: `r${i}`, from: "a", kind: "text", text: `see you at ${i + 1}` })).decision).toBe("sent"); }
+    for (let i = 0; i < 6; i++) { h.t += 1000; expect((await d.request({ itemId: `r${i}`, from: "a", kind: "text", text: `see you at ${i + 1}` }, { hook: simulatedRelayClassifier })).decision).toBe("sent"); }
     const saved = d.exportState();
     const d2 = new RelayDesk(h);
     d2.importState(JSON.parse(JSON.stringify(saved)));
     h.t += 1000;
-    const r = await d2.request({ itemId: "r6", from: "a", kind: "text", text: "one more thing" });
+    const r = await d2.request({ itemId: "r6", from: "a", kind: "text", text: "one more thing" }, { hook: simulatedRelayClassifier });
     expect(r).toEqual({ itemId: "r6", decision: "refused", reason: "I didn't send that: you've sent a lot in a short time. Please try again a bit later." });
     expect(d2.records().at(-1)!.reasons).toEqual(["rate:burst"]);
     h.t += 11 * 60_000;
-    expect((await d2.request({ itemId: "r7", from: "a", kind: "text", text: "ok last one" })).decision).toBe("sent");
+    expect((await d2.request({ itemId: "r7", from: "a", kind: "text", text: "ok last one" }, { hook: simulatedRelayClassifier })).decision).toBe("sent");
   });
 
   await b.run("relay desk: private facts of the other member, a closed match and no match are refused", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
-    expect((await d.request({ itemId: "l1", from: "a", kind: "text", text: "do you still work at Halcyon Biotech?" })).decision).not.toBe("sent");
+    expect((await d.request({ itemId: "l1", from: "a", kind: "text", text: "do you still work at Halcyon Biotech?" }, { hook: simulatedRelayClassifier })).decision).not.toBe("sent");
     h.match = { ...h.match, status: "cancelled" };
-    expect((await d.request({ itemId: "l2", from: "a", kind: "text", text: "hi" })).decision).toBe("refused");
+    expect((await d.request({ itemId: "l2", from: "a", kind: "text", text: "hi" }, { hook: simulatedRelayClassifier })).decision).toBe("refused");
     h.match = { ...h.match, status: "closed" };
-    expect((await d.request({ itemId: "l3", from: "a", kind: "text", text: "hi" })).decision).toBe("refused");
+    expect((await d.request({ itemId: "l3", from: "a", kind: "text", text: "hi" }, { hook: simulatedRelayClassifier })).decision).toBe("refused");
     expect(h.sent).toEqual([]);
   });
 
@@ -642,7 +629,7 @@ async function deskGates(b: Block): Promise<void> {
   await b.run("relay desk: the thread persists after the date (a text 8 days after the meeting is sent)", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
     h.match = { ...h.match, status: "mutual", metAt: NOW - 8 * 86_400_000 };
-    expect((await d.request({ itemId: "p1", from: "a", kind: "text", text: "want to get dinner again next week?" })).decision).toBe("sent");
+    expect((await d.request({ itemId: "p1", from: "a", kind: "text", text: "want to get dinner again next week?" }, { hook: simulatedRelayClassifier })).decision).toBe("sent");
   });
 
   await b.run("photo ids: every platform-issued id is opaque; phone-number-like ids still fail", () => {
@@ -659,7 +646,7 @@ const ADV_NAME: Record<AdversarialResult["scenario"], string> = {
   swap_before_yes: "number swap (share, number in text, photo) before both yeses: every item blocked, no number in the output or the log",
   leak_other_member: "leak of the other member's details (full name, number, private fact, canary): none delivered, stopped by the leak guard, a canary blocks",
   minor_in_relay: "minor in the relay (age slip, declared minor, unknown age): the slip blocks, then every item both ways blocked",
-  photo_in_probe: "photo in the probe with the flag off, no consent, a minor or a held member: never a photo or the photo line; relayed photo never passes",
+  photo_in_probe: "photo in the probe with no photo ids, no consent, a minor or a held member: never a photo or the photo line; relayed photo never passes",
   catfish_photos: "catfish photos (the match's, a third member's, an unowned id, one smuggled among the sender's own): never delivered, never a partial set; the sender's own photo passes",
   probing_asks: "probing asks (how hot did you rate me, prompt injection for a number or rating, fishing for the match's contact or address): every ask blocked with its family, nothing delivered; friendly text passes",
 };
@@ -676,8 +663,7 @@ async function adversarialGates(b: Block): Promise<void> {
       `${fails.length} failures${fails.length ? `: ${fails.slice(0, 3).join("; ")}` : ""}; controls ${ctlOk}/${ctlN}; ${Object.entries(stats).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   }
 
-  await b.run("relay adversarial (live path): the slop probe hook never attaches a photo while SLOP_PROBE_PHOTOS is off (adults, minors, unknown ages)", () => {
-    expect(SLOP_PROBE_PHOTOS).toBe(false);
+  await b.run("relay adversarial (live path): the slop probe hook never attaches a photo (adults, minors, unknown ages; probeCarriesNoPhoto)", () => {
     const probe = appWiring("slop").hooks!.probe!;
     let n = 0;
     for (const [ageA, ageB] of [[29, 31], [45, 22], [18, 19], [17, 30], [30, 16], [undefined, 28]] as const) {
@@ -698,19 +684,19 @@ async function adversarialGates(b: Block): Promise<void> {
       const h = fakeHost(), d = new RelayDesk(h);
       h.match = { ...h.match, status, acceptedBy: [...acceptedBy] };
       for (const from of ["a", "b"] as const) {
-        const r = await d.request({ itemId: `c-${status}-${acceptedBy.length}-${from}`, from, kind: "contact_share" }, { contactOf });
+        const r = await d.request({ itemId: `c-${status}-${acceptedBy.length}-${from}`, from, kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier });
         expect([status, acceptedBy.length, from, r.decision]).toEqual([status, acceptedBy.length, from, "refused"]);
-        const t = await d.request({ itemId: `t-${status}-${acceptedBy.length}-${from}`, from, kind: "text", text: `text me at ${phones[from]!.slice(2, 5)} ${phones[from]!.slice(5, 8)} ${phones[from]!.slice(8)}` });
+        const t = await d.request({ itemId: `t-${status}-${acceptedBy.length}-${from}`, from, kind: "text", text: `text me at ${phones[from]!.slice(2, 5)} ${phones[from]!.slice(5, 8)} ${phones[from]!.slice(8)}` }, { hook: simulatedRelayClassifier });
         expect(t.decision).not.toBe("sent");
       }
       expect(h.sent).toEqual([]);
       expect(JSON.stringify(d.records())).not.toContain("555");
     }
     const h = fakeHost(), d = new RelayDesk(h);
-    expect((await d.request({ itemId: "h1", from: "a", kind: "text", text: "so glad we matched, see you Saturday" })).decision).toBe("sent");
+    expect((await d.request({ itemId: "h1", from: "a", kind: "text", text: "so glad we matched, see you Saturday" }, { hook: simulatedRelayClassifier })).decision).toBe("sent");
     for (const [i, t] of ["Do you have Telegram? Much easier to chat there.", "My card got frozen, can you send me $200 through cash app until it clears?", "Can you grab two Apple gift cards and send me the codes? I'll explain later."].entries()) {
       h.t += 60_000;
-      expect([t, (await d.request({ itemId: `s${i}`, from: "a", kind: "text", text: t })).decision]).toEqual([t, "refused"]);
+      expect([t, (await d.request({ itemId: `s${i}`, from: "a", kind: "text", text: t }, { hook: simulatedRelayClassifier })).decision]).toEqual([t, "refused"]);
     }
     expect(h.sent.length).toBe(1);
     expect(d.records().filter(r => r.decision === "block").map(r => r.itemId)).toEqual(["s0", "s1", "s2"]);

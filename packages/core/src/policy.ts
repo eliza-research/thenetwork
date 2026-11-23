@@ -3,7 +3,6 @@ import { adultAge, ageConjunctionAllowed, ageInRange, fractionalAgeEvidence, joi
 import type { Member } from "./types.ts";
 
 export type { AgeSide } from "./generated/friendIntroAge.ts";
-export type { BirthReadings } from "./generated/memberAge.ts";
 
 export const MIN_MEMBER_AGE = minMemberAge;
 export const ADULT_AGE = adultAge;

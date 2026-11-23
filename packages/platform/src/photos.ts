@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ObjectStore } from "../../core/src/runtime/object-store.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull } from "../../core/src/generated/photoPolicy.ts";
+import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull, photoSubjectAllowed } from "../../core/src/generated/photoPolicy.ts";
 import {
   canCheckReturnedScore, canCheckWrittenScore, canRecordScoreRemoval, canRecordScoreWrite, canReceiveScore, canSupplyPhotos,
   initial as ratingInitial, ratingPhotoSelectionCurrent, step as stepRating,
@@ -17,7 +17,7 @@ import {
 } from "../../core/src/generated/photoRetention.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { effectiveAgeAt } from "./age.ts";
-import { ageStandingOf, PgPeopleStore } from "./pg-store.ts";
+import { ageFloorColumns, ageStandingOf, PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
@@ -26,7 +26,7 @@ import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/pa
 import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "../../engine/src/packs/slop/clefWeights.ts";
 import { isOpaquePhotoId } from "../../engine/src/relay.ts";
 
-export type RaterStatus = "on" | "on_placeholder" | "off_env" | "refused_weights";
+type RaterStatus = "on" | "on_placeholder" | "off_env" | "refused_weights";
 
 export async function photoRaterFromEnv(
   env: Record<string, string | undefined>,
@@ -57,13 +57,13 @@ export const PHOTO_MAX_BYTES = uploadMaxBytes;
 export const PHOTO_MAX_PER_PERSON = uploadMaxPerPerson;
 export const PHOTO_VIEW_TTL_MS = 5 * 60_000;
 export const PHOTO_CONSENT = {
-  version: "2026-11-22",
-  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them unless I ask the agent to send one to a match, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them and their rating by texting DELETE PHOTOS, except after a ban, when the safety team keeps them.",
+  version: "2026-11-23",
+  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them unless I ask the agent to send one to a match, and no score from them is ever shown to anyone. A person on the safety team looks at a photo after a report, and at a photo that I send to a match when the automatic check does not clear it. Photos are for adults (18+) only. I can delete them and their rating by texting DELETE PHOTOS, except after a ban, when the safety team keeps them.",
 } as const;
 
 export function newPhotoBatchId(): string { return randomBytes(16).toString("hex"); }
-export const PHOTO_LABEL = /^[a-z0-9]+([ -][a-z0-9]+){0,2}$/;
-export const PHOTO_LABEL_MAX = 24;
+const PHOTO_LABEL = /^[a-z0-9]+([ -][a-z0-9]+){0,2}$/;
+const PHOTO_LABEL_MAX = 24;
 
 export function newPhotoId(): string {
   for (;;) {
@@ -286,8 +286,8 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
   return undefined;
 }
 
-export type PhotoAdmission = (tx?: SQL) => Promise<PhotoRefusal | undefined>;
-export interface UnfinishedPhoto { row: PhotoRow; reserved: boolean; hidden: boolean; changedAt: number }
+type PhotoAdmission = (tx?: SQL) => Promise<PhotoRefusal | undefined>;
+interface UnfinishedPhoto { row: PhotoRow; reserved: boolean; hidden: boolean; changedAt: number }
 export interface PhotoHolder { personId: string; app: AppId }
 export interface PhotoStore {
   reserve(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
@@ -433,8 +433,7 @@ export class PgPhotoStore implements PhotoStore {
     let after = { personId: "", app: "" };
     for (;;) {
       const rows = await this.sql<Record<string, any>[]>`select distinct on (ph.person_id::text, ph.app_id) ph.person_id::text as holder_id, ph.app_id as holder_app,
-          m.state as membership_state, p.*, f.lowest_age as floor_lowest_age, f.at as floor_at, f.birth_lower as floor_birth_lower,
-          f.birth_upper as floor_birth_upper, f.birth_youngest as floor_birth_youngest
+          m.state as membership_state, p.*, ${ageFloorColumns(this.sql)}
         from platform.photos ph
         left join platform.people p on p.id = ph.person_id
         left join platform.age_floor f on f.phone_hash = p.phone_hash
@@ -456,7 +455,7 @@ export class PgPhotoStore implements PhotoStore {
 }
 
 export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member" | "photo_set_changed";
-const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
+export const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
 const SWEEP_BATCH = 64;
 const HOLDER_PAGE = 512;
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
@@ -487,10 +486,16 @@ export class PhotoService {
   get enabled() { return !!this.o.storage; }
   get rating() { return !!this.o.rater; }
 
+  private async adultNow(people: PeopleStore, personId: string): Promise<{ live: boolean; adult: boolean }> {
+    const standing = await people.ageStanding(personId, null);
+    const live = !!standing.person && standing.person.deletedAt === null;
+    return { live, adult: live && canBeMatched(effectiveAgeAt(standing, this.now())) };
+  }
+
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
-    const standing = await (tx ? new PgPeopleStore(tx) : this.o.people).ageStanding(personId, null);
-    const p = standing.person;
-    if (!p || p.deletedAt !== null || !canBeMatched(effectiveAgeAt(standing, this.now()))) return "adults_only";
+    const people = tx ? new PgPeopleStore(tx) : this.o.people;
+    const { adult } = await this.adultNow(people, personId);
+    if (!photoSubjectAllowed(adult, await people.minorSignalOpen(personId))) return "adults_only";
     if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
@@ -660,11 +665,10 @@ export class PhotoService {
   }
 
   async holdAllowed(personId: string, app: AppId): Promise<boolean> {
-    const standing = await this.o.people.ageStanding(personId, null);
-    const p = standing.person;
+    const { live, adult } = await this.adultNow(this.o.people, personId);
     const m = await this.o.people.getMembership(personId, app);
     const appAdultCheckPassed = await (this.o.eligible?.(personId, app) ?? Promise.resolve(false));
-    return photoHoldAllowed(!!p && p.deletedAt === null, !!p && canBeMatched(effectiveAgeAt(standing, this.now())), appAdultCheckPassed, !!m && LIVE_MEMBERSHIP.includes(m.state));
+    return photoHoldAllowed(live, adult, appAdultCheckPassed, !!m && LIVE_MEMBERSHIP.includes(m.state));
   }
 
   async ratingAllowed(personId: string, app: AppId): Promise<boolean> {

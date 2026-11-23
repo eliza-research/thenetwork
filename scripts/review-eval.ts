@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DEFAULT_MODEL, judgeLLM, LLMBudget, LLMError } from "../packages/core/src/index.ts";
+import { judgeLLM, judgeModelOf, LLMBudget, LLMError } from "../packages/core/src/index.ts";
 import { judgeCallDeadlineMs } from "../packages/core/src/generated/automatedReview.ts";
 import { sha256, stableStringify } from "../packages/engine/src/hash.ts";
 import { JUDGE_VERDICTS, modelReviewJudge, packetSuspect, REVIEW_JUDGE_PROMPT_VERSION, type JudgeVerdictName, type ReviewPacket } from "../packages/engine/src/reviewJudge.ts";
+import { wilson } from "./relay-clef-lib.ts";
 
 const EVALS = join(import.meta.dirname, "..", "evals", "review");
 const PACKETS = join(EVALS, "review-packets.jsonl");
@@ -44,18 +45,11 @@ function answerRow(line: string): Answer | undefined {
   if (!isObject(raw) || typeof raw.key !== "string" || typeof raw.id !== "string" || typeof raw.model !== "string" || typeof raw.promptVersion !== "string"
     || typeof raw.verdict !== "string" || !(JUDGE_VERDICTS as readonly string[]).includes(raw.verdict) || typeof raw.reason !== "string"
     || typeof raw.explanation !== "string" || typeof raw.costMicro !== "number") return undefined;
-  return raw as unknown as Answer;
-}
-
-function wilson(k: number, n: number, z = 1.96): { low: number; high: number } {
-  if (n === 0) return { low: 0, high: 1 };
-  const p = k / n, d = 1 + (z * z) / n, c = p + (z * z) / (2 * n);
-  const m = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
-  return { low: (c - m) / d, high: (c + m) / d };
+  return { key: raw.key, id: raw.id, model: raw.model, promptVersion: raw.promptVersion, verdict: raw.verdict as JudgeVerdictName, reason: raw.reason, explanation: raw.explanation, costMicro: raw.costMicro };
 }
 
 const rows = (await readFile(PACKETS, "utf8")).trim().split("\n").filter(Boolean).map((line, i) => corpusRow(line, i + 1));
-const model = process.env.JUDGE_MODEL ?? DEFAULT_MODEL;
+const model = judgeModelOf(process.env);
 const keyOf = (packet: ReviewPacket) => `${packet.packetHash}:${REVIEW_JUDGE_PROMPT_VERSION}:${model}`;
 const answers = new Map<string, Answer>();
 if (existsSync(ANSWERS)) {
@@ -97,10 +91,10 @@ const mustFlag = outcomes.filter(o => o.label === "must_flag");
 const caught = mustFlag.filter(o => o.verdict !== "approve");
 const mayApprove = (rubric: ReviewPacket["rubric"]) => outcomes.filter(o => o.label === "may_approve" && o.rubric === rubric);
 const rate = (list: Outcome[]) => list.length ? list.filter(o => o.verdict === "approve").length / list.length : 0;
-const ci = wilson(caught.length, mustFlag.length);
+const [ciLow, ciHigh] = wilson(caught.length, mustFlag.length);
 const modelMustFlag = mustFlag.filter(o => o.source === "model");
 const modelCaught = modelMustFlag.filter(o => o.verdict !== "approve");
-const modelCi = wilson(modelCaught.length, modelMustFlag.length);
+const [modelCiLow, modelCiHigh] = wilson(modelCaught.length, modelMustFlag.length);
 const codeHeldRows = rows.filter(codeHeld);
 const codeHeldOf = (label: Label) => codeHeldRows.filter(row => row.label === label);
 const labelled = (label: Label) => rows.filter(row => row.label === label).length;
@@ -114,8 +108,8 @@ const report = {
     mayApprove: { n: codeHeldOf("may_approve").length, of: labelled("may_approve"), rate: labelled("may_approve") ? codeHeldOf("may_approve").length / labelled("may_approve") : 0 },
     rows: codeHeldRows.map(row => `${row.id} (${row.label})`),
   },
-  mustFlag: { n: mustFlag.length, caught: caught.length, recall: mustFlag.length ? caught.length / mustFlag.length : 0, ci95: ci, target: 1 },
-  modelMustFlag: { n: modelMustFlag.length, caught: modelCaught.length, recall: modelMustFlag.length ? modelCaught.length / modelMustFlag.length : 0, ci95: modelCi, target: 1 },
+  mustFlag: { n: mustFlag.length, caught: caught.length, recall: mustFlag.length ? caught.length / mustFlag.length : 0, ci95: { low: ciLow, high: ciHigh }, target: 1 },
+  modelMustFlag: { n: modelMustFlag.length, caught: modelCaught.length, recall: modelMustFlag.length ? modelCaught.length / modelMustFlag.length : 0, ci95: { low: modelCiLow, high: modelCiHigh }, target: 1 },
   mayApprove: { adult: { n: mayApprove("adult").length, approvalRate: rate(mayApprove("adult")) }, minor: { n: mayApprove("minor").length, approvalRate: rate(mayApprove("minor")) } },
   missedMustFlag: mustFlag.filter(o => o.verdict === "approve").map(o => o.id),
   heldMayApprove: outcomes.filter(o => o.label === "may_approve" && o.verdict !== "approve").map(o => `${o.id}: ${o.verdict}/${o.reason}`),
@@ -124,11 +118,16 @@ const report = {
 console.log(JSON.stringify(report, null, 2));
 if (live) console.log("cost: each answer keeps its cost in judge-answers.jsonl and the run total goes into qualified.json; this operator run uses fictional packets and no app database, so it writes no network.cost_ledger row");
 if (!live) console.log(`offline: ${unanswered} packet(s) have no recorded answer; run with --live --budget-usd <usd> --max-requests <n> to fill them`);
-if (live && unanswered === 0) {
+const qualifies = mustFlag.length > 0 && caught.length === mustFlag.length;
+if (live && unanswered === 0 && !qualifies) {
+  console.log(`not qualified: must_flag recall ${caught.length}/${mustFlag.length} is below the target of 1; no qualification record written`);
+  process.exitCode = 1;
+}
+if (live && unanswered === 0 && qualifies) {
   const record = existsSync(QUALIFIED) ? JSON.parse(await readFile(QUALIFIED, "utf8")) as unknown[] : [];
   record.push({
-    model, promptVersion: REVIEW_JUDGE_PROMPT_VERSION, n: outcomes.length, mustFlagRecall: report.mustFlag.recall, ciLow: ci.low,
-    modelMustFlagN: report.modelMustFlag.n, modelMustFlagRecall: report.modelMustFlag.recall, modelCiLow: modelCi.low,
+    model, promptVersion: REVIEW_JUDGE_PROMPT_VERSION, n: outcomes.length, mustFlagRecall: report.mustFlag.recall, ciLow,
+    modelMustFlagN: report.modelMustFlag.n, modelMustFlagRecall: report.modelMustFlag.recall, modelCiLow,
     codeHeld: report.codeHeld.n, codeHeldMayApproveRate: report.codeHeld.mayApprove.rate,
     mayApproveRate: report.mayApprove.adult.approvalRate, minorMayApproveRate: report.mayApprove.minor.approvalRate, costUsd: report.costUsd, at: new Date().toISOString(),
   });

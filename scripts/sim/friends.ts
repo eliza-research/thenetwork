@@ -11,23 +11,24 @@ import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
 import { candidateReason, memberReason } from "../../packages/engine/src/filters.ts";
-import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, FRIENDS_SLOTS, ROMANCE_FRAMING, friendsInfo, friendsPack, planFriendsWeek } from "../../packages/engine/src/packs/friends/index.ts";
-import { buildPlanProbe, planItem, planToProposal, type Crew, type PlanEvidence, type PlanOutcomeRecord } from "../../packages/engine/src/plans.ts";
+import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, FRIENDS_SLOTS, ROMANCE_FRAMING, attendedGroup, friendsInfo, friendsPack, planFriendsWeek } from "../../packages/engine/src/packs/friends/index.ts";
+import { buildPlanProbe, planItem, venueAgesIn, planToProposal, type Crew, type PlanEvidence, type PlanOutcomeRecord } from "../../packages/engine/src/plans.ts";
 import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { hTeen, officialGates, opennessGroups, teenGates, teenTracked, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, friendsOutboundLog, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher, friendsTeenMatcher, planToProposal as toFriendsProposal } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, slotTime, visibleRedFlag, weekTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
-import { FRIENDS_TEEN_WORLD, isReal, SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { buildFriendsSnapshot, slotTime, visibleRedFlag, weekTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { isReal, NYC_TZ, SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { TEEN_WORLD } from "../../packages/sim/src/generator.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { PLAN_VENUES } from "../../packages/network/src/plans.ts";
 import { runFriendsWorld, runFriendsWorldAsync, slotOfCrew, VENUE_BY_ID, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
 import { ACTIVITIES, activityAllAges, activityById, venueAllAges } from "../../packages/engine/src/packs/network/activities.ts";
 import { groupAgeAllowed, rosterHasMinor, teenPlaceAllowed, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
 import { teenFriendCategory } from "../../packages/core/src/generated/matchLane.ts";
-import { teenMeetingAllowed } from "../../packages/core/src/generated/teenIntroSwitch.ts";
+import { teenWindowAllowed } from "../../packages/sim/src/teen.ts";
 import { conformance, teenConformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 import { idsSalted, overlap, pairedLine } from "../../packages/sim/src/paired.ts";
@@ -51,7 +52,7 @@ const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapsho
 const teenCache = new Map<number, FriendsSnapshot>();
 async function teenSnapshotAfter(seed: number): Promise<FriendsSnapshot> {
   if (!teenCache.has(seed)) {
-    const r = await runFriendsWorldAsync({ seed: 100 + seed, n: 400, weeks: 3, ...FRIENDS_TEEN_WORLD, matcher: friendsTeenMatcher() });
+    const r = await runFriendsWorldAsync({ seed: 100 + seed, n: 400, weeks: 3, ...TEEN_WORLD, matcher: friendsTeenMatcher() });
     const st = r.world.state;
     st.week = 3; st.now += 7 * DAY;
     teenCache.set(seed, buildFriendsSnapshot(r.world.personas, st));
@@ -126,20 +127,26 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const placed = wk.plans.filter(p => p.venueId);
       if (!placed.length) throw new Error(`seed ${seed} produced no new table with an open venue`);
       expect(placed.some(p => p.options.length > 1)).toBe(true);
-      const pair = seed === 101 ? ["f0157", "f0159"] : seed === 102 ? ["f0072", "f0147"] : undefined;
-      if (pair) {
+      if (seed === 101 || seed === 102) {
         const windows = (["tue_eve", "sat_eve", "sun_am"] as const).map(name => {
           const start = slotTime(s.week, SLOTS.indexOf(name));
           return { start, end: start + 3 * HOUR };
         });
-        const evidence = new Map<MemberId, PlanEvidence>(pair.map(id => [id, {
-          memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
-        }]));
-        const input = { now: s.now, tz: NYC_TZ, evidence, venues, crews: [], outcomes: [], offered: [] };
         const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false };
-        const partners = planFriendsWeek(w, input, policy, FRIENDS_PLANS).partners;
-        expect(partners.length).toBe(1);
-        const open = planFriendsWeek(w, { ...input, venues: venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } })) }, policy, FRIENDS_PLANS).partners;
+        const inputOf = (pair: readonly MemberId[]) => ({ now: s.now, tz: NYC_TZ, venues, crews: [], outcomes: [], offered: [], evidence: new Map<MemberId, PlanEvidence>(pair.map(id => [id, {
+          memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
+        }])) });
+        const openVenues = venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } }));
+        const veterans = r.world.personas.filter(p => isReal(p) && attendedGroup(w, p.id)).sort((a, b) => a.id.localeCompare(b.id));
+        let pair: MemberId[] | undefined, partners: ReturnType<typeof planFriendsWeek>["partners"] = [];
+        for (let i = 0; i < veterans.length && !pair; i++) for (let j = i + 1; j < veterans.length && !pair; j++) {
+          const a = veterans[i]!, c = veterans[j]!;
+          if (!a.stated.activities.some(x => c.stated.activities.includes(x))) continue;
+          const found = planFriendsWeek(w, inputOf([a.id, c.id]), policy, FRIENDS_PLANS).partners;
+          if (found.length === 1) { pair = [a.id, c.id]; partners = found; }
+        }
+        if (!pair) throw new Error(`seed ${seed}: no pair of group veterans with a shared activity gets one partner table at normal hours`);
+        const open = planFriendsWeek(w, { ...inputOf(pair), venues: openVenues }, policy, FRIENDS_PLANS).partners;
         expect(open.length).toBe(1);
         expect(open[0]!.options.length).toBe(3);
         expect(partners[0]!.window.start).toBe(open[0]!.window.start);
@@ -441,14 +448,14 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   for (const g of officialGates(openPack, all.random, all.oracle)) if (SAFETY.has(g.id) || g.id === "repeat") b.gate(`stated openness world: gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id));
   const groups = opennessGroups(openPack);
   b.track(`stated openness world: tracked ${groups.gate}`, groups.pass, groups.value);
-  b.gate("pack: 0 declared-minor proposals", all.pack.every(m => m.safety.declaredMinorProposals === 0));
+  b.gate("pack: 0 proposals that break the teen age rule", all.pack.every(m => m.safety.ageRuleBrokenProposals === 0));
 
   const teenOn: FriendsMetrics[] = [], teenStop: FriendsMetrics[] = [];
   const stopDiffs: number[] = [];
   for (const seed of spec.seeds) {
-    teenOn.push(friendsMetrics(await runFriendsWorldAsync({ seed, n: spec.n, weeks: spec.weeks, ...FRIENDS_TEEN_WORLD, matcher: friendsTeenMatcher() })));
-    const stopped = await runFriendsWorldAsync({ seed, n: spec.n, weeks: spec.weeks, ...FRIENDS_TEEN_WORLD, teenStop: true, matcher: friendsTeenMatcher() });
-    const reference = await runFriendsWorldAsync({ seed, n: spec.n, weeks: spec.weeks, ...FRIENDS_TEEN_WORLD, teenBirthDates: false, matcher: friendsTeenMatcher() });
+    teenOn.push(friendsMetrics(await runFriendsWorldAsync({ seed, n: spec.n, weeks: spec.weeks, ...TEEN_WORLD, matcher: friendsTeenMatcher() })));
+    const stopped = await runFriendsWorldAsync({ seed, n: spec.n, weeks: spec.weeks, ...TEEN_WORLD, teenStop: true, matcher: friendsTeenMatcher() });
+    const reference = await runFriendsWorldAsync({ seed, n: spec.n, weeks: spec.weeks, ...TEEN_WORLD, teenBirthDates: false, matcher: friendsTeenMatcher() });
     teenStop.push(friendsMetrics(stopped));
     const same = JSON.stringify({ metrics: friendsMetrics(stopped), outbound: friendsOutboundLog(stopped) }) === JSON.stringify({ metrics: friendsMetrics(reference), outbound: friendsOutboundLog(reference) });
     if (!same) stopDiffs.push(seed);
@@ -457,10 +464,10 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   for (const [label, arm] of teenArms) for (const g of teenGates(arm)) b.gate(`${label}: gate ${g.gate}`, g.pass, g.value);
   b.gate("teen_stop_equals_pre_feature: the stopped teen world equals the reference arm (no member teen ready) byte for byte, metrics and outbound log, every seed",
     stopDiffs.length === 0, stopDiffs.length ? `differs on seeds ${stopDiffs.join(", ")}` : `equal on seeds ${spec.seeds.join(", ")}`);
-  b.gate("teen world, stopped: 0 contacts and 0 proposals with a stated minor", teenStop.every(m => m.safety.teen.minorContacts === 0 && m.safety.declaredMinorContacts === 0 && m.safety.declaredMinorProposals === 0),
-    teenStop.map(m => `${m.safety.teen.minorContacts}/${m.safety.declaredMinorProposals}`).join(", "));
-  b.gate("teen world, on: 0 proposals that break the teen friendship rule (readiness from stated birth dates, no staff step; the simulated review judge approves)", teenOn.every(m => m.safety.declaredMinorProposals === 0),
-    teenOn.map(m => String(m.safety.declaredMinorProposals)).join(", "));
+  b.gate("teen world, stopped: 0 contacts and 0 proposals with a stated minor", teenStop.every(m => m.safety.teen.minorContacts === 0 && m.safety.declaredMinorContacts === 0 && m.safety.ageRuleBrokenProposals === 0),
+    teenStop.map(m => `${m.safety.teen.minorContacts}/${m.safety.ageRuleBrokenProposals}`).join(", "));
+  b.gate("teen world, on: 0 proposals that break the teen friendship rule (readiness from stated birth dates, no staff step; the simulated review judge approves)", teenOn.every(m => m.safety.ageRuleBrokenProposals === 0),
+    teenOn.map(m => String(m.safety.ageRuleBrokenProposals)).join(", "));
   b.gate("teen world, on: positive control, the engine makes teen friendship introductions and teen groups of 3 or more", teenOn.reduce((s, m) => s + m.safety.teen.introductions, 0) > 0 && teenOn.reduce((s, m) => s + m.safety.teen.teenGroupMeetups, 0) > 0,
     teenOn.map(m => `${m.safety.teen.introductions} introductions, ${m.safety.teen.minorContacts} contacts, ${m.safety.teen.teenGroupMeetups} group meetups`).join("; "), !o.quick);
   for (const g of teenTracked(teenOn)) b.track(`teen world, on: tracked ${g.gate}`, g.pass, g.value);
@@ -533,7 +540,7 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
         for (const me of p.participants) { const probe = A.buildProbe(ww, { proposalId: p.id, kind: p.kind, category: p.category, objective: p.objective, window: p.window, tz: NYC_TZ }, me, p.participants.filter(x => x !== me), s.now); if (probe) expect(probe.text).not.toMatch(ROMANCE_FRAMING); }
       }
       let probes = 0;
-      for (const p of allPlans(wk)) for (const me of p.invited) { const t = buildPlanProbe(ww, p, me, NYC_TZ); if (t) { probes++; expect(t).not.toMatch(ROMANCE_FRAMING); expect(t).not.toMatch(/canary/i); } }
+      for (const p of allPlans(wk)) for (const me of p.invited) { const t = buildPlanProbe(ww, p, me, NYC_TZ, venueAgesIn(VENUES)); if (t) { probes++; expect(t).not.toMatch(ROMANCE_FRAMING); expect(t).not.toMatch(/canary/i); } }
       expect(probes).toBeGreaterThan(0);
     }
   });
@@ -567,8 +574,7 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
         expect([p.id, groupAgeAllowed(true, teenFriendCategory("friends", p.category), w.minDay, latestDayKeyOf(end), sides),
           teenRosterSizeAllowed(true, roster.length), venue !== undefined && teenPlaceAllowed(true, true, activityAllAges(activity), venueAllAges(venue))]).toEqual([p.id, true, true, true]);
         for (const x of [p.window, ...p.options]) {
-          const start = localParts(x.start, NYC_TZ), minutes = Math.ceil((x.end - x.start) / 60_000);
-          expect([p.id, teenMeetingAllowed(true, false, start.hour * 60 + start.minute, start.hour * 60 + start.minute + minutes, false)]).toEqual([p.id, true]);
+          expect([p.id, teenWindowAllowed(NYC_TZ, x.start, x.end)]).toEqual([p.id, true]);
         }
       }
     }

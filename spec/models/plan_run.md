@@ -18,7 +18,7 @@ A group backfill skips an alternate who would change the probe words that a memb
 
 The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
 
-Changed (owner decision 2026-11-22, answers A2 to A5): a friends.help group plan can seat members aged 13 to 17 when every pair with a minor passes the teen pair rule, the roster has at most 6 people, and the activity and place are all-ages ([friend introductions with a minor](../friendIntroAge.md) `groupAgeAllowed`, `teenRosterSizeAllowed`, `teenPlaceAllowed`). The model chooses at the start whether the plan is a teen plan (`teenPlan`). In a teen plan every invited member and the alternate pass the rule at the start, and the set `minors` stands for the members who fail the rule now (19 on the meeting end day, a lost readiness, a report or a bar, a stop of teen introductions): the seat check, the close of the whole plan and the guards are then the same as the minors policy, so nobody is dropped (Q22). A teen plan gets no fallback: the smaller group, the partner plan, the solo event and the next-week offer are refused, and the plan closes when quorum fails (`planFallbackF`; network.ts `offerGroupReplacement` and the fallback return with no offer for a teen item). A late join from the plan's own reviewed alternate stays, with the rule run again. In a teen plan `noMinorContact` and `minorEndsBooking` are the teen plan rule, and `teenNoFallback` states the rest. The first build had `teenPlanRule`, a copy of those two invariants, and `teenPlanSmall`, a size bound that could not fail with five members; both are deleted because they checked nothing. Outside this model: the roster size (`teenRosterSizeAllowed`, checked when the item is submitted: the [opportunity](opportunity.md) run `teenGroupTooBigTest` (t7, 7 people) is refused), the place rule (`teenPlanPlace`, checked when the plan is submitted, before this model starts: `planCatalogPlace` refuses a venue or an activity that is not all-ages; the [opportunity](opportunity.md) model has the refusal, and [plan_crew](plan_crew.md) checks it for crew sessions), and organizing reach (`withReach` returns a plan with a minor unchanged; `teen-friend-intro.integration.test.ts`). While teen introductions are stopped, a teen plan has every minor in `minors`, which is the old minors-policy invariant `noMinorContact`.
+A friends.help group plan can seat members aged 13 to 17 when every pair with a minor passes the teen pair rule, the roster has at most 6 people, and the activity and place are all-ages ([friend introductions with a minor](../friendIntroAge.md) `groupAgeAllowed`, `teenRosterSizeAllowed`, `teenPlaceAllowed`). The model chooses at the start whether the plan is a teen plan (`teenPlan`). In a teen plan every invited member and the alternate pass the rule at the start, and the set `minors` stands for the members who fail the rule now (19 on the meeting end day, a lost readiness, a report or a bar, a stop of teen introductions): the seat check, the close of the whole plan and the guards are then the same as the minors policy, so nobody is dropped (Q22). A teen plan gets no fallback: the smaller group, the partner plan, the solo event and the next-week offer are refused, and the plan closes when quorum fails (`planFallbackF`; network.ts `offerGroupReplacement` and the fallback return with no offer for a teen item). A late join from the plan's own reviewed alternate stays, with the rule run again. In a teen plan `noMinorContact` and `minorEndsBooking` are the teen plan rule, and `teenNoFallback` states the rest. Outside this model: the roster size (`teenRosterSizeAllowed`, checked when the item is submitted: the [opportunity](opportunity.md) run `teenGroupTooBigTest` (t7, 7 people) is refused), the place rule (`teenPlanPlace`, checked when the plan is submitted, before this model starts: `planCatalogPlace` refuses a venue or an activity that is not all-ages; the [opportunity](opportunity.md) model has the refusal, and [plan_crew](plan_crew.md) checks it for crew sessions), and organizing reach (`withReach` returns a plan with a minor unchanged; `teen-friend-intro.integration.test.ts`). While teen introductions are stopped, a teen plan has every minor in `minors`, so `noMinorContact` is the minors policy. Changed (owner decision 2026-11-22, answer A4): a friends.help group plan may seat a minor under the rule, because the owner chose "Also small teen groups".
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -36,7 +36,7 @@ Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) fo
 // planDeadline 3237, planAnswer 3244, planAct 3257, bookPlan 3282, planReveal 3328, planJoin 3343,
 // planFallback 3357, planOut 3389, handleDrop 2680, close 2710, dropMember 2756, checkRecipient 4530,
 // bookedNear 3094, planSeatOk 3113, onPlanProbeAnswer 2499, applyBlock 1491, callOffPair 1532, the reveal and
-// plan_probe send hooks 4388-4413, intro reveal 2578; quorumMet in network/src/transitions.ts:186).
+// plan_probe send hooks 4388-4413, intro reveal 2578; quorumMet in network/src/transitions.ts).
 // The model follows the code at the commit that adds this note (branch wave2/plan_run). The other
 // "network.ts:<line>" references in this file are lines at that commit (now about 150-260 lines lower);
 // the function names above are the anchors. A reference marked "formal-main" is a current line.
@@ -60,7 +60,7 @@ Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) fo
 //  - Hours are small integers: probe deadline D, late-join cutoff CUTOFF (start - lateJoinHours), start S,
 //    probe silence PROBE_TTL.
 //  - An intro (a non-plan opportunity) for a plan member is a small per-member machine. Its time is the
-//    plan's time: evidence() counts only scheduled items as away (network.ts:2285), so an intro may pick it.
+// plan's time: evidence counts only scheduled items as away (network.ts), so an intro may pick it.
 //
 // The model is kept small for Apalache (docs/research/quint-findings/plan_run.md section 6):
 //  - The maps are total over MEMBERS ("" or -1 is "no entry"). The messages are not kept one by one: the
@@ -88,7 +88,7 @@ module plan_run {
   pure val ORDER = ["a", "b", "c", "d", "e"]
   pure val INVITED = Set("a", "b", "c", "d")   // a group plan invites up to size.target (3-6), quorum 3
   pure val BENCH0 = ["e"]
-  pure val QUORUM = 3          // DEFAULT_PLANS.quorum.group (engine/src/config.ts:497); a run may also use 4
+  pure val QUORUM = 3 // DEFAULT_PLANS.quorum.group (engine/src/config.ts); a run may also use 4
   pure val GROUP_MIN = 3       // a group plan is 3-6 people (D15, PRD 33.4)
   pure val D = 4               // plan.probeDeadline
   pure val S = 10              // plan.window.start
@@ -122,7 +122,7 @@ module plan_run {
     // ghosts
     knows: str -> Set[str],     // learner -> the members a reveal named to them
     earlyName: bool,            // a reveal named someone before a group of GROUP_MIN yes-sayers was seated
-    promised: Set[str],         // heard "Great, thanks. I'll tell you once enough people are in." (network.ts:2347)
+    promised: Set[str], // heard "Great, thanks. I'll tell you once enough people are in." (network.ts)
     told: Set[str],             // heard how the plan ended for them (reveal, note, event, cancel notice)
     excused: Set[str],          // left on their own or by policy (STOP, minor, watch, block, "can't make it")
     seated: Set[str],           // who was seated at the last booking
@@ -171,12 +171,12 @@ module plan_run {
   pure def live(o: Opp, x: str): bool = o.answers.get(x) == "pending" or o.answers.get(x) == "yes"
   pure def isOpen(o: Opp): bool = o.stage == "review" or o.stage == "probing" or o.stage == "scheduled"
 
-  /** planSeatOk (network.ts:2888) with busyOk: an adult, not opted out, trust ok. */
+  /** planSeatOk (network.ts) with busyOk: an adult, not opted out, trust ok. */
   pure def seatOk(e: Env, m: str): bool =
     not(e.minors.contains(m)) and not(e.optedOut.contains(m)) and not(e.watch.contains(m))
 
 
-  /** bookedNear (network.ts:2869): booked in another scheduled opportunity near the plan's start. */
+  /** bookedNear (network.ts): booked in another scheduled opportunity near the plan's start. */
   pure def bookedNear(e: Env, m: str): bool = e.intro.get(m) == "booked"
 
   /**
@@ -212,15 +212,15 @@ module plan_run {
       eventMsg: o.eventMsg or (kind == "planEvent" and r != Set()), told: o.told.union(r) }
   }
 
-  /** noteFor (network.ts:3130): a note folded into the member's next message. Counted as told. */
+  /** noteFor (network.ts): a note folded into the member's next message. Counted as told. */
   pure def note(o: Opp, ids: Set[str]): Opp = { ...o, told: o.told.union(ids) }
 
-  /** bookPlan's `tell` (network.ts:3099): the note, never to a minor or a member on watch (SD-480 fixed). */
+  /** bookPlan's `tell` (network.ts): the note, never to a minor or a member on watch (SD-480 fixed). */
   pure def noteLeft(e: Env, o: Opp, ids: Set[str]): Opp =
     note(o, ids.filter(id => not(e.minors.contains(id)) and not(e.watch.contains(id))))
 
   // ------------------------------------------------------------------------------------------------
-  // Engine: recordPlanAnswer (engine/src/plans.ts:568-591), group plans only. The network passes the adult gate
+  // Engine: recordPlanAnswer (engine/src/plans.ts), group plans only. The network passes the adult gate
   // as opts.canMatch in every app (beginPlan and planAnswer).
 
   pure def recordable(o: Opp, m: str): bool = o.runStage != "closed" and o.answers.get(m) == "pending"
@@ -242,7 +242,7 @@ module plan_run {
     } else recordNo(e, o1)
   }
 
-  /** The no branch of recordPlanAnswer (plans.ts:582-591), after the answer is stored. */
+  /** The no branch of recordPlanAnswer (plans.ts), after the answer is stored. */
   pure def recordNo(e: Env, o1: Opp): (Opp, Act) =
     if (o1.runStage == "booked") (o1, NONE)
     else if (e.now < D and o1.bench.length() > 0) {
@@ -266,7 +266,7 @@ module plan_run {
   // ------------------------------------------------------------------------------------------------
   // Network side
 
-  /** close (network.ts:2532). */
+  /** close (network.ts). */
   pure def closeF(e: Env, o: Opp, reason: str): Opp =
     if (not(isOpen(o))) o
     else {
@@ -277,14 +277,14 @@ module plan_run {
       else tellAll(e, o1, yesMembers(o1), "declinedQuiet")
     }
 
-  /** handleDrop (network.ts:2512): a booked participant drops out. */
+  /** handleDrop (network.ts): a booked participant drops out. */
   pure def handleDrop(e: Env, o: Opp, m: str): Opp = handleDropFor(e, o, m, false)
 
   pure def handleDropFor(e: Env, o: Opp, m: str, minorClose: bool): Opp = {
     val o1 = { ...setStatus(o, m, "dropped"),
                answers: if (o.runStage != "none") o.answers.set(m, "no") else o.answers }
     val still = yesMembers(o1)
-    // A group stays on with 3 or more yes (network.ts:2538, SD-078 fixed). A minor who leaves closes the
+    // A group stays on with 3 or more yes (network.ts, SD-078 fixed). A minor who leaves closes the
     // booking whatever its size (spec/opportunityLifecycle.md, bookedGroupCanContinue).
     val keep = not(minorClose) and still.size() >= 3
     if (keep) tellAll(e, o1, still.intersect(o1.bookedTold), "dropNotice")
@@ -312,18 +312,18 @@ module plan_run {
              earlyName: o1.earlyName or going.size() < GROUP_MIN or going.exists(x => o.answers.get(x) != "yes") }
   }
 
-  /** planReveal (network.ts:3076) through send(): the reveal hook's valid() and the send-time recipient check. */
+  /** planReveal (network.ts) through send: the reveal hook's valid and the send-time recipient check. */
   pure def planReveal(e: Env, o: Opp, id: str): Opp =
     if (o.stage != "scheduled" or o.status.get(id) != "yes") o
     else {
       val going = yesMembers(o)
       if (checkRecipient(e, id, going)._1 == "ok") revealTo(e, o, id, going)
-      // onRefused: the plan cannot stand without them (network.ts:4087).
+      // onRefused: the plan cannot stand without them (network.ts).
       else handleDrop(e, o, id)
     }
 
   /**
-   * bookPlan (network.ts:3041). Returns the opportunity, "booked", "closed", "fallback" or "pair", and the
+   * bookPlan (network.ts). Returns the opportunity, "booked", "closed", "fallback" or "pair", and the
    * members the fallback may use (Set() = every yes-sayer). The caller runs planFallback, which calls this
    * again with fromFallback = true; "pair" falls back for the two seated members only, so there is no recursion.
    */
@@ -347,7 +347,7 @@ module plan_run {
       else (o3, "fallback", Set())
     } else {
       val o3 = { ...withStatus(noteLeft(e, o2, left), seated, "yes"), stage: "scheduled", runStage: "booked", seated: seated }
-      // The reveals go out one by one (network.ts:3115). Each seated member passed the recipient check against
+      // The reveals go out one by one (network.ts). Each seated member passed the recipient check against
       // the members seated before them, and blocks and the minors and watch checks are symmetric, so each
       // reveal passes planReveal's check against the whole group: every seated member hears the names.
       (ORDER.foldl(o3, (acc, id) => if (seated.contains(id)) revealTo(e, acc, id, seated) else acc), "booked", Set())
@@ -355,7 +355,7 @@ module plan_run {
   }
 
   /**
-   * planFallback (network.ts:3109) with engine planFallback (engine/src/plans.ts:640-654). The smaller group
+   * planFallback (network.ts) with engine planFallback (engine/src/plans.ts). The smaller group
    * is booked by bookPlan (fromFallback = true): this returns the plan and the members to book, or Set() when
    * the fallback is done. `eligible`: the members the fallback may use, Set() for every yes-sayer (network.ts
    * planFallback's `eligible`: the seated pair of a group plan).
@@ -368,7 +368,7 @@ module plan_run {
     else if (yes.size() == 0) (closeF(e, { ...o1, fallbackKind: "none" }, "plan did not come together"), Set())
     else if (yes.size() >= 2 and e.minSize <= 2 and S - e.now > LATEJOIN) {
       if (yes.size() == 2)
-        // Exactly two: the plan closes and a fresh partner plan is submitted for review (network.ts:3160-3168,
+        // Exactly two: the plan closes and a fresh partner plan is submitted for review (network.ts,
         // SD-008 fixed). The two hear "that plan didn't come together" (Q-plan_run-2 fixed).
         ({ ...note(closeF(e, { ...o1, fallbackKind: "smaller" }, "plan did not come together"), yes), partnerAsked: yes }, Set())
       else ({ ...o1, fallbackKind: "smaller" }, yes)
@@ -379,14 +379,14 @@ module plan_run {
     } else (note(closeF(e, { ...o1, fallbackKind: "next_week" }, "plan did not come together"), yes), Set())
   }
 
-  /** planJoin (network.ts:3137): a late yes after booking. The reveal goes to the joiner only (SD-479, skipped). */
+  /** planJoin (network.ts): a late yes after booking. The reveal goes to the joiner only (SD-479, skipped). */
   pure def planJoin(e: Env, o: Opp, j: str): Opp =
     if (bookedNear(e, j) or checkRecipient(e, j, yesMembers(o))._1 != "ok") setStatus(o, j, "unavailable")
     else planReveal(e, setStatus(o, j, "yes"), j)
 
-  /** planAct (network.ts:3018) for a backfill: the probe goes out later through the plan lane (the probe action). */
+  /** planAct (network.ts) for a backfill: the probe goes out later through the plan lane (the probe action). */
   pure def backfill(o: Opp, m: str): Opp =
-    // The alternate joins plan.invited, so the probe copy is built for them (network.ts:3059, SD-204 fixed).
+    // The alternate joins plan.invited, so the probe copy is built for them (network.ts, SD-204 fixed).
     { ...setStatus(o, m, "probing"), invited: o.invited.union(Set(m)),
       participants: o.participants.union(Set(m)), alternates: o.alternates.exclude(Set(m)) }
 
@@ -399,7 +399,7 @@ module plan_run {
   pure def thenFallback(o: Opp): Res = { o: o, next: "fallback", going: Set() }
 
   /**
-   * planAnswer (network.ts:3008) for a yes: recordPlanAnswer, then planAct. "book" runs bookPlan (finishBook);
+   * planAnswer (network.ts) for a yes: recordPlanAnswer, then planAct. "book" runs bookPlan (finishBook);
    * a yes after booking joins; a yes after the late-join cutoff is out and hears so in the next message
    * (Q-plan_run-1). A yes can cause a fallback when it is the last reply and quorum is unmet.
    */
@@ -430,7 +430,7 @@ module plan_run {
       else done(o1)
     }
 
-  /** planOut (network.ts:3133). */
+  /** planOut (network.ts). */
   pure def planOut(e: Env, o: Opp, m: str): Res =
     if (o.answers.get(m) == "pending") planNoF(e, o, m, true)
     else if (o.status.get(m) == "available")
@@ -438,7 +438,7 @@ module plan_run {
     else if (o.status.get(m) == "queued") done(setStatus(o, m, "unavailable"))
     else done(o)
 
-  /** dropMember (network.ts:2564) for the plan opportunity. */
+  /** dropMember (network.ts) for the plan opportunity. */
   pure def dropMember(e: Env, o: Opp, m: str, minor: bool): Res =
     if (not(isOpen(o))) done(o)
     else {
@@ -455,7 +455,7 @@ module plan_run {
       else if (minor and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
       else if (o1.stage == "review") done(closeF(e, o1, "dropped"))
       else if (o1.stage == "probing") planOut(e, o1, m)
-      // Only a member who is going leaves a booked plan (formal-main network.ts:2777): one who said no, is out or
+      // Only a member who is going leaves a booked plan (formal-main network.ts): one who said no, is out or
       // still pending for a late join is not in it.
       else if (o1.status.get(m) == "yes") done(handleDropFor(e, o1, m, minor))
       // A minor on the booked roster who is not going still closes it (closesForMinor: participant), on closeBooking.
@@ -464,10 +464,10 @@ module plan_run {
     }
 
   /**
-   * planProbe (network.ts:2990) once the plan lane lets it go out: seat check, the probe copy
-   * (buildPlanProbe returns null for a recipient not in plan.invited, engine/src/plans.ts:488, or when the
+   * planProbe (network.ts) once the plan lane lets it go out: seat check, the probe copy
+   * (buildPlanProbe returns null for a recipient not in plan.invited, engine/src/plans.ts, or when the
    * leak gate drops every frame: copyOk), then send() with about = the participants still in the plan
-   * (status not no, unavailable or dropped: network.ts:3019, SD-046 fixed) and the send-time leak guard (leakOk).
+   * (status not no, unavailable or dropped: network.ts, SD-046 fixed) and the send-time leak guard (leakOk).
    * This model treats send as accepted delivery. The service can queue before acceptance and checks the
    * exact member, opportunity, message and receive time before applying a reply (spec/planDispatch.md).
    */
@@ -482,19 +482,19 @@ module plan_run {
       } else {
         val stale = chk._1 == "other" and chk._2.forall(x => not(live(o, x)))
         val o1 = if (stale) { ...o, staleRefused: o.staleRefused.union(Set(m)) } else o
-        planOut(e, o1, m)                                                   // onRefused (network.ts:4099)
+        planOut(e, o1, m) // onRefused (network.ts)
       }
     }
 
-  /** planDeadline (network.ts:3032): at the probe deadline without quorum, the fallback runs. */
+  /** planDeadline (network.ts): at the probe deadline without quorum, the fallback runs. */
   pure def deadlineDue(e: Env, o: Opp): bool = o.stage == "probing" and o.runStage == "probing" and e.now >= D
 
-  /** A probe that went silent for PROBE_TTL (network.ts:440). */
+  /** A probe that went silent for PROBE_TTL (network.ts). */
   pure def silentNow(e: Env, o: Opp, p: str): bool =
     o.answers.get(p) == "pending" and o.sentAt.get(p) >= 0 and e.now >= o.sentAt.get(p) + PROBE_TTL
 
   /**
-   * advance (network.ts:3400-3420) for the plan: probe silence, the deadline, the meeting is over. The silence
+   * advance (network.ts) for the plan: probe silence, the deadline, the meeting is over. The silence
    * of each member is a planAnswer no (planNoF). When one of them makes the run fall back, the fold stops and
    * the fallback is the next step. In the code the later members are then not recorded (the run is closed),
    * or, when the fallback booked a smaller group, recorded as no with no other effect: finishBook does that
@@ -527,7 +527,7 @@ module plan_run {
   }
   def env0: Env = envOf(Set(), false)
 
-  /** busy (network.ts:4373) for the plan opportunity only. */
+  /** busy (network.ts) for the plan opportunity only. */
   def busyInPlan(m: str): bool = {
     val st = plan.status.get(m)
     isOpen(plan) and plan.participants.contains(m) and not(Set("unavailable", "no", "dropped").contains(st))
@@ -620,7 +620,7 @@ module plan_run {
   // ------------------------------------------------------------------------------------------------
   // Plan actions
 
-  /** A reviewer approves the plan: beginPlan (network.ts:2940) with engine startPlanRun. */
+  /** The review judge, or staff for a held plan, approves the plan: beginPlan (network.ts) with engine startPlanRun. */
   action approve = all {
     idle, plan.stage == "review",
     plan' = { ...withStatus(plan, plan.participants, "probing"),
@@ -629,7 +629,7 @@ module plan_run {
     now' = now, todo' = IDLE, keepEnv,
   }
 
-  /** A reviewer rejects, or the review SLA passes (network.ts:3344-3350). */
+  /** Staff reject a plan, or the review deadline passes (network.ts). */
   action reject = all {
     idle, plan.stage == "review",
     plan' = closeF(env0, plan, "review expired"),
@@ -639,8 +639,8 @@ module plan_run {
   /** The plan lane sends a pending member's probe (send window, one a day and allowance are deferrals). */
   action probe(m: str, copyOk: bool, leakOk: bool): bool = all {
     idle,
-    // advance() runs the deadline check before planLane (network.ts:3365-3369), so no probe goes out at or
-    // after the deadline while probing; after booking, probes go out until the late-join cutoff (network.ts:2954).
+    // advance runs the deadline check before planLane (network.ts), so no probe goes out at or
+    // after the deadline while probing; after booking, probes go out until the late-join cutoff (network.ts).
     (plan.stage == "probing" and now < D) or (plan.stage == "scheduled" and now <= CUTOFF),
     plan.answers.get(m) == "pending", not(plan.contacted.contains(m)), not(introBusy(m)),
     val r = probeF(env0, plan, m, copyOk, leakOk)
@@ -649,7 +649,7 @@ module plan_run {
   }
 
   /**
-   * The member answers the probe (onPlanProbeAnswer, network.ts:2351); m.awaiting routes it while the opp is
+   * The member answers the probe (onPlanProbeAnswer, network.ts); m.awaiting routes it while the opp is
    * open. At or after the deadline, the fallback runs and the reply leaves the answer and status unchanged.
    */
   action answer(m: str, yes: bool, streakBad: Set[str], eventExists: bool): bool = all {
@@ -665,7 +665,7 @@ module plan_run {
     now' = now, keepEnv,
   }
 
-  /** A booked member says they can't make it (handleDrop with ack, network.ts:2512). */
+  /** A booked member says they can't make it (handleDrop with ack, network.ts). */
   action cantMakeIt(m: str): bool = all {
     idle, plan.stage == "scheduled", plan.status.get(m) == "yes", not(optedOut.contains(m)),
     plan' = handleDrop(env0, { ...plan, excused: plan.excused.union(Set(m)) }, m),
@@ -683,7 +683,7 @@ module plan_run {
   action clock = all { idle, now < MAXT, now' = now + 1, plan' = plan, todo' = IDLE, keepEnv }
 
   /**
-   * bookPlan (network.ts:3041), the next step of a unit that books. When the main booking falls back, the
+   * bookPlan (network.ts), the next step of a unit that books. When the main booking falls back, the
    * fallback is the next step. When a smaller group is booked in a tick, the silent members are recorded
    * (lateSilence).
    */
@@ -699,7 +699,7 @@ module plan_run {
     now' = now, keepEnv,
   }
 
-  /** planFallback (network.ts:3109), the next step of a unit that falls back. */
+  /** planFallback (network.ts), the next step of a unit that falls back. */
   action finishFallback = all {
     todo.kind == "fallback",
     val e = envOf(todo.streakBad, todo.eventExists)
@@ -712,7 +712,7 @@ module plan_run {
   // ------------------------------------------------------------------------------------------------
   // Other actors
 
-  /** STOP (network.ts:675): opted out, then dropMember. */
+  /** STOP (network.ts): opted out, then dropMember. */
   action stop(m: str): bool = all {
     idle, not(optedOut.contains(m)),
     val e = { ...env0, optedOut: optedOut.union(Set(m)) }
@@ -722,7 +722,7 @@ module plan_run {
     now' = now, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
-  /** Trust goes to watch (onTrustChange, network.ts:1188): dropMember. */
+  /** Trust goes to watch (onTrustChange, network.ts): dropMember. */
   action goWatch(m: str): bool = all {
     idle, not(watch.contains(m)),
     val e = { ...env0, watch: watch.union(Set(m)) }
@@ -733,7 +733,7 @@ module plan_run {
   }
 
   /**
-   * A minor signal (network.ts:721): dropMember with the minors policy. A record that goes under 18 with no
+   * A minor signal (network.ts): dropMember with the minors policy. A record that goes under 18 with no
    * inbound signal is read at the next tick, and also at the moment the plan books, falls back or takes a late yes
    * (planMembersAdult, spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that
    * person"), before any reveal. So the plan never books for the adults first, and this one atomic step models both.
@@ -747,11 +747,11 @@ module plan_run {
     now' = now, optedOut' = optedOut, watch' = watch, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
-  /** A member blocks another (applyBlock, network.ts:1426): an open opportunity with both is closed. */
+  /** A member blocks another (applyBlock, network.ts): an open opportunity with both is closed. */
   action block(m: str, x: str): bool = all {
     idle, m != x, not(blocks.contains((m, x))),
     val e = { ...env0, blocks: blocks.union(Set((m, x))) }
-    // callOffPair (formal-main network.ts:1532-1545) skips an opportunity where either one is already out of it.
+    // callOffPair (formal-main network.ts) skips an opportunity where either one is already out of it.
     def out(id: str): bool = Set("no", "unavailable", "dropped").contains(plan.status.get(id))
     val both = isOpen(plan) and plan.participants.contains(m) and plan.participants.contains(x) and not(out(m)) and not(out(x))
     val o1 = { ...plan, excused: plan.excused.union(Set(m, x)) }
@@ -763,20 +763,20 @@ module plan_run {
     now' = now, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
-  /** An intro probe reaches a plan member who is not busy (network.ts:4373-4379: a plan yes is not busy). */
+  /** An intro probe reaches a plan member who is not busy (network.ts: a plan yes is not busy). */
   action introProbe(m: str): bool = all {
     idle, intro.get(m) == "none", not(busyInPlan(m)), seatOk(env0, m),
     intro' = intro.set(m, "probing"),
     now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart, teenPlan' = teenPlan,
   }
-  /** The member picks the plan's time: evidence() counts only scheduled items as away (network.ts:2285). */
+  /** The member picks the plan's time: evidence counts only scheduled items as away (network.ts). */
   action introYes(m: str): bool = all {
     idle, intro.get(m) == "probing",
     intro' = intro.set(m, "yes"),
     now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart, teenPlan' = teenPlan,
   }
   /**
-   * The other side says yes: reveal() (network.ts:2443) books it. A member booked in the plan near that time
+   * The other side says yes: reveal (network.ts) books it. A member booked in the plan near that time
    * is left out (bookedNear, refused "booked_elsewhere"): the intro is over for them (SD-268 fixed).
    */
   action introBook(m: str): bool = all {
@@ -827,9 +827,9 @@ module plan_run {
   /**
    * SD-008 (fixed). A group plan is never booked with fewer than 3 people. Rule: plans are groups of 3-6 (D15,
    * PRD 33.4, engine/src/config.ts resolvePlans), and a group's two yes-sayers "said yes to a group, not to a
-   * one-to-one meeting, so the pair is NEVER booked directly" (engine/src/plans.ts:600-606). Before the fix,
+   * one-to-one meeting, so the pair is NEVER booked directly" (engine/src/plans.ts). Before the fix,
    * planFallback booked fallback.members and ignored fallback.partnerPlan, and bookPlan's `enough` accepted 2.
-   * Now bookPlan needs 3 (network.ts:3101) and the pair gets the partner plan (network.ts:3160-3170).
+   * Now bookPlan needs 3 (network.ts) and the pair gets the partner plan (network.ts).
    */
   val pairNeverBookedFromGroup: bool =
     (plan.stage == "scheduled" or plan.seated.size() > 0) implies plan.seated.size() >= GROUP_MIN
@@ -837,8 +837,8 @@ module plan_run {
   /**
    * SD-078 (fixed). A booked group never shrinks to a two-person meeting that nobody agreed to: a scheduled plan
    * always has 3 or more yes. Rule: as above, plus partnerPlanFor's doc "a booking that shrank to two ... becomes
-   * a fresh activity-partner plan" (engine plans.ts:612-616). Before the fix handleDrop kept a group of 3+
-   * participants on with 2 left; now it keeps it only with 3 or more (network.ts:2538).
+   * a fresh activity-partner plan" (engine plans.ts). Before the fix handleDrop kept a group of 3+
+   * participants on with 2 left; now it keeps it only with 3 or more (network.ts).
    */
   val groupNeverShrinksToPair: bool =
     plan.stage == "scheduled" implies yesMembers(plan).size() >= GROUP_MIN
@@ -854,25 +854,25 @@ module plan_run {
 
   /**
    * SD-204 (fixed). A backfilled alternate is part of the plan. Rule: Plan.invited is "Members probed (primary group,
-   * plus alternates once backfilled)" (engine/src/plans.ts:199). Before the fix planAct's backfill added only
-   * to o.participants, buildPlanProbe returned null for the alternate (engine plans.ts:488) and the probe was
-   * refused "plan_copy". Now the backfill adds the alternate to plan.invited (network.ts:3059).
+   * plus alternates once backfilled)" (engine/src/plans.ts). Before the fix planAct's backfill added only
+   * to o.participants, buildPlanProbe returned null for the alternate (engine plans.ts) and the probe was
+   * refused "plan_copy". Now the backfill adds the alternate to plan.invited (network.ts).
    */
   val planInvitedCurrent: bool =
     plan.runStage != "none" implies MEMBERS.forall(k => plan.answers.get(k) != "" implies plan.invited.contains(k))
 
   /**
    * SD-046 (fixed). A probe is never refused because of a member who has already left the run. Rule: checkRecipient
-   * checks "every other person" the message is about (network.ts:4216-4218); a member who said no, went
+   * checks "every other person" the message is about (network.ts); a member who said no, went
    * silent or was dropped is no longer someone the plan is about. Before the fix the probe's about was the
    * stale o.plan.invited; now it is the participants whose status is not no, unavailable or dropped
-   * (network.ts:3019).
+   * (network.ts).
    */
   val noStaleRefusal: bool = plan.staleRefused == Set()
 
   /**
    * SD-423 (fixed). A yes after the probe deadline never books the plan. Rule: the probe "Expires at the probe
-   * deadline" (engine plans.ts:440-443) and "At the probe deadline without quorum: close and fall back"
+   * deadline" (engine plans.ts) and "At the probe deadline without quorum: close and fall back"
    * Before the fix only the tick ran checkPlanDeadline. A reply while the plan is still probing now
    * expires the probe before recording an answer.
    */
@@ -880,22 +880,22 @@ module plan_run {
 
   /**
    * SD-268 (fixed). A member is never booked twice at the same time. Rule: bookPlan "Anyone booked elsewhere within 4
-   * hours of the start is left out" (network.ts:3071) and "A member's booked plans count as away when a time
+   * hours of the start is left out" (network.ts) and "A member's booked plans count as away when a time
    * is chosen for anything else (plans ask 5)". busy() still skips a plan yes, so an intro can probe the member;
-   * the intro reveal now leaves out a member booked near its time (network.ts:2441-2449).
+   * the intro reveal now leaves out a member booked near its time (network.ts).
    */
   val noDoubleBooking: bool =
     MEMBERS.forall(m => not(intro.get(m) == "booked" and plan.stage == "scheduled" and plan.status.get(m) == "yes"))
 
   /**
    * SD-480, Q-plan_run-1 and Q-plan_run-2 (fixed). A yes-sayer always hears how the plan ended. Rule: the ack promises "I'll tell you once enough
-   * people are in" (network.ts:2347); planFallback "Yes-sayers hear 'that plan didn't come together'"
-   * (network.ts:3106). Exempt: members who left on their own or by policy, and a plan closed for the minors
-   * policy or a block (any later message about it is a minor contact or says why, dropMember network.ts:2568-2571,
-   * applyBlock network.ts:1437). Fixed paths: bookPlan notes the members it leaves out (plan_conflict and refused
-   * seats, not minors or members on watch, network.ts:3097-3110, SD-480); a yes after the late-join cutoff is
-   * marked "late" and gets the note (network.ts:3047, Q-plan_run-1); the pair of a group plan that fell to two
-   * gets the note with its partner plan (network.ts:3160-3170, Q-plan_run-2).
+   * people are in" (network.ts); planFallback "Yes-sayers hear 'that plan didn't come together'"
+   * (network.ts). Exempt: members who left on their own or by policy, and a plan closed for the minors
+   * policy or a block (any later message about it is a minor contact or says why, dropMember network.ts,
+   * applyBlock network.ts). Fixed paths: bookPlan notes the members it leaves out (plan_conflict and refused
+   * seats, not minors or members on watch, network.ts, SD-480); a yes after the late-join cutoff is
+   * marked "late" and gets the note (network.ts, Q-plan_run-1); the pair of a group plan that fell to two
+   * gets the note with its partner plan (network.ts, Q-plan_run-2).
    */
   val yesSayerTold: bool =
     (plan.stage == "closed" or plan.stage == "done" or plan.stage == "scheduled")
@@ -906,7 +906,7 @@ module plan_run {
    * SD-479 (SKIPPED: needs a founder decision on member text). Reveals are mutual: in a booked plan, a member
    * who learned another's name is also named to them. Rule: double opt-in and "I'll share who's coming once
    * enough people say yes" to every invitee (FRAME_COPY). Code: planJoin sends planReveal to the joiner only
-   * (network.ts:3137-3145). A fix needs new text to the booked members or the removal of late joins (a change to
+   * (network.ts). A fix needs new text to the booked members or the removal of late joins (a change to
    * docs/network.md); re-sending the reveal re-emits plan_accepted and resets the 48-hour opt-out. Kept out of
    * `safety` until the founder decides; `sd479LateJoinTest` shows it still fails.
    */
@@ -939,8 +939,8 @@ module plan_run {
   val reviewBeforeContact: bool = plan.runStage == "none" implies not(plan.sent)
 
   /**
-   * A group plan that falls to two yes-sayers becomes a fresh partner plan for the pair (engine plans.ts:600-606,
-   * network.ts:3160-3170): the plan is closed, and nobody was seated (SD-008 fixed).
+   * A group plan that falls to two yes-sayers becomes a fresh partner plan for the pair (engine plans.ts,
+   * network.ts): the plan is closed, and nobody was seated (SD-008 fixed).
    */
   val partnerPlanNotBooked: bool =
     plan.partnerAsked != Set() implies (plan.stage == "closed" and plan.seated == Set() and plan.partnerAsked.size() == 2)

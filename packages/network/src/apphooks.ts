@@ -1,6 +1,6 @@
 // What an app's engine pack adds to the ConsentNetwork (founder decision 5; the slop, peon and friends
 // wiring lives in packages/network/service/packs.ts). The Network keeps every core rule: review
-// first, consent first, the leak guard on every text, minors in a pack's input only as spec/friendIntroAge.md allows, blocks,
+// first, consent first, the leak guard on every text, blocks,
 // STOP and the caps. A hook only supplies app data and app words at fixed points:
 //   engineInput   app fields for the pack (slop: verification and zip presence)
 //   onboarding    the app's onboarding loop: tags from each answer and the next question or read-back
@@ -70,8 +70,6 @@ export interface AppHooks {
   booked?(o: HookOpp, id: MemberId, ctx: { others: string[]; where: string; when: string }): string | undefined;
   /** The question after the meeting; undefined: the Network's own ("How did it go with ...?"). */
   checkIn?(o: HookOpp, id: MemberId, others: string): string | undefined;
-  /** Answers to the check-in can file a report about the other person (slop: harassment, lying, a no-show, an unsafe date). */
-  postDateReports?: boolean;
   /** peon: hiring managers post, update and close jobs by text in a handled turn, read back and confirmed (jobs.ts). */
   postings?: boolean;
 }

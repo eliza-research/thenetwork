@@ -94,7 +94,6 @@ export interface PublicApiOptions extends AccountHooks {
   otpLimits?: Partial<OtpLimits>;
   /** Private member photos (photos.ts): /api/photos/*. Without it those paths answer 404. */
   photos?: PhotoService;
-  /** Single-use photo upload links (photo-upload-link.ts): POST /api/photos/upload, bound by the link, never by a session. */
   photoLinks?: PhotoUploadLinks;
   photoPages?: PhotoPages;
   /** Private home-help address for the current approved revision. Use the verified app session only. */
@@ -147,9 +146,7 @@ export const MAX_API_BODY_BYTES = 16 * 1024;
 export const REVIEW_MESSAGE = "We need to check this number before it can be used here. Please try again later, or email us for help.";
 /** Delete everything needs a code from a login in the last 10 minutes. */
 export const REAUTH_MESSAGE = "For your safety, log in again with a new code, then delete everything.";
-/** A number change needs a sign-in on the current number from the last 10 minutes (PRD F25): a platform code on an
- *  OTP site, a Cloud phone sign-in on a Cloud site, so the text names neither. */
-export const REAUTH_CHANGE_MESSAGE = "For your safety, sign in again with your current number, then change your number.";
+const REAUTH_CHANGE_MESSAGE = "For your safety, sign in again with your current number, then change your number.";
 
 /** Cookie header -> map. A malformed value (bad %-escape) is skipped, never thrown. */
 export function parseCookies(header: string | null): Map<string, string> {
@@ -373,6 +370,12 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     } catch { return "unavailable"; }
   }
 
+  const sameSiteRequest = (req: Request, appId: AppId): boolean => {
+    if (req.headers.get("sec-fetch-site") === "cross-site") return false;
+    const origin = req.headers.get("origin");
+    return !origin || (URL.canParse(origin) && appForHost(new URL(origin).host, hostMap) === appId);
+  };
+
   async function handle(req: Request, url: URL, peer?: string): Promise<Response> {
     // A request signed by a site router: its host and client IP. Otherwise our own Host and the socket.
     const signed = await verifyProxyHeaders(req, proxySecret, Math.floor(now() / 1000));
@@ -406,21 +409,13 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       if (!o.photoPages) return json(404, { ok: false, error: "not_found" });
       if (post) {
         if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return json(415, { ok: false, error: "json_required" });
-        if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
-        const origin = req.headers.get("origin");
-        try { if (origin && appForHost(new URL(origin).host, hostMap) !== appId) return json(403, { ok: false, error: "origin" }); }
-        catch { return json(403, { ok: false, error: "origin" }); }
+        if (!sameSiteRequest(req, appId)) return json(403, { ok: false, error: "origin" });
       }
-      return (await o.photoPages.route(req, photoPath, appId))!;
+      return o.photoPages.route(req, photoPath, appId);
     }
     if (o.photoLinks && photoPath === PHOTO_UPLOAD_PATH && !post) return o.photoLinks.status(req, appId);
     if (o.photoLinks && photoPath === PHOTO_UPLOAD_PATH && post) {
-      // The link page on the app's own site posts a multipart batch: a cross-site request is refused.
-      if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
-      const origin = req.headers.get("origin");
-      let originHost: string | undefined;
-      try { originHost = origin ? new URL(origin).host : undefined; } catch { /* not a URL */ }
-      if (origin && appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
+      if (!sameSiteRequest(req, appId)) return json(403, { ok: false, error: "origin" });
       return o.photoLinks.redeem(req, appId);
     }
     if (o.photos && (photoPath === "/api/photos" || photoPath.startsWith("/api/photos/"))) {
@@ -428,11 +423,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       if (post) {
         const ct = (req.headers.get("content-type") ?? "").toLowerCase();
         if (!(photoPath === "/api/photos" ? ct.startsWith("image/") : ct.startsWith("application/json"))) return json(415, { ok: false, error: "json_required" });
-        if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
-        const origin = req.headers.get("origin");
-        let originHost: string | undefined;
-        try { originHost = origin ? new URL(origin).host : undefined; } catch { /* not a URL */ }
-        if (origin && appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
+        if (!sameSiteRequest(req, appId)) return json(403, { ok: false, error: "origin" });
       }
       let authenticated: Awaited<ReturnType<typeof auth>>;
       const response = (await o.photos.route(req, photoPath, appId, async () => {
@@ -445,13 +436,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     if (post) {
       // CSRF: JSON only (a cross-site form cannot send it without CORS), a cross-site Origin or fetch is refused.
       if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return json(415, { ok: false, error: "json_required" });
-      if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
-      const origin = req.headers.get("origin");
-      if (origin) {
-        let originHost: string | undefined;
-        try { originHost = new URL(origin).host; } catch { /* not a URL */ }
-        if (appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
-      }
+      if (!sameSiteRequest(req, appId)) return json(403, { ok: false, error: "origin" });
     }
     const parsed = post ? await body(req) : {};
     if (parsed === "too_large") return json(413, { ok: false, error: "too_large" });
@@ -722,11 +707,6 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return withSession(async who => { await accounts.stop(app, who); return json(200, { ok: true }); });
 
       case "POST /api/me/phone/start": {
-        // A member changes their own number (PRD F25), step 1: a fresh sign-in on the current number (a platform
-        // code, or a Cloud phone proof on a Cloud sign-in site), then a platform code to the new one (the OTP
-        // limits apply). The answer is the same whether or not the new number is known: that is checked after
-        // the code proves the person holds it.
-        // spec/phoneChange.md, "The request uses the existing account"
         const t0 = performance.now();
         try {
           return await withSession(async (who, a) => {
@@ -753,9 +733,6 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       }
 
       case "POST /api/me/phone/confirm": {
-        // Step 2: the code from the new number. The person moves to it and every session of the old number
-        // ends. An OTP site gives this browser a session on the new number; a Cloud sign-in site ends its
-        // Cloud identity, and the person signs in through Cloud with the new number.
         const t0 = performance.now();
         try {
           return await withSession(async who => {
@@ -767,7 +744,6 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
               return json(status, { ok: false, error: r.error, ...(r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             }
             log(`[platform] number change confirmed on ${appId}`);
-            // spec/phoneChange.md, "After a move the browser signs in on the new number in its own sign-in mode"
             if (signInAfterMove(!!cloud) === "CloudSignInAgain") {
               const response = json(200, { ok: true, phoneMasked: maskPhone(r.e164) }, { "set-cookie": cookie(appId, "", 0) });
               response.headers.append("set-cookie", identityCookie(appId, "", 0));

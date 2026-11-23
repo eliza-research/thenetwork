@@ -137,7 +137,7 @@ test("a source authorization at the same Cloud time as the revocation is covered
   } finally { await f.close(); }
 });
 
-test("a legacy suggestion row with the Network batch time is covered by a later revocation after the legacy migration", async () => {
+test("a suggestion row saved before the source-time migration with the Network batch time is covered by a later revocation after migration 0079", async () => {
   const legacy = await seed(false, true, now - 500);
   expect(await sql`select 1 from platform.profile_suggestions s join platform.profile_suggestion_batches b on b.id=s.batch_id
     where s.batch_id=${legacy.id} and s.source_authorized_at=b.created_at`).toHaveLength(1);
@@ -150,7 +150,7 @@ test("a legacy suggestion row with the Network batch time is covered by a later 
   } finally { await f.close(); }
 });
 
-test("the legacy migration keeps the Cloud time of a row saved after the source-time migration, even when it equals the batch time", async () => {
+test("migration 0079 keeps the Cloud time of a row saved after the source-time migration, even when it equals the batch time", async () => {
   const legacy = await seed(false, true, now - 500);
   await sql`update public.__migrations set applied_at=${new Date(now - 300)} where id='0076_profile_suggestion_source_time'`;
   const current = await seed(false, true, now - 100);

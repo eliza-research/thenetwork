@@ -25,16 +25,21 @@ test.skipIf(!pgAvailable).each(["staff", "judge"] as const)("signed gathering at
   const startsAt = clock.now() + 4 * HOUR, endsAt = startsAt + HOUR;
   const app = APPS.ntwrk, key = { id, revision: 1 };
   const sent: SendRequest[] = [];
+  const adapters = new Map<string, BlooioAdapter>();
   const createService = () => new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
     env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: approval === "staff" ? holdEveryItem.judge : simulatedServiceJudge({ exceptions: false }),
     tokens: "admin@ntwrk:gathering-staff", network: { growth: false, plans: false },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }, { id: "friends:nyc", matchingEnabled: false }],
-    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {},
-      provider: { kind: "sim", async send(request) {
-        sent.push(request);
-        return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };
-      } },
-    }),
+    adapter: (_net, rt) => {
+      const made = new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {},
+        provider: { kind: "sim", async send(request) {
+          sent.push(request);
+          return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };
+        } },
+      });
+      adapters.set(rt.id, made);
+      return made;
+    },
   });
   let service = createService();
   try {
@@ -163,13 +168,13 @@ test.skipIf(!pgAvailable).each(["staff", "judge"] as const)("signed gathering at
     expect((await staff("/matching", { on: true })).status).toBe(200);
     const rt = service.runtimeFor("ntwrk")!;
     const repeatSends = () => sent.filter(message => message.idempotencyKey.startsWith(`tn:${gatheringRepeatOppPrefix}`));
-    const adapter = rt.adapter as BlooioAdapter;
+    const adapter = adapters.get(rt.id)!;
     if (approval === "judge") await adapter.lineSafety("review", "fixture");
     await service.tick();
     const reviewItems = await (await staff("/review")).json();
     const reviews = reviewItems.items.filter((item: { oppId: string }) => item.oppId.startsWith(gatheringRepeatOppPrefix));
     expect(repeatSends()).toHaveLength(0);
-    const repeats = (await rt.pg.load())?.opps.filter(opp => opp.id.startsWith(gatheringRepeatOppPrefix)) ?? [];
+    const repeats = (await rt.pg.load())!.opps.filter(opp => opp.id.startsWith(gatheringRepeatOppPrefix));
     expect(repeats).toHaveLength(1);
     const oppId = repeats[0]!.id;
     if (approval === "staff") {

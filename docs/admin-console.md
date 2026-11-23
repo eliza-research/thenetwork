@@ -10,7 +10,7 @@ The admin console is the backend dashboard that the team uses to run the Network
 
 - The Observatory has the graph, the NYC map, member detail, the pipeline, the matching run inspector, metrics, shadow engine runs and a read-only Postgres mode.
 - These parts of the launch gates are built:
-  1. The review gate. `ConsentNetwork` holds every opportunity in a review queue before any member is contacted. The default mode is `"human"`. An item past its SLA expires unsent. Approve runs the gates again. Reviewers can approve, reject, edit and re-roll, and the time spent is recorded.
+  1. The review gate. `ConsentNetwork` holds every opportunity in a review queue before any member is contacted. The review judge decides every opportunity before contact. Staff decide only the items it holds, reject any open item and can stop an approval before its reveal. An item past its SLA expires unsent. Approve runs the gates again. Staff can approve, reject, edit and re-roll a held item, and the time spent is recorded.
   2. Stored Network state. `PgStore` saves the whole Network state and the console rows to Postgres. Every tick, inbound message and staff action runs under one advisory lock and loads the newest state first (`runTick`, `runStored`).
   3. Staff access. Role tokens, Cloudflare Access sign-in (SSO), role checks on the server, a per-member PII reveal with a reason and a 15-minute limit, and an append-only audit log of reveals, staff reads and staff actions.
   4. PII by default. Real mode shows `[member message hidden]` for inbound text. The global reveal works only on a local database.
@@ -64,7 +64,7 @@ Other PRD 35.2 modules: the social graph explorer is built (graph and NYC map). 
 
 ### 3.2 Review queue
 
-The founders decided that a person reviews every proactive proposal while the Network has fewer than 1,000 members (PRD 32.8). Member-initiated requests also pass review at launch.
+Every opportunity, member requests included, gets one recorded approval before the first member contact (owner decisions D15 to D17 of 2026-11-22, [spec/automatedReview.md](../spec/automatedReview.md)). The review judge gives it. Staff approve only an item that the judge holds. This replaces the earlier founder rule that a person reviews every proactive proposal.
 
 - **MUST**
   - Hold every opportunity in review before the first member contact. The first contact includes the anonymous probe.
@@ -78,7 +78,7 @@ The founders decided that a person reviews every proactive proposal while the Ne
 - **LATER**: sampled review per category after the precision gate.
 - **Data**: a `review_items` table (proposal, priority, queued at, deadline, assignee, decision, reason, note, edits, time spent); opportunity rows; past edges and interactions for the pair; `network.events` rows with `actor_type = 'reviewer'`.
 - **Status: partial.**
-  - Built in the Network: every opportunity waits in review (all origins). The default mode is `"human"`; `"auto"` is for the simulator only. The 12-hour and 1-hour SLAs work. `decide()` takes approve, reject, edit and re-roll, and refuses approve for a minor, a member declined at join, a member with an unknown age, and while matching is off. Reason "other" needs a note. Approve runs the gates again; a failure logs `review_invalidated` and contacts nobody. Edits are leak-checked. `secondsSpent` is added up per item ([network.md](network.md) section 2).
+  - Built in the Network: every opportunity waits in review (all origins). The review judge decides it; the simulator uses a deterministic stand-in judge. The 12-hour and 1-hour SLAs work. `decide()` takes approve, reject, edit and re-roll, and refuses approve for a minor, a member declined at join, a member with an unknown age, and while matching is off. Reason "other" needs a note. Approve runs the gates again; a failure logs `review_invalidated` and contacts nobody. Edits are leak-checked. `secondsSpent` is added up per item ([network.md](network.md) section 2).
   - Built in the store: `PgStore` writes `network.review_items` with `origin`, `seconds_spent`, `edits`, `rerolls` and `invalidated`, and `network.participations` (participants with their status, and alternates). A re-roll or an under-13 decline rewrites the participations on the next save, so real mode shows who is in each item, and a reviewer can open the members of an open item.
   - Built in the Observatory (game mode): the Review tab with Approve, Edit, Re-roll and Reject, the time spent per card, keys `e` and `s` then 1-6, and the server `review` command. The reviewer of record is the signed-in staff id. Refusals return a `code` (for example `edit_leak`, `matching_paused`, `busy_elsewhere`).
   - Built in the judge: the invariant `unreviewed_contact` (no probe or proposal before an approve `review_decision`).
@@ -148,7 +148,7 @@ PRD 28.5 says: "Admin console can show any member's full experience (their messa
   - Minor-safety view: members aged 13-17, and proof that none is in a multi-person opportunity that breaks `teenFriendAgeRule` (while teen introductions are stopped: none is in any multi-person opportunity).
   - There is no teen age confirm step: a member with an exact birth date, aged 13 to 17, with no bar, no open minor signal or report and no age conflict is teen ready.
   - Teen stop (`POST /teen-intros` with `{ "on": false }` or `{ "on": true }`, else 400 `on_required`): one `admin` or `safety` staff member stops teen introductions, and one `admin` turns them on again. One call acts on every network whose app offers teen introductions (friends.help and ntwrk). Each call writes one `config` audit row `teen_intros_<network>` for each network. A stop closes every open teen item and relay thread at once. Health lists the state of each network.
-  - Known gap (open, owned by the UI session): the review desk page (`packages/observatory/web/review.tsx`, `approveBlock`) still disables Approve for every item with a minor ("Members under 18 are never introduced"), so a reviewer cannot approve a teen item from the page. The server accepts the approval of a teen item that passes `teenFriendAgeRule` from a named reviewer; the page must call the same rule.
+  - Known gap (open, owned by the UI session): the review desk page (`packages/observatory/web/review.tsx`, `approveBlock`) still disables Approve for every item with a minor ("Members under 18 are never introduced"), so a reviewer cannot approve a teen item from the page. The server accepts a staff approval of a held teen item that passes `teenFriendAgeRule`; the page must call the same rule.
 - **SHOULD**: repeat-offender and repeat-target views; block patterns; inviter accountability (who invited held members).
 - **LATER**: appeals workflow; relay moderation holds (relay is not built yet).
 - **Data**: a safety case store (case, reporter, target, evidence refs, status, decision); trust events from `trust.ts`; `events` rows `member_blocked`, `safety_flag`.

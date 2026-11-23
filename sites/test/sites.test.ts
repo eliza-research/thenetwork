@@ -481,11 +481,11 @@ test("slop.date keeps its safety information off the landing page, and photos ar
   expect(text(read(slop, "privacy.html"))).toContain("never shown to you, to other members or to anyone else");
 });
 
-test("peon.biz says a person reviews every introduction; no compliance gate blocks joining", () => {
+test("peon.biz says an automatic check approves every introduction and the hiring team decides; no compliance gate blocks joining", () => {
   const peon = SITES.find((s) => s.app === "peon")!;
   for (const f of ["SKILL.md"]) {
     const t = text(read(peon, f));
-    expect(t, f).toMatch(/reviews every introduction/i);
+    expect(t, f).toContain("Every introduction is checked automatically before anyone is contacted, and the team that hires makes every hiring decision.");
     expect(t, f).not.toContain("bias audit");
   }
 });

@@ -7,16 +7,24 @@ import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, ReviewProbeText, SafetyAction, SafetyReport, StaffPlanPreview, StaffProbePreview } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
 
+export class PreviewUnavailableError extends Error {
+  constructor(readonly kind: "plan" | "probe") { super(`${kind} preview unavailable`); this.name = "PreviewUnavailableError"; }
+}
+
+export class ServiceUnreachableError extends Error {
+  constructor(readonly cause: unknown) { super(`the Network service did not answer: ${cause instanceof Error ? cause.message : String(cause)}`); this.name = "ServiceUnreachableError"; }
+}
+
 function reviewedPlanOptions(value: unknown, primary: { start: number; end: number }, probeDeadline: number): StaffPlanPreview["options"] {
   if (value === undefined) return;
-  if (!Array.isArray(value) || value.length > 3) throw new Error("plan preview unavailable");
+  if (!Array.isArray(value) || value.length > 3) throw new PreviewUnavailableError("plan");
   const options: NonNullable<StaffPlanPreview["options"]> = [];
   for (const slot of value) {
-    if (!slot || !Number.isSafeInteger(slot.start) || !Number.isSafeInteger(slot.end) || slot.start <= 0) throw new Error("plan preview unavailable");
+    if (!slot || !Number.isSafeInteger(slot.start) || !Number.isSafeInteger(slot.end) || slot.start <= 0) throw new PreviewUnavailableError("plan");
     options.push({ start: slot.start, end: slot.end });
   }
   if (!friendPlanReviewedWindowsValid(options) || !friendPlanHasWindow(options, primary.start, primary.end)
-      || probeDeadline >= options[0]!.start) throw new Error("plan preview unavailable");
+      || probeDeadline >= options[0]!.start) throw new PreviewUnavailableError("plan");
   return options;
 }
 
@@ -24,7 +32,7 @@ const PROBE_PREVIEW_MAX = 50;
 const PROBE_TEXT_MAX = 1600;
 const memberIdField = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 200;
 const probeCopyField = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= PROBE_TEXT_MAX;
-const unavailable = (): never => { throw new Error("probe preview unavailable"); };
+const unavailable = (): never => { throw new PreviewUnavailableError("probe"); };
 const optionalCopy = (value: unknown): string | undefined => (value === undefined ? undefined : probeCopyField(value) ? scrubText(value, false) : unavailable());
 
 function probeTextOf(value: unknown): ReviewProbeText {
@@ -64,15 +72,30 @@ export interface ServiceConfig {
 }
 
 export interface ServiceHealth {
-  ok: boolean; instance: string; channel: string; matchingAllowed: boolean; matchingEnabled: boolean;
-  reviewJudge: {
-    awaiting: number; oldestAwaitingMs: number | null; exceptions: number; exceptionsOverdue: number;
-    qualified: { model: string; promptVersion: string; n: number; mustFlagRecall: number; ciLow: number; mayApproveRate: number; minorMayApproveRate: number; at: string | number } | null;
-  };
-  lastTick: { thisInstance: { at: number; ran: boolean } | null; stored: number | null; savedAt: number | null };
-  lockHolder: { pid: number; application: string } | null;
-  backlog: { review: number; reviewOverdue: number; deferred: number; outboundWaiting: number };
-  refusals: { sendRefused: number; guardBlocked: number; channel: Record<string, number> };
+  channel: string; matchingAllowed: boolean;
+  lastTick: { stored: number | null; savedAt: number | null };
+  lockHolder: { application: string } | null;
+  backlog: { outboundWaiting: number };
+  refusals: { channel: Record<string, number> };
+}
+
+const record = (v: unknown): Record<string, unknown> | undefined => (v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : undefined);
+const timeOrNull = (v: unknown): number | null | undefined => (v === null ? null : Number.isSafeInteger(v) ? v as number : undefined);
+
+export function parseServiceHealth(json: unknown): ServiceHealth | undefined {
+  const h = record(json), tick = record(h?.lastTick), backlog = record(h?.backlog), channelRefusals = record(record(h?.refusals)?.channel);
+  const lock = h?.lockHolder === null ? null : record(h?.lockHolder);
+  if (!h || typeof h.channel !== "string" || typeof h.matchingAllowed !== "boolean" || !tick || !backlog || !channelRefusals) return;
+  const stored = timeOrNull(tick.stored), savedAt = timeOrNull(tick.savedAt);
+  if (stored === undefined || savedAt === undefined || !Number.isSafeInteger(backlog.outboundWaiting)) return;
+  if (lock !== null && typeof lock?.application !== "string") return;
+  const channel: Record<string, number> = {};
+  for (const [status, n] of Object.entries(channelRefusals)) {
+    if (!Number.isSafeInteger(n)) return;
+    channel[status] = n as number;
+  }
+  return { channel: h.channel, matchingAllowed: h.matchingAllowed, lastTick: { stored, savedAt },
+    lockHolder: lock === null ? null : { application: lock.application as string }, backlog: { outboundWaiting: backlog.outboundWaiting as number }, refusals: { channel } };
 }
 
 export const SERVICE_TICK_WARN = 5 * 60_000, SERVICE_TICK_BAD = 15 * 60_000;
@@ -100,7 +123,7 @@ export class ServiceClient {
         ...(staff ? { [STAFF_HEADER]: staff } : {}), ...(this.c.app ? { [APP_HEADER]: this.c.app } : {}), ...extra,
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+    }).catch((e: unknown) => { throw isTimeout(e) ? e : new ServiceUnreachableError(e); });
     return { status: r.status, json: await r.json().catch(() => ({})) as Record<string, any> };
   }
 
@@ -108,7 +131,7 @@ export class ServiceClient {
     let res: { status: number; json: Record<string, any> };
     try { res = await this.call("POST", path, staff, body); } catch (e) {
       if (isTimeout(e)) return serviceTimeout();
-      return { ok: false, code: "service_unavailable", error: `the Network service did not answer: ${(e as Error).message}` };
+      return { ok: false, code: "service_unavailable", error: (e as Error).message };
     }
     const { status, json } = res;
     if (status === 200 && json.ok) return json.reach === "app" || json.reach === "all" ? { ok: true, reach: json.reach } : { ok: true };
@@ -134,7 +157,7 @@ export class ServiceClient {
         || p.end <= p.start || p.quorum < 1 || p.maxSeats < p.quorum
         || p.app !== (this.c.app ?? "ntwrk") || p.opportunityId !== id || !reviewRevisionCurrent(revision, p.revision)
         || !textField(p.activity) || !textField(p.place.name) || (p.place.area !== undefined && !textField(p.place.area))
-        || !Array.isArray(p.alternates) || !p.alternates.every(textField)) throw new Error("plan preview unavailable");
+        || !Array.isArray(p.alternates) || !p.alternates.every(textField)) throw new PreviewUnavailableError("plan");
     const options = reviewedPlanOptions(p.options, p, p.probeDeadline);
     return { app: p.app, opportunityId: p.opportunityId, revision: p.revision, deadline: p.deadline,
       activity: scrubText(p.activity, false), place: { name: scrubText(p.place.name, false), ...(p.place.area ? { area: scrubText(p.place.area, false) } : {}) },
@@ -148,7 +171,7 @@ export class ServiceClient {
     const p = json.preview;
     if (status !== 200 || !json.ok || !p || p.app !== (this.c.app ?? "ntwrk") || p.opportunityId !== id || !reviewRevisionCurrent(revision, p.revision)
         || !Number.isSafeInteger(p.deadline) || !Array.isArray(p.probes) || p.probes.length > PROBE_PREVIEW_MAX
-        || !Array.isArray(p.replacements) || p.replacements.length > PROBE_PREVIEW_MAX) throw new Error("probe preview unavailable");
+        || !Array.isArray(p.replacements) || p.replacements.length > PROBE_PREVIEW_MAX) throw new PreviewUnavailableError("probe");
     return { app: p.app, opportunityId: p.opportunityId, revision: p.revision, deadline: p.deadline,
       probes: (p.probes as unknown[]).map(probeTextOf), replacements: (p.replacements as unknown[]).map(replacementOf) };
   }
@@ -206,7 +229,7 @@ export class ServiceClient {
   async photos(staff: string, memberId: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult> {
     let res: { status: number; json: Record<string, any> };
     try { res = await this.call("GET", `/members/${encodeURIComponent(memberId)}/photos`, staff, undefined, { [REASON_HEADER]: reason.replace(/[\r\n]+/g, " ").slice(0, 500) }); } catch (e) {
-      return { ok: false, code: "service_unavailable", error: `the Network service did not answer: ${(e as Error).message}` };
+      return { ok: false, code: "service_unavailable", error: (e as Error).message };
     }
     const { status, json } = res;
     if (status === 200 && json.ok && Array.isArray(json.photos)) {
@@ -232,15 +255,15 @@ export class ServiceClient {
       return {
         ok: true,
         items: (json.items as Record<string, unknown>[]).flatMap((x): HeldText[] => {
-          const id = str(x.id, 300) ?? str(x.itemId, 300);
+          const id = str(x.id, 300);
           if (!id) return [];
-          const memberId = str(x.memberId, 200) ?? str(x.from, 200);
+          const memberId = str(x.memberId, 200);
           const at = Number(x.createdAt ?? x.at), deadline = x.deadline === null || x.deadline === undefined ? NaN : Number(x.deadline);
           return [{
             id, queue, reasons: Array.isArray(x.reasons) ? x.reasons.filter((r): r is string => typeof r === "string").map(r => r.slice(0, 120)).slice(0, 20) : [],
             ...(str(x.kind, 60) ? { kind: str(x.kind, 60) } : {}), ...(str(x.to, 40) ? { to: maskTo(str(x.to, 40)!) } : {}),
             ...(memberId ? { memberId } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}), ...(Number.isSafeInteger(deadline) ? { deadline } : {}),
-            ...(x.minor === true ? { textHidden: "minor" as const } : str(x.text) ? { text: str(x.text) } : {}),
+            ...(x.minor === true ? { textHidden: "minor" as const } : queue === "leak" && str(x.text) ? { text: str(x.text) } : {}),
           }];
         }),
       };
@@ -280,7 +303,8 @@ export class ServiceClient {
   async health(): Promise<ServiceHealth | { error: string }> {
     try {
       const { status, json } = await this.call("GET", "/health");
-      return status === 200 && json.ok ? json as ServiceHealth : { error: String(json.error ?? `HTTP ${status}`) };
+      if (status !== 200 || !json.ok) return { error: String(json.error ?? `HTTP ${status}`) };
+      return parseServiceHealth(json) ?? { error: "the service /health answer has an unknown shape" };
     } catch (e) { return { error: (e as Error).message }; }
   }
 }

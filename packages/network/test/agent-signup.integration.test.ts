@@ -19,7 +19,6 @@ function hiddenField(html: string, name: string): string {
   return value;
 }
 
-// spec/oauthBrowserAuthorization.md, "Optional signup stays inside the verified authorization request"
 test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits the approved profile once through MCP", async () => {
   const url = await testDb();
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
@@ -95,7 +94,7 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       expect(joined.status).toBe(200);
       const approvalForm = await joined.text();
       expect(approvalForm).toContain('action="/oauth/authorize/consent"');
-      expect(approvalForm).toContain("Save your profile, prepare signup details, and pause or turn back on what this app looks for for you");
+      expect(approvalForm).toContain("Save your profile, prepare signup details, and pause or turn back on what this app finds for you");
       const person = await service.accounts.personFor(phone);
       if (!person) throw new Error("No owner recorded after verified signup");
       const membership = await service.people.getMembership(person.id, "friends");
@@ -141,7 +140,7 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       const readConsent = await browser(`/oauth/authorize?${params}`);
       expect(readConsent.status).toBe(200);
       const readForm = await readConsent.text();
-      expect(readForm).toContain("Read the profile you saved for this app and what it looks for for you");
+      expect(readForm).toContain("Read the profile you saved for this app and what this app finds for you");
       const readApproval = await browser("/oauth/authorize/consent", {
         rid: hiddenField(readForm, "rid"), decision: "approve",
       });

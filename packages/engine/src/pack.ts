@@ -6,15 +6,6 @@
 //   peon    peon.biz (hiring)     peonPack
 //   friends friends.help (NYC)    friendsPack
 //
-// THE CORE OWNS INVARIANTS, PACKS OWN POLICY. A pack is data plus small, pure, synchronous hooks,
-// called in a fixed order. Pack rules run IN ADDITION to the core rules and can only remove
-// candidates. These core invariants hold for every pack and cannot be configured away:
-//   1. Blocks win: a blocked or avoided pair is never a warm tie, never paired, never a `via`.
-//   2. Hard filters run before scoring and before every judge pass; the judge can only remove.
-//   3. LeakGuard on every member-facing string (explanations, probes, judge "why", questions).
-//   4. Determinism: seeded RNG, stable ordering, no clock reads; same input + config + pack = same bytes.
-//   5. Consent before reveal: nobody is named to anyone before the pack's consent flow allows it.
-//
 // BYTE IDENTITY (section 3.2). Pack identity travels BESIDE the config (`deps.pack`, the World
 // constructor), never inside it: EngineConfig / AttentionConfig / PlansConfig keep their shapes and
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.

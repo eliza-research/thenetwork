@@ -72,7 +72,7 @@ Pass options after the script name: `pnpm run observatory --port 4793`.
 - Approve runs the gates again. If one fails, nobody is contacted and Decided shows "stopped on re-check (reason)".
 - The time you spend on a card is recorded with the decision.
 - An item that passes its SLA (12 hours, or 1 hour for same-day) expires. It shows as "Expired unsent" in Decided.
-- Approve is blocked when a participant is under 18 or has an unknown age, and while matching is off (Config tab, admin only).
+- Approve is blocked when a participant has an unknown age, when a roster with a minor fails `teenFriendAgeRule`, and while matching is off (Config tab, admin only).
 
 ### 2.3.1 One world per app
 
@@ -378,7 +378,7 @@ Do this when the Network, the engine, the oracle, the personas or the dataset ch
 
 3. Run one command twice and compare the JSON. It must be identical. If it is not, someone changed the code during the run; run again.
 4. Write a new results doc `docs/results/YYYY-MM-DD-<topic>.md`. Give the commands, seeds, sample sizes and confidence intervals. Say what changed since the last baseline.
-5. If a sim gate threshold depends on the numbers (for example the push all-yes threshold in `scripts/sim/network.ts`), update its comment with the new measured values.
+5. If a sim gate threshold depends on the numbers (for example the push all-yes threshold in `scripts/sim/network.ts`), record the new measured values in a docs/results report and in the gate's spec prose.
 
 The runs are CPU-heavy. On 2026-10-07 one arm took about 7-8 seconds on a quiet machine, and 70-110 seconds on a heavily loaded one.
 

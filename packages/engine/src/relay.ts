@@ -1,7 +1,6 @@
 import { relayKindAllowed, teenFriendMaxAge } from "../../core/src/generated/friendIntroAge.ts";
 import { ageOnDay } from "../../core/src/generated/memberAge.ts";
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayBlockNotice, relayClassifierReading, relayClassifierReads, relayConsentStale, relayVerdict, type RelayBlockNotice } from "../../core/src/generated/relayDecision.ts";
-import { teenRelayHeld } from "../../core/src/generated/teenIntroSwitch.ts";
 import { canBeMatched, labelHash, latestDayKeyOf, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 const RELAY_POLICY_VERSION = "relay-1.0.0";
@@ -95,9 +94,10 @@ export interface RelayResult {
   photos: string[];
   record: RelayRecord;
   senderNotice: string;
+  classifierError?: string;
 }
 
-const FINAL_FAMILIES = new Set(["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "llm_severe", "clef_severe"]);
+const FINAL_FAMILIES = new Set(["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "clef_severe"]);
 const CONTACT_FAMILIES = new Set(["contact", "fishing", "offplatform"]);
 const EXPLAINED_FAMILIES = new Set(["consent", "rating", "rate", "classifier", ...CONTACT_FAMILIES]);
 const familyOf = (reason: string) => reason.split(":")[0]!;
@@ -318,7 +318,7 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
   const mine = (ctx.history ?? []).filter(h => h.opportunityId === op.id && h.from === item.from && h.itemId !== item.id);
   if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < L.burst.windowMs).length >= L.burst.n) reasons.add("rate:burst");
   if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < 86_400_000).length >= (teenPair ? L.teenDaily : L.daily)) reasons.add("rate:daily");
-  if (item.kind === "photo" && mine.filter(h => h.kind === "photo" && h.decision === "pass" && item.at - h.at < 86_400_000).length >= L.photosDaily) reasons.add("rate:photos");
+  if (item.kind === "photo" && mine.filter(h => h.kind === "photo" && h.decision === "pass" && item.at - h.at >= 0 && item.at - h.at < 86_400_000).length >= L.photosDaily) reasons.add("rate:photos");
   if (item.kind === "contact_share" && mine.filter(h => h.kind === "contact_share" && h.contactShared).length >= L.contactShares) reasons.add("contact_share:already_shared");
 
   return finish(item, ctx, [...reasons].sort(), { contactValue, photos, text, ageSignal });
@@ -347,7 +347,7 @@ export interface RelayClassifierInput {
   context?: readonly string[];
   met?: boolean;
 }
-export interface RelayClassifierOutput { flags: string[]; block?: string[]; source?: "llm" | "clef"; scores?: Record<string, number>; unavailable?: true }
+export interface RelayClassifierOutput { flags: string[]; block?: string[]; scores?: Record<string, number>; unavailable?: true }
 export type RelayClassifierHook = (input: RelayClassifierInput) => Promise<RelayClassifierOutput>;
 export const simulatedRelayClassifier: RelayClassifierHook = async () => ({ flags: [], block: [] });
 
@@ -355,42 +355,57 @@ const flagCode = (f: string) => f.toLowerCase().replace(/[^a-z_]/g, "").slice(0,
 const CLASSIFIER_MINOR_FLAG = "minor_signal";
 const CLASSIFIER_UNAVAILABLE = "classifier:unavailable";
 
-interface ClassifierAnswer { flags: string[]; block: string[]; source: "llm" | "clef" }
+interface ClassifierAnswer { flags: string[]; block: string[] }
 function classifierAnswer(x: unknown): ClassifierAnswer | undefined {
   if (typeof x !== "object" || x === null || Array.isArray(x)) return undefined;
   const o = x as Record<string, unknown>;
   const strings = (v: unknown) => (Array.isArray(v) && v.every(s => typeof s === "string") ? (v as string[]) : undefined);
   const flags = strings(o.flags), block = o.block === undefined ? [] : strings(o.block);
   if (o.unavailable !== undefined || !flags || !block) return undefined;
-  return { flags, block, source: o.source === "clef" ? "clef" : "llm" };
+  return { flags, block };
+}
+
+const causePart = (v: string) => v.replace(/[^A-Za-z0-9_]/g, "").slice(0, 32) || "unknown";
+function thrownCause(e: unknown): string {
+  if (!(e instanceof Error)) return "thrown";
+  const code = "code" in e && typeof e.code === "string" ? `:${causePart(e.code)}` : "";
+  return `${causePart(e.name)}${code}`;
+}
+const unreadCause = (raw: unknown) =>
+  typeof raw === "object" && raw !== null && "unavailable" in raw && raw.unavailable !== undefined ? "unavailable" : "invalid_answer";
+
+async function askClassifier(hook: RelayClassifierHook | undefined, input: RelayClassifierInput): Promise<{ raw: unknown; error?: string }> {
+  if (!hook) return { raw: undefined, error: "no_classifier" };
+  try {
+    return { raw: await hook(input) };
+  } catch (e) {
+    return { raw: undefined, error: thrownCause(e) };
+  }
 }
 
 export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { hook?: RelayClassifierHook } = {}): Promise<RelayResult> {
   const first = relayItem(item, ctx);
   const text = (item.text ?? "").trim();
   const teenPair = ctx.teenFriendPair === true;
-  const read = !!o.hook && relayClassifierReads(!!text, first.reasons.some(r => FINAL_FAMILIES.has(familyOf(r))), first.reasons.length > 0, teenPair);
+  const read = relayClassifierReads(!!text, first.reasons.some(r => FINAL_FAMILIES.has(familyOf(r))), first.reasons.length > 0, teenPair);
   let extra: string[] = [];
   let classifierAgeSignal = false;
+  let classifierError: string | undefined;
   if (read) {
-    let raw: unknown;
-    try {
-      raw = await o.hook!({ text, kind: item.kind, context: [...(ctx.thread ?? [])], met: !teenPair && ctx.opportunity.metAt !== undefined && ctx.opportunity.metAt <= ctx.now });
-    } catch { raw = undefined; }
-    const answer = classifierAnswer(raw);
+    const asked = await askClassifier(o.hook, { text, kind: item.kind, context: [...(ctx.thread ?? [])], met: !teenPair && ctx.opportunity.metAt !== undefined && ctx.opportunity.metAt <= ctx.now });
+    const answer = classifierAnswer(asked.raw);
+    classifierError = asked.error ?? (answer === undefined ? unreadCause(asked.raw) : undefined);
     const flags = (answer?.flags ?? []).map(flagCode), block = (answer?.block ?? []).map(flagCode);
     const reading = relayClassifierReading(answer !== undefined, flags.length + block.length > 0);
     if (reading === "ReadingUnavailable") extra = [CLASSIFIER_UNAVAILABLE];
     else if (reading === "ReadingFlagged") {
-      const src = answer!.source;
       classifierAgeSignal = [...flags, ...block].includes(CLASSIFIER_MINOR_FLAG);
-      extra = [...new Set([...flags.map(f => `${src}:${f}`), ...block.map(f => `${src}_severe:${f}`)])];
+      extra = [...new Set([...flags.map(f => `clef:${f}`), ...block.map(f => `clef_severe:${f}`)])];
     }
   }
-  const cleanPass = read && first.reasons.length === 0 && extra.length === 0;
-  const unclean = teenRelayHeld(teenPair, cleanPass) && first.reasons.length === 0 && extra.length === 0 ? ["teen:unclassified"] : [];
-  if (!extra.length && !unclean.length) return first;
-  return finish(item, ctx, [...new Set([...first.reasons, ...extra, ...unclean])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || classifierAgeSignal });
+  if (!extra.length) return first;
+  const result = finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || classifierAgeSignal });
+  return classifierError ? { ...result, classifierError } : result;
 }
 
 type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string } | { kind: "none" };

@@ -24,6 +24,11 @@ export function paired(a: readonly number[], b: readonly number[]): Paired {
 
 const f = (x: number, d = 3) => (Number.isFinite(x) ? Number(x.toFixed(d)).toString() : "-");
 
+export function meanInterval(xs: readonly number[], unit = "seed"): string {
+  const n = xs.length, m = mean(xs), se = n > 1 ? sdOf(xs) / Math.sqrt(n) : NaN, t = tq(T975, 1.96, n - 1);
+  return `${f(m, 2)} per ${unit} (95% CI ${f(m - t * se, 2)} to ${f(m + t * se, 2)}, n ${n} ${unit}s)`;
+}
+
 export function pairedLine(a: readonly number[], b: readonly number[], d = 3): string {
   const p = paired(a, b);
   return `diff/seed [${a.map((x, i) => f(b[i]! - x, d)).join(", ")}]; mean ${f(p.diff, d)} (A ${f(p.meanA, d)}, B ${f(p.meanB, d)}), sd ${f(p.sd, d)}, se ${f(p.se, d)}, 95% CI [${f(p.lo, d)}, ${f(p.hi, d)}], corr ${f(p.corr, 2)}, MDE ${f(p.mde, d)} (n ${p.n})`;
