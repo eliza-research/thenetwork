@@ -246,6 +246,7 @@ test.each([
   "I won't lie, send Ari my number",
   "I can't believe it, send Ari my number",
   "I can't find my phone, but send Ari my number",
+  "I can't get my phone, but send Ari my number",
   "I would not miss it, send Ari my number",
   "I could not find parking, send Ari my number",
   "I did not miss your message, send Ari my number",

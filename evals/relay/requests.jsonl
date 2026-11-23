@@ -56,5 +56,6 @@
 {"text":"I won't lie, send Ari my number","want":"contact_share"}
 {"text":"I can't believe it, send Ari my number","want":"contact_share"}
 {"text":"I can't find my phone, but send Ari my number","want":"contact_share"}
+{"text":"I can't get my phone, but send Ari my number","want":"contact_share"}
 {"text":"My number is off limits, send Ari my number","want":"none"}
 {"text":"I can't believe it, “send Ari my number”","want":"none"}

@@ -464,7 +464,8 @@ const OWN_SWAP_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(
 const SWAP_PROPERTY = new RegExp(OWN_SWAP_ITEM.source + "\\s+(?:(?:is|stays?|remains?)\\s+(?:private|off limits)|can wait)\\b");
 const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to\s+)?(?:send|share|give|pass|forward|text)\b|(?:the|that|our)\s+(?:numbers?\s+)?swap\b)/;
 const TRANSFER = "send|share|give|pass|forward|text|disclose|reveal";
-const SWAP_MODAL_REFUSAL = new RegExp(SHARE_NEG.source + "\\s+(?:ever\\s+)?(?:" + TRANSFER + "|have|get)\\b");
+const SWAP_MODAL_REFUSAL = new RegExp(SHARE_NEG.source + "\\s+(?:ever\\s+)?(?:" + TRANSFER + ")\\b");
+const REFUSES_MATCH_ACCESS = new RegExp("\\b(?:they|he|she)\\s+" + SHARE_NEG.source + "\\s+(?:have|get)\\b");
 const DECLINES_PENDING_SEND = new RegExp(
   "^\\s*(?:(?:actually|please|pls|i|no|never mind|nvm)\\s+)*(?:i(?='ll\\b))?(?:(?:don'?t|do\\s+not)(?:\\s+want\\s+(?:you\\s+)?to)?|" +
   SHARE_NEG.source + ")\\s+(?:" + TRANSFER + ")(?:\\s+out)?\\s+(?:it|that)(?:\\s+(?:to|with)\\s+(?:them|him|her|my (?:match|date)))?(?:\\s+(?:yet|please|pls))*\\s*$",
@@ -479,7 +480,8 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 function refusesNumberSwap(clauses: readonly string[]): boolean {
   return clauses.some(clause => pendingSwapWithdrawn(
     OWN_SWAP_ITEM.test(clause),
-    SWAP_WITHHOLDING.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause) || SWAP_MODAL_REFUSAL.test(clause),
+    SWAP_WITHHOLDING.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause)
+      || SWAP_MODAL_REFUSAL.test(clause) || REFUSES_MATCH_ACCESS.test(clause),
     DECLINES_PENDING_SEND.test(clause),
   ));
 }
