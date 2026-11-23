@@ -16,7 +16,6 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
     "Birthday refused": { birthdateError: "Enter your birthday. It must be a real date, not after today.", prefill: { firstName: "Ari", homeCity: "sf" } },
     "Prefilled from the agent": { prefill: { firstName: "Ari", homeCity: "sf" } },
     "Rendered by ntwrk.party": { siteOrigin: "https://friends.help" },
-    "Refused with a draft": { error: "Check your details and try again.", prefill: { firstName: "Ari", homeCity: "nyc" } },
   },
   play: {
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
@@ -41,17 +40,6 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
       await expect(page.queryByText(/will introduce|we introduce you/i)).toBeNull();
       const hrefs = [...canvasElement.querySelectorAll("a")].map(a => a.getAttribute("href"));
       await expect(hrefs).toEqual(["/", "/terms#sms", "/terms", "/privacy", "/privacy", "/terms"]);
-      const buttons = page.getAllByRole("button").map(button => button.textContent);
-      await expect(buttons).toEqual(["Finish signup", "Back to connection"]);
-      await expect(page.queryByText("Check the details from your agent, add your birthday and finish.")).toBeNull();
-    },
-    "Refused with a draft": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-      const page = within(canvasElement);
-      await expect(page.queryByText("Check the details from your agent, add your birthday and finish.")).toBeNull();
-      await expect(canvasElement.querySelector("#signup-error")?.textContent).toBe("Check your details and try again.");
-      await expect((canvasElement.querySelector("input[name=firstName]") as HTMLInputElement).value).toBe("Ari");
-      await expect(page.getByRole<HTMLInputElement>("checkbox").checked).toBe(false);
-      await expect(page.getByRole("button", { name: "Back to connection" }).getAttribute("value")).toBe("skip");
     },
     "Rendered by ntwrk.party": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const hrefs = [...canvasElement.querySelectorAll("a")].map(a => a.getAttribute("href"));
@@ -79,7 +67,7 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
       await expect(page.queryByText("Check the details from your agent, add your birthday and finish.")).toBeNull();
       await expect((canvasElement.querySelector("input[name=firstName]") as HTMLInputElement).value).toBe("Ari");
     },
-    "Invitation required": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+        "Invitation required": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       await expect((canvasElement.querySelector("input[name=invitation]") as HTMLInputElement).required).toBe(true);
       await expect(within(canvasElement).getByText("Invitation link")).toBeTruthy();
     },

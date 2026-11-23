@@ -1,6 +1,6 @@
 # Staff console analysis panels
 
-The staff console (`packages/observatory/web`) has drawer panels that show numbers and let staff run the simulated world. This spec owns what these panels show in each data state and which controls they offer: the lab, the runs tab and its run comparison, the metrics tab with the bias monitor, the cost and the growth sections, the feed, the pipeline, the game tab with its levels, and the deadline countdowns. The [workspace spec](consoleWorkspace.md) owns the loading, refused, unavailable, failed and empty rows of a panel, and the roles that open the lab and the bias monitor. The [navigation spec](consoleNavigation.md) owns which tab shows and the filters of each tab. The shell owns the fetches, the timers, the number formats and the server data. The server checks every role again and refuses the lab and the game on a real-only server.
+The staff console (`packages/observatory/web`) has drawer panels that show numbers and let staff run the simulated world. This spec owns what these panels show in each data state and which controls they offer: the lab, the runs tab and its run comparison, the metrics tab with the bias monitor, the cost and the growth sections, the feed, the pipeline, and the game tab with its levels. The [workspace spec](consoleWorkspace.md) owns the loading, refused, unavailable, failed and empty rows of a panel, and the roles that open the lab and the bias monitor. The [navigation spec](consoleNavigation.md) owns which tab shows and the filters of each tab. The shell owns the fetches, the timers, the number formats and the server data. The server checks every role again and refuses the lab and the game on a real-only server.
 
 The shell builds the panel viewer through `canReceiveViewer` and `receiveViewer`, and it shows the limits of the lab, the run picks, the proactive rate and the inviter share from the generated constants. These definitions are model-only helpers that the generated guards call: `panelWritesOffered`, `labRequestValid`, `workStaff`, `maxLabArms` and `joinsHiddenFrom`. The lab offers only three arms, so the shell has no arm limit to show.
 
@@ -334,37 +334,6 @@ pure def lawBudgetMarkGrowsWithUse(sharePercent: int): bool =
 
 pure def lawRefusedCostShowsNoNumber(answer: W::PanelAnswer): bool =
   costView(answer) == W::PanelRows iff answer == W::AnswerRows
-```
-
-### A deadline countdown turns amber under an hour and red under ten minutes
-
-Each panel shows the time left to a review, case or report deadline with one countdown. The console clock gives the time now: simulated time in the simulated world, and wall time on real data. The shell gives the time left in milliseconds. The countdown is amber when less than one hour is left and red when less than ten minutes is left. When the server says that the deadline is overdue, the countdown is red and shows "overdue". When no time is left and the server does not say overdue, the countdown shows "Due now". Less time left never makes the countdown calmer.
-
-```quint
-type CountdownMark = CountdownCalm | CountdownNear | CountdownUrgent
-type CountdownText = CountdownOverdue | CountdownDueNow | CountdownTimeLeft
-
-pure val countdownNearWithinMs: int = 3600000
-pure val countdownUrgentWithinMs: int = 600000
-pure val leftMsValues = Set(-1, 0, 1, 599999, 600000, 3599999, 3600000, 86400000)
-
-pure def countdownMark(overdue: bool, leftMs: int): CountdownMark =
-  if (overdue or leftMs < countdownUrgentWithinMs) CountdownUrgent
-  else if (leftMs < countdownNearWithinMs) CountdownNear
-  else CountdownCalm
-
-pure def countdownText(overdue: bool, leftMs: int): CountdownText =
-  if (overdue) CountdownOverdue else if (leftMs <= 0) CountdownDueNow else CountdownTimeLeft
-
-pure def lawLessTimeIsNeverCalmer(overdue: bool, leftMs: int): bool =
-  (countdownMark(overdue, leftMs) == CountdownUrgent implies countdownMark(overdue, leftMs - 1) == CountdownUrgent)
-    and (countdownMark(overdue, leftMs) != CountdownCalm implies countdownMark(overdue, leftMs - 1) != CountdownCalm)
-
-pure def lawOverdueIsRedAndSaysOverdue(leftMs: int): bool =
-  countdownMark(true, leftMs) == CountdownUrgent and countdownText(true, leftMs) == CountdownOverdue
-
-pure def lawDueNowIsRed(leftMs: int): bool =
-  countdownText(false, leftMs) == CountdownDueNow implies countdownMark(false, leftMs) == CountdownUrgent
 ```
 
 ### The proactive rate and the inviter share show their targets

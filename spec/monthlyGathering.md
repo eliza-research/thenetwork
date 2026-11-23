@@ -9,8 +9,6 @@
 The signed staff request uses the Network app and New York City. The staff identity has the real administrator role for the app. Record the actual staff actor from request authentication.
 
 ```quint
-import consoleWorkspace as W from "./consoleWorkspace"
-
 pure def monthlyGatheringStaffAllowed(networkApp: bool, nyc: bool, appAdmin: bool): bool =
   networkApp and nyc and appAdmin
 ```
@@ -70,79 +68,4 @@ pure def monthlyGatheringReviewOffered(phase: GatheringPhase): bool = phase == G
 
 pure def lawMonthlyGatheringConsoleNeedsReal(networkApp: bool, appAdmin: bool, serviceAvailable: bool): bool =
   not(monthlyGatheringConsoleAllowed(false, networkApp, appAdmin, serviceAvailable))
-```
-
-### The gathering panel offers the draft form and one confirmation at a time
-
-The monthly gatherings are a work panel of the console (`GatheringPanel` in the [workspace spec](consoleWorkspace.md)). A panel that waits for the list shows the loading row. A 403 answer shows the refusal. A 503 answer shows that the gatherings are not available here. An answer with the list shows the rows. Any other answer shows the error. The draft form shows only when the panel has the list.
-
-The form sends a draft only when each field has a value and the start and the end are each one exact New York time. A local time that the clock skips or repeats is not one exact time, and a year before 1970 is not a time. The window and the capacity must also pass the draft rule. The confirm control of a review shows only on a draft row, and only for the row and the revision that the staff member chose. One write is on its way at a time. A saved write puts the row in the list and closes the confirmation. A 403 answer shows the refusal and closes the confirmation. A 409 answer closes the confirmation and reads the list again. Any other failure keeps the confirmation and shows the error. The shell gives each error code of the server one error kind, and the component library keeps the words.
-
-```quint
-type GatheringWriteFollowUp = GatheringWriteSaved | GatheringWriteRefused | GatheringWriteConflict | GatheringWriteFailed
-type GatheringError = GatheringInvalid | GatheringMonthTaken | GatheringNotReviewable | GatheringMissing | GatheringOtherError
-
-pure val gatheringEarliestYear = 1970
-pure val statusValues = Set(0, 200, 400, 403, 409, 503)
-pure val chosenRevisionValues = Set(0, 1, 2)
-pure val matchCountValues = Set(0, 1, 2)
-pure val yearValues = Set(1969, 1970, 2026)
-
-pure def gatheringPanelAnswer(answered: bool, status: int, listRead: bool): W::PanelAnswer =
-  if (not(answered)) W::NotAnswered
-  else if (status == 403) W::AnswerForbidden
-  else if (status == 503) W::AnswerMissing
-  else if (listRead) W::AnswerRows
-  else W::AnswerFailed
-
-pure def gatheringDraftFormShown(answer: W::PanelAnswer): bool = answer == W::AnswerRows
-
-pure def gatheringLocalTimeExact(year: int, matchCount: int): bool =
-  year >= gatheringEarliestYear and matchCount == 1
-
-pure def gatheringDraftReady(fieldsComplete: bool, now: int, startsAt: int, endsAt: int, inMonth: bool, capacity: int): bool =
-  fieldsComplete and gatheringDraftWindowAllowed(now, startsAt, endsAt, inMonth, capacity)
-
-pure def gatheringConfirmShown(phase: GatheringPhase, sameRow: bool, chosenRevision: int, revision: int): bool =
-  monthlyGatheringReviewOffered(phase) and sameRow and chosenRevision == revision
-
-pure def gatheringWriteFollowUp(saved: bool, status: int): GatheringWriteFollowUp =
-  if (saved) GatheringWriteSaved
-  else if (status == 403) GatheringWriteRefused
-  else if (status == 409) GatheringWriteConflict
-  else GatheringWriteFailed
-
-pure def gatheringConfirmationCloses(followUp: GatheringWriteFollowUp): bool = followUp != GatheringWriteFailed
-
-pure def gatheringListRead(followUp: GatheringWriteFollowUp): bool = followUp == GatheringWriteConflict
-
-pure def gatheringErrorFor(code: str): GatheringError =
-  if (code == "invalid_gathering") GatheringInvalid
-  else if (code == "month_unavailable") GatheringMonthTaken
-  else if (code == "gathering_not_reviewable") GatheringNotReviewable
-  else if (code == "not_found") GatheringMissing
-  else GatheringOtherError
-
-pure def lawRefusedGatheringListShowsNoForm(listRead: bool): bool =
-  not(gatheringDraftFormShown(gatheringPanelAnswer(true, 403, listRead)))
-
-pure def lawGatheringFormNeedsTheList(answered: bool, status: int, listRead: bool): bool =
-  gatheringDraftFormShown(gatheringPanelAnswer(answered, status, listRead)) implies (answered and listRead)
-
-pure def lawSkippedOrRepeatedTimeIsRefused(year: int, matchCount: int): bool =
-  matchCount != 1 implies not(gatheringLocalTimeExact(year, matchCount))
-
-pure def lawReadyDraftPassesTheWindowRule(fieldsComplete: bool, now: int, startsAt: int, endsAt: int, inMonth: bool, capacity: int): bool =
-  gatheringDraftReady(fieldsComplete, now, startsAt, endsAt, inMonth, capacity) implies
-    (fieldsComplete and gatheringDraftWindowAllowed(now, startsAt, endsAt, inMonth, capacity))
-
-pure def lawStaleRevisionShowsNoConfirm(phase: GatheringPhase, sameRow: bool, chosenRevision: int, revision: int): bool =
-  gatheringConfirmShown(phase, sameRow, chosenRevision, revision) implies
-    (phase == GatheringDraft and sameRow and chosenRevision == revision)
-
-pure def lawRefusedWriteClosesTheConfirmation(status: int): bool =
-  (status == 403 or status == 409) implies gatheringConfirmationCloses(gatheringWriteFollowUp(false, status))
-
-pure def lawOnlyAConflictReadsTheListAgain(saved: bool, status: int): bool =
-  gatheringListRead(gatheringWriteFollowUp(saved, status)) iff (not(saved) and status == 409)
 ```

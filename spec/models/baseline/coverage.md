@@ -14,12 +14,12 @@ How the ledger was made: six agents read every file and the models on the three 
 
 | Verdict | Files |
 |---|---|
-| covered | 291 |
-| na | 416 |
+| covered | 297 |
+| na | 411 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 707 |
+| total | 708 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
@@ -353,10 +353,12 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/observatory/src/types.ts | data | none | none | na | Types and constant lists with no logic. |
 | packages/observatory/web/admin.tsx | production | review_desk, observatory_sync [claude/lemmascript-frontend], staff_console [wave2/staff_console], spec/consoleWorkspace.md | none | covered | Held texts, cases, reports, requests, the matching switch, the audit log and the lab; spec/consoleWorkspace.md owns their view states. The cited logic/review.ts is not on this branch. |
 | packages/observatory/web/apps.tsx | production | console_privacy, console_views [claude/lemmascript-frontend], spec/consoleNavigation.md | none | covered | App switcher, all-apps page and person page; spec/consoleNavigation.md owns which page shows and spec/staffPermissions.md the role scope. The cited privacy-core.ts is not on this branch. |
-| packages/observatory/web/css.d.ts | data | none | none | na | Type declaration that lets the type checker accept a stylesheet import; it exports nothing and decides nothing. |
 | packages/observatory/web/drawer.tsx | production | console_views, observatory_sync [claude/lemmascript-frontend], spec/consoleNavigation.md | none | covered | spec/consoleNavigation.md owns tab visibility, the fallback to the feed and the filter keys of each tab; the cited logic/views.ts is not on this branch. |
-| packages/observatory/web/gatherings.tsx | production | spec/monthlyGathering.md, spec/consoleWorkspace.md | packages/core/src/generated/monthlyGathering.ts, packages/core/src/generated/consoleWorkspace.ts | covered | The shell of the monthly gathering panel: it fetches and writes, and calls the generated monthlyGathering and consoleWorkspace decisions (panel answer, form, exact local time, draft rule, confirmation, write follow-up, error kind). GatheringPanel renders it. The local time arithmetic and the fetches stay outside the model; the GatheringPanel stories cover the view. |
 | packages/observatory/web/graph.ts | production | none | none | na | Canvas force graph and colors for display only. |
+| packages/observatory/web/logic/filters.ts | removed | spec/observatorySync.md, spec/consoleNavigation.md | none | covered | Not on this branch. spec/observatorySync.md owns the filter sync and spec/consoleNavigation.md owns the filter dimming. |
+| packages/observatory/web/logic/review.ts | removed | spec/staffReview.md | none | covered | Not on this branch. review.tsx imports the generated staffReview decisions. |
+| packages/observatory/web/logic/sync.ts | removed | spec/observatorySync.md | none | covered | Not on this branch. store.ts imports the generated observatorySync decisions. |
+| packages/observatory/web/logic/views.ts | removed | spec/consoleNavigation.md, spec/consoleWorkspace.md | none | covered | Not on this branch. spec/consoleNavigation.md owns tabs, search and picks; spec/consoleWorkspace.md owns panel views and the propose gate. |
 | packages/observatory/web/main.tsx | production | console_views [claude/lemmascript-frontend], spec/consoleNavigation.md, spec/staffSignIn.md | none | covered | The top bar, search, stage and sign-in panels; spec/consoleNavigation.md and spec/staffSignIn.md own them. The cited logic/views.ts is not on this branch. |
 | packages/observatory/web/map.ts | production | observatory_sync [claude/lemmascript-frontend] | none | covered | Map renderer; marker data comes from the store, which imports the generated observatorySync decisions (spec/observatorySync.md). The cited logic/sync.ts is not on this branch. |
 | packages/observatory/web/network.tsx | production | none | none | na | Game-mode scenario buttons; the server gates reset. |
@@ -482,7 +484,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/AuthShell.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/AuthShell.tsx | production | spec/authorizationPages.md | packages/core/src/generated/authorizationPages.ts, packages/core/src/generated/brandIdentity.ts | covered | Calls the generated decisions of authorizationPages, brandIdentity and does not recompute them. |
 | packages/ui/src/components/AuthSignupView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
-| packages/ui/src/components/AuthSignupView.tsx | production | spec/authorizationPages.md | packages/core/src/generated/authorizationPages.ts | covered | The SignupView of the AuthView machine: it calls chromeFor, offersFor, signupDraftNoteShown and signupConsentStartsTicked, and does not recompute them. The once-only prefill is in oauth_mcp openSignup. |
+| packages/ui/src/components/AuthSignupView.tsx | production | spec/authorizationPages.md | packages/core/src/generated/authorizationPages.ts | covered | Shows the signup form and the prefill that the server gives; consent never starts ticked (signupConsentStartsTicked). The once-only prefill is in oauth_mcp openSignup. |
 | packages/ui/src/components/BlockedStep.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/BlockedStep.tsx | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
 | packages/ui/src/components/BrandMark.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -523,7 +525,6 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/Input.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/JoinView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/JoinView.tsx | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
-| packages/ui/src/components/Label.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Label.stories.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Label.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/LandingView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -543,7 +544,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/PhoneInput.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/PhoneInput.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/components/PhoneStep.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
-| packages/ui/src/components/PhoneStep.tsx | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated phoneStepParts of browserJoin for the number field, the check, the busy state, the button and the submit, and does not recompute them. |
+| packages/ui/src/components/PhoneStep.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/components/Popover.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Popover.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/PopoverClose.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -583,18 +584,14 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/Textarea.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/Toast.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Toast.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
-| packages/ui/src/components/Toaster.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Tooltip.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Tooltip.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
-| packages/ui/src/components/UpdateHandoffView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
-| packages/ui/src/components/UpdateHandoffView.tsx | production | spec/sitePages.md | packages/core/src/generated/sitePages.ts | na | Display only: it shows the update handoff heading and the buttons that the caller builds with the generated buttonPageButtons; it makes no decision. |
 | packages/ui/src/components/VisuallyHidden.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/VisuallyHidden.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/Wordmark.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Wordmark.tsx | production | spec/brandIdentity.md | packages/core/src/generated/brandIdentity.ts | covered | Calls the generated decisions of brandIdentity and does not recompute them. |
 | packages/ui/src/components/console/AppSwitcher.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/AppSwitcher.tsx | production | spec/consoleNavigation.md | packages/core/src/generated/consoleNavigation.ts | covered | Calls the generated decisions of consoleNavigation and does not recompute them. |
-| packages/ui/src/components/console/AreaLink.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/AuditQuery.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/AuditRow.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/AuditRow.tsx | production | spec/consoleWorkspace.md | packages/core/src/generated/consoleWorkspace.ts | covered | Calls the generated decisions of consoleWorkspace and does not recompute them. |
@@ -605,8 +602,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/console/ConsoleShell.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/ConsoleShell.tsx | production | spec/consoleNavigation.md | packages/core/src/generated/consoleNavigation.ts | covered | Calls the generated decisions of consoleNavigation and does not recompute them. |
 | packages/ui/src/components/console/Countdown.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
-| packages/ui/src/components/console/Countdown.tsx | production | spec/consolePanels.md | packages/core/src/generated/consolePanels.ts | covered | Calls the generated countdownMark and countdownText of consolePanels and does not recompute the thresholds. |
-| packages/ui/src/components/console/DataCell.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/console/Countdown.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/console/DataTable.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/DataTable.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/console/DisclosureCard.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -617,9 +613,6 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/console/FactLine.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/console/FilterBar.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/FilterBar.tsx | production | spec/consoleNavigation.md | packages/core/src/generated/consoleNavigation.ts | covered | Calls the generated decisions of consoleNavigation and does not recompute them. |
-| packages/ui/src/components/console/FilterBarFocus.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
-| packages/ui/src/components/console/GatheringPanel.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
-| packages/ui/src/components/console/GatheringPanel.tsx | production | spec/monthlyGathering.md, spec/consoleWorkspace.md | packages/core/src/generated/monthlyGathering.ts | covered | Calls the generated decisions of monthlyGathering (review offered, confirmation shown) and shows the panel view that the shell gives; it does not recompute them. |
 | packages/ui/src/components/console/HeldItemCard.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/HeldItemCard.tsx | production | spec/consoleWorkspace.md | packages/core/src/generated/consoleWorkspace.ts | covered | Calls the generated decisions of consoleWorkspace and does not recompute them. |
 | packages/ui/src/components/console/InspectorSection.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -630,15 +623,12 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/console/KpiGrid.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/console/Legend.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/Legend.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
-| packages/ui/src/components/console/LegendItem.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/LorenzCurve.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/LorenzCurve.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
-| packages/ui/src/components/console/MemberLink.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/MeterBars.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/MeterBars.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/console/ModeIndicator.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/ModeIndicator.tsx | production | spec/consoleNavigation.md | packages/core/src/generated/consoleNavigation.ts | covered | Calls the generated decisions of consoleNavigation and does not recompute them. |
-| packages/ui/src/components/console/OpportunityLink.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/ProposeTray.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/console/ProposeTray.tsx | production | spec/consoleNavigation.md, spec/consoleWorkspace.md | packages/core/src/generated/consoleNavigation.ts, packages/core/src/generated/consoleWorkspace.ts | covered | Calls the generated decisions of consoleNavigation, consoleWorkspace and does not recompute them. |
 | packages/ui/src/components/console/ReportCard.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -726,7 +716,18 @@ How the ledger was made: six agents read every file and the models on the three 
 | scripts/synthetic/names.ts | data | none | none | na | Name tables for the synthetic dataset; no decision or state. |
 | scripts/synthetic/validate.ts | devtool | none | none | na | Synthetic dataset validator; it does not run in production. |
 | scripts/wrangler.sh | devtool | runtime_ops [wave2/runtime_ops] | none | covered | Machine M-149 wrangler-deploy-guard models decide(); the file is Bash, so a LemmaScript core is not meaningful. |
+| sites/agents.ts | removed | spec/landingEntry.md | none | na | Not on this branch. spec/landingEntry.md owns the agent table; packages/ui/src/brand/agentLogos.ts holds the logos. |
+| sites/shared/agent.ts | removed | spec/landingEntry.md | none | na | Not on this branch. packages/ui/src/hooks/useLanding.ts runs the landing page and calls the generated landingEntry decisions. |
+| sites/shared/api.ts | removed | spec/browserJoin.md | none | covered | Not on this branch. packages/ui/src/api/client.ts and join.ts replace it; spec/browserJoin.md owns the 10-digit US number rule and the answers. |
+| sites/shared/auth.ts | removed | spec/browserJoin.md | none | covered | Not on this branch. packages/ui/src/hooks/useJoin.ts runs sign-in mode, security check, code request and code check through the generated browserJoin machine. |
+| sites/shared/demo.ts | removed | none | none | na | Not on this branch. Dead demo replay code that no page loaded. |
+| sites/shared/join-core.ts | removed | spec/browserJoin.md | none | covered | Not on this branch. spec/browserJoin.md owns the join page steps and the form rules. |
+| sites/shared/join.ts | removed | spec/browserJoin.md | none | covered | Not on this branch. packages/ui/src/hooks/useJoin.ts and JoinView.tsx replace the peon.biz join page. |
+| sites/shared/prefill.ts | removed | spec/browserJoin.md | none | covered | Not on this branch. useJoin.ts reads the fragment; spec/browserJoin.md owns the fragment rule. |
+| sites/shared/turnstile.ts | removed | spec/browserJoin.md | none | na | Not on this branch. packages/ui/src/api/turnstile.ts loads the widget. |
+| sites/shared/ui.ts | removed | none | none | na | Not on this branch. DOM helpers that the React components replace. |
 | sites/sites.ts | devtool | spec/agentSignup.md, spec/sitePages.md, spec/brandIdentity.md | packages/core/src/generated/agentSignup.ts, packages/core/src/generated/sitePages.ts, packages/core/src/generated/brandIdentity.ts | na | Site build script with file I/O and constant headers. Its skill check walks each SKILL.md through the generated agentSignup machine, the connector setup step included. It holds no state for a Quint flow. |
+| sites/skill-responses.ts | removed | none | none | na | Not on this branch. sites/sites.ts serves the SKILL.md files without it. |
 | sites/skills.config.ts | config | none | none | na | Skill build configuration with a URL check. |
 | tools/clef-label/build.ts | devtool | none | none | na | Inlines core.ts into the local rater page. |
 | tools/clef-label/core.ts | devtool | none | self [claude/lemmascript-frontend] | covered | The rater plan, resume and undo rules are verified in place; the local tool has no shared state to model. |

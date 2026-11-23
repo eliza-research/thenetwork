@@ -9,7 +9,7 @@ import {
 import {
   type Connection, type GrantOwnerDecision, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
   canCallCheckStatus, canCallGetUpdates, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
-  decideGrantOwner, initial as connectionInitial, nextStepFor, scopeFor, signInSite, toolAllowedFor, toolListed,
+  decideGrantOwner, initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
@@ -66,18 +66,13 @@ export const PROFILE_MAX_CHARS = 1200;
 /** Server instructions. The rules are in the first 512 characters (OpenAI shows only those). */
 export const INSTRUCTIONS =
   "Helps a person learn about apps powered by The Network and sign themselves up. Never ask for, accept or relay a phone number or a verification code. " +
-  "The person completes signup and authorization themselves, in the browser. Never send a message on their behalf. No tool returns anything about other people or other apps. " +
-  "app_info and start_signup are public. start_signup points to the app's published signup instructions. " +
-  "The other tools work only after the person confirms their phone and allows access in the browser, on the sign-in page of the site that serves this connector, and they cover only this one app. " +
-  "check_status shows the person's own status. read_profile shows their saved profile, only when they ask. submit_profile sends what the person approved about themselves. " +
-  "get_updates shows their own new updates and marks them seen. prepare_signup saves only an approved first name and home city; the person types their birthday and ticks the text consent in the browser.";
+  "The person completes signup and authorization themselves. Never send a message on their behalf. start_signup points to the app's published signup instructions. " +
+  "check_status works only after the person signs in and authorizes access in that app's browser, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps.";
 
 const annotations = (title: string) => ({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 
-export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host: McpApp, site: McpApp) {
+export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host: McpApp) {
   const ids = appsOn(apps, surface, host.id).map(a => a.id);
-  const signInApp = signInSite(connectorApp[site.id], connectorApp[host.id]);
-  const signIn = Object.values(apps).find(a => connectorApp[a.id] === signInApp) ?? site;
   const appProp = (description: string) => ({ type: "string", enum: ids, description });
   // The security scheme of each tool, from its generated scope (spec/connectorTools.md, "Public tools need no sign-in").
   const schemes = (tool: ToolName) => {
@@ -121,7 +116,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "prepare_signup", title: "Save my signup draft",
-      description: `After the person confirms their phone and allows access on ${signIn.domain}, saves only the first name and optional home city that the person approved for this app. The person then follows the app's signup instructions: in the app's browser they check these details, type their own birthday and tick the text consent. Never approve text consent for the person. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.`,
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. The person continues signup in their agent and approves their details and text consent there. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
       annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -130,7 +125,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     {
       name: "check_status",
       title: `My ${host.name} status`,
-      description: `After the person confirms their phone and allows access on ${signIn.domain}, returns their own status in ${host.name} only (not joined, invited, onboarding, active, stopped or on hold) and what to do next. Never returns anything about other people or other apps.`,
+      description: `After the person signs in on ${host.domain} and allows access, returns their own status in ${host.name} only (not joined, invited, onboarding, active, stopped or on hold) and what to do next. Never returns anything about other people or other apps.`,
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}: this connection covers ${host.name} only.` } }, additionalProperties: false },
       outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text }),
       annotations: annotations(`My ${host.name} status`),
@@ -170,7 +165,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     {
       name: "get_updates",
       title: `My ${host.name} updates`,
-      description: `After the person confirms their phone and allows access on ${signIn.domain}, returns their own new updates from ${host.name} (introductions, plans, reminders, questions) and marks them seen. Use when they ask what's new, or when their message has an update reference from a text like T-7F3K9Q (pass it as update_token). It is not a password: never ask for it. Never returns anything about other apps.`,
+      description: `After the person signs in on ${host.domain} and allows access, returns their own new updates from ${host.name} (introductions, plans, reminders, questions) and marks them seen. Use when they ask what's new, or when their message has an update reference from a text like T-7F3K9Q (pass it as update_token). It is not a password: never ask for it. Never returns anything about other apps.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -405,7 +400,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt, consumedAt: null }, at);
         const finished = stepDraftPreparation(preparedMembership, { type: "observeWrite", saved });
         return finished.phase === "Prepared" ? { kind: "ok", data: { prepared: true, app: g.app, url: publicSignupUrl(c.apps[g.app]),
-          next_step: "Your draft is saved. Continue with the signup instructions in your agent. In the app's browser, the person checks these details, types their own birthday and ticks the text consent. The agent never approves text consent." } }
+          next_step: "Your draft is saved. Follow the signup instructions in your agent and approve your details and text consent there." } }
           : { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
       });
     }

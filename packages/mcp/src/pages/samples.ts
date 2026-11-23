@@ -16,10 +16,10 @@ const titles: MessageTitle[] = [
 /** Each view and field error that the handler can send, with fictional data. */
 export const samplePages: SamplePage[] = [
   { name: "Phone", render: app => phonePage(app, "preview") },
-  { name: "Phone: number not valid", render: app => phonePage(app, "preview", { reply: "ReplyPhoneInvalid" }) },
-  { name: "Phone: security check", render: app => phonePage(app, "preview", { turnstileSiteKey: "preview", reply: "ReplyCheckFailed" }) },
+  { name: "Phone: number not valid", render: app => phonePage(app, "preview", { error: "Enter a US or Canada phone number." }) },
+  { name: "Phone: security check", render: app => phonePage(app, "preview", { turnstileSiteKey: "preview", error: "Please complete the check and try again." }) },
   { name: "Code", render: app => codePage(app, "preview", "0123") },
-  { name: "Code: not accepted", render: app => codePage(app, "preview", "0123", { reply: "ReplyCodeRejected" }) },
+  { name: "Code: not accepted", render: app => codePage(app, "preview", "0123", { error: "That code did not work. Check the newest text and try again." }) },
   { name: "Consent", render: app => consentPage(app, "preview", "Your assistant", "assistant.example", "https://assistant.example", [...SCOPES]) },
   { name: "Consent: finish signup", render: app => consentPage(app, "preview", "Your assistant", "assistant.example", "https://assistant.example", [...SCOPES], { canSignup: true }) },
   { name: "Signup", render: app => signupPage(app, "preview", {

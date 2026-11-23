@@ -39,7 +39,7 @@ export interface ReportRow { present: boolean; status: safetyCase_ReportPhase; m
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface Workspace { staff: StaffView; held: HeldRow; caseRow: CaseRow; report: ReportRow; requestSegment: RequestSegment; config: ConfigEditor; audit: AuditPhase; tray: TrayPhase; worldMenuOpen: boolean; worldEventSent: boolean; reveal: RevealForm }
 /** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
-export type WorkPanel = "HeldPanel" | "CasesPanel" | "ReportsPanel" | "RequestsPanel" | "ConfigPanel" | "AuditPanel" | "LabPanel" | "BiasPanel" | "GatheringPanel";
+export type WorkPanel = "HeldPanel" | "CasesPanel" | "ReportsPanel" | "RequestsPanel" | "ConfigPanel" | "AuditPanel" | "LabPanel" | "BiasPanel";
 /** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 export type PanelAnswer = "NotAnswered" | "AnswerRows" | "AnswerForbidden" | "AnswerMissing" | "AnswerFailed";
 /** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
@@ -56,8 +56,8 @@ export type Event =
   | { type: "receiveViewer"; viewMode: WorkMode; safetyRole: boolean; adminRole: boolean; analystRole: boolean; simRoleHeld: boolean; globalPiiShown: boolean }
   | { type: "receiveHeldText"; photoItem: boolean; minorItem: boolean }
   | { type: "typeHeldReason"; reasonChars: number }
-  | { type: "loadHeldPhoto"; loaded: boolean }
   | { type: "markPhotoReviewed"; reviewed: boolean }
+  | { type: "loadHeldPhoto"; loaded: boolean }
   | { type: "decideHeld"; choice: HeldChoice }
   | { type: "receiveHeldAnswer"; accepted: boolean }
   | { type: "receiveCase"; heldCase: boolean }
@@ -159,7 +159,7 @@ export function receiveViewer(w: Workspace, viewMode: WorkMode, safetyRole: bool
 /** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 //@ pure
 export function panelView(panel: WorkPanel, answer: PanelAnswer, rowCount: number): PanelView {
-  return answer === "NotAnswered" ? "PanelLoading" : (answer === "AnswerForbidden" ? "PanelForbidden" : (answer === "AnswerMissing" && (panel === "HeldPanel" || panel === "BiasPanel" || panel === "GatheringPanel") ? "PanelUnavailable" : (answer !== "AnswerRows" ? "PanelFailed" : (rowCount <= 0 ? "PanelEmpty" : "PanelRows"))));
+  return answer === "NotAnswered" ? "PanelLoading" : (answer === "AnswerForbidden" ? "PanelForbidden" : (answer === "AnswerMissing" && (panel === "HeldPanel" || panel === "BiasPanel") ? "PanelUnavailable" : (answer !== "AnswerRows" ? "PanelFailed" : (rowCount <= 0 ? "PanelEmpty" : "PanelRows"))));
 }
 
 /** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
@@ -179,7 +179,7 @@ export function lawRowsNeedAnAnswer(panel: WorkPanel, answer: PanelAnswer, rowCo
 /** Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it (spec/consoleWorkspace.md) */
 //@ pure
 export function panelAllowed(panel: WorkPanel, staff: StaffView): boolean {
-  return panel === "HeldPanel" || panel === "CasesPanel" || panel === "ReportsPanel" ? staff.safety : (panel === "ConfigPanel" || panel === "LabPanel" ? staff.analyst : (panel === "AuditPanel" ? staff.admin : (panel === "BiasPanel" ? staff.analyst && staff.mode !== "SimulatedWorld" : (panel === "GatheringPanel" ? staff.admin && staff.mode === "RealWithService" : true))));
+  return panel === "HeldPanel" || panel === "CasesPanel" || panel === "ReportsPanel" ? staff.safety : (panel === "ConfigPanel" || panel === "LabPanel" ? staff.analyst : (panel === "AuditPanel" ? staff.admin : (panel === "BiasPanel" ? staff.analyst && staff.mode !== "SimulatedWorld" : true)));
 }
 
 /** Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it (spec/consoleWorkspace.md) */
@@ -187,13 +187,6 @@ export function panelAllowed(panel: WorkPanel, staff: StaffView): boolean {
 export function lawAuditLogIsAdminOnly(staff: StaffView): boolean {
   //@ ensures \result === true
   return panelAllowed("AuditPanel", staff) === staff.admin;
-}
-
-/** Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it (spec/consoleWorkspace.md) */
-//@ pure
-export function lawGatheringPanelNeedsARealAdmin(staff: StaffView): boolean {
-  //@ ensures \result === true
-  return panelAllowed("GatheringPanel", staff) === (staff.admin && staff.mode === "RealWithService");
 }
 
 /** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md) */
@@ -260,37 +253,6 @@ export function typeHeldReason(w: Workspace, reasonChars: number): Workspace {
 
 /** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
 //@ pure
-export function loadHeldPhoto(w: Workspace, loaded: boolean): Workspace {
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysAdminHoldsEveryRole(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysSimulatedWorldShowsNoRealData(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysReleaseWasReleasable(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysBanNeedsTheService(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysReportDecisionNeedsANote(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysSavedSwitchWasShown(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysSavingNeedsTheSwitch(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysAuditLogNeedsAnAdmin(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysTrayWorkIsSimulated(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysWorldMenuIsSimulated(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysRevealLengthIsAChoice(\result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepNewViewerClosesForms(w, "loadHeldPhoto", \result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "loadHeldPhoto", \result)
-  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepRevealFollowsAGrant(w, "loadHeldPhoto", \result)
-  return { ...w, held: ({ ...w.held, photoLoaded: loaded, photoReviewed: false } as HeldRow) };
-}
-
-/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
-//@ pure
-export function canMarkPhotoReviewed(w: Workspace): boolean {
-  return w.held.status === "HeldWaiting" && w.held.photoLoaded;
-}
-
-/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
-//@ pure
 export function markPhotoReviewed(w: Workspace, reviewed: boolean): Workspace {
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysAdminHoldsEveryRole(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysSimulatedWorldShowsNoRealData(\result)
@@ -318,6 +280,37 @@ export function markPhotoReviewed(w: Workspace, reviewed: boolean): Workspace {
 //@ pure
 export function canLoadHeldPhoto(w: Workspace): boolean {
   return w.held.status === "HeldWaiting" && w.held.photo && w.held.reasonReady && !w.held.minorHidden;
+}
+
+/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
+//@ pure
+export function loadHeldPhoto(w: Workspace, loaded: boolean): Workspace {
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysAdminHoldsEveryRole(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysSimulatedWorldShowsNoRealData(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysReleaseWasReleasable(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysReportDecisionNeedsANote(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysSavedSwitchWasShown(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysSavingNeedsTheSwitch(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysAuditLogNeedsAnAdmin(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysTrayWorkIsSimulated(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysWorldMenuIsSimulated(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysRevealLengthIsAChoice(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepNewViewerClosesForms(w, "loadHeldPhoto", \result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "loadHeldPhoto", \result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepRevealFollowsAGrant(w, "loadHeldPhoto", \result)
+  return { ...w, held: ({ ...w.held, photoLoaded: loaded, photoReviewed: false } as HeldRow) };
+}
+
+/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
+//@ pure
+export function canMarkPhotoReviewed(w: Workspace): boolean {
+  return w.held.status === "HeldWaiting" && w.held.photoLoaded;
 }
 
 /** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
@@ -1615,8 +1608,8 @@ export function enabled(current: Workspace, event: Event): boolean {
   if (event.type === "receiveViewer") return true;
   if (event.type === "receiveHeldText") return canReceiveHeldText(current);
   if (event.type === "typeHeldReason") return canTypeHeldReason(current);
-  if (event.type === "loadHeldPhoto") return canLoadHeldPhoto(current);
   if (event.type === "markPhotoReviewed") return canMarkPhotoReviewed(current);
+  if (event.type === "loadHeldPhoto") return canLoadHeldPhoto(current);
   if (event.type === "decideHeld") return canDecideHeld(current, event.choice);
   if (event.type === "receiveHeldAnswer") return canReceiveHeldAnswer(current);
   if (event.type === "receiveCase") return canReceiveCase(current);
@@ -1659,8 +1652,8 @@ export function step(current: Workspace, event: Event): Workspace {
   if (event.type === "receiveViewer") return receiveViewer(current, event.viewMode, event.safetyRole, event.adminRole, event.analystRole, event.simRoleHeld, event.globalPiiShown);
   if (event.type === "receiveHeldText") return canReceiveHeldText(current) ? receiveHeldText(current, event.photoItem, event.minorItem) : current;
   if (event.type === "typeHeldReason") return canTypeHeldReason(current) ? typeHeldReason(current, event.reasonChars) : current;
-  if (event.type === "loadHeldPhoto") return canLoadHeldPhoto(current) ? loadHeldPhoto(current, event.loaded) : current;
   if (event.type === "markPhotoReviewed") return canMarkPhotoReviewed(current) ? markPhotoReviewed(current, event.reviewed) : current;
+  if (event.type === "loadHeldPhoto") return canLoadHeldPhoto(current) ? loadHeldPhoto(current, event.loaded) : current;
   if (event.type === "decideHeld") return canDecideHeld(current, event.choice) ? decideHeld(current, event.choice) : current;
   if (event.type === "receiveHeldAnswer") return canReceiveHeldAnswer(current) ? receiveHeldAnswer(current, event.accepted) : current;
   if (event.type === "receiveCase") return canReceiveCase(current) ? receiveCase(current, event.heldCase) : current;
@@ -1712,8 +1705,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "receiveViewer" && (raw.viewMode === "SimulatedWorld" || raw.viewMode === "RealWithService" || raw.viewMode === "RealWithoutService") && typeof raw.safetyRole === "boolean" && typeof raw.adminRole === "boolean" && typeof raw.analystRole === "boolean" && typeof raw.simRoleHeld === "boolean" && typeof raw.globalPiiShown === "boolean") return { type: "receiveViewer", viewMode: raw.viewMode, safetyRole: raw.safetyRole, adminRole: raw.adminRole, analystRole: raw.analystRole, simRoleHeld: raw.simRoleHeld, globalPiiShown: raw.globalPiiShown };
   if (raw.type === "receiveHeldText" && typeof raw.photoItem === "boolean" && typeof raw.minorItem === "boolean") return { type: "receiveHeldText", photoItem: raw.photoItem, minorItem: raw.minorItem };
   if (raw.type === "typeHeldReason" && Number.isSafeInteger(raw.reasonChars)) return { type: "typeHeldReason", reasonChars: raw.reasonChars };
-  if (raw.type === "loadHeldPhoto" && typeof raw.loaded === "boolean") return { type: "loadHeldPhoto", loaded: raw.loaded };
   if (raw.type === "markPhotoReviewed" && typeof raw.reviewed === "boolean") return { type: "markPhotoReviewed", reviewed: raw.reviewed };
+  if (raw.type === "loadHeldPhoto" && typeof raw.loaded === "boolean") return { type: "loadHeldPhoto", loaded: raw.loaded };
   if (raw.type === "decideHeld" && (raw.choice === "ReleaseHeld" || raw.choice === "RejectHeld")) return { type: "decideHeld", choice: raw.choice };
   if (raw.type === "receiveHeldAnswer" && typeof raw.accepted === "boolean") return { type: "receiveHeldAnswer", accepted: raw.accepted };
   if (raw.type === "receiveCase" && typeof raw.heldCase === "boolean") return { type: "receiveCase", heldCase: raw.heldCase };

@@ -63,11 +63,9 @@ build does not read this prose. To change a token, write the change as a list in
 | `border` | oklch(0.87 0 0) | oklch(0.3 0 0) |
 | `input` | oklch(0.6 0 0) | oklch(0.52 0 0) |
 | `ring` | oklch(0.5 0.13 150) | oklch(0.72 0.17 150) |
-| `ok` | oklch(0.46 0.09 200) | oklch(0.84 0.11 190) |
+| `ok` | oklch(0.5 0.13 150) | oklch(0.78 0.17 150) |
 | `warn` | oklch(0.53 0.13 55) | oklch(0.82 0.15 75) |
 | `info` | oklch(0.5 0.13 255) | oklch(0.82 0.09 253) |
-| `inverse` | oklch(0.16 0 0) | oklch(0.96 0 0) |
-| `inverse-foreground` | oklch(0.985 0 0) | oklch(0.15 0 0) |
 
 | Token | Value |
 | --- | --- |

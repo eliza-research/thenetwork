@@ -10,19 +10,18 @@ The handler (`packages/mcp/src/handler.ts`) also uses the guards of this machine
 
 ### The server reply selects the page view
 
-Each server reply selects exactly one view. A phone page, a code page, a consent page or the signup page can show a form. A message page shows a title, one sentence and, for "Please try again" only, a retry link. Three replies leave this site: the hand-off to Cloud sign-in, the return to the assistant with a code, and the return to the assistant with a refusal. A field error is part of the reply and shows only on the page of its field. The phone page shows a security check only when the site has one.
+Each server reply selects exactly one view. A phone page, a code page or a consent page can show a form. A message page shows a title, one sentence and, for "Please try again" only, a retry link. Three replies leave this site: the hand-off to Cloud sign-in, the return to the assistant with a code, and the return to the assistant with a refusal. A field error is part of the reply and shows only on the page of its field. The phone page shows a security check only when the site has one.
 
 ```quint
 type AuthView =
   Opening | PhoneView | CodeView | ConsentView | ConsentRetryView | CloudView | ApprovedView | DeclinedView |
   LinkInvalidView | TooManyTriesView | NotAvailableView | PageExpiredView | AlreadySignedInView |
-  CheckNumberView | ConnectAgainView | PleaseRetryView | SignInUnavailableView | NotAllowedView | SignupView
+  CheckNumberView | ConnectAgainView | PleaseRetryView | SignInUnavailableView | NotAllowedView
 type Reply =
   ReplyPhone | ReplyCode | ReplyConsent | ReplyConsentRetry | ReplyCloud | ReplyApproved | ReplyDeclined |
   ReplyCheckFailed | ReplyPhoneInvalid | ReplyTooManyCodes | ReplySendUnavailable | ReplyCodeRejected |
   ReplyLinkInvalid | ReplyTooManyTries | ReplyNotAvailable | ReplyExpired | ReplyAlreadySignedIn |
-  ReplyCheckNumber | ReplyConnectAgain | ReplyRetryLater | ReplySignInUnavailable | ReplyNotAllowed |
-  ReplySignupForm | ReplySignupRefused
+  ReplyCheckNumber | ReplyConnectAgain | ReplyRetryLater | ReplySignInUnavailable | ReplyNotAllowed
 type FieldError = NoFieldError | CheckNotPassed | PhoneNotValid | CodesRateLimited | CodeSendFailed | CodeNotAccepted
 type SecurityCheck = CheckOff | CheckWaiting | CheckSolved | CheckExpired
 type AuthPage = {
@@ -36,7 +35,6 @@ type AuthPage = {
 }
 type Offers = {
   sendCode: bool, continueCode: bool, allow: bool, retryAllow: bool, dontAllow: bool, cancel: bool, retryLink: bool,
-  finishSignup: bool, backToConsent: bool,
 }
 
 pure val initial: AuthPage = {
@@ -62,7 +60,6 @@ pure def viewFor(reply: Reply): AuthView =
   else if (reply == ReplyConnectAgain) ConnectAgainView
   else if (reply == ReplyRetryLater) PleaseRetryView
   else if (reply == ReplySignInUnavailable) SignInUnavailableView
-  else if (reply == ReplySignupForm or reply == ReplySignupRefused) SignupView
   else NotAllowedView
 
 pure def errorFor(reply: Reply): FieldError =
@@ -94,7 +91,6 @@ pure def showsCodeField(view: AuthView): bool = view == CodeView
 
 pure val noOffers: Offers = {
   sendCode: false, continueCode: false, allow: false, retryAllow: false, dontAllow: false, cancel: false, retryLink: false,
-  finishSignup: false, backToConsent: false,
 }
 
 pure def offersFor(view: AuthView): Offers = {
@@ -105,8 +101,6 @@ pure def offersFor(view: AuthView): Offers = {
   dontAllow: isConsentView(view),
   cancel: view == PhoneView or view == CodeView,
   retryLink: view == PleaseRetryView,
-  finishSignup: view == SignupView,
-  backToConsent: view == SignupView,
 }
 
 pure def showReply(reply: Reply, page: AuthPage): AuthPage =
@@ -154,26 +148,6 @@ pure def canRetryConnection(page: AuthPage, reply: Reply): bool =
 pure def retryConnection(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
 ```
 
-### A posted form names the page that sent it
-
-The handler makes the page that sent a form from the word of the stored step or of the form route. The `phone` step and route give the phone page. The `code` step and route give the code page. The `consent`, `enrolling` and `enrolled` steps and the `consent` route give the consent page. Any other word gives "This page has expired", so no form guard allows a reply from it.
-
-```quint
-pure def storedStepView(stepWord: str): AuthView =
-  if (stepWord == "phone") PhoneView
-  else if (stepWord == "code") CodeView
-  else if (stepWord == "consent" or stepWord == "enrolling" or stepWord == "enrolled") ConsentView
-  else PageExpiredView
-
-pure def lawStoredStepShowsAFormPageOrExpires(stepWord: str): bool =
-  val v = storedStepView(stepWord)
-  v == PhoneView or v == CodeView or v == ConsentView or v == PageExpiredView
-
-pure def lawUnknownStepShowsNoForm(stepWord: str): bool =
-  (stepWord != "phone" and stepWord != "code" and stepWord != "consent" and stepWord != "enrolling" and stepWord != "enrolled")
-    implies offersFor(storedStepView(stepWord)) == noOffers
-```
-
 ## Story: Prove my phone on this page
 
 > As a person who connects my assistant, I want to confirm my own phone on the site's page, so that the assistant never sees my code.
@@ -196,22 +170,9 @@ pure def alwaysSecurityCheckOnlyOnPhonePage(page: AuthPage): bool =
 
 ### The phone page sends a code or tells why it did not
 
-The person can send the phone number only when the check is off or solved. A sent code opens the code page. A failed check, a number that is not a US or Canada number, too many codes, or a send failure shows the phone page again with that field error. A failed check can occur only on a site with a check. When the code is not sent, a rate limit gives "too many codes" and any other cause gives the send failure. The handler gives the phone page its reply, never a sentence, and the page shows the words of the field error. The other replies are "This page has expired", "Already signed in", "Not allowed" and "Not available".
+The person can send the phone number only when the check is off or solved. A sent code opens the code page. A failed check, a number that is not a US or Canada number, too many codes, or a send failure shows the phone page again with that field error. A failed check can occur only on a site with a check. The other replies are "This page has expired", "Already signed in", "Not allowed" and "Not available".
 
 ```quint
-pure def codeSendFailureReply(rateLimited: bool): Reply =
-  if (rateLimited) ReplyTooManyCodes else ReplySendUnavailable
-
-pure def isPhoneFieldReply(reply: Reply): bool =
-  reply == ReplyCheckFailed or reply == ReplyPhoneInvalid or reply == ReplyTooManyCodes or reply == ReplySendUnavailable
-
-pure def lawCodeSendFailureStaysOnThePhonePage(rateLimited: bool): bool =
-  val reply = codeSendFailureReply(rateLimited)
-  isPhoneFieldReply(reply) and viewFor(reply) == PhoneView and errorFor(reply) != NoFieldError
-
-pure def lawPhoneFieldReplyShowsThePhonePage(reply: Reply): bool =
-  isPhoneFieldReply(reply) implies (viewFor(reply) == PhoneView and errorFor(reply) != NoFieldError)
-
 pure def isPhoneReply(reply: Reply): bool =
   reply == ReplyCode or reply == ReplyCheckFailed or reply == ReplyPhoneInvalid or reply == ReplyTooManyCodes
     or reply == ReplySendUnavailable or reply == ReplyExpired or reply == ReplyAlreadySignedIn
@@ -297,43 +258,6 @@ pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
   not(showsSignupConfirmation(view, false))
 ```
 
-### The signup page is a step of the same request
-
-"Finish signup" on the consent page opens the signup page of the same request. The signup page shows no phone field and no code field. It offers "Finish signup" and "Back to connection" and nothing else. "Finish signup" goes back to the consent page when the server saves the signup. When the server refuses the form, the signup page shows again with the reason. "Back to connection" goes back to the consent page and saves nothing. A request that is no longer live gets "This page has expired". The other replies are "Not allowed" and "Not available". The signup page never sends the approval and never returns a code to the assistant. Only a consent page opens the signup page, so the signup page always follows a consent page.
-
-```quint
-pure def isSignupOpenReply(reply: Reply): bool =
-  reply == ReplySignupForm or reply == ReplyExpired or reply == ReplyNotAllowed or reply == ReplyNotAvailable
-
-pure def isSignupReply(reply: Reply): bool =
-  reply == ReplyConsent or reply == ReplySignupRefused or reply == ReplyExpired
-    or reply == ReplyNotAllowed or reply == ReplyNotAvailable
-
-pure def isLeaveSignupReply(reply: Reply): bool =
-  reply == ReplyConsent or reply == ReplyExpired or reply == ReplyNotAllowed or reply == ReplyNotAvailable
-
-pure def canOpenSignup(page: AuthPage, reply: Reply): bool = page.view == ConsentView and isSignupOpenReply(reply)
-pure def openSignup(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
-
-pure def canSubmitSignup(page: AuthPage, reply: Reply): bool = page.view == SignupView and isSignupReply(reply)
-pure def submitSignup(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
-
-pure def canLeaveSignup(page: AuthPage, reply: Reply): bool = page.view == SignupView and isLeaveSignupReply(reply)
-pure def leaveSignup(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
-
-pure def alwaysSignupFollowsConsent(page: AuthPage): bool = page.view == SignupView implies page.consentSeen
-
-pure def lawSignupPageShowsNoCredentialField(view: AuthView): bool =
-  view == SignupView implies
-    (not(showsPhoneField(view)) and not(showsCodeField(view))
-      and offersFor(view) == { ...noOffers, finishSignup: true, backToConsent: true })
-
-pure def stepSignupNeverApproves(before: AuthPage, via: str, after: AuthPage): bool =
-  (via == "openSignup" or via == "submitSignup" or via == "leaveSignup") implies after.approved == before.approved
-
-pure def sometimesSignupShown(page: AuthPage): bool = page.view == SignupView
-```
-
 ### A new person sees Finish signup as the main action on the consent page
 
 When the server offers signup on the consent page, the signed-in phone has no membership in this app yet, or it has only an invitation. Then "Finish signup" is the main action and it comes first. "Allow" and "Don't allow" come after it and have less emphasis, so that a new person does not give access before signup by mistake. When the server does not offer signup, "Allow" is the main action. On the retry consent page, "Try again" is the main action. The order does not change what each action does: only "Allow" or "Try again" sends the approval. After a successful signup the server does not offer signup again, so "Allow" is the main action on the confirmed consent page. A page that is not a consent page has no main consent action.
@@ -362,7 +286,7 @@ pure def lawOnlyConsentPagesHaveAPrimaryAction(view: AuthView, signupAvailable: 
 
 ### The signup form shows the draft that the person approved in the agent
 
-An assistant that has a live grant with profile write access can save a signup draft before the person signs up (the [MCP signup draft spec](mcpSignupDraft.md)). The draft holds only the first name and the home city that the person approved in the agent. It never holds a phone number, a code or an age. When the person opens "Finish signup", the form shows the fields of that draft, so that the person does not type them again. The person can change each field. The person always types the birthday, because no tool takes an age or a birth date. The text consent box is never ticked before the person ticks it. "Finish signup" is the one main action of the form. A short note asks the person to check the details from the agent. The note shows only when the form shows a draft and the server did not refuse the form.
+An assistant that has a live grant with profile write access can save a signup draft before the person signs up (the [MCP signup draft spec](mcpSignupDraft.md)). The draft holds only the first name and the home city that the person approved in the agent. It never holds a phone number, a code or an age. When the person opens "Finish signup", the form shows the fields of that draft, so that the person does not type them again. The person can change each field. The person always types the birthday, because no tool takes an age or a birth date. The text consent box is never ticked before the person ticks it. "Finish signup" is the one main action of the form.
 
 The form shows a draft only when all of these conditions are true: the grant that saved the draft has the same client, the same app and the same phone as this authorization request, the draft is not used and not expired, and the age guard of the phone allows the signup. The first form that shows the draft uses it, so a reload, another request or another client gets an empty form. A wrong, used, expired or other-app draft gives an empty form and no error. When the server refuses a submitted form, the form shows again with the first name and the home city that the person sent, and the birthday field and the consent box are empty. The lowest stated age still applies when the person submits: a lower age that the phone already has is the age that counts, and an age below 13 is refused.
 
@@ -380,8 +304,6 @@ pure def useSignupPrefill(d: SignupDraftBinding, r: SignupPrefillRequest): Signu
 
 pure def signupConsentStartsTicked(prefilled: bool): bool = false
 
-pure def signupDraftNoteShown(prefilled: bool, refused: bool): bool = prefilled and not(refused)
-
 pure def lawPrefillOnlyForItsClientAppAndPhone(d: SignupDraftBinding, r: SignupPrefillRequest): bool =
   signupPrefillAllowed(d, r) implies (d.client == r.client and d.app == r.app and d.phone == r.phone)
 
@@ -395,8 +317,6 @@ pure def lawAgeGuardRefusesPrefill(d: SignupDraftBinding, r: SignupPrefillReques
   not(r.ageAllowed) implies not(signupPrefillAllowed(d, r))
 
 pure def lawConsentNeverPreTicked(prefilled: bool): bool = not(signupConsentStartsTicked(prefilled))
-
-pure def lawRefusedSignupShowsNoDraftNote(prefilled: bool): bool = not(signupDraftNoteShown(prefilled, true))
 
 pure val dValues = Set(
   { client: "c1", app: "friends", phone: "+15550100", used: false, expiresAt: 10 },
@@ -561,8 +481,7 @@ pure def stepConsentNeedsKnownPerson(before: AuthPage, via: str, after: AuthPage
     ((via == "openPage" and before.view == Opening)
       or (via == "returnFromCloud" and before.view == CloudView)
       or (via == "retryConnection" and before.view == PleaseRetryView)
-      or (via == "submitCode" and before.view == CodeView)
-      or ((via == "submitSignup" or via == "leaveSignup") and before.view == SignupView and before.consentSeen))
+      or (via == "submitCode" and before.view == CodeView))
 ```
 
 ### Cancel or Don't allow returns to the assistant with a refusal

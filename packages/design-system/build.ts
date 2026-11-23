@@ -2,20 +2,7 @@
 import { mkdirSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import {
-  type AccentTokens,
-  type AppKey,
-  accentTokens,
-  appKeys,
-  brandFor,
-  colorIsClearOfAccent,
-  designBrandId,
-  hoverFillIsClear,
-  inverseIsReadable,
-  ringIsTheAccent,
-  stateColors,
-  stateToken,
-} from "../core/src/generated/brandIdentity.ts"
+import { type AccentTokens, type AppKey, accentTokens, appKeys, brandFor } from "../core/src/generated/brandIdentity.ts"
 import { buildTokenProject, checkTokenProject, writeTextIfChanged } from "../../tools/vibestack/vibestack/design/project.ts"
 import { type BrandId, brandIds } from "./src/brands.ts"
 
@@ -66,26 +53,9 @@ function keySetIssues(): string[] {
   })
 }
 
-function brandIdIssues(): string[] {
-  const mapped = appKeys.map(designBrandId)
-  return [
-    ...mapped.filter((id) => !(brandIds as readonly string[]).includes(id)).map((id) => `designBrandId gives ${id}, which is not in src/brands.ts`),
-    ...brandIds.filter((brand) => !mapped.includes(brand)).map((brand) => `brands/${brand}: no app has it in designBrandId`),
-  ]
-}
+const brandOfApp: Record<AppKey, BrandId> = { Ntwrk: "network", Slop: "slop", Peon: "peon", Friends: "friends" }
 
-const brandOfApp = (app: AppKey): BrandId => {
-  const id = brandIds.find((brand) => brand === designBrandId(app))
-  if (!id) throw new Error(`designBrandId(${app}) is ${designBrandId(app)}, which is not in src/brands.ts`)
-  return id
-}
-
-type Scheme = "light" | "dark"
-type SchemeColors = Record<Scheme, Record<string, string>>
-const schemes: Scheme[] = ["light", "dark"]
-const colorsOf = (brand: BrandId): SchemeColors => (JSON.parse(read(join(brandDir(brand), "tokens.json"))) as { color: SchemeColors }).color
-
-const accentToken: Record<keyof AccentTokens, [scheme: Scheme, name: "primary" | "primary-foreground"]> = {
+const accentToken: Record<keyof AccentTokens, [scheme: "light" | "dark", name: "primary" | "primary-foreground"]> = {
   light: ["light", "primary"],
   lightInk: ["light", "primary-foreground"],
   dark: ["dark", "primary"],
@@ -94,8 +64,8 @@ const accentToken: Record<keyof AccentTokens, [scheme: Scheme, name: "primary" |
 
 function accentIssues(): string[] {
   return appKeys.flatMap((app) => {
-    const brand = brandOfApp(app)
-    const color = colorsOf(brand)
+    const brand = brandOfApp[app]
+    const color = (JSON.parse(read(join(brandDir(brand), "tokens.json"))) as { color: Record<"light" | "dark", Record<string, string>> }).color
     const accent = accentTokens(brandFor(app).accent)
     return (Object.keys(accentToken) as (keyof AccentTokens)[]).flatMap((key) => {
       const [scheme, name] = accentToken[key]
@@ -103,65 +73,6 @@ function accentIssues(): string[] {
       return token === accent[key] ? [] : [`${brand}: color.${scheme}.${name} is ${token}, but accentTokens(${brandFor(app).accent}).${key} is ${accent[key]} (spec/brandIdentity.md)`]
     })
   })
-}
-
-const oklch = (value: string): [number, number, number] => {
-  const match = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)$/.exec(value)
-  if (!match) throw new Error(`${value} is not an opaque oklch color`)
-  return [Number(match[1]), Number(match[2]), Number(match[3])]
-}
-const oklab = (value: string): [number, number, number] => {
-  const [l, c, h] = oklch(value)
-  return [l, c * Math.cos((h * Math.PI) / 180), c * Math.sin((h * Math.PI) / 180)]
-}
-const distancePermille = (one: string, other: string): number => {
-  const [a, b] = [oklab(one), oklab(other)]
-  return Math.floor(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * 1000)
-}
-const luminance = (value: string): number => {
-  const [l, a, b] = oklab(value)
-  const [lc, mc, sc] = [
-    (l + 0.3963377774 * a + 0.2158037573 * b) ** 3,
-    (l - 0.1055613458 * a - 0.0638541728 * b) ** 3,
-    (l - 0.0894841775 * a - 1.291485548 * b) ** 3,
-  ]
-  const [r, g, bl] = [
-    4.0767416621 * lc - 3.3077115913 * mc + 0.2309699292 * sc,
-    -1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc,
-    -0.0041960863 * lc - 0.7034186147 * mc + 1.707614701 * sc,
-  ].map((channel) => Math.min(1, Math.max(0, channel))) as [number, number, number]
-  return 0.2126 * r + 0.7152 * g + 0.0722 * bl
-}
-const contrastTenths = (one: string, other: string): number => {
-  const [dark, light] = [luminance(one), luminance(other)].sort((x, y) => x - y) as [number, number]
-  return Math.floor(((light + 0.05) / (dark + 0.05)) * 10)
-}
-const sameHue = (one: string, other: string): boolean => {
-  const [, c1, h1] = oklch(one), [, c2, h2] = oklch(other)
-  return c1 === 0 || c2 === 0 ? c1 === c2 : h1 === h2
-}
-
-function colorRuleIssues(): string[] {
-  const ruled = ["background", "primary", "ring", "accent", "inverse", "inverse-foreground", ...stateColors.map(stateToken)]
-  return brandIds.flatMap((brand) => schemes.flatMap((scheme) => {
-    const color = colorsOf(brand)[scheme]
-    const at = `${brand}: color.${scheme}`
-    const missing = ruled.filter((name) => !color[name])
-    if (missing.length) return missing.map((name) => `${at}.${name} is missing`)
-    const { background, primary, ring, accent, inverse } = color as Record<string, string>
-    const ink = color["inverse-foreground"]!
-    const accentDistance = distancePermille(accent!, primary!)
-    const [text, edge] = [contrastTenths(ink, inverse!), contrastTenths(inverse!, background!)]
-    return [
-      ...(ringIsTheAccent(ring!, primary!) ? [] : [`${at}.ring is ${ring}, but it must equal primary ${primary}`]),
-      ...(hoverFillIsClear(accentDistance, sameHue(accent!, primary!)) ? [] : [`${at}.accent ${accent} must have the hue of primary ${primary} and be clear of it: OKLab distance ${accentDistance}/1000`]),
-      ...stateColors.map(stateToken).flatMap((name) => {
-        const distance = distancePermille(color[name]!, primary!)
-        return colorIsClearOfAccent(distance) ? [] : [`${at}.${name} ${color[name]} is too near primary ${primary}: OKLab distance ${distance}/1000`]
-      }),
-      ...(inverseIsReadable(text, edge) ? [] : [`${at}.inverse: inverse-foreground on inverse is ${text / 10}:1 and inverse on background is ${edge / 10}:1`]),
-    ]
-  }))
 }
 
 /** The declarations of one top-level rule of a generated tokens.css. */
@@ -210,7 +121,7 @@ function themeCss(): string {
 }
 
 function build(): string[] {
-  const issues = [...directoryIssues(), ...brandIdIssues(), ...keySetIssues(), ...accentIssues(), ...colorRuleIssues()]
+  const issues = [...directoryIssues(), ...keySetIssues(), ...accentIssues()]
   if (issues.length) return issues
   const failed = brandIds.flatMap((brand) => runBrand(brand, "build"))
   if (failed.length) return failed
@@ -221,9 +132,9 @@ function build(): string[] {
 }
 
 function check(): string[] {
-  const issues = [...directoryIssues(), ...brandIdIssues()]
+  const issues = directoryIssues()
   if (issues.length) return issues
-  return [...keySetIssues(), ...accentIssues(), ...colorRuleIssues(), ...brandIds.flatMap((brand) => runBrand(brand, "check"))]
+  return [...keySetIssues(), ...accentIssues(), ...brandIds.flatMap((brand) => runBrand(brand, "check"))]
 }
 
 const [command = "build"] = process.argv.slice(2)

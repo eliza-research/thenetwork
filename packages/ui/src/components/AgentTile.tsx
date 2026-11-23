@@ -16,7 +16,7 @@ export type AgentTileProps = Omit<HTMLAttributes<HTMLElement>, "children" | "onC
 
 const tile = cn(
   focusRing,
-  "grid size-12 shrink-0 place-items-center rounded-lg border border-border bg-transparent text-foreground transition duration-base ease-standard hover:-translate-y-0.5 hover:border-foreground hover:bg-inverse hover:text-inverse-foreground active:scale-95 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+  "grid size-12 shrink-0 place-items-center rounded-lg border border-border bg-transparent text-foreground transition duration-base ease-standard hover:-translate-y-0.5 hover:border-foreground hover:bg-foreground hover:text-background active:scale-95 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
 );
 
 /**
