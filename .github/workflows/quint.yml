@@ -24,7 +24,7 @@ on:
       - '.github/workflows/quint.yml'
       - '.github/actions/setup-quint/**'
   push:
-    branches: [main, develop]
+    branches: [main, develop, vibestack]
     paths: *quint-paths
   workflow_dispatch:
 

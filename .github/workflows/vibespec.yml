@@ -2,7 +2,7 @@ name: Vibestack
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, vibestack]
     paths:
       - 'spec/**'
       - '!spec/models/**'
@@ -70,7 +70,7 @@ concurrency:
 
 jobs:
   full-check:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main' || github.base_ref == 'vibestack'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
@@ -123,7 +123,7 @@ jobs:
         env:
           TOOLS: ${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}
           ACTION_TOOLS: ${{ hashFiles('tools/vibestack/vibestack/action.ts', 'tools/vibestack/vibestack/run.ts', 'tools/vibestack/vibestack/simulator.ts') }}
-          RESTORE: ${{ (github.event_name == 'workflow_dispatch' && !inputs.cold_formal_cache) || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
+          RESTORE: ${{ (github.event_name == 'workflow_dispatch' && !inputs.cold_formal_cache) || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main' || github.base_ref == 'vibestack')) }}
         run: |
           printf '%s\n' "restore=$RESTORE" "complete=formal-full-complete-v3-$TOOLS-$ACTION_TOOLS-" \
             "previous=formal-full-complete-v3-$TOOLS-" "complete_v2=formal-full-complete-v2-$TOOLS-" \
@@ -186,7 +186,7 @@ jobs:
         id: shards
         shell: bash
         env:
-          ENABLED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
+          ENABLED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main' || github.base_ref == 'vibestack')) }}
           COLD: ${{ github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache }}
           MATCHED: ${{ steps.formal-retry.outputs.cache-matched-key || steps.formal-complete.outputs.cache-matched-key }}
         run: |
