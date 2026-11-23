@@ -811,9 +811,14 @@ function consentScan(body: string): Consent & { separateYes?: boolean } {
     const interest = /^(?:i'?m |i am )?interested[.!]?\s*$/.test(lead.slice(0, boundary));
     return { answer: "counter", why: "counter", separateYes: (affirmAt < boundary || interest) && shared.answer !== "no" };
   }
-  // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
-  // two disagree the member is asked again, never booked.
-  if (affirmAt < Infinity) return shared.answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal or a hedge:
+  // when the two disagree the member is asked again, never booked. A reading that is unsure only because
+  // it found no word it knows ("aight", "I'm game") or only about the time (this reader reads the time
+  // options itself) is no veto.
+  if (affirmAt < Infinity) {
+    const veto = shared.answer === "no" || (shared.answer === "unsure" && !shared.counter && shared.reason !== "no_signal");
+    return veto ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  }
   return { answer: "unclear", why: qualifiedWithdrawal ? "hedged" : "none" };
 }
 

@@ -24,7 +24,10 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   const degree = new Map<MemberId, number>();
   for (const x of pairs) for (const id of x.c.participants) degree.set(id, (degree.get(id) ?? 0) + 1);
   const capacity = (id: MemberId) => w.match.profileIn(id, SLOP_MATCH_LANE)?.capacity ?? 0;
-  const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+  // Interruption budget (ME-002): proposals in the budget period. Asks are not counted here: a missing
+  // hard field already holds the member back (needs_answer), and the Network sends one open question at a time.
+  const budgetLeft = (id: MemberId) => { const mi = w.get(id)!; return w.cfg.budgets[mi.m.state].limit - mi.recentProactive; };
+  const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity && budgetLeft(id) > 0;
   const debt = (id: MemberId) => Math.min(C.debtCap, Math.max(0, ctx.debt[id] ?? 0));
   const edges: Edge[] = [];
   for (const x of pairs) {
@@ -44,7 +47,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   const baseRounds = Math.max(0, Math.min(Math.floor(C.perMemberPerTick), totalRounds)) || 0;
   let run = step(initial, { type: "configureAssignment", totalRounds, baseRounds });
   const withinBackupDegree = (e: Edge) => Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.backupMaxDegree;
-  const hasRoom = (id: MemberId) => memberCount(run.memberCounts, id) < capacity(id);
+  const hasRoom = (id: MemberId) => memberCount(run.memberCounts, id) < Math.min(capacity(id), budgetLeft(id));
   // spec/slopAssignment.md, "Each pair can be reserved once and each member can participate once per round"
   const tryReserve = (e: Edge): boolean => {
     if (!hasRoom(e.a) || !hasRoom(e.b) || !canReservePair(run, pairKey(e.a, e.b), e.a, e.b, withinBackupDegree(e))) return false;
