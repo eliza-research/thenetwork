@@ -33,7 +33,7 @@
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
 import { relayEnvelopeTextAllowed, relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
-import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, relayMinorEstimate, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -260,7 +260,7 @@ export function classifyRelayText(text: string): { codes: string[]; minorSignal:
   const lower = normalized.toLowerCase();
   const ageText = normalizeAgeInitialism(lower);
   const ageVariants = ageText === lower ? vs : textVariants(ageText);
-  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
+  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
 }
 
 // ----------------------------------------------------------------------------------- photo ids
@@ -942,12 +942,16 @@ function privateCourtesy(sentence: string): boolean {
     || (polite !== null && PRIVATE_RELAY_COURTESY.test(words.slice(polite[0].length)));
 }
 
+function normalizeRelayStatement(statement: string): string {
+  return statement.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are")
+    .replace(/^(i|we)'ve\b/u, "$1 have");
+}
+
 function independentRenewalFollowup(sentence: string): boolean {
   const words = sentence.trim().toLowerCase();
   if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
   const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
-  const body = envelope?.at(-1) ?? words;
-  const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+  const statement = normalizeRelayStatement(envelope?.at(-1) ?? words);
   if (!envelope) return INDEPENDENT_RENEWAL_STATUS.test(statement);
   return PRIVATE_CONDITION_STATEMENT.test(statement) && !PRIVATE_CONDITION_ITEM_NAME.test(statement)
     && !PRIVATE_RELAY_ACTION.test(statement) && !PRIVATE_RELAY_UNCERTAIN.test(statement)
@@ -957,12 +961,14 @@ function independentRenewalFollowup(sentence: string): boolean {
 function detachedRelayStatement(after: string): boolean {
   const lead = /^\s*\.\s*(?:to be clear|with that settled),\s*/iu.exec(after);
   if (!lead) return false;
-  const statement = after.slice(lead[0].length).trim().replace(/[.!]+$/, "").toLowerCase();
-  if (independentRenewalFollowup(statement)) return true;
+  // The exception applies only to a complete standalone status and its optional time.
+  const statement = normalizeRelayStatement(after.slice(lead[0].length).trim().replace(/[.!]+$/, "").toLowerCase());
+  if (INDEPENDENT_RENEWAL_STATUS.test(statement)) return true;
   const timeAt = statement.lastIndexOf(" at ");
+  if (timeAt < 0) return false;
   const timing = statement.slice(timeAt);
-  return timeAt >= 0 && LINKED_PRIVATE_TIME.exec(timing)?.[0] === timing
-    && independentRenewalFollowup(statement.slice(0, timeAt));
+  return LINKED_PRIVATE_TIME.exec(timing)?.[0] === timing
+    && INDEPENDENT_RENEWAL_STATUS.test(statement.slice(0, timeAt));
 }
 
 function privateRelayTimingIsUncertain(text: string, ordinaryBody: { start: number; end: number } | undefined): boolean {

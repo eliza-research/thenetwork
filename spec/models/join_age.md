@@ -12,7 +12,7 @@ The [shared-line enrollment spec](../textEnrollment.md) generates app routing, t
 
 The [near-birthday rule](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) supplies the parser's age estimate. This model uses 17 as the minor representative for a near eighteenth birthday, and retains the same adult and minimum-age boundaries.
 
-The [fractional age and conjunction rule](../memberAge.md#a-half-age-needs-age-wording-to-confirm-an-under-13-refusal) supplies the current age and its explicit flag. The model takes these fields as input. A signed-turn regression checks how the readers produce the fields.
+The [fractional age and conjunction rule](../memberAge.md#a-half-age-needs-age-wording-to-confirm-an-under-13-refusal) supplies the current age and its explicit flag. The model takes these fields as input. The signed relay cases check how the turn reader excludes a measurement or a complete adult role while retaining a separate credible youth disclosure.
 
 Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

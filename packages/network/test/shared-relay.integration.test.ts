@@ -474,6 +474,7 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
     ["Please send this photo to Herman when you can.", "block"],
     ["Please send this photo to her and Ana.", "none"],
     ["Please send him this photo to Ana.", "none"],
+    ["Please send Elle this photo. With that settled, tell them I'm at work. Over to Ana.", "none"],
   ].entries()) {
     const messageId = "delegated-selected-photo-" + index;
     clock.advance(MINUTE / 6);

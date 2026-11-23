@@ -311,8 +311,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHost(u.hostname))) throw new Error(`the issuer for ${a.id} must be https (http only on a loopback host)`);
     if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
   }
-  const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
-  const browserCookie = (a: McpApp) => (secureCookies(a) ? "__Host-mcp_auth" : "mcp_auth");
+  const secureCookies = (a: McpApp) => new URL(issuerOf(a)).protocol === "https:";
+  const browserCookie = (a: McpApp) => secureCookies(a) ? "__Host-mcp_auth" : `mcp_auth_${a.id}`;
   let lastSweep = 0;
 
   const resourceFor = (issuer: string, surface: Surface) => `${issuer}${surface === "openai" ? "/mcp/openai" : "/mcp"}`;
@@ -621,7 +621,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function liveRequest(c: Ctx, form: URLSearchParams) {
     const rid = form.get("rid") ?? "";
     const r = rid ? await store.getAuthRequest(rid) : undefined;
-    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.app));
+    const cookies = c.req.headers.get("cookie");
+    const browser = cookieValue(cookies, browserCookie(c.app))
+      ?? (secureCookies(c.app) ? undefined : cookieValue(cookies, "mcp_auth"));
     if (!r) return undefined;
     const sameApp = r.app === c.app.id;
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
