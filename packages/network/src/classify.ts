@@ -832,11 +832,15 @@ function partOf(minute: number): TimeMention["part"] {
   return minute >= 5 * 60 && minute < 12 * 60 ? "morning" : minute >= 12 * 60 && minute < 17 * 60 ? "afternoon" : "evening";
 }
 
+function probeChoiceAuthored(prefix: string): boolean {
+  return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]/).at(-1)!);
+}
+
 function timeMentions(text: string, recoverTrailingPair: boolean): TimeMention[] {
   const days = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
   if (recoverTrailingPair) {
     for (const pair of text.matchAll(TRAILING_BOTH_DAY_PAIR)) {
-      if (quoteStillOpen(text.slice(0, pair.index))) continue;
+      if (!probeChoiceAuthored(text.slice(0, pair.index + 1))) continue;
       const tail = text.slice(pair.index + pair[0].length);
       if (!BOTH_TIME_QUALIFIER.test(tail) && !BOTH_TIME_TAIL.test(tail.split(BOTH_TIME_BOUNDARY, 1)[0]!)) continue;
       const [at, end] = pair.indices!.groups!.last!;
@@ -996,8 +1000,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       || weakNegated) return { ...unclear, why: "slot" };
     const bothCues = weakCues.filter(cue => {
       if (cue.index! >= weakLimit || !cue[0].startsWith("both")) return false;
-      const before = t.slice(0, cue.index!);
-      return !quoteStillOpen(before) && !describesAnotherPerson(before.split(/[.!?\n]/).at(-1)!);
+      return probeChoiceAuthored(t.slice(0, cue.index!));
     });
     if (bothCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
     const namesPair = bothCues.some(cue => {
