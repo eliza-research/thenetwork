@@ -382,6 +382,7 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   let priorChecks = 0, priorErrors = 0, memoryChecks = 0, memoryErrors = 0;
   const bookings = { crewMeetups: 0, slotConflicts: 0, overCapBookings: 0, duplicateCrewWeeks: 0 };
   const selections = { feasible: 0, firstUnavailable: 0, missed: 0, cancelledSeats: 0 };
+  const feedbackClock = { pending: 0, earlyFeedback: 0, earlyPositive: 0, invalidEdges: 0, boundaries: 0, boundaryFailures: 0 };
   let metEvents = 0, wrongMetTimes = 0;
   const metKey = (a: MemberId, b: MemberId, at: number) => `${[a, b].sort().join("|")}|${at}`;
   for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
@@ -408,6 +409,34 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
       const matcher = matchers[arm];
       const delegate = typeof matcher === "function" ? matcher(w) : matcher;
       return { ...delegate, propose(ctx) {
+        if (arm === "pack" && seed === spec.seeds[0]) {
+          const { snapshot } = ctx;
+          const pending = w.state.feedback.filter(reply => reply.at > snapshot.now);
+          const pendingIds = new Set(pending.map(reply => JSON.stringify([reply.opportunityId, reply.from])));
+          const replyEdges = new Set(w.state.feedback.filter(reply => reply.wouldMeetAgain)
+            .map(reply => JSON.stringify([reply.from, reply.about, reply.at])));
+          feedbackClock.pending += pending.length;
+          feedbackClock.earlyFeedback += snapshot.feedback.filter(reply => reply.at > snapshot.now).length;
+          feedbackClock.earlyPositive += snapshot.outcomes.reduce((count, outcome) => count
+            + outcome.positive.filter(id => pendingIds.has(JSON.stringify([outcome.planId, id]))).length, 0);
+          feedbackClock.invalidEdges += snapshot.edges.filter(edge => edge.type === "would_interact_again"
+            && (edge.createdAt > snapshot.now || !replyEdges.has(JSON.stringify([edge.from, edge.to, edge.createdAt])))).length;
+
+          const sample = pending.find(reply => reply.wouldMeetAgain && w.state.outcomes.some(outcome =>
+            outcome.planId === reply.opportunityId && outcome.positive.includes(reply.from)));
+          if (sample) {
+            const before = buildFriendsSnapshot(w.personas, { ...w.state, now: sample.at - 1 });
+            const received = buildFriendsSnapshot(w.personas, { ...w.state, now: sample.at });
+            const hasReply = (s: FriendsSnapshot) => s.feedback.some(reply => reply.id === sample.id);
+            const hasPositive = (s: FriendsSnapshot) => s.outcomes.some(outcome =>
+              outcome.planId === sample.opportunityId && outcome.positive.includes(sample.from));
+            const hasReplyEdge = (s: FriendsSnapshot) => s.edges.some(edge => edge.type === "would_interact_again"
+              && edge.from === sample.from && edge.to === sample.about && edge.createdAt === sample.at);
+            feedbackClock.boundaries++;
+            if (hasReply(before) || hasPositive(before) || hasReplyEdge(before)
+              || !hasReply(received) || !hasPositive(received) || !hasReplyEdge(received)) feedbackClock.boundaryFailures++;
+          }
+        }
         const offered = delegate.propose(ctx);
         offered.forEach((proposal, index) => {
           if (proposal.kind === "partner") proposals.set(`w${ctx.week}:${index}:partner`, proposal);
@@ -493,6 +522,10 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   b.gate("harness: mutually available pairs use a free offered time and cancelled plans reserve no seats",
     selections.feasible > 0 && selections.missed === 0 && selections.cancelledSeats === 0, JSON.stringify(selections));
   b.gate("harness: met edges use actual meetup times", metEvents > 0 && wrongMetTimes === 0, `${wrongMetTimes} mismatches across ${metEvents} events`);
+  b.gate("harness: Friends publishes feedback and derived signals at receipt",
+    (o.quick || feedbackClock.pending > 0 && feedbackClock.boundaries > 0)
+      && feedbackClock.earlyFeedback + feedbackClock.earlyPositive + feedbackClock.invalidEdges + feedbackClock.boundaryFailures === 0,
+    JSON.stringify(feedbackClock));
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);

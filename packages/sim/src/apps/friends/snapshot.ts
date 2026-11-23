@@ -18,6 +18,7 @@
 //   fact            verify:liveness:<r>, verify:age:<r>  agent_private (r: pass, fail or pending; info.ts VERIFY_PASS)
 //   fact            safety:<cue>                         agent_private, inferred
 //   Intent          category "social", "meet people nearby to do things with"
+import { slopSimulationFeedbackReceived as simulationFeedbackReceived } from "../../../../core/src/generated/slopSimulationFeedback.ts";
 import { DAY, canBeMatched, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
 import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
@@ -184,6 +185,14 @@ export function emptyFriendsState(): FriendsNetworkState {
 
 export function buildFriendsSnapshot(personas: readonly FriendsPersona[], state: FriendsNetworkState): FriendsSnapshot {
   const members: Member[] = [], facets: Facet[] = [], intents: Intent[] = [], presence: Presence[] = [];
+  // Sunday replies may arrive after Monday's planner. Keep their positive outcome signals pending too.
+  const pendingAnswers = new Map<string, Set<MemberId>>();
+  for (const reply of state.feedback) {
+    if (reply.opportunityId === undefined || simulationFeedbackReceived(reply.at, state.now)) continue;
+    const pending = pendingAnswers.get(reply.opportunityId) ?? new Set<MemberId>();
+    pending.add(reply.from);
+    pendingAnswers.set(reply.opportunityId, pending);
+  }
   const joinedAt = FRIENDS_WORLD_START;
   for (const p of personas) {
     members.push(friendsMemberOf(p, joinedAt));
@@ -192,10 +201,10 @@ export function buildFriendsSnapshot(personas: readonly FriendsPersona[], state:
     presence.push({ memberId: p.id, city: "nyc", type: "home", areas: [hoodOf(p.stated.home).name, ...p.stated.often.map(h => hoodOf(h).name)] });
   }
   return {
-    now: state.now, members, facets, intents, presence, edges: state.edges.map(e => ({ ...e })), recentProposals: [],
-    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.map(f => ({ ...f })), safetyHolds: state.safetyHolds.map(h => ({ ...h })),
+    now: state.now, members, facets, intents, presence, edges: state.edges.filter(e => simulationFeedbackReceived(e.createdAt, state.now)).map(e => ({ ...e })), recentProposals: [],
+    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.filter(f => simulationFeedbackReceived(f.at, state.now)).map(f => ({ ...f })), safetyHolds: state.safetyHolds.map(h => ({ ...h })),
     crews: state.crews.map(c => ({ ...c, members: [...c.members], sessions: [...c.sessions] })), offered: state.offered.map(c => ({ ...c })),
-    outcomes: state.outcomes.map(o => ({ ...o })), checkIns: Object.fromEntries([...state.checkIns].map(([k, v]) => [k, [...v]])),
+    outcomes: state.outcomes.map(o => ({ ...o, positive: o.positive.filter(id => !pendingAnswers.get(o.planId)?.has(id)) })), checkIns: Object.fromEntries([...state.checkIns].map(([k, v]) => [k, [...v]])),
     lastPlannedAt: Object.fromEntries(state.lastPlannedAt), week: state.week,
   };
 }
