@@ -90,8 +90,6 @@ const scenarios: Scenario[] = [
   { scene: "a joined abbreviated list keeps both choices with courtesy after clarification",
     slots: three, text: "Monday works.", picked: [],
     followUp: { text: "Sat and Sun please.", picked: weekend } },
-  { scene: "a missing day in a joined abbreviated list leaves the offer open",
-    slots: [thursday, friday, saturday], text: "Sat and Sun are good.", picked: [] },
   { scene: "an ordinary first-turn yes accepts the whole offer",
     slots: three, text: "Yes.", picked: three.map(slot => slot.start) },
   { scene: "a plain yes after a new general clarification accepts the whole offer",

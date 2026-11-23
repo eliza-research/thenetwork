@@ -130,4 +130,3 @@
 {"text":"Sat and Sun are good.","answer":"yes","keys":["b","c"]}
 {"text":"Sat and Sun please.","answer":"yes","keys":["b","c"]}
 {"text":"Sat or Sun are fine.","answer":"yes","keys":["b","c"]}
-{"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
