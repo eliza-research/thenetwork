@@ -1276,6 +1276,14 @@
         "417e6c44294d",
         "873aff669d03"
       ],
+      "Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question": [
+        "bd0375670fc2",
+        "54c1a0d18207"
+      ],
+      "Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target": [
+        "205cc0f318fc",
+        "19c535c3c418"
+      ],
       "Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave": [
         "a0068a169ab4",
         "c32f1cdc792e"
@@ -1549,6 +1557,10 @@
         "38e56eeba9e9",
         "b63c3a9cbbe1",
         "5ce71ae12e9d"
+      ],
+      "Story: Take part in adult matching / Quoted age evidence does not change the sender": [
+        "0004b0c7acf6",
+        "c4ec5a5c752e"
       ],
       "Story: Take part in adult matching / Project a committed age using its original owner": [
         "08a44e16b9eb",

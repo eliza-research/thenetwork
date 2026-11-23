@@ -229,6 +229,73 @@ pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf
   reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) implies receivedAt >= askedAt
 ```
 
+### An unrelated reply keeps a current safety question
+
+This rule applies when the reply reaches the app that holds the safety question. A signed reply can answer or close it only if the gateway received the reply at or after the question opened and at or before the current time. An exact allowed name answers the question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting.
+
+An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. Without a competing prompt, a direct unnamed rejection such as "not him" or "it was someone else" can end the question in the same way. An incidental mention does not count as a rejection. A competing prompt can still handle the reply after cancellation or exclusion.
+
+Read a bare confirmation, refusal, or cancellation as a control reply, even when the words match a member's name. A control reply cannot select an exact name on the current app or on another app. A member can give a full name or use "I mean" to name someone in the current app when their displayed name matches a control reply.
+
+When the reply supplies no allowed target, cancellation, or exclusion, a competing prompt keeps the safety question open. A bare yes or no can answer that prompt. Without another prompt, a short unresolved reply ends the question. A longer unrelated reply keeps it available through the one-day reply window. After that window, the stored question cannot intercept a reply or delay an invitation survey.
+
+```quint
+pure def safetyQuestionIsCurrent(askedAt: int, oldestQuestion: int): bool = askedAt >= oldestQuestion
+
+pure def lawExpiredSafetyQuestionCannotAct(askedAt: int, oldestQuestion: int): bool =
+  askedAt < oldestQuestion implies not(safetyQuestionIsCurrent(askedAt, oldestQuestion))
+
+pure def safetyQuestionAcceptsName(confirmation: bool, refusal: bool, cancellation: bool): bool =
+  not(confirmation or refusal or cancellation)
+
+pure def lawSafetyControlCannotNameTarget(confirmation: bool, refusal: bool, cancellation: bool): bool =
+  (confirmation or refusal or cancellation) implies not(safetyQuestionAcceptsName(confirmation, refusal, cancellation))
+
+pure def safetyQuestionAppliesTarget(allowedTarget: bool, excludesTarget: bool): bool =
+  allowedTarget and not(excludesTarget)
+
+pure def safetyQuestionResolves(allowedTarget: bool, competingPrompt: bool, cancels: bool, excludesTarget: bool, shortReply: bool): bool =
+  safetyQuestionAppliesTarget(allowedTarget, excludesTarget) or cancels or excludesTarget or (not(competingPrompt) and shortReply)
+
+pure def lawCompetingPromptKeepsUnresolvedSafety(shortReply: bool): bool =
+  not(safetyQuestionResolves(false, true, false, false, shortReply))
+
+pure def lawCancellationResolvesSafety(competingPrompt: bool, shortReply: bool): bool =
+  safetyQuestionResolves(false, competingPrompt, true, false, shortReply)
+
+pure def lawAllowedTargetResolvesSafety(competingPrompt: bool, cancels: bool, shortReply: bool): bool =
+  safetyQuestionResolves(true, competingPrompt, cancels, false, shortReply)
+
+pure def lawTargetExclusionClosesWithoutFiling(allowedTarget: bool, competingPrompt: bool, shortReply: bool): bool =
+  safetyQuestionResolves(allowedTarget, competingPrompt, false, true, shortReply) and
+    not(safetyQuestionAppliesTarget(allowedTarget, true))
+
+pure def lawLongUnrelatedReplyKeepsSafety(competingPrompt: bool): bool =
+  not(safetyQuestionResolves(false, competingPrompt, false, false, false))
+```
+
+### A complete name or confirmation identifies one safety target
+
+A fixed affirmative prefix or courtesy suffix can accompany the full name. If the literal and qualified readings identify different people, the answer is ambiguous.
+
+A bare affirmative or a complete positive expression such as "him" or "that's her" can use the sole person offered only when no other prompt is waiting. A pronoun followed by another suggestion, a refusal, or a question cannot select the offered person.
+
+Shared-line routing requires a unique exact displayed name across the active app questions. An unnamed confirmation cannot choose the app.
+
+```quint
+pure def safetyQuestionUsesSoleOffer(soleOffer: bool, competingPrompt: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+  soleOffer and not(competingPrompt) and exactConfirmation and not(hasNamedMatch)
+
+pure def lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, true, exactConfirmation, hasNamedMatch))
+
+pure def lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: bool, competingPrompt: bool, hasNamedMatch: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, false, hasNamedMatch))
+
+pure def lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: bool, competingPrompt: bool, exactConfirmation: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true))
+```
+
 ### A ban allows only carrier commands and app leave
 
 A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.

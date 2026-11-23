@@ -5,7 +5,7 @@
 //  - 18+: full membership (romance and other adult-only features stay 18+).
 // Missing or invalid ages fail closed: they cannot join and cannot be matched.
 
-import { adultAge, ageConjunctionAllowed, ageInRange, ageQualifierFollows, fractionalAgeEvidence, joinableAge, matchableAge, maxAge, minMemberAge, precedingBirthdayAge } from "./generated/memberAge.ts";
+import { adultAge, ageConjunctionAllowed, ageInRange, ageQualifierFollows, fractionalAgeEvidence, joinableAge, matchableAge, maxAge, minMemberAge, ownAgeEvidenceAllowed, ownYouthCueAllowed, precedingBirthdayAge } from "./generated/memberAge.ts";
 
 // spec/memberAge.md, "Age data outside the human range is unusable"
 export const MIN_MEMBER_AGE = minMemberAge;
@@ -74,23 +74,81 @@ export function normalizeAgeInitialism(text: string): string {
  * are not quotes. A quote that has closed is not open: `he said "hi" I'm 15` is a real age.
  */
 export function quoteStillOpen(prefix: string): boolean {
-  let double = false, single = false;
-  for (let i = 0; i < prefix.length; i++) {
-    const c = prefix[i]!;
-    const prev = i > 0 ? prefix[i - 1]! : "";
-    const next = i + 1 < prefix.length ? prefix[i + 1]! : "";
-    if (c === "\"") {
-      // 6" is inches, unless this mark closes a quote that is already open.
-      if (!double && /[0-9]/.test(prev)) continue;
-      double = !double;
-      continue;
-    }
-    if (c !== "'") continue;
-    if (/[a-z0-9]/.test(prev) && /[a-z0-9]/.test(next)) continue;
-    if (!single && (/[0-9]/.test(prev) || /[a-z]/.test(prev))) continue;
-    single = !single;
+  return quoteInSpan(prefix, prefix.length, prefix.length) !== undefined;
+}
+
+/** Check the exact evidence span in the normalized message, across sentence boundaries. */
+export function unquotedOwnAgeEvidence(text: string, start: number, end: number): boolean {
+  return ownAgeEvidenceAllowed(quoteInSpan(text, start, end) !== undefined);
+}
+
+const OWN_QUOTE = /^\s*(?:(?:yesterday|today|earlier|last night|this morning)\s*,?\s+)?(?:i(?:'ve|ve|'d|d)?\s+(?:(?:just|already|literally|basically|actually|honestly)\s+)?(?:said|told|texted|wrote|replied|posted|messaged|asked)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?|i(?:'m| am)\s+quoting myself)\s*[:,]?\s*$/;
+const SPEECH_FRAME = /(?:\b(?:say|said|says|tell|told|tells|text|texted|texts|message|messaged|write|wrote|writes|quote|quoted|reply|replied|asked|asks|posted|read|reads|whispered|translate|forwarded|was like|is like)\b[^.!?;\n]*|\b(?:line|draft|dialogue|script|example|excerpt|lyrics?|caption|transcript|screenshot|prompt|meme)\s*[:,]?\s*)$/;
+const LEADING_ELISION = /^(?:cause|cos|coz|cuz|bout|round|kay|nother|em|sup|til|till|tis|twas)\b/;
+const ELISION_QUOTE_INTRODUCTION = /(?:\b(?:say|said|says|told|texted|wrote|replied|asked|whispered)(?:\s+(?:me|him|her|them|you))?\s*,?|:)\s*$/;
+const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
+const beforeQuote = (text: string, at: number, start = 0): string => text.slice(start, at).split(/[.!?;\n]/).at(-1)!;
+
+/** A repeat of the sender's own disclosure or an unfinished casual aside can still be a youth cue. */
+export function ownYouthCue(text: string, start: number, end: number): boolean {
+  const quote = quoteInSpan(text, start, end);
+  if (!quote) return ownYouthCueAllowed(false, false, false);
+  const before = beforeQuote(text, quote.at);
+  const ownAttribution = OWN_QUOTE.test(before)
+    && (quote.innerAt === undefined || OWN_QUOTE.test(beforeQuote(text, quote.innerAt, quote.at + 1)));
+  const unfinishedCasual = quote.innerAt === undefined && !SPEECH_FRAME.test(before) && !hasClosingQuote(text, quote);
+  return ownYouthCueAllowed(true, ownAttribution, unfinishedCasual);
+}
+
+type Quote = { at: number; mark: "'" | '"'; innerAt?: number };
+
+function hasClosingQuote(text: string, quote: Quote): boolean {
+  for (let at = text.indexOf(quote.mark, quote.at + 1); at >= 0; at = text.indexOf(quote.mark, at + 1)) {
+    if (quoteDelimiter(text, at, true)) return true;
   }
-  return double || single;
+  return false;
+}
+
+function nextApostropheClosesQuote(text: string, after: number): boolean {
+  for (let at = text.indexOf("'", after + 1); at >= 0; at = text.indexOf("'", at + 1)) {
+    if (!WORD_CHARACTER.test(text[at + 1] ?? "")) return true;
+    if (!WORD_CHARACTER.test(text[at - 1] ?? "") && !LEADING_ELISION.test(text.slice(at + 1))) return false;
+  }
+  return false;
+}
+
+function quoteDelimiter(text: string, at: number, closing: boolean): boolean {
+  const prev = text[at - 1] ?? "", next = text[at + 1] ?? "";
+  if (text[at] === '"') return closing || !/\d/.test(prev);
+  const followsWord = WORD_CHARACTER.test(prev);
+  if (followsWord && WORD_CHARACTER.test(next)) return false;
+  const after = text.slice(at + 1);
+  const leadingElision = !followsWord && LEADING_ELISION.test(after);
+  if (closing) {
+    // A plural possessor can appear before the actual closing mark of the same quote.
+    const possessive = /s/i.test(prev) && /^[ \t]+\p{L}/u.test(after) && nextApostropheClosesQuote(text, at);
+    return !leadingElision && !possessive;
+  }
+  if (followsWord) return false;
+  const before = text.slice(0, at);
+  if (/^\d{2}\b/.test(after) && /\bclass of\s*$/i.test(before)) return false;
+  if (!leadingElision) return true;
+  const frame = beforeQuote(text, at);
+  return ELISION_QUOTE_INTRODUCTION.test(frame) && SPEECH_FRAME.test(frame);
+}
+
+function quoteInSpan(text: string, start: number, end: number): Quote | undefined {
+  let doubleAt = -1, singleAt = -1;
+  const active = (): Quote | undefined => {
+    if (doubleAt >= 0 && (singleAt < 0 || doubleAt < singleAt)) return { at: doubleAt, mark: '"', innerAt: singleAt >= 0 ? singleAt : undefined };
+    if (singleAt >= 0) return { at: singleAt, mark: "'", innerAt: doubleAt >= 0 ? doubleAt : undefined };
+  };
+  for (let i = 0; i < end; i++) {
+    if (i >= start && (doubleAt >= 0 || singleAt >= 0)) return active();
+    if (text[i] === '"' && quoteDelimiter(text, i, doubleAt >= 0)) doubleAt = doubleAt < 0 ? i : -1;
+    if (text[i] === "'" && quoteDelimiter(text, i, singleAt >= 0)) singleAt = singleAt < 0 ? i : -1;
+  }
+  return active();
 }
 
 
@@ -147,7 +205,7 @@ export function relayMinorAge(text: string, includeUpcoming = false): number | u
       const at = reading.index + reading[0].indexOf(digits);
       // The dot in 18.5 cannot start a new age at the digit 5.
       if (normalized[at - 1] === "." && /\d/.test(normalized[at - 2] ?? "")) continue;
-      if (quoteStillOpen(normalized.slice(0, at))) continue;
+      if (!unquotedOwnAgeEvidence(normalized, at, at + digits.length)) continue;
       if (rule === AGE_FORM_EXPLICIT_PART &&
           agePartEvidenceOf(Number(digits), reading[2]!, normalized.slice(reading.index + reading[0].length), false) !== "FractionalAgeExplicit") continue;
       const approximate = rule === AGE_FORM_NEAR_BIRTHDAY;

@@ -17,7 +17,7 @@
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
 import { slopRadiusContextAllowed, slopRadiusMilesInBounds, slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, NOT_DISTANT_BIRTHDAY, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, NOT_DISTANT_BIRTHDAY, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, ownYouthCue, tryChatJson, unquotedOwnAgeEvidence } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -210,7 +210,9 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
     for (const r of AGE_RULES) for (const m of all(r.rx, s.text)) {
       if (r.rx === LETTER_FIRST_AGE && !selfLetterAge(s.text, m)) continue;
       const lead = m[0].length - m[0].trimStart().length;
-      if (quoteStillOpen(t.slice(0, s.start + m.index + lead)) || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
+      const start = s.start + m.index;
+      if (!unquotedOwnAgeEvidence(t, start + lead, start + m[0].length)
+        || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
       const after = s.text.slice(m.index + m[0].length);
       if (KIN_AFTER.test(after)) continue;
       const rawAge = r.age(m);
@@ -226,8 +228,11 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
       }
     }
     for (const r of MINOR_SIGNS) for (const m of all(r.rx, s.text)) {
+      const start = s.start + m.index;
+      const end = start + m[0].length;
+      if (!ownYouthCue(t, start, end)) continue;
       out.minor ??= cand(true as const, s, m, 0.9);
-      const a = r.age?.(m);
+      const a = r.age && unquotedOwnAgeEvidence(t, start, end) ? r.age(m) : undefined;
       if (a !== undefined && a >= 10 && a < 18 && (!out.age || a < out.age.value)) { out.age = cand(a, s, m, 0.85); out.strict = false; }
     }
   }

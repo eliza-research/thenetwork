@@ -751,6 +751,68 @@ module safety_trust {
     }
   }
 
+  // The language shell supplies a complete positive confirmation of the offer. The pending
+  // model stores a single proposed target, so offered abstracts the sole displayed choice.
+  pure def safetyQuestionUsesSoleOffer(soleOffer: bool, competing: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+    soleOffer and not(competing) and exactConfirmation and not(hasNamedMatch)
+
+  action answerWhoBySoleOffer(m: Mid, competing: bool, exactConfirmation: bool, explicitlyNamed: bool): bool =
+    all {
+      safetyQuestionUsesSoleOffer(s.pendingWho.get(m).offered, competing, exactConfirmation and not(explicitlyNamed), false),
+      answerWho(m),
+    }
+
+  // No allowed name or explicit cancellation. A competing prompt, or a long unrelated answer,
+  // leaves the current question available. Other actions model what the reply does after fallback.
+  action keepWhoAfterUnrelatedReply(m: Mid, competing: bool, shortReply: bool): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      competing or not(shortReply),
+      s' = { ...s, lastAction: "whoReplyPreserved" },
+    }
+  }
+
+  pure def safetyQuestionAcceptsName(confirmation: bool, refusal: bool, cancellation: bool): bool =
+    not(confirmation or refusal or cancellation)
+
+  // The reader preserves Unicode word boundaries and reads the complete reply before it strips
+  // courtesy words. An explicitly marked name does not become an implicit control.
+  pure def safetyQuestionNamedReading(confirmation: bool, refusal: bool, cancellation: bool, explicitlyNamed: bool): bool =
+    safetyQuestionAcceptsName(not(explicitlyNamed) and confirmation, not(explicitlyNamed) and refusal, cancellation)
+
+  action receiveWhoControl(m: Mid, competing: bool, refuses: bool, cancels: bool): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      competing or refuses or cancels,
+      s' = if (cancels or (refuses and not(competing)))
+        { ...s, pendingWho: s.pendingWho.set(m, NO_WHO), lastAction: "whoControlClosed" }
+      else
+        { ...s, lastAction: "whoControlForwarded" },
+    }
+  }
+
+  // The reader has identified an explicit exclusion of the sole offered counterpart. A
+  // competing prompt can still handle the message, but no report can use the expired choice.
+  action excludeWhoTarget(m: Mid): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, p.offered, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      s' = { ...s, pendingWho: s.pendingWho.set(m, NO_WHO), lastAction: "whoTargetExcluded" },
+    }
+  }
+
+  // An out-of-order signed receipt cannot answer or clear an otherwise current question.
+  action staleSignedWhoReply(m: Mid, receivedAt: int): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      receivedAt < p.at or s.now < receivedAt,
+      s' = { ...s, lastAction: "whoSignedReplyStale" },
+    }
+  }
+
   pure def currentWhoOffer(st: State, m: Mid, name: str): bool = {
     val p = st.pendingWho.get(m)
     val target = midOf(st, m.app, name)
@@ -758,15 +820,17 @@ module safety_trust {
       and st.live.get(target) and counterpart(st, m, target)
   }
 
-  // The shared route sees one exact name. The same active offer must still be usable under the app lock.
+  // The shared route matches an exact displayed name, including an affirmative or courtesy
+  // qualifier that leaves an exact name. A pronoun does not choose an app. The same active
+  // offer must still be usable under the app lock.
   // An explicit app has its own existing local answer path, modeled by answerWho.
-  action answerWhoShared(m: Mid, ordinaryApp: str, explicit: bool): bool = {
+  action answerWhoShared(m: Mid, ordinaryApp: str, explicit: bool, exactNamedChoice: bool): bool = {
     val p = s.pendingWho.get(m)
     val other = midOf(s, ordinaryApp, m.p)
     val matches = liveMidsOf(s, m.p).filter(member => currentWhoOffer(s, member, p.target))
     all {
       p.asked, s.live.get(m), inboundOk(s, m.p), ordinaryApp != m.app, s.live.get(other),
-      if (not(explicit) and matches.size() == 1)
+      if (not(explicit) and exactNamedChoice and matches.size() == 1)
         answerWho(matches.fold(NOBODY, (_, member) => member))
       else s' = { ...s, lastAction: "whoSharedPreserved" },
     }
@@ -1061,7 +1125,12 @@ module safety_trust {
       disclose(k, app, a, meant, kind, flag),
       report(a, app, b, verb, kind, flag),
       answerWho(m),
-      answerWhoShared(m, app, flag),
+      answerWhoBySoleOffer(m, flag, flag2, risk == 2),
+      keepWhoAfterUnrelatedReply(m, flag, flag2),
+      receiveWhoControl(m, flag, flag2, risk == 1),
+      excludeWhoTarget(m),
+      staleSignedWhoReply(m, if (flag) s.pendingWho.get(m).at - 1 else s.now + 1),
+      answerWhoShared(m, app, flag, flag2),
       abuse(m, risk),
       staffHoldBy(m, scope, onlyRep),
       staffHoldApply(m),
@@ -1713,6 +1782,70 @@ module safety_trust {
       .then(answerWho(ANA_S))
       .expect(s.reports.exists(r => r.reporter == ANA_S and r.met) and everyMetReportFiled)
 
+  run soleWhoOfferNeedsCompleteConfirmationTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .expect(not(safetyQuestionUsesSoleOffer(true, false, false, false)) and
+        not(safetyQuestionUsesSoleOffer(true, true, true, false)) and
+        not(safetyQuestionUsesSoleOffer(true, false, true, true)))
+      .then(answerWhoShared(ANA_S, "peon", false, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set())
+      .then(answerWhoBySoleOffer(ANA_S, false, true, false))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.subject == BEN_S))
+
+  run unmatchedExplicitNameDoesNotUseSoleOfferTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(answerWhoBySoleOffer(ANA_S, false, true, true).fail())
+
+  run unrelatedRepliesKeepWhoTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(keepWhoAfterUnrelatedReply(ANA_S, true, true))
+      .then(keepWhoAfterUnrelatedReply(ANA_S, false, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.pendingWho.get(ANA_S).target == "ben" and s.reports == Set())
+      .then(answerWho(ANA_S))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.reporter == ANA_S and r.met))
+
+  run bareSafetyControlsDoNotNameTargetTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .expect(not(safetyQuestionNamedReading(true, false, false, false)) and
+        not(safetyQuestionNamedReading(false, true, false, false)) and
+        not(safetyQuestionNamedReading(false, false, true, true)) and
+        safetyQuestionNamedReading(false, true, false, true))
+      .then(receiveWhoControl(ANA_S, true, false, false))
+      .then(receiveWhoControl(ANA_S, true, true, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set() and s.personBlocks == Set())
+      .then(receiveWhoControl(ANA_S, false, true, false))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.personBlocks == Set())
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(receiveWhoControl(ANA_S, true, false, true))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.personBlocks == Set())
+
+  run excludedTargetCannotBeConfirmedTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(excludeWhoTarget(ANA_S))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set())
+      .then(answerWho(ANA_S).fail())
+
+  run staleSignedWhoReplyKeepsCurrentQuestionTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(tick(1))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(staleSignedWhoReply(ANA_S, 0))
+      .then(staleSignedWhoReply(ANA_S, 2))
+      .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set() and s.personBlocks == Set())
+      .then(answerWho(ANA_S))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.reporter == ANA_S and r.met))
+
   // ------------------------------------------------------------------ wave 4 run tests
   pure val CY_S1: Mid = { app: "slop", p: "cy", g: 1 }
 
@@ -1758,7 +1891,7 @@ module safety_trust {
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(everyMetReportFiled and s.reports.exists(r => r.subject == BEN_S and r.met)
               and not(s.reports.exists(r => r.subject == BEN_P)) and not(s.pendingWho.get(ANA_S).asked))
 
@@ -1768,24 +1901,24 @@ module safety_trust {
       .then(bookDate("o2", "peon", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
       .then(report("ana", "peon", "ben", "report", "harassment", true))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(s.reports == Set() and s.pendingWho.get(ANA_S).asked and s.pendingWho.get(ANA_P).asked)
 
   run sharedWhoDoesNotOverrideAnExplicitAppOrUseExpiredOffersTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
-      .then(answerWhoShared(ANA_S, "peon", true))
+      .then(answerWhoShared(ANA_S, "peon", true, true))
       .expect(s.reports == Set() and s.pendingWho.get(ANA_S).asked)
       .then(tick(2))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(s.reports == Set() and everyMetReportFiled)
 
   run sharedWhoDoesNotUseANameThatWasNeverOfferedTest =
     init
       .then(report("ana", "slop", "ben", "report", "harassment", true))
       .then(bookDate("o1", "slop", "ana", "ben"))
-      .then(answerWhoShared(ANA_S, "peon", false))
+      .then(answerWhoShared(ANA_S, "peon", false, true))
       .expect(s.reports == Set() and everyMetReportFiled and not(s.pendingWho.get(ANA_S).offered))
 
   // W3-221: ana’s urgent report commits after leave consent. Forget keeps the exact report restriction.
