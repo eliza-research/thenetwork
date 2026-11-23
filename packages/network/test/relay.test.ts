@@ -556,8 +556,8 @@ test.each([
 ])("a signed relay envelope applies only an authored withdrawal: $text", async ({ text, body, decision, withdraws }) => {
   const id = "relay-envelope-withdrawal-" + randomUUID();
   const pair = ++envelopeWithdrawalPair;
-  const senderPhone = "+12125550" + (150 + 2 * pair);
-  const recipientPhone = "+12125550" + (151 + 2 * pair);
+  const senderPhone = "+16465550" + (150 + 2 * pair);
+  const recipientPhone = "+16465550" + (151 + 2 * pair);
   async function enroll(phone: string, name: string) {
     for (const [index, line] of ["friends.help", name + ", 29", "I enjoy hiking and cooking",
       "Saturday afternoons work for me", "Small groups are good"].entries()) {
