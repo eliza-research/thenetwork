@@ -537,7 +537,7 @@ const LATE_PRIVATE_RETRACTION = new RegExp(
   "iu",
 );
 const LATE_ORPHAN_QUESTION = /[.!;…\n][ \t]*\?{2,}[ \t]*(?=$|[.!;…\n])/u;
-const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said|asks?|asked|(?:tells?|told)\s+(?:me|us))\s*$/iu;
+const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
 const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;

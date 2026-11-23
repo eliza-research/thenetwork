@@ -373,7 +373,9 @@ test.each([
   const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
   expect(original).toBeDefined();
 
-  await open(phones.bo, id + "-followup", text);
+  clock.advance(MINUTE);
+  const messageId = id + "-followup";
+  expect((await signed(TURN_PATH, messageId, JSON.stringify(turn(phones.bo, messageId, text)))).status).toBe(200);
   expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
   expect(await (await post(await ask("ari", id + "-second", "send Bo my number"))).json())
     .toMatchObject({ decision: "pass", delivered: false });
@@ -387,6 +389,7 @@ test.each([
   { text: "Scratch that. Send him my number.", shares: true },
   { text: "Send him my number. Ana says, scratch that.", shares: true },
   { text: "Send him my photo, Ana said. Please send him my number.", shares: true },
+  { text: "Send them my number, she already asked.", shares: true },
   { text: "Send him my number. Don't send my photo. Or my number.", shares: false },
   { text: "Don't send my photo. My number neither. Send him my number.", shares: false },
   { text: "Send him my number. Don't send my photo. Same goes for my cell.", shares: false },
