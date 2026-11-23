@@ -531,11 +531,13 @@ const CONTINUES_PRIVATE_REFUSAL = new RegExp(
 const RELAY_SHORT_RETRACTION = "no|wait|cancel|(?:hold|hang) on";
 const RELAY_EXPLICIT_RETRACTION = "scratch that|cancel that|take that back|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
 const RELAY_LATE_DOUBT = "maybe|hmm|idk|(?:i(?:'m| am) )?(?:not ready|reconsidering)|on second thought|let me think|ugh actually";
+const RELAY_RETRACTION_OPENER = "actually|wait|sorry|lol|ok(?:ay)?|oh|ugh";
+const RELAY_UNPUNCTUATED_DOUBT = String.raw`on second thought[,;:\s–—]+|let me think(?:\s+(?:about|over|on|through)\s+(?:it|this|that))?(?:\s+(?:first|more|again|a bit))?\s*(?:[,;:–—]\s*|$)`;
 const RELAY_STOP_SYMBOL = String.raw`[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*`;
 const RELAY_ITEM_SYMBOL = String.raw`[📞📸][\p{M}]*`;
 const RELAY_MARKED_STOP = String.raw`(?:${RELAY_STOP_SYMBOL}(?:\s*${RELAY_ITEM_SYMBOL})?|${RELAY_ITEM_SYMBOL}\s*${RELAY_STOP_SYMBOL})`;
 const LATE_PRIVATE_RETRACTION = new RegExp(
-  String.raw`^[,\s–—]*(?:(?:actually|wait|sorry)[,\s]+)?(?:${RELAY_SHORT_RETRACTION}|${RELAY_EXPLICIT_RETRACTION}|${RELAY_LATE_DOUBT}|` +
+  String.raw`^[,\s–—]*(?:(?:${RELAY_RETRACTION_OPENER})[,\s]+)?(?:${RELAY_SHORT_RETRACTION}|${RELAY_EXPLICIT_RETRACTION}|${RELAY_LATE_DOUBT}|` +
   String.raw`(?:${RELAY_MARKED_STOP}\s*)+)` +
   String.raw`(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$`,
   "iu",
@@ -543,20 +545,20 @@ const LATE_PRIVATE_RETRACTION = new RegExp(
 const LATE_ORPHAN_QUESTION = /[.!;…\n][ \t]*\?{2,}[ \t]*(?=$|[.!;…\n])/u;
 // Short cues need punctuation to mark a retraction. "Wait in the lobby" is a different request.
 const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
-  String.raw`^[,\s–—]*(?:and\s+)?(?:(?:actually|wait|sorry)[,\s]+)?(?:(?:${RELAY_SHORT_RETRACTION}|${RELAY_LATE_DOUBT})\s*[,;:–—]\s*|` +
-  String.raw`(?:${RELAY_EXPLICIT_RETRACTION})[,;:\s–—]+)`,
+  String.raw`^[,\s–—]*(?:and\s+)?(?:(?:${RELAY_RETRACTION_OPENER})[,\s]+)?(?:(?:${RELAY_SHORT_RETRACTION}|${RELAY_LATE_DOUBT})\s*[,;:–—]\s*|` +
+  String.raw`(?:${RELAY_EXPLICIT_RETRACTION})[,;:\s–—]+|${RELAY_UNPUNCTUATED_DOUBT})`,
   "iu",
 );
 const LATE_PRIVATE_STOP_LEAD = new RegExp(String.raw`^[,\s–—]*${RELAY_MARKED_STOP}[,;:\s–—]+`, "u");
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
-const PRIVATE_CONDITION_MARKER = String.raw`if|when|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when(?:ever)?|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
 const TRAILING_PRIVATE_CONDITION = new RegExp(
   String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b.*)$`,
   "iu",
 );
 const POLITE_PRIVATE_CONDITION =
-  /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when\s+you\s+(?:can|get a chance|have a chance))\b/iu;
+  /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when(?:ever)?\s+you\s+(?:can|get a chance|have a chance))\b|^whenever(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)))?/iu;
 const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
 const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
