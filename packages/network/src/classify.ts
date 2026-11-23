@@ -950,9 +950,13 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
   if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
-  const allAt = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t) ?? ALL_WEAK.exec(t);
+  // A weak cue ("both", "either") beside named times names those times: it adds no time the member
+  // did not name. A bare weak cue, with no time named and nothing refused, still takes every open option.
+  const strongAll = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t);
+  const allAt = strongAll ?? (explicitTimesOnly ? null : ALL_WEAK.exec(t));
   if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
+    if (!strongAll && !neg.size && picked.length) return explicitYes(picked);
     return open.length ? explicitYes(open) : { ...unclear, why: "slot" };
   }
   if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };

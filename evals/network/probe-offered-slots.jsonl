@@ -33,3 +33,9 @@
 {"text": "Evenings work", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
 {"text": "Yes, evenings are pretty open", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
 {"text": "Evening", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
+{"text":"both Saturday and Sunday","answer":"yes","keys":["b","c"]}
+{"text":"Saturday and Sunday both work","answer":"yes","keys":["b","c"]}
+{"text":"both Sat and Sun","answer":"yes","keys":["b","c"]}
+{"text":"both Thursday and Sunday work","answer":"yes","keys":["a","c"]}
+{"text":"Saturday and Sunday, either is fine","answer":"yes","keys":["b","c"]}
+{"text":"both of those work","answer":"yes","keys":["a","b","c"]}
