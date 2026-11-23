@@ -195,6 +195,66 @@ export function agePartEvidenceOf(age: number, part: string, after: string, atCl
 const AGE_FORM_EXPLICIT_PART = new RegExp(`${AGE_FORM_START}${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(\\d{1,2})(${AGE_PART})`, "g");
 const AGE_FORM_NEAR_BIRTHDAY = new RegExp(`${AGE_FORM_START}${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(\\d{1,2})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`, "g");
 
+const RELAY_AGE_WORDS: Record<string, number> = { thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18 };
+const RELAY_NEXT_AGE = `(1[3-8]|${Object.keys(RELAY_AGE_WORDS).join("|")})\\b`;
+const RELAY_AGE_APPROXIMATION = "(?:almost|nearly|turning|about to (?:be|turn))\\s+";
+const RELAY_NEAR_BIRTHDAY = `(?:${AGE_BIRTHDAY_AFTER_AGE}|(?:\\s*${BIRTHDAY_AGE_MARKER})?${BIRTHDAY_SEPARATOR}(?:today|this\\s+(?:week|month|year))\\b)`;
+const RELAY_QUOTE_END = String.raw`(?=\s*["'])`;
+const RELAY_BIRTHDAY_END = `(?:${AGE_BIRTHDAY_END}|${RELAY_QUOTE_END})`;
+const RELAY_ESTIMATE_END = `(?:${RELAY_NEAR_BIRTHDAY}${RELAY_BIRTHDAY_END}|(?:\\s*${BIRTHDAY_AGE_MARKER})?(?:${AGE_FORM_END}|${RELAY_QUOTE_END}))`;
+const RELAY_BIRTHDAY_ESTIMATES = [
+  new RegExp(`\\b${AGE_FORM_SELF}${RELAY_AGE_APPROXIMATION}${RELAY_NEXT_AGE}${RELAY_ESTIMATE_END}`, "g"),
+  new RegExp(`\\bi(?:(?:'ll| will) be| turn)\\s+${RELAY_NEXT_AGE}${RELAY_NEAR_BIRTHDAY}${RELAY_BIRTHDAY_END}`, "g"),
+  new RegExp(`^${RELAY_AGE_APPROXIMATION}${RELAY_NEXT_AGE}(?:${RELAY_NEAR_BIRTHDAY})?\\s*[.!]*$`, "g"),
+  new RegExp(`^${RELAY_NEXT_AGE}${RELAY_NEAR_BIRTHDAY}\\s*[.!]*$`, "g"),
+];
+const RELAY_GRADE = "(?:6|7|8|9|10|11|12)(?:st|nd|rd|th)?";
+const RELAY_SCHOOL_YEAR = "freshman|sophomore|junior|senior";
+const RELAY_SCHOOL_ESTIMATE = new RegExp(
+  String.raw`\b${AGE_FORM_SELF}(?:in\s+(?:the\s+)?(?:${RELAY_GRADE}|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\s+grade|a\s+${RELAY_GRADE}\s+grader|` +
+  String.raw`(?:a\s+)?(?:${RELAY_SCHOOL_YEAR})\s+(?:in|at)\s+(?:high school|hs)|a\s+(?:high school|hs)\s+(?:${RELAY_SCHOOL_YEAR}|student))\b` +
+  String.raw`(?=\s*(?:$|[.!?,;:)"']|and\b|but\b|here\b|now\b|lol\b|btw\b|tho(?:ugh)?\b))`,
+  "g",
+);
+const RELAY_SCHOOL_ROLE = String.raw`as\s+(?:a|an|the)\s+(?:teacher|coach|counselor|principal|nurse|tutor|librarian|aide|staff(?: member)?)\b`;
+const RELAY_SCHOOL_ROLE_BEFORE = new RegExp(String.raw`(?:^|,)\s*${RELAY_SCHOOL_ROLE}(?:\s+(?:at|for|of|in)\b[^,]*)?\s*,?\s*$`);
+const RELAY_SCHOOL_ROLE_AFTER = new RegExp(
+  String.raw`^\s*,?\s*${RELAY_SCHOOL_ROLE}(?:\s+(?:at|for|of|in)\s+[^.!?,;:)"'\n]+)?(?=\s*(?:$|[.!?,;:)"']))`,
+);
+const RELAY_ESTIMATE_HYPOTHETICAL = /\b(?:if|unless|when|imagine|pretend(?:ing)?(?: that)?|as if|as though|feel like|heard)\s*,?\s*$/;
+
+function ownsRelayEstimate(text: string, start: number, end: number): boolean {
+  const quote = quoteInSpan(text, start, end);
+  if (quote) return ownYouthCue(text, start, end);
+  const prefix = beforeQuote(text, start).split(/\b(?:but|however|although)\b/).at(-1)!;
+  if (RELAY_ESTIMATE_HYPOTHETICAL.test(prefix)) return false;
+  if (!SPEECH_FRAME.test(prefix)) return true;
+  const last = text.slice(0, start).replace(/[\s,]+(?:(?:and(?:\s+then)?|then)\s*)?$/, "").length - 1;
+  const closed = last >= 0 && quoteInSpan(text, last, last + 1);
+  return !!closed && closed.mark === text[last] && quoteDelimiter(text, last, true);
+}
+
+/** Read an age or school estimate for relay moderation without projecting a member age. */
+export function relayMinorEstimate(text: string): boolean {
+  const normalized = normalizeAgeInitialism(text.normalize("NFKC").trim().toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"'));
+  for (const rule of RELAY_BIRTHDAY_ESTIMATES) {
+    for (const reading of normalized.matchAll(rule)) {
+      const value = reading[1]!;
+      const upcoming = RELAY_AGE_WORDS[value] ?? Number(value);
+      if (!canBeMatched(precedingBirthdayAge(upcoming)) && ownsRelayEstimate(normalized, reading.index!, reading.index! + reading[0].length)) return true;
+    }
+  }
+  for (const reading of normalized.matchAll(RELAY_SCHOOL_ESTIMATE)) {
+    const start = reading.index!, end = start + reading[0].length;
+    // A completed role describes the speaker. A teacher's words can instead explain the student's grade.
+    const followingRole = RELAY_SCHOOL_ROLE_AFTER.exec(normalized.slice(end));
+    const adultRole = RELAY_SCHOOL_ROLE_BEFORE.test(beforeQuote(normalized, start))
+      || (!!followingRole && !SPEECH_FRAME.test(followingRole[0]));
+    if (!adultRole && ownsRelayEstimate(normalized, start, end)) return true;
+  }
+  return false;
+}
+
 /** Read a direct age disclosure in the limited relay forms. A birthday estimate can only flag the item. */
 export function relayMinorAge(text: string, includeUpcoming = false): number | undefined {
   const normalized = normalizeAgeInitialism(text.trim().toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"'));
