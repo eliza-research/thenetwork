@@ -587,6 +587,17 @@ const INCOMPLETE_CONDITION_ACTION = new RegExp(
   String.raw`\b(?:(?:do|handle|take care of)(?:\s+(?:it|that|this))?|(?:${TRANSFER}|show|tell)|tell\s+${OTHER}\s+(?:it|that|this))(?:\s+(?:now|then|myself))?\s*$`,
   "u",
 );
+const LINKED_PRIVATE_OBJECT = String.raw`(?:(?<contact>${CONTACT_RELAY_ITEM})|(?<photo>${PHOTO_RELAY_ITEM})|it|this|that)\b`;
+const LINKED_PRIVATE_SEND = new RegExp(
+  String.raw`\b(?:${TRANSFER}|show)\s+(?:(?<recipient>${OTHER})\s+)?${LINKED_PRIVATE_OBJECT}(?:\s+(?:to|with)\s+(?<destination>${OTHER}))?`, "iu",
+);
+const LINKED_PRIVATE_ACCESS = new RegExp(
+  String.raw`\b(?!(?:you|u|we|i)\b)(?<recipient>${OTHER})\s+(?:can|could|may)\s+have\s+${LINKED_PRIVATE_OBJECT}`, "iu",
+);
+const LINKED_PRIVATE_LEAD = /^[\s,:–—]*(?:(?:and|but|then|only)[,\s:–—]+)*/iu;
+const PRIVATE_RECIPIENT_REFERENCE = /^(?:he|she|they|him|her|them|my\s+(?:match|date))$/i;
+const PRIVATE_NOTICE_THEN = /^\s*(?:please\s+)?(?:tell\s+(?:me|us)|let\s+(?:me|us)\s+know)\s+[^,]+,\s*(?=then\b)/iu;
+const LINKED_PRIVATE_TIME = /^[\s,–—]*(?:on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+week|at\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|noon|midnight|(?:[01]?\d|2[0-3])(?::[0-5]\d)?(?:\s*[ap]m)?))\b/iu;
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -663,16 +674,52 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   return true;
 }
 
-function conditionsPrivateRequest(text: string, source: string, start: number): boolean {
+function linkedPrivateTransfer(sentence: string): RegExpExecArray | undefined {
+  return [LINKED_PRIVATE_SEND.exec(sentence), LINKED_PRIVATE_ACCESS.exec(sentence)].find(transfer => transfer !== null
+    && DIRECT_RELAY_LEAD.test(sentence.slice(0, transfer.index).replace(LINKED_PRIVATE_LEAD, ""))) ?? undefined;
+}
+
+function namedPrivateRecipient(transfer: RegExpExecArray | undefined): string | undefined {
+  const name = (transfer?.groups?.destination ?? transfer?.groups?.recipient)?.toLowerCase();
+  return name && !PRIVATE_RECIPIENT_REFERENCE.test(name) ? name : undefined;
+}
+
+function linkedTransferIsConditional(sentence: string, source: string, request: RegExpMatchArray, contact: boolean): boolean {
+  const lead = PRIVATE_NOTICE_THEN.exec(sentence)?.[0].length ?? 0;
+  const transfer = linkedPrivateTransfer(sentence.slice(lead));
+  if (!transfer || (contact ? transfer.groups?.photo : transfer.groups?.contact)) return false;
+  const recipient = namedPrivateRecipient(transfer);
+  const selected = recipient && namedPrivateRecipient(linkedPrivateTransfer(request[0]));
+  if (selected && selected !== recipient) return false;
+  const end = lead + transfer.index + transfer[0].length;
+  const tail = sentence.slice(end);
+  const attribution = /[,–—][^,–—]*$/u.exec(tail);
+  if (sentence.slice(0, end) !== source.slice(0, end) || attribution && PRIVATE_RELAY_POST_ATTRIBUTION.test(attribution[0])) return false;
+  const time = LINKED_PRIVATE_TIME.exec(tail);
+  return privateClauseIsConditional(tail, source.slice(end), false)
+    || (time !== null && tail === source.slice(end) && PRIVATE_RELAY_COURTESY.test(tail.slice(time[0].length)));
+}
+
+function conditionsPrivateRequest(text: string, source: string, start: number, request: RegExpMatchArray, contact: boolean): boolean {
   const clause = text.slice(start).split(RELAY_SENTENCE, 1)[0]!;
-  if (privateClauseIsConditional(clause, source.slice(start, start + clause.length), false)) return true;
+  const requestTail = source.slice(start, start + clause.length);
+  if (privateClauseIsConditional(clause, requestTail, false) || linkedTransferIsConditional(clause, requestTail, request, contact)) return true;
   const boundary = /^[.!?;…\n]+\s*/u.exec(text.slice(start + clause.length));
   if (!boundary) return false;
   const adjacentStart = start + clause.length + boundary[0].length;
   const remaining = text.slice(adjacentStart);
-  const adjacent = remaining.split(RELAY_SENTENCE, 1)[0]!;
-  if (remaining[adjacent.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(adjacent)) return false;
-  return privateClauseIsConditional(adjacent, source.slice(adjacentStart, adjacentStart + adjacent.length), true);
+  let adjacent = true;
+  for (const part of remaining.matchAll(RELAY_SENTENCE_TEXT)) {
+    const sentence = part[0];
+    const offset = adjacentStart + part.index!;
+    const authored = source.slice(offset, offset + sentence.length);
+    if (adjacent && text[offset + sentence.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(sentence)) return false;
+    if (adjacent && privateClauseIsConditional(sentence, authored, true)
+      || linkedTransferIsConditional(sentence, authored, request, contact)) return true;
+    if (authored !== sentence || !independentRenewalFollowup(sentence)) return false;
+    adjacent = false;
+  }
+  return false;
 }
 
 function colloquialRetractionLead(sentence: string, contact: boolean): string | undefined {
@@ -737,7 +784,7 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
     const renewal = ownStatement && (retracted || lead !== undefined)
       ? privateRenewalEnd(sentence.slice(prefix.length), request, referenceAvailable && (adjacentPause || lead !== undefined))
       : undefined;
-    if (renewal !== undefined && !conditionsPrivateRequest(text, source, start + prefix.length + renewal)) {
+    if (renewal !== undefined && !conditionsPrivateRequest(text, source, start + prefix.length + renewal, request, contact)) {
       renewedAfterPause ||= retracted;
       retracted = false;
       referenceAvailable = true;
@@ -805,7 +852,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
     const hedged = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
-      || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length)
+      || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
       || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
