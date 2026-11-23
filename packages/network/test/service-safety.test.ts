@@ -385,7 +385,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const askSlop = async (id: string) => {
       const at = clock.now();
       expect(await signed(id, "Report him, he harassed me.", "slop")).toMatchObject({
-        outcome: "handled", app: "slop", replies: [expect.stringContaining(`Who do you mean: ${otherNames?.[0] ?? "Ben"}?`)],
+        outcome: "handled", app: "slop", replies: [expect.stringContaining(`Who do you mean: ${otherNames?.[0].split(" ", 1)[0] ?? "Ben"}?`)],
       });
       expect(await pending("slop")).toMatchObject({ at, targets: [slopBen] });
       clock.advance(MINUTE);
@@ -524,6 +524,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     { name: "Naw", reply: "naw", probeReply: undefined },
     { name: "Sure", reply: "sure", probeReply: "available" },
     { name: "Okay", reply: "okay", probeReply: "available" },
+    { name: "No Thanks", reply: "No thanks", probeReply: "unavailable" },
+    { name: "Sure Thing", reply: "Sure thing", probeReply: "available" },
+    { name: "Not Now", reply: "Not now", probeReply: "unavailable" },
   ];
   for (const { name, reply, probeReply } of safetyControlCases) {
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"

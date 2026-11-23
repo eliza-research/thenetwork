@@ -168,17 +168,26 @@ export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind
 const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
   .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
 
+function safetyReplyConsent(text: string) {
+  return consentOf(text.replace(/(?![\x00-\x7F])[\p{L}\p{M}\p{N}]/gu, "_")).answer;
+}
+
 const CONFIRM_SAFETY_QUESTION = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|correct|that's (?:him|her|them))[.!,\s]*$/i;
 const CANCEL_SAFETY_QUESTION = /^[^\p{L}\p{M}\p{N}_]*(?:never ?mind|nvm|forget it|cancel that)[^\p{L}\p{M}\p{N}_]*$/iu;
 const NO_SAFETY_TARGET = /^[^\p{L}\p{M}\p{N}_]*(?:nobody|no one|none|no|nope|nah|naw)[^\p{L}\p{M}\p{N}_]*$/iu;
+const SAFETY_TARGET_PREFIX = /^(?:i (?:mean|meant)|it'?s)\s+/;
 
 function safetyQuestionReply(text: string) {
   const normalized = text.normalize("NFKC").replace(/[‘’]/g, "'").replace(/\s+/g, " ");
   const confirms = CONFIRM_SAFETY_QUESTION.test(normalized);
   const refuses = NO_SAFETY_TARGET.test(normalized);
   const cancels = CANCEL_SAFETY_QUESTION.test(normalized);
-  const confirmationWord = CONFIRM_SAFETY_QUESTION.test(safetyName(text));
-  return { confirms, refuses, cancels, acceptsName: safetyQuestionAcceptsName(confirmationWord, refuses, cancels) };
+  const name = safetyName(text);
+  const explicitlyNamed = SAFETY_TARGET_PREFIX.test(name);
+  const consent = safetyReplyConsent(normalized);
+  const implicitConfirmation = !explicitlyNamed && (consent === "yes" || CONFIRM_SAFETY_QUESTION.test(name));
+  const implicitRefusal = !explicitlyNamed && (consent === "no" || refuses);
+  return { confirms, refuses, cancels, acceptsName: safetyQuestionAcceptsName(implicitConfirmation, implicitRefusal, cancels) };
 }
 
 function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
@@ -193,8 +202,8 @@ function excludesSoleSafetyTarget(text: string, names: readonly (string | undefi
 
 export function pendingReportReplyName(text: string): string | undefined {
   const body = text.trim();
-  if (!safetyQuestionReply(body).acceptsName || ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || consentOf(body).answer !== "unclear") return;
-  const name = safetyName(body.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
+  if (!safetyQuestionReply(body).acceptsName || ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || safetyReplyConsent(body) !== "unclear") return;
+  const name = safetyName(body).replace(SAFETY_TARGET_PREFIX, "");
   return name || undefined;
 }
 
@@ -2562,7 +2571,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return false;
     const text = body.trim();
     const reply = safetyQuestionReply(text);
-    const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
+    const name = safetyName(text).replace(SAFETY_TARGET_PREFIX, "");
     const exact = reply.acceptsName ? this.resolveTarget(m, name, p.verb === "report").target : undefined;
     const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && safetyName(value) === name) ? exact : undefined;
     const competing = m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);

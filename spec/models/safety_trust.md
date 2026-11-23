@@ -752,6 +752,14 @@ module safety_trust {
     }
   }
 
+  pure def safetyQuestionAcceptsName(confirmation: bool, refusal: bool, cancellation: bool): bool =
+    not(confirmation or refusal or cancellation)
+
+  // The reader preserves Unicode word boundaries and reads the complete reply before it strips
+  // courtesy words. An explicitly marked name does not become an implicit control.
+  pure def safetyQuestionNamedReading(confirmation: bool, refusal: bool, cancellation: bool, explicitlyNamed: bool): bool =
+    safetyQuestionAcceptsName(not(explicitlyNamed) and confirmation, not(explicitlyNamed) and refusal, cancellation)
+
   action receiveWhoControl(m: Mid, competing: bool, refuses: bool, cancels: bool): bool = {
     val p = s.pendingWho.get(m)
     all {
@@ -1753,6 +1761,10 @@ module safety_trust {
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .expect(not(safetyQuestionNamedReading(true, false, false, false)) and
+        not(safetyQuestionNamedReading(false, true, false, false)) and
+        not(safetyQuestionNamedReading(false, false, true, true)) and
+        safetyQuestionNamedReading(false, true, false, true))
       .then(receiveWhoControl(ANA_S, true, false, false))
       .then(receiveWhoControl(ANA_S, true, true, false))
       .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set() and s.personBlocks == Set())
