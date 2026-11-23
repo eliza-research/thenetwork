@@ -464,21 +464,28 @@ const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|ra
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
-const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass|forward|text)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
-const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward|pass|show)\\s+(?:this|that|the|these|my)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\s+(?:to|with)\\s+${OTHER}`, "iu");
+const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass|forward|text)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "giu");
+const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward|pass|show)\\s+(?:this|that|the|these|my)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\s+(?:to|with)\\s+${OTHER}`, "giu");
+const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
+const RELAY_ASIDE = /^\s*i(?:'ll\s+not|\s+(?:can'?t|cannot|couldn'?t|didn'?t|mustn'?t|won'?t|wouldn'?t|(?:can|could|did|will|would|must)\s+not))\s+\S/i;
+const INCOMPLETE_RELAY_ASIDE = /\b(?:to|that|if|and|or|because|for|with)\s*$/i;
+const RELAY_SPEECH_CUE = /\b(?:say|says|said|tell|tells|told|ask|asks|asked|asking|hear|heard|quote|quoted|reply|replied|repeat|repeated|report|reported|instruct|instructed|request|requested|let|letting)\b/i;
+
 const RELAY_MODAL = /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\s+(?:please\s+)?/i;
 const TEXT_REQ = new RegExp(`^(?:please\\s+)?(tell|let|ask)\\s+(${OTHER})\\s+(know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
+const TEXT_PRIVATE_DIRECTIVE_LEAD = /^\s*(?:(?:\p{L}[\p{L}'-]*\s+)?to\s+|you\s+(?:can|may|should|must)\s+)?(?:(?:please|just|kindly|pls)\s+)*$/iu;
 const IMPLICIT_RELAY_TARGET = /^(?:them|him|her|my (?:match|date))$/i;
 const SHARE_CONDITION = /\b(?:if|when)\s+(?:she|he|they|my (?:match|date))(?:(?:'s|'re)|\s+(?:is|are))?\s+(?:asks?|wants?|requests?|ready|interested|says?\s+(?:so|yes|ok(?:ay)?))\b/;
 const SHARE_DEFERRED = /\b(?:(?:when|once)\s+(?:we(?:'re)?|i)\s+(?:meet|see\s+(?:him|her|them|each other)|get together|together)|after\s+(?:our|my|the)\s+(?:first\s+)?date|next\s+(?:week|month)|this\s+(?:week|weekend)|in a (?:few days|week|month)|(?:on|this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/;
 const SHARE_QUALIFIER = new RegExp(String.raw`^[\s,:]*(?:(?:only|please)\s+)*(?:${SHARE_CONDITION.source}|${SHARE_DEFERRED.source})`);
 
-function privateShareQualified(text: string, request: RegExpExecArray): boolean {
-  const after = text.slice(request.index + request[0].length).toLowerCase();
+function privateShareQualified(text: string, request: RegExpMatchArray): boolean {
+  const index = request.index!;
+  const after = text.slice(index + request[0].length).toLowerCase();
   if (SHARE_QUALIFIER.test(after)) return true;
 
   // A leading qualifier must end at the request. Leave prior sentences outside its scope.
-  const before = text.slice(0, request.index).toLowerCase().split(/[.!?;]+/).at(-1) ?? "";
+  const before = text.slice(0, index).toLowerCase().split(/[.!?;]+/).at(-1) ?? "";
   const qualifier = SHARE_QUALIFIER.exec(before);
   return qualifier !== null && /^[\s,:]*$/.test(before.slice(qualifier[0].length));
 }
@@ -503,7 +510,21 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
 const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;
 
-const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"').replace(RELAY_QUOTATION, " ").trim();
+// Keep offsets so a request can be compared with the actual words before it.
+const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"')
+  .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length));
+
+function directRelayLead(prefix: string): boolean {
+  // Treat a complete quoted sentence as a boundary without reading its words as consent.
+  const clause = prefix.replace(/[“”]/g, '"')
+    .replace(RELAY_QUOTATION, quotation => /[.!?…]\s*["']$/.test(quotation) ? ";" : " ")
+    .split(/[.!?;…\n]+/).at(-1)!;
+  if (DIRECT_RELAY_LEAD.test(clause)) return true;
+  const comma = clause.lastIndexOf(",");
+  const aside = clause.slice(0, comma);
+  return comma >= 0 && RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)
+    && DIRECT_RELAY_LEAD.test(clause.slice(comma + 1).replace(/^\s*(?:but|however)\b/i, ""));
+}
 
 // spec/relayDecision.md, "A member can take back a pending number swap"
 function refusesNumberSwap(clauses: readonly string[]): boolean {
@@ -518,7 +539,7 @@ function refusesNumberSwap(clauses: readonly string[]): boolean {
 const relayClauses = (text: string): string[] => text.replace(SWAP_GO_AHEAD, " ").split(RELAY_CLAUSE);
 
 export function withdrawsRelaySwap(text: string): boolean {
-  return refusesNumberSwap(relayClauses(ownRelayWords(text.replace(/[’‘`´]/g, "'")).toLowerCase()));
+  return refusesNumberSwap(relayClauses(ownRelayWords(text.replace(/[’‘`´]/g, "'")).trim().toLowerCase()));
 }
 
 /**
@@ -528,20 +549,31 @@ export function withdrawsRelaySwap(text: string): boolean {
  */
 export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
+  const own = ownRelayWords(t);
+  const spoken = own.trim();
+  const start = own.length - own.trimStart().length;
+  const contacts = [...spoken.matchAll(CONTACT_REQ)];
+  const photos = [...spoken.matchAll(PHOTO_REQ)];
+  const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!));
+  const contact = contacts.find(direct);
+  const privateRequest = contact ?? photos.find(direct);
   const modal = RELAY_MODAL.exec(t);
   const envelope = TEXT_REQ.exec(t.slice(modal?.[0].length ?? 0));
   if (envelope && (envelope[1]!.toLowerCase() !== "let" || envelope[3])) {
-    const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(envelope[4]!);
-    const body = (modal && declarative ? envelope[4]!.replace(/\?$/, "") : envelope[4]!).trim();
-    const target = envelope[2]!;
-    if (body) return { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
+    const payload = envelope[4]!;
+    const bodyStart = t.length - payload.length;
+    const delegates = (candidate: RegExpMatchArray) => TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(bodyStart, start + candidate.index!));
+    // An outer delegation does not subsume a later direct request. A declarative text body is separate.
+    if (!contacts.some(delegates) && !photos.some(delegates)) {
+      const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(payload);
+      const body = (modal && declarative ? payload.replace(/\?$/, "") : payload).trim();
+      const target = envelope[2]!;
+      if (body) return { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
+    }
   }
 
-  const spoken = ownRelayWords(t);
-  const privateModal = RELAY_MODAL.exec(spoken);
-  const contact = CONTACT_REQ.exec(spoken);
-  const privateRequest = contact ?? PHOTO_REQ.exec(spoken);
   if (privateRequest) {
+    const privateModal = RELAY_MODAL.exec(spoken);
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
     const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
@@ -551,7 +583,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const refused = clauses.some(clause => NEG.test(clause) || INCOMPLETE_SHARE_REFUSAL.test(clause)
       || (SHARE_NEG.test(clause) && (PRIVATE_RELAY_REFERENCE.test(clause)
         || (PRIVATE_RELAY_ACTION.test(clause) && PRIVATE_RELAY_ITEM.test(clause)))))
-      || (contact !== null && refusesNumberSwap(clauses));
+      || (!!contact && refusesNumberSwap(clauses));
     if (!privateRelayRequestAllowed(refused, uncertain)) return { kind: "none" };
     return { kind: contact ? "contact_share" : "photo" };
   }

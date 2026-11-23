@@ -300,3 +300,42 @@ test.each(["Ari said “Don't send my number.”", "Ari said ‘don't send it pl
     expect(await sharesQueued()).toBe(before + 2);
   }, 60_000,
 );
+
+test.each([
+  "Tell Ana to send him my number",
+  "Ask Ana to text him my number",
+  "Could you tell Ana to please give him my number?",
+  "Let Ana share my number with him",
+  "Ana says to send him my number",
+  "Ana tells me to send him my number",
+  "Ask Mary Jane to send him my number",
+  "Tell them you can send him my number",
+  "Tell Ana to show him this photo and send him my number",
+  "I want Ana to, send him my number",
+  "I would not want Ana to, send him my number",
+])("a signed delegated request cannot finish a number swap: %s", async text => {
+  const id = "delegated-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+
+  const refused = await post(await ask("bo", id + "-delegated", text));
+  expect(refused.status).toBe(200);
+  expect({ decision: (await refused.json()).decision, shares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
+    .toEqual({ decision: "none", shares: 0, pending: original });
+
+  const accepted = await post(await ask("bo", id + "-direct", "Please send Ari my number."));
+  expect(await accepted.json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test("an independent direct sentence can finish a signed number swap", async () => {
+  const id = "independent-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const text = "Tell Ana to send him my number. Please send Ari my number.";
+  expect(await (await post(await ask("bo", id + "-direct", text))).json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);

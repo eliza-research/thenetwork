@@ -108,3 +108,37 @@
 {"text":"I would not send this calendar invite, but send Ari this photo.","want":"photo"}
 {"text":"I will not wait, send them my number","want":"contact_share"}
 {"text":"I would not wait, send them my number","want":"contact_share"}
+{"text": "tell Ana to send him my number", "want": "none"}
+{"text": "ask Ana to give him my number", "want": "none"}
+{"text": "tell Sam to share my number with him", "want": "none"}
+{"text": "let Ana send him my number", "want": "none"}
+{"text": "please tell Ana to send him my number", "want": "none"}
+{"text": "tell my match to send him my number", "want": "none"}
+{"text": "Ask Ana to text him my number.", "want": "none"}
+{"text": "Could you tell Ana to please give him my number?", "want": "none"}
+{"text": "Tell Ana to send him my photo.", "want": "none"}
+{"text": "Could you let Ana show him this photo?", "want": "none"}
+{"text": "Please have Ana send this picture to my date.", "want": "none"}
+{"text": "Ana said to give him my number.", "want": "none"}
+{"text": "Ask Ana to forward this selfie to Sam.", "want": "none"}
+{"text": "I asked Ana about lunch. Can you send them my number?", "want": "contact_share"}
+{"text": "I asked Ana about lunch. Show them this photo.", "want": "photo"}
+{"text": "Tell them Ana said she'd bring coffee.", "want": "text"}
+{"text": "Tell them to send me their number.", "want": "text"}
+{"text": "Tell 'Ana' to send him my number.", "want": "none"}
+{"text": "Could you ask \u201cAna\u201d to show him this photo?", "want": "none"}
+{"text": "Ana told me \u2018Keep this private.\u2019 Send them my number.", "want": "contact_share"}
+{"text": "Ana says to send him my number", "want": "none"}
+{"text": "Ana tells me to send him my number", "want": "none"}
+{"text": "Ask Mary Jane to send him my number", "want": "none"}
+{"text": "Tell them you can send him my number", "want": "none"}
+{"text": "Tell Ana to show him this photo and send him my number", "want": "none"}
+{"text": "Tell Ana to send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Ask Mary Jane to show him this photo. Please show Ari this photo.", "want": "photo"}
+{"text": "I want you to send them my number.", "want": "contact_share"}
+{"text": "Please go ahead and show them this photo.", "want": "photo"}
+{"text": "Tell them I asked Ana to send him my number.", "want": "text"}
+{"text": "I want Ana to, send him my number", "want": "none"}
+{"text": "I have Ana assigned to, show him this photo", "want": "none"}
+{"text": "I would not want Ana to, send him my number", "want": "none"}
+{"text": "Tell them I can send them my number", "want": "text"}
