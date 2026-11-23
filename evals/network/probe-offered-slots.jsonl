@@ -50,6 +50,7 @@
 {"text":"Either Saturday or Sunday, not either.","answer":"unclear","keys":[]}
 {"text":"\"Either Saturday or Sunday\", but not both.","answer":"unclear","keys":[]}
 {"text":"sat and sun both","answer":"yes","keys":["b","c"]}
+{"text":"sat and sun both except Thursday","answer":"yes","keys":["b","c"]}
 {"text":"sat and sun both at 11am","answer":"unclear","keys":[]}
 {"text":"sat sun both","answer":"unclear","keys":[]}
 {"text":"the 2nd and 3rd both work","answer":"unclear","keys":[]}
@@ -59,3 +60,4 @@
 {"text":"Saturday works and we both like coffee.","answer":"yes","keys":["b"]}
 {"text":"Saturday works. I saw the sun both days.","answer":"yes","keys":["b"]}
 {"text":"Sunday works. We sat both times.","answer":"yes","keys":["c"]}
+{"text":"Saturday works. Ana said, Sat and Sun both.","answer":"yes","keys":["b"]}
