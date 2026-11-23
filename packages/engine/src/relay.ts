@@ -550,11 +550,14 @@ const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
 const LATE_PRIVATE_STOP_LEAD = new RegExp(String.raw`^[,\s–—]*${RELAY_MARKED_STOP}[,;:\s–—]+`, "u");
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
-const TRAILING_PRIVATE_CONDITION =
-  /^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:if|when|unless|once|after|until|provided|as\s+long\s+as|in\s+case)\b.*)$/iu;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const TRAILING_PRIVATE_CONDITION = new RegExp(
+  String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b.*)$`,
+  "iu",
+);
 const POLITE_PRIVATE_CONDITION =
   /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when\s+you\s+(?:can|get a chance|have a chance))\b/iu;
-const PRIVATE_CONDITION_MAIN = /^(?:only\s+)?(?:if|when)\b[^,]+,\s*(\S.*)$/iu;
+const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
 const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
 const INDEPENDENT_WHEN_QUESTION = /^when\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;

@@ -242,6 +242,7 @@
 {"text": "Send him my number. If he asks, I'll send.", "want": "none"}
 {"text": "Send him my number. If he asks, the number can be sent.", "want": "none"}
 {"text": "Send him my number. When is dinner?", "want": "contact_share"}
+{"text": "Send him my number. After dinner, the lights are off.", "want": "contact_share"}
 {"text": "Send him my number\nif he asks.", "want": "none"}
 {"text": "Send him my number if you could, please.", "want": "contact_share"}
 {"text": "Send him my number if it's convenient for you.", "want": "contact_share"}
