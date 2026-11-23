@@ -5,7 +5,7 @@
     [
       "reviewed-public-hike",
       {
-        "type": "reviewGroup",
+        "type": "judgeGroup",
         "approved": true
       }
     ],

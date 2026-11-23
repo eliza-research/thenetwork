@@ -1002,6 +1002,9 @@ module join_age {
   pure val M_AGE15: Msg = NO_MSG.with("age", 15).with("explicit", true)
   pure val M_SAM25: Msg = NO_MSG.with("age", 25).with("name", true).with("explicit", true)
   pure val M_SAM15: Msg = NO_MSG.with("age", 15).with("name", true).with("explicit", true)
+  // "friends Sam 15": the first text names the app (routeChoices: an app word wins), as "slop Sam 25" in ja2BadHomeAgeKeptTest. With no
+  // app word a first text of a person with no membership routes to The Network, so a plain "Sam 15" cannot join friends.help.
+  pure val M_FRIENDS15: Msg = M_SAM15.with("kw", "friends")
   pure val M_HI: Msg = NO_MSG
   pure val M_AGE25: Msg = NO_MSG.with("age", 25).with("explicit", true).with("long", true)
 
@@ -1273,7 +1276,7 @@ module join_age {
   // Owner decision 2026-11-22, answers A2 to A5. A 15-year-old joins friends and states a birthday that agrees:
   // a teen friend candidate with no staff step, still matchable in no adult lane.
   run teenReadyTest =
-    init.then(joinByText(M_SAM15, "friends"))
+    init.then(joinByText(M_FRIENDS15, "friends"))
       .then(statesBirthday(15))
       .expect(teenCandidate(db) and APPS.forall(a => not(matchable(db, a))) and safety)
       // "I'm 25 actually": an older claim is a conflict, and the candidate is single-player again.
@@ -1288,13 +1291,13 @@ module join_age {
 
   // A birthday that disagrees with the stated age (16 after 15) is a conflict: not a teen candidate.
   run teenConflictTest =
-    init.then(joinByText(M_SAM15, "friends"))
+    init.then(joinByText(M_FRIENDS15, "friends"))
       .then(statesBirthday(16))
       .expect(not(teenCandidate(db)) and safety)
 
   // A stop makes the teen single-player; a resume makes the teen a candidate again.
   run teenStopTest =
-    init.then(joinByText(M_SAM15, "friends"))
+    init.then(joinByText(M_FRIENDS15, "friends"))
       .then(statesBirthday(15)).then(teenStop)
       .expect(not(teenCandidate(db)) and safety)
       .then(teenResume)
@@ -1302,7 +1305,7 @@ module join_age {
 
   // Delete everything clears the birth date: a returning teen is not a candidate until a new birthday.
   run teenEraseTest =
-    init.then(joinByText(M_SAM15, "friends"))
+    init.then(joinByText(M_FRIENDS15, "friends"))
       .then(statesBirthday(15))
       .then(deleteAll)
       .expect(not(teenCandidate(db)) and db.birthAge == NONE and safety)

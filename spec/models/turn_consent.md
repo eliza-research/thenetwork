@@ -22,7 +22,12 @@ starts with the reader's result and keeps its existing transitions.
 Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
-// quint-check: max-steps=30 max-samples=20000 verify-steps=3
+// quint-check: max-steps=30 max-samples=60000 verify-steps=3
+//
+// max-samples is 60000 so that witness_pauseConfirmedAgain stays reachable: a second change of the pause setting needs
+// two open turns and a resume (or a pause in each app) in one run, and the search with seed 0x5eed first reaches it
+// near sample 53000. The witness is the rule of spec/staffSafetyService.md, not its opposite: a pause that a resume
+// undid is a new change, so the next applied pause has its own confirmation (agentPauseResumedTest).
 //
 // The signed turn, the consent ledger, its projections and the gateway's consent mirror
 // (docs/research/2026-11-07-state-machines.md section 6.2, machines M-001..M-013, M-106..M-111).

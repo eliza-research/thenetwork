@@ -26,8 +26,8 @@ The trust rules (`packages/network/src/trust.ts` `add`, `block`, `report`, `lift
 
 - Staff lift. `NetworkService.liftHold` (`packages/network/service/service.ts`) is one unit of work: it reads `platform.staff_safety_holds` (`currentStaffHold`), refuses a global hold without safety on every app (`durableStaffHoldLiftAllowed`, `needs_safety_everywhere`), calls `ConsentNetwork.liftHold(memberId, actor, note, durable)`, and its member command `liftStaffHold` (`packages/network/service/staff-safety-holds.ts`) reads the rows again under the person lock and refuses a change (`hold_changed`, the unit rolls back). It deletes this app's row and adds this app to `released_apps` of the global row. The lift reads the decision identifiers of both rows (`liftStart`, `liftRead`) and commits only when they are unchanged (`liftTx`, `commitLift`, `liftStillAuthorized`), else it answers `liftChanged`. A lift with a durable hold and no runtime hold returns ok and marks an open case lifted (`holdLiftResult(actor, runtimeHeld || durable)`, `liftDurableOnlyTest`). The other apps of a staff hold call `holdMember(..., relatedReport, undefined)`, which marks every open report of that member `held` as `staffHoldApply` does.
 - Durable hold on another app. `snapshot.ts` maps a durable staff hold and a canonical ban to `accountStatus: "restricted"` (`durableStaffHoldSnapshotStatus`, `staffBanSnapshotStatus`), and `syncMember` only drops the member from open items. The model's `sync` writes no trust hold, no hold notice and no report status.
-- The check-in. `checkIn` follows `onFeedback`: slop and peon set `postDateReports` (`packs.ts` `slopHooks`, `peonHooks`), and each other person gets `recordMeetingSafetyReport`, which is `blockAndReport` with source `check_in`: the pair block and person block, the close of the pair's open items on this app (`closePairOpportunities`), `trust.report` with met true and a 0-point `report_received` case event when it adds no points, `fileReport` (an urgent kind holds the subject through `reportHeld` and `dropMember`), and `minorReported` for kind minor. The code does not call `trust.block` there, because `trust.block` does nothing for a member who met the target.
-- The check-in question. `onFeedback` calls the generated `checkInReading` and `checkInSafetyStep` ([meeting settlement](../meetingSettlement.md), "Choose a report or a block after a meeting that went wrong"). A concern said without a report kind (`checkInConcern`, intent `concern`) about the one other attendee of an adult pair asks once whether to report, block or neither (`askCheckInSafety`). The question is stored in `pendingSafety` with verb `check_in`, the person and the meeting (the model's `pendingWho` with verb `check_in`), and the shared line routes a short answer to the app that asked. `answerCheckInSafety` runs before `handleBlock` and clears the question on any own text: `answerCheckIn` with "report" is `recordMeetingSafetyReport`, "block" is `applyBlock` with verb block, and "no" or an unclear text (`freeText`) files nothing. The answer must come within a day (`checkInSafetyAnswerCurrent`). `report` is not enabled for the person of a current check-in question, because the code reads that text as the answer. `checkInQuestionAboutMetPerson` is in `safety`. The answer is the result of the generated reader (`checkInSafetyChoice`, `checkInSafetyAnswer`), an oracle here. Abstractions: the model's two apps both file every cue at once, so the urgent path for ntwrk.party and friends.help and the question after a non-urgent cue there are not in the model; `minorF` stands for `notKnownAdult`; the model has no `awaiting`, so `freeText` always closes the question (the code lets only report, flag or block answer it while a probe, a day-of check-in, a crew offer or the weekly check-in waits, `checkInSafetyAnswerApplies`). Changed (owner decision D7 of 2026-11-22, "Ask the member"): a concern without "report" or "block" gets one question, because the owner wants the member to choose.
+- The check-in. `checkIn` follows `onFeedback`: an urgent cue (`URGENT`) on a date gives each other person `recordMeetingSafetyReport` at once (`checkInSafetyStep` gives `CheckInFileNow`; `postDateReports` is gone from the code), which is `blockAndReport` with source `check_in`: the pair block and person block, the close of the pair's open items on this app (`closePairOpportunities`), `trust.report` with met true and a 0-point `report_received` case event when it adds no points, `fileReport` (an urgent kind holds the subject through `reportHeld` and `dropMember`), and `minorReported` for kind minor. The code does not call `trust.block` there, because `trust.block` does nothing for a member who met the target.
+- The check-in question. `onFeedback` calls the generated `checkInReading` and `checkInSafetyStep` ([meeting settlement](../meetingSettlement.md), "Choose a report or a block after a meeting that went wrong"). A non-urgent cue (`no_show`) or a concern said without a report kind (`checkInConcern`, intent `concern`) about the one other attendee of an adult pair asks once (stored kind: the cue, else `other`); outside an adult pair they file nothing whether to report, block or neither (`askCheckInSafety`). The question is stored in `pendingSafety` with verb `check_in`, the person and the meeting (the model's `pendingWho` with verb `check_in`), and the shared line routes a short answer to the app that asked. `answerCheckInSafety` runs before `handleBlock` and clears the question on any own text: `answerCheckIn` with "report" is `recordMeetingSafetyReport`, "block" is `applyBlock` with verb block, and "no" or an unclear text (`freeText`) files nothing. The answer must come within a day (`checkInSafetyAnswerCurrent`). `report` is not enabled for the person of a current check-in question, because the code reads that text as the answer. `checkInQuestionAboutMetPerson` is in `safety`. The answer is the result of the generated reader (`checkInSafetyChoice`, `checkInSafetyAnswer`), an oracle here. Abstractions: the model's two apps stand for every app (the steps are the same in every app); the model has no teen pair on slop or peon, so the teen-pair question is not in the model; `minorF` stands for `notKnownAdult`; the model has no `awaiting`, so `freeText` always closes the question (the code lets only report, flag or block answer it while a probe, a day-of check-in, a crew offer or the weekly check-in waits, `checkInSafetyAnswerApplies`). Changed (owner decisions D1 and D7 of 2026-11-22, "Ask the member"): a concern without "report" or "block", and a non-urgent cue, get one question, because the owner wants the member to choose (before, slop and peon filed every cue at once). The ghost `wanted` records a check-in cue as a wanted report only when it files at once; a cue that asks is wanted once the member answers "report".
 - Danger text. `disclose` models `handleImmediateDanger`: a current-danger text files a check-in report only with the exact receipt of the current feedback prompt and attribution to the one counterpart of that meeting; otherwise it gives guidance only. A later free text with no "block" or "report" command files nothing (`freeText`; inbound logs `abuse_disclosed` only). A "report him" is the `report` command: `resolveTarget` with `confirmPast` asks "Who do you mean: Ben?" when no date is ahead (`report` with `ambiguous`, then `answerWho`), so the report names the person the member confirms (`w3_218PronounConfirmedTest`).
 - The route. `report` reaches the app of the newest meeting with the named person ([shared-line routing](../lineRouting.md)): `NetworkService.route` calls `safetyRoute`, which asks each app's `ConsentNetwork.safetyRouteFacts` and picks the app with `safetyCommandClaims` and `safetyClaimLeads`. The answer to "Who do you mean?" reaches the app that asked (`answerWho`, `safetyAnswerClaims`). `w3_220PronounRoutedToMeetingTest` and `w3_220WhoAnswerReachesAskingAppTest` replay these paths. Abstraction: when another app of the member sent a message after the question, or the text is a join answer with an age, the code gives the short text to that other app or to the join; the model has no per-app message times, so that text is a `freeText` of the other app's member and changes no state of the asking app, whose question lapses after a day.
 - The relay. `relaySend` follows `RelayDesk.apply`: a block for the sender's own words calls the host's `severeBlock`, which writes the 0-point case event `relay_block`. An age signal in a member's own relayed text (the rules' `minor:signal`, a classifier `minor_signal` flag) makes `RelayDesk.apply` ask `relayStartsMinorPolicy` and call the host's `minorSignal`: a 0-point case event `relay_age_signal`, the minor flags, `onMinorSignal` and `dropMember` (`relayMinorSignal`, `relayAgeSignalReachesAgePolicy`). The relay host's `observeSenderAge` reads a direct own minor age before dispatch ([member age](../memberAge.md)), commits it and refuses the item (`relaySend` with `selfAge`, `statedRelayMinors`, `relaySelfAgeCommitsBeforeDispatchTest`); staff cannot clear a stated age (`clearMinorStart`). Abstraction: `relaySend` takes date items only, which are adult pairs; the teen pool part covers teen pairs. Every app of the model has the join age 13, so no `age_review` case event.
@@ -45,6 +45,8 @@ Known drift (the model keeps the rule; another area owns the code or a decision 
 - A pronoun command ("report him") while a check-in question is current is the answer about the person asked about in the code, even when a booked meeting with another counterpart is ahead; the model writes that pronoun as the other counterpart's name and lets `report` file about them.
 
 Bounds note: `packs.ts` sets `plans: false` for slop and peon, so the model's plans on those apps stand for a group item of any app.
+
+Sampling note: `step` has one extra branch for an attendee of a finished meeting: `checkIn` (with free intent and reader, and once more as a concern with reader "none") and `disclose` with an exact receipt about an attendee. These are the same actions as the full `checkIn` and `disclose` branches, so the reachable states do not change; the branch only makes `witness_checkInQuestion`, `witness_checkInReport` and `witness_dangerReport` reachable in the samples. A refused step (`.fail()`) leaves no next state in quint's test runner, so each refused step ends its own run after a shared prefix run.
 
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
@@ -67,7 +69,7 @@ Bounds note: `packs.ts` sets `plans: false` for slop and peon, so the model's pl
 //                                            forgetMember, tick, syncMember; inbound (the hold return)
 //   packages/network/service/service.ts      NetworkService.route, forget, liftHold, hold, clearMinor, ban
 //   packages/network/service/staff-safety-holds.ts currentStaffHold, liftStaffHold, writeStaffHold
-//   packages/network/service/packs.ts        slopHooks and peonHooks postDateReports
+//   packages/network/src/network.ts           onFeedback: checkInReading, checkInSafetyStep (file an urgent cue, ask otherwise)
 //   packages/network/service/runtime.ts      recordBlock (person_blocks), the send kind (meta.safety)
 //   packages/network/service/snapshot.ts     canonical ban and durable staff hold -> restricted matching status
 //   packages/network/src/relay.ts            RelayDesk.apply (stepRelay; no case event for a block)
@@ -689,27 +691,33 @@ module safety_trust {
   pure def checkInReaderSound(intent: str, reader: str): bool =
     if (intent == "report") REPORT_KINDS.contains(reader) else reader == "none"
   // spec/meetingSettlement.md, "A check-in answer that describes a problem asks once whether to report or block"
-  // (owner decision 2026-11-22): intent "concern" is a problem said without a report kind (checkInConcern; the
-  // reader gives "none"). Both apps of the model file every cue at once (postDateReports), so only a concern
-  // asks here; the urgent path of ntwrk and friends (checkInSafetyStep) is outside the model's two apps.
-  // The question goes to a date with one other attendee when neither carries a minor flag (notKnownAdult).
-  // postDateReports on slop and peon (packs.ts slopHooks, peonHooks), and onFeedback calls
-  // recordMeetingSafetyReport for each other person: a block and a report like a "report X" text (blockAndReport:
-  // trust points, the call-off of the pair's open items on this app at once and on the other apps at the next tick).
-  // Never a report for a plan (onFeedback `!o.plan`): a plan member reports with "report X".
+  // (owner decisions D1 and D7 of 2026-11-22; network.ts onFeedback calls the generated checkInReading and
+  // checkInSafetyStep): an urgent cue (URGENT) files at once for every date, whatever the ages and the number of
+  // attendees (CheckInFileNow: recordMeetingSafetyReport for each other person, a block and a report like a
+  // "report X" text through blockAndReport: trust points, the call-off of the pair's open items on this app at
+  // once and on the other apps at the next tick). A non-urgent cue (no_show) and a concern (intent "concern",
+  // checkInConcern; the reader gives "none") about the one other attendee of an adult pair ask once
+  // (CheckInAsk, askCheckInSafety; the stored kind is the cue, else "other"); outside an adult pair they file
+  // nothing (CheckInNoStep). The pair is adult when neither side carries a minor flag (notKnownAdult); the
+  // model's apps have no teen pair. Never a step for a plan (groupPlan): a plan member reports with "report X".
+  // The ghost `wanted` records a cue the member gave as a report only when it files at once; a cue that asks
+  // becomes wanted when the member answers "report" (`answerCheckIn`).
   action checkIn(k: str, m: Mid, intent: str, reader: str): bool = {
     val s0 = sync(s, m)
     val o = s0.opps.get(k)
     val others = o.going.exclude(Set(m))
-    val reportKind = if (o.kind == "date") reader else "none"
+    val urgentCue = URGENT.contains(reader)
+    val reportKind = if (o.kind == "date" and urgentCue) reader else "none"
     val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
       inters: s0.inters.union(Set(recordOf(o, m, intent == "selfNoShow", s0.now))) }
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
     val subject = others.fold(NOBODY, (acc, x) => x)
-    val asks = intent == "concern" and o.kind == "date" and others.size() == 1
+    val adultPair = o.kind == "date" and others.size() == 1
       and not(s0.minorF.get(m)) and others.forall(x => not(s0.minorF.get(x)))
-    val s3 = if (asks) { ...s2, pendingWho: s2.pendingWho.set(m, { asked: true, at: s2.now, verb: "check_in", kind: "other", target: subject.p, offered: false }) }
+    val asks = (intent == "concern" or (reader != "none" and not(urgentCue))) and adultPair
+    val askKind = if (reader == "none") "other" else reader
+    val s3 = if (asks) { ...s2, pendingWho: s2.pendingWho.set(m, { asked: true, at: s2.now, verb: "check_in", kind: askKind, target: subject.p, offered: false }) }
       else s2
     all {
       o.stage == "done", o.going.contains(m), not(o.feedbackFrom.contains(m)), s.live.get(m), inboundOk(s, m.p),
@@ -719,7 +727,7 @@ module safety_trust {
       checkInReaderSound(intent, reader),
       s' = { ...s3,
         staffCleared: if (intent == "selfNoShow") s3.staffCleared.filter(y => not(o.parts.contains(y))) else s3.staffCleared,
-        wanted: if (intent == "report" and o.kind == "date") s3.wanted.union(others.map(x => (m.p, x.p))) else s3.wanted,
+        wanted: if (intent == "report" and reportKind != "none") s3.wanted.union(others.map(x => (m.p, x.p))) else s3.wanted,
         lastAction: "checkIn" },
     }
   }
@@ -1234,6 +1242,20 @@ module safety_trust {
       bookPlan(k, app, a, b, c, flag),
       meet(k, absent),
       checkIn(k, m, intent, reader),
+      // Weights for the random walk only (each action is also a branch of this `any` with free arguments): an
+      // attendee of a finished meeting answers the check-in (also as a concern) or discloses a danger about an
+      // attendee, so that witness_checkInQuestion, witness_checkInReport and witness_dangerReport are reachable.
+      all {
+        OPP_IDS.exists(x => s.opps.get(x).stage == "done" and s.opps.get(x).going != Set()),
+        nondet kd = OPP_IDS.filter(x => s.opps.get(x).stage == "done" and s.opps.get(x).going != Set()).oneOf()
+        nondet md = s.opps.get(kd).going.oneOf()
+        nondet od = s.opps.get(kd).going.oneOf()
+        any {
+          checkIn(kd, md, intent, reader),
+          checkIn(kd, md, "concern", "none"),
+          disclose(kd, s.opps.get(kd).app, md.p, od.p, kind, true),
+        }
+      },
       freeText(m),
       disclose(k, app, a, meant, kind, flag),
       report(a, app, b, verb, kind, flag),
@@ -1704,7 +1726,10 @@ module safety_trust {
       .then(meet("o1", Set()))
       .then(meet("o2", Set()))
       .then(checkIn("o1", ANA_S, "report", "no_show"))
+      .expect(s.reports == Set() and s.pendingWho.get(ANA_S).verb == "check_in" and s.pendingWho.get(ANA_S).kind == "no_show")
+      .then(answerCheckIn(ANA_S, "report"))
       .then(checkIn("o2", CY_S, "report", "no_show"))
+      .then(answerCheckIn(CY_S, "report"))
       .expect(reportersCounted and s.trust.get(BEN_S).reportsFrom == Set(ANA_S, CY_S) and lvl(s, BEN_S) == "watch")
 
   // ST-D7 (intended): the same check-in through blockAndReport closes the second date at once.
@@ -1714,6 +1739,7 @@ module safety_trust {
       .then(meet("o1", Set()))
       .then(bookDate("o2", "slop", "ana", "ben"))
       .then(checkIn("o1", ANA_S, "report", "no_show"))
+      .then(answerCheckIn(ANA_S, "report"))
       .expect(s.opps.get("o2").stage == "closed" and s.opps.get("o2").closedBy == "blocked" and blockClosesAllApps)
 
   // An urgent check-in report holds ben (reportHeld -> dropMember); the pair's other item closes first, as blocked.
@@ -1773,15 +1799,19 @@ module safety_trust {
       .expect(s.reports == Set() and s.personBlocks.contains(("ana", "ben")) and not(s.pendingWho.get(ANA_S).asked))
 
   // Owner decision 2026-11-22: "no" files nothing and closes the question; it is never asked again.
-  run checkInConcernThenNoTest =
+  // A refused step (`.fail()`) leaves no next state in quint's test runner, so each refused step ends its own
+  // run after the shared prefix (a refused step changes nothing).
+  run checkInConcernThenNoPrefix =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(meet("o1", Set()))
       .then(checkIn("o1", ANA_S, "concern", "none"))
       .then(answerCheckIn(ANA_S, "no"))
       .expect(s.reports == Set() and not(s.personBlocks.contains(("ana", "ben"))) and not(s.pendingWho.get(ANA_S).asked))
-      .then(answerCheckIn(ANA_S, "report").fail())
-      .then(checkIn("o1", ANA_S, "concern", "none").fail())
+  run checkInConcernThenNoTest =
+    checkInConcernThenNoPrefix.then(answerCheckIn(ANA_S, "report").fail())
+  run checkInConcernAskedOnceTest =
+    checkInConcernThenNoPrefix.then(checkIn("o1", ANA_S, "concern", "none").fail())
 
   // Owner decision 2026-11-22: an unclear text closes the question with nothing filed; a late answer lapses.
   run checkInQuestionLapsesTest =
@@ -2044,13 +2074,17 @@ module safety_trust {
 
   // W3-220, trigger A (fixed with SD-250): "report him" after the meeting cannot reach peon, where ana has no
   // counterpart; it reaches slop, which asks "Who do you mean: Ben?", and her answer files the report there.
-  run w3_220PronounRoutedToMeetingTest =
+  // The refused peon step ends its own run (a refused step leaves no next state in quint's test runner).
+  run w3_220PronounPrefix =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(meet("o1", Set()))
       .then(checkIn("o1", ANA_S, "fine", "none"))
       .then(tick(1))
-      .then(report("ana", "peon", "ben", "report", "harassment", true).fail())
+  run w3_220PronounNotToPeonTest =
+    w3_220PronounPrefix.then(report("ana", "peon", "ben", "report", "harassment", true).fail())
+  run w3_220PronounRoutedToMeetingTest =
+    w3_220PronounPrefix
       .then(report("ana", "slop", "ben", "report", "harassment", true))
       .then(answerWho(ANA_S))
       .expect(s.lastAction == "answerWho" and everyMetReportFiled and s.reports.exists(r => r.subject == BEN_S and r.met))

@@ -129,6 +129,36 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     expect(itemMessages(w, item.id, from)).toEqual([]);
   });
 
+  test("a staff approval right after the member record turns 16, with no tick between, is refused and sends nothing", async () => {
+    const w = await world([ARI, BEA], holdEveryItem.inline, "ntwrk");
+    const item = await requestItem(w, ARI.id);
+    await tickNow(w);
+    expect(w.net.reviewQueue().filter(x => x.kind !== "fraud").map(x => x.oppId)).toEqual([item.id]);
+    const from = w.mark();
+    const at = w.members.findIndex(m => m.id === BEA.id);
+    w.members[at] = { ...w.members[at]!, age: 16 };
+    expect(w.net.decide(item.id, "approve", { reviewer: "staff-1", revision: 0 })).toEqual({ ok: false, reason: "participant_minor" });
+    await w.run(DAY);
+    expect(itemMessages(w, item.id, from)).toEqual([]);
+  });
+
+  test("a judge approval right after the member record turns 16, with no tick between, is stale, and the age gate closes the item unsent", async () => {
+    const judge = scriptedJudge();
+    const w = await world([ARI, BEA], judge.judge, "ntwrk");
+    const item = await requestItem(w, ARI.id);
+    const [work] = w.net.judgePackets().work.filter(x => x.packet.oppId === item.id);
+    expect(work).toBeDefined();
+    const from = w.mark();
+    const at = w.members.findIndex(m => m.id === BEA.id);
+    w.members[at] = { ...w.members[at]!, age: 16 };
+    expect(w.net.recordJudgment(judgmentFor(work!.packet, "approve"))).toEqual({ ok: false, reason: "judgment_stale_packet" });
+    expect(oppOf(w, item.id)?.review?.decision).toBeUndefined();
+    expect(w.net.judgePackets().close.filter(x => x.oppId === item.id)).toEqual([{ oppId: item.id, reason: "participant_minor" }]);
+    await w.run(DAY);
+    expect(oppOf(w, item.id)?.stage).toBe("closed");
+    expect(itemMessages(w, item.id, from)).toEqual([]);
+  });
+
   test("a judgment for revision 0 after a staff re-roll is stale, and the re-roll keeps the flag on the pair it replaced", async () => {
     const judge = scriptedJudge();
     judge.state.answer = "flag";

@@ -660,13 +660,14 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
+    const err = new Response(proc.stderr).text();
     try {
       let ok = false;
       for (let i = 0; i < 100 && !ok; i++) {
         await sleep(100);
         ok = await fetch(`http://127.0.0.1:${port}/healthz`).then(r => r.status === 200, () => false);
       }
-      if (!ok) { proc.kill("SIGKILL"); throw new Error(`the backend did not become healthy:\n${(await out).split("\n").filter(l => !l.includes('"applied ')).slice(-5).join("\n")}`); }
+      if (!ok) { proc.kill("SIGKILL"); throw new Error(`the backend did not become healthy:\n${(await out).split("\n").filter(l => !l.includes('"applied ')).slice(-5).join("\n")}\n${(await err).split("\n").slice(-5).join("\n")}`); }
       const h = await fetch(`http://127.0.0.1:${port}/healthz`);
       expect(h.headers.get(BUILD_HEADER)).toBe("boot-test");
       const hosts = Object.entries(DEFAULT_HOST_MAP).filter(([h]) => !h.includes(":") && !h.startsWith("www.") && !h.endsWith(".pages.dev"));

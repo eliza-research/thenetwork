@@ -10,7 +10,7 @@ Check per-item consent and withdrawal, relay decisions, age restrictions, and er
 
 Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. Phone swaps and durable queue acceptance remain separate.
 
-The rules and the relay classifier decide alone: every decided item is a pass or a block (`noRelayHold`), and the sender is told at once. The text outcome `flag` is a rule or classifier flag, and `unavailable` is a classifier that could not run (an error, a timeout, an answer that does not parse or a Clef cache miss gives `classifier:unavailable`); both block, and a text that the classifier could not read never gets an outbound row (`uncheckedNeverSent`). A rate limit or a safety hold on a member blocks the item as well; the sender asks again later. The model has a classifier in every run, as the service has in every environment: Clef with the Workers AI credentials, else a classifier that cannot run, or the simulated one that `platform:dev`, the simulator and the tests inject (`relayClassifierFromEnv`). Changed (owner decision 2026-11-22, D18, "Automate relay holds too"): a text that the rules or the classifier do not clear is blocked, because no relayed text waits for staff.
+The rules and the relay classifier decide alone: every decided item is a pass or a block (`noRelayHold`), and the sender is told at once. The text outcome `flag` is a rule or classifier flag, and `unavailable` is a classifier that could not run (an error, a timeout, an answer that does not parse or a Clef cache miss gives `classifier:unavailable`); both block, and a text that the classifier could not read never gets an outbound row (`uncheckedNeverSent`). A rate limit or a safety hold on a member blocks the item as well; the sender asks again later. The model has a classifier in every run, as the service has in every environment: Clef with the Workers AI credentials, else a classifier that cannot run, or the simulated one that `platform:dev`, the simulator and the tests inject (`relayClassifierFromEnv`). Changed (owner decision 2026-11-22, D18, "Automate relay holds too"): a text that the rules or the classifier do not clear is blocked, because no relayed text waits for staff. A passed item can still wait in `Network.deferred` while the recipient is in quiet hours (a relay send has the timing `logistics` in `Network.timingOf`); that is a delay of a decided pass, not a hold, and the tick runs every send-time check again before it queues the item (`deferredFlushTest`, `witness_deferredFlushed`).
 
 The text outcome `minorClef` is a block for a classifier `minor_signal` flag. `relayItemAsync` records a classifier `minor_signal` flag, as a flag or a severe flag, and the rules' `minor:signal` as the age signal of the item record. `RelayDesk.apply` reads only that record and asks the generated `relayStartsMinorPolicy`; the host's `minorSignal` marks the sender, writes the person minor signal (`onMinorSignal`) and closes the sender's open opportunities. The blocked item keeps no text. The person minor signal on the member's other apps is outside this model, which has one app ([safety_trust](safety_trust.md) checks it). A severe block also writes the 0-point `relay_block` case event (`relaySevereBlockCaseEvent`); it changes no relay state, so it stays outside this model.
 
@@ -679,38 +679,51 @@ module relay {
     else if (ep.kind.get(k) == "withdraw") commitWithdraw(k)
     else commitNone(k)
 
-  action step = any {
-    nondet k = REQS.oneOf()
-    nondet kind = Set("text", "share", "withdraw").oneOf()
-    if (kind == "share") claimPrivateContact(k, false, false, false) else claim(k, kind),
-    all {
-      REQS.exists(k => ep.phase.get(k) == "claimed"),
-      nondet k = REQS.filter(k => ep.phase.get(k) == "claimed").oneOf()
-      nondet tc = TEXT_OUTCOMES.oneOf()
-      nondet fault = FAULTS.oneOf()
-      commit(k, tc, fault),
-    },
-    all {
-      REQS.exists(k => ep.phase.get(k) != "idle"),
-      nondet k = REQS.filter(k => ep.phase.get(k) != "idle").oneOf()
-      any { unitThrow(k), postCommitDeliverError(k), answer(k), crash(k), replay(k) },
-    },
-    nondet refused = desk.deferred.powerset().oneOf()
-    tickFlush(refused),
-    all {
-      queue.rows.keys().exists(key => queue.rows.get(key).status == "queued"),
-      nondet key = queue.rows.keys().filter(key => queue.rows.get(key).status == "queued").oneOf()
-      any { queueSend(key), queueFail(key) },
-    },
-    // Other actors share one branch, so the random simulation does not end most traces early.
-    nondet m = MEMBERS.oneOf()
-    any { stop(m), safetyHold(m), minorFlag(m), erase(m), blockPair, closeMatch },
-    nondet m = MEMBERS.oneOf()
-    nondet b = Set(false, true).oneOf()
-    nondet dt = Set(5, 20).oneOf()
-    any { setQuiet(m, b), timePass(dt) },
-    // The teen friendship pair: it opens before the first item, and the sweep or the stop ends it.
-    any { teenPairOpen, teenPairEnds, teenStop, teenResume },
+  // The branch weights (weights only: the reachable states do not change). A weight is the number of `pick`
+  // values that enable a branch, so that Apalache still sees each action once. Every other-actor event and every
+  // end of the teen pair is permanent in a trace (no unstop, unblock or reopen), so they come in 1 draw of 20 each;
+  // otherwise most traces end the match before two shares or a quiet-hours flush complete. The simulator gives the
+  // draws of a disabled branch to the next enabled branch in this order (measured with the pinned Quint CLI, Rust
+  // backend), so the permanent events come first and the clock branch, which is always enabled, comes last. In the
+  // commit and tick branches, half of the draws are the clean outcome (a passed text, no fault, no refusal at the
+  // tick) and half draw any outcome, fault and refusal, so every outcome stays reachable.
+  action step = {
+    nondet pick = 0.to(19).oneOf()
+    nondet clean = Set(false, true).oneOf()
+    any {
+      // Other actors share one branch, so the random simulation does not end most traces early.
+      all { pick == 0,
+        nondet m = MEMBERS.oneOf()
+        any { stop(m), safetyHold(m), minorFlag(m), erase(m), blockPair, closeMatch } },
+      // The teen friendship pair: it opens before the first item, and the sweep or the stop ends it.
+      all { pick == 1, any { teenPairOpen, teenPairEnds, teenStop, teenResume } },
+      all { pick >= 2, pick <= 4,
+        nondet k = REQS.oneOf()
+        nondet kind = Set("text", "share", "withdraw").oneOf()
+        if (kind == "share") claimPrivateContact(k, false, false, false) else claim(k, kind) },
+      all { pick >= 5, pick <= 7,
+        REQS.exists(k => ep.phase.get(k) == "claimed"),
+        nondet k = REQS.filter(k => ep.phase.get(k) == "claimed").oneOf()
+        nondet tc = TEXT_OUTCOMES.oneOf()
+        nondet fault = FAULTS.oneOf()
+        commit(k, if (clean) "pass" else tc, if (clean) "none" else fault) },
+      all { pick >= 8, pick <= 9,
+        REQS.exists(k => ep.phase.get(k) != "idle"),
+        nondet k = REQS.filter(k => ep.phase.get(k) != "idle").oneOf()
+        any { unitThrow(k), postCommitDeliverError(k), answer(k), crash(k), replay(k) } },
+      all { pick >= 10, pick <= 11,
+        nondet refused = desk.deferred.powerset().oneOf()
+        tickFlush(if (clean) Set() else refused) },
+      all { pick >= 12, pick <= 15,
+        queue.rows.keys().exists(key => queue.rows.get(key).status == "queued"),
+        nondet key = queue.rows.keys().filter(key => queue.rows.get(key).status == "queued").oneOf()
+        any { queueSend(key), queueFail(key) } },
+      all { pick >= 16,
+        nondet m = MEMBERS.oneOf()
+        nondet b = Set(false, true).oneOf()
+        nondet dt = Set(5, 20).oneOf()
+        any { setQuiet(m, b), timePass(dt) } },
+    }
   }
 
   // ------------------------------------------------------------------------------------------ derived
@@ -956,6 +969,17 @@ module relay {
       .expect(desk.log.get("b1").contactShared and queue.records.get("b1").contactShared)
       .then(setQuiet("A", false)).then(tickFlush(desk.deferred))
       .expect(not(queue.records.get("b1").contactShared) and queue.records.get("b1").decision == "block" and contactSharedImpliesDelivered)
+
+  // Network.send defers a relayed text while the recipient is in quiet hours (timing "logistics", network.ts
+  // timingOf and timingOk); the tick sends it once the hours end, and the queue admission lets it go.
+  run deferredFlushTest =
+    init
+      .then(setQuiet("B", true))
+      .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(answer("a1"))
+      .expect(desk.deferred.size() == 1 and desk.thread.contains("a1") and not(queue.rows.keys().contains("a1")))
+      .then(setQuiet("B", false)).then(tickFlush(Set()))
+      .then(queueSend("a1"))
+      .expect(g.flushed.contains("a1") and g.events.exists(e => e.key == "a1") and safety)
 
   // SD-040 (fixed): the swap completes, then A deletes everything. B's row no longer holds A's number.
   run erasedNumberGoneTest =

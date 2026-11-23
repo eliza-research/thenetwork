@@ -37,6 +37,7 @@ After the receiver's yes, each item starts in the automatic check (`screen`; the
 //   3 days). The check tries RETRY_MAX = 2 times (photoScreenRetryMax, 5) and waits RETRY_WAIT = 1 unit between
 //   tries (photoScreenRetryDelayMs, 1 to 60 minutes). Only the order of the values matters. newDay stands for the
 //   24-hour window of photoOffersDaily.
+//   The random walk is weighted toward the next step of the offer (see `step`); the weights change no reachable state.
 //
 // OUTSIDE THE MODEL
 //   The regex tables of the reader (the corpus evals/photo-references.jsonl covers them), SQL and the offer row lock
@@ -488,18 +489,33 @@ module photo_relay_item {
   // A new PHOTO_SEND_NOTICE version ships.
   action noticeChange: bool = all { w' = { ...w, noticeVersion: 3 - w.noticeVersion }, now' = now, g' = g }
 
+  /** Every action of the model, with free parameters. */
+  action anyStep(ps: Set[int], p: int, b: bool, d: int, v: str): bool = any {
+    propose(ps), correct(ps), consentYes, askReceiver, receiverYes, receiverNo, noMorePhotos, lapseAnswer,
+    screen(p, v), review(p, b), expirePending(p), settle, openView, viewImage(p, b), renewLink, revoke(ps),
+    endOnParties, report, sendNotice,
+    any { tick(d), otherPrompt(b), pairEnds(b), pairResumes, photoDeleted(p), noticeChange, newDay, photosOk },
+  }
+
+  // Weights for the random walk only (the reachable states do not change: every action stays in anyStep with free
+  // parameters, and anyStep is a branch of every step, so a step is never disabled). The view needs eight steps in
+  // order (consent, ask, yes, check, settle, open, image), and the environment (a clock tick, another prompt, NO MORE
+  // PHOTOS, a deletion, a notice change) ends the offer in most other steps, so a uniform walk did not reach a view
+  // in 4000 samples of 18 steps. In three steps of four the next step of the offer is offered beside anyStep, with
+  // its photo taken from the offer, a staff approval and the bound browser.
   action step = {
     nondet ps = PHOTOS.powerset().oneOf()
     nondet p = PHOTOS.oneOf()
     nondet b = Set(true, false).oneOf()
     nondet d = Set(1, 4, 8, 16).oneOf()
     nondet v = Set("clean", "flagged", "unusable", "down").oneOf()
-    any {
-      propose(ps), correct(ps), consentYes, askReceiver, receiverYes, receiverNo, noMorePhotos, lapseAnswer,
-      screen(p, v), review(p, b), expirePending(p), settle, openView, viewImage(p, b), renewLink, revoke(ps),
-      endOnParties, report, sendNotice,
-      any { tick(d), otherPrompt(b), pairEnds(b), pairResumes, photoDeleted(p), noticeChange, newDay, photosOk },
+    nondet focus = 0.to(3).oneOf()
+    nondet fp = (if (w.offer.photos.size() > 0) w.offer.photos else PHOTOS).oneOf()
+    if (focus < 3) any {
+      consentYes, askReceiver, receiverYes, screen(fp, v), review(fp, true), settle, openView, viewImage(fp, true), renewLink,
+      anyStep(ps, p, b, d, v),
     }
+    else anyStep(ps, p, b, d, v)
   }
 
   // ---------------------------------------------------------------- invariants (the law names of the specs)

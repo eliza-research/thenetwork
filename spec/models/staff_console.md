@@ -14,9 +14,9 @@ The production staff role projection and route admission use [Observatory staff 
 
 Convention: the intended action is in `step`, so `safety` checks the intended design of every flow. Where the code differs, a `*Code` action (one `*By(code, ...)` body with the code branch) is outside `step`, and a run test shows the rule fail after it. This is the convention of [join_age](join_age.md) and [safety_trust](safety_trust.md).
 
-The console staff-step proxy (`packages/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action. It admits a step only in real mode and with the role of `staffStepAdmitted`, and it needs a configured service and a named person (`X-Network-Staff-Id`). With no service it answers 503 `read_only` and writes no row. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode`). A write records its "requested" row before the forwarder sends it, and a failed audit write stops the step (`inv_consoleAuditFirst`). A forward that times out records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504: the console says that the step may have run (`inv_consoleSaysServiceDoes`). Any other forward error records ok false with `service_unavailable` and answers 503. Staff-step ids `.` and `..` are refused. `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are admin steps for all apps. `staffStepTimeoutTest` and `staffStepRefusedTest` replay the proxy; `packages/observatory/test/staff-steps.integration.test.ts` and `held.test.ts` cover it.
+The console staff-step proxy (`packages/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action. It admits a step only in real mode and with the role of `staffStepAdmitted`, and it needs a configured service and a named person (`X-Network-Staff-Id`). With no service it answers 503 `read_only` and writes no row. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode`). A write records its "requested" row before the forwarder sends it, and a failed audit write stops the step (`inv_consoleAuditFirst`). A forward that times out records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504: the console says that the step may have run (`inv_consoleSaysServiceDoes`). Any other forward error records ok false with `service_unavailable` and answers 503. Staff-step ids `.` and `..` are refused. `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are admin steps for all apps. `staffStepTimeoutTest`, the `staffStep*` refusal runs and `staffStepAuditDownTest` replay the proxy; `packages/observatory/test/staff-steps.integration.test.ts` and `held.test.ts` cover it.
 
-The held routes `/api/held` and `/api/held/:id/photo` ask `staffStepAdmitted` (`ReadHeldRelay`, `DecideHeldRelay`). The leak queue holds member-facing texts that the leak guard stopped. The relay queue holds only selected relay photos that the automatic image check flagged or could not check (owner decision D14 of 2026-11-22); no relayed text waits for staff (owner decision D18 of 2026-11-22).
+The held routes `/api/held` and `/api/held/:id/photo` ask `staffStepAdmitted` (`ReadHeldRelay`, `DecideHeldRelay`). The leak queue holds member-facing texts that the leak guard stopped. The relay queue holds only selected relay photos that the automatic image check flagged or could not check (owner decision D14 of 2026-11-22); no relayed text waits for staff (owner decision D18 of 2026-11-22). The review kind of a console action is a staff decision on the exception queue: since owner decisions D15 to D17 of 2026-11-22 the automated judge decides every item, there is no review mode control, and staff approve only items that the judge held, reject an open item or stop an approved one.
 
 The matching switch: the registry row of the network ([runtime unit](../runtimeUnit.md)) alone decides whether matching may run. The service refuses "on" and the tick does not run outside it, the real source sends every press to the service, and the overview says "locked" unless the service's `/health` says `matchingAllowed: true`; no service, or a failed `/health`, also reads as locked (`inv_consoleShowsGate`, `inv_tickRunImpliesRegistry`). Changed (owner decision D6 of 2026-11-22): the launch scope and its inputs `production` and `peonLive` are removed, because every app is approved for live sends.
 
@@ -1165,16 +1165,46 @@ module staff_console {
       .then(consoleTimeout)
       .expect(s.rel.consoleResult == "unknown" and inv_consoleSaysServiceDoes and inv_auditFirst)
 
+  // Each refusal is its own run: a `.fail()` step assigns no state, so it can only end a run.
+  // S1 has no role in peon.
   run staffStepRefusedTest =
     init0
-      .then(staffStep("S1", "peon", Set("safety"), true, true, true).fail())
-      .then(staffStep("S1", "slop", Set("admin"), true, true, true).fail())
-      .then(staffStep("S1", "slop", Set("safety"), true, false, true).fail())
-      .then(staffStep("S1", "slop", Set("safety"), false, true, true).fail())
-      .then(staffStep("S1", "slop", Set("safety"), true, true, false))
-      .expect(s.rel.phase == "idle" and s.svcEffects.size() == 0)
+      .then(staffStep("S1", "peon", Set("safety"), true, true, true))
+      .fail()
 
-  // A review through the console (the witness path): requested row, commit, answer.
+  // The step needs admin, and S1 holds only safety and reviewer in slop.
+  run staffStepRoleRefusedTest =
+    init0
+      .then(staffStep("S1", "slop", Set("admin"), true, true, true))
+      .fail()
+
+  // No configured service: 503 read_only, no row.
+  run staffStepNoServiceTest =
+    init0
+      .then(staffStep("S1", "slop", Set("safety"), true, false, true))
+      .fail()
+
+  // No named person (X-Network-Staff-Id): the step never reaches the service.
+  run staffStepUnnamedTest =
+    init0
+      .then(staffStep("S1", "slop", Set("safety"), false, true, true))
+      .fail()
+
+  // Game mode: staff steps act on real data only (404 real_only).
+  run staffStepGameModeTest =
+    initWith(true, false, "game", 0, true, "adult")
+      .then(staffStep("S1", "slop", Set("safety"), true, true, true))
+      .fail()
+
+  // The audit sink is down: no "requested" row, so nothing is sent.
+  run staffStepAuditDownTest =
+    init0
+      .then(staffStep("S1", "slop", Set("safety"), true, true, false))
+      .expect(s.rel.phase == "idle" and s.svcEffects.size() == 0 and inv_consoleAuditFirst)
+
+  // A review through the console (the witness path): requested row, commit, answer. Since owner decisions D15 to
+  // D17 (2026-11-22) the judge decides every item and the console has no review mode control; the kind "review" is
+  // a staff decision on an item in the exception queue (held by the judge) or a reject or stop of an open item.
   run reviewThroughConsoleTest =
     init0
       .then(consoleSend("review", true))

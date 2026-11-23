@@ -1333,7 +1333,7 @@ module opportunity {
   // a held item.
   val heldItemNeedsStaff = OPPS.forall(o => {
     val r = op(s, o).review
-    (r.approver == "judge" implies not(r.held)) and (r.approver == "staff" implies r.held)
+    and { r.approver == "judge" implies not(r.held), r.approver == "staff" implies r.held }
   })
 
   // PRD 32.8 and docs/network.md 2: an item that missed its SLA expires; "it is never sent late".

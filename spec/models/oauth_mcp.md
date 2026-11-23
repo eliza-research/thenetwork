@@ -597,11 +597,14 @@ module oauth_mcp {
     val now = personForKey(pf, gr.phone)
     val st = statusOf(pf, now, gr.app)
     val served = now != NONE and st == "active" and not(pf.banned.contains(now)) and (kind != "resumeLookingFor" or not(pf.minor.contains(now)))
-    if (kind == "listLookingFor" and not(readsProfile(g))) false
-    else if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, kind)
-    else all {
-      gh' = { ...gh, last: { kind: kind, person: now, grant: g, status: st, items: Set(), ok: served, listed: served and readsProfile(g) } },
-      oa' = oa, pf' = pf, ib' = ib, pc' = pc,
+    // The 403 before the call is a guard (a conjunct), not a `false` branch: every branch of an `if` must update the same variables.
+    all {
+      kind != "listLookingFor" or readsProfile(g),
+      if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, kind)
+      else all {
+        gh' = { ...gh, last: { kind: kind, person: now, grant: g, status: st, items: Set(), ok: served, listed: served and readsProfile(g) } },
+        oa' = oa, pf' = pf, ib' = ib, pc' = pc,
+      },
     }
   }
   action listLookingFor(t: int): bool = lookingForCall(t, "listLookingFor")
@@ -622,11 +625,14 @@ module oauth_mcp {
     val now = personForKey(pf, gr.phone)
     val st = statusOf(pf, now, gr.app)
     val served = now != NONE and st == "active" and not(pf.banned.contains(now)) and not(pf.minor.contains(now))
-    if (gr.app != "slop" or not(readsPhotos(g))) false
-    else if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, kind)
-    else all {
-      gh' = { ...gh, last: { kind: kind, person: now, grant: g, status: st, items: Set(), ok: served, listed: false } },
-      oa' = oa, pf' = pf, ib' = ib, pc' = pc,
+    // The host and scope 403 before the call is a guard (a conjunct), as in lookingForCall.
+    all {
+      gr.app == "slop" and readsPhotos(g),
+      if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, kind)
+      else all {
+        gh' = { ...gh, last: { kind: kind, person: now, grant: g, status: st, items: Set(), ok: served, listed: false } },
+        oa' = oa, pf' = pf, ib' = ib, pc' = pc,
+      },
     }
   }
   action myPhotos(t: int): bool = photoCall(t, "myPhotos")
@@ -830,7 +836,8 @@ module oauth_mcp {
   /** The grants that revokeAllFor revokes (and audits) before the delete: live and unexpired (grantsFor). */
   def forgetGhost(o: OAuth, ns: Set[str], apps: Set[str]): Set[int] =
     REQS.filter(g => liveG(o, g) and ns.contains(o.grants.get(g).phone) and apps.contains(o.grants.get(g).app))
-  def forgetAllOa(o: OAuth, ns: Set[str]): OAuth = revokeAllForgetOa(revokeAllForgetOa(o, ns, "friends"), ns, "peon")
+  /** Every app of the number (pg-store.ts forgetPhone and forgetPerson with no app), also slop. */
+  def forgetAllOa(o: OAuth, ns: Set[str]): OAuth = APPS.fold(o, (acc, a) => revokeAllForgetOa(acc, ns, a))
   /** The ghost and inbox side of a forget of `apps` on the numbers `ns`. */
   def forgetGh(gone: Set[int], last: Effect): Ghost =
     { ...gh, audits: gh.audits.union(gone.map(g => ("revoked", g))), revokedEver: gh.revokedEver.union(gone), last: last }
@@ -1226,6 +1233,9 @@ module oauth_mcp {
   /** A default grant (no photos:use) cannot call a photo tool. */
   run photoToolsNeedScopeTest =
     init.then(connect(1, "cS", false)).then(myPhotos(1)).fail()
+  /** The same slop.date grant: a held member's pause is not served. A run cannot continue after `fail()`, so this is a separate run. */
+  run photoGrantHeldPauseTest =
+    init.then(connect(1, "cS", false))
       .then(staffHold("p1")).then(pauseLookingFor(1))
       .expect(not(gh.last.ok) and heldIsHeld and safety)
 
