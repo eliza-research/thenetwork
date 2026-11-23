@@ -21,8 +21,9 @@ The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a
 The same declined action covers a standalone “afraid not,” “not a chance,” or
 “no chance.” A qualified use of those words stays in the unresolved action.
 The probe reader also removes explicitly excluded options. A trailing
-refusal to the offered time applies to the exact times in its list, including their
-stated clocks or parts of the day. A separate affirmative clause can
+refusal to the offered time applies to each time in its list, including
+its ordinal position, clock or part of the day. A daypart that restates
+an exact clock keeps that clock's scope. A separate affirmative clause can
 select another offered time. A broad yes with “both” in the refused
 list leaves the time choice open when the member chooses no other
 time. Fallback selection keeps any stated time-of-day limit before

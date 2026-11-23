@@ -13,6 +13,7 @@ import { Mini } from "./mini.ts";
 const thursday = { label: "Thursday 7pm", start: Date.UTC(2026, 9, 15, 23) };
 const friday = { label: "Friday 7pm", start: Date.UTC(2026, 9, 16, 23) };
 const saturday = { label: "Saturday 11am", start: Date.UTC(2026, 9, 17, 15) };
+const earlierSaturday = { label: "Saturday 10am", start: Date.UTC(2026, 9, 17, 14) };
 const sunday = { label: "Sunday 2pm", start: Date.UTC(2026, 9, 18, 18) };
 const three = [thursday, saturday, sunday];
 const weekend = [saturday.start, sunday.start];
@@ -100,6 +101,20 @@ const scenarios: Scenario[] = [
   { scene: "a trailing qualifier does not revive a refused time",
     slots: three, text: "Monday works.", picked: [],
     followUp: { text: "Saturday and Sunday don't work for me anymore. Thursday works.", picked: [thursday.start] } },
+  { scene: "a complete refusal of ordinal options leaves only the third choice",
+    slots: three, text: "The first option and the second option don't work for me. The third works.", picked: [sunday.start] },
+  { scene: "a complete refusal of the first and second waits for a time",
+    slots: three, text: "The first and second aren't available for me.", picked: [] },
+  { scene: "an affirmative ordinal pair retains both precise positions",
+    slots: three, text: "The first and second work for me.", picked: [thursday.start, saturday.start] },
+  { scene: "an ordinal and a day can share a refusal without discarding the positive day",
+    slots: three, text: "The first option and Sunday don't work for me. Saturday works.", picked: [saturday.start] },
+  { scene: "a redundant daypart still identifies the exact refused clock",
+    slots: three, text: "Saturday at 11am in the morning and Sunday at 2pm in the afternoon don't work for me.", picked: [] },
+  { scene: "a refused exact clock does not remove a distinct clock in the same daypart",
+    slots: [thursday, earlierSaturday, saturday, sunday], text: "Monday works.", picked: [],
+    followUp: { text: "Saturday at 11am in the morning and Sunday at 2pm in the afternoon don't work. Saturday 10am works.",
+      picked: [earlierSaturday.start] } },
   { scene: "none of those work records unavailability after a time clarification",
     slots: three, text: "Both Saturday, not Thursday.", picked: [],
     followUp: { text: "None of those work.", picked: [], closeReason: "no common time" } },
