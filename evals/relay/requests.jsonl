@@ -226,6 +226,9 @@
 {"text": "send him my number every time you can, thanks", "want": "contact_share"}
 {"text": "send him my number now. every time he replies, tell me", "want": "contact_share"}
 {"text": "send him my number now. every time he reports a problem, tell me", "want": "contact_share"}
+{"text": "send him my number, and every time he replies, tell me", "want": "contact_share"}
+{"text": "send him my number, and every time he asks about parking, the pass is on the dashboard", "want": "contact_share"}
+{"text": "send him my number, and every time he asks, it is okay", "want": "none"}
 {"text": "send him my number anytime, thanks", "want": "contact_share"}
 {"text": "send them my number if they ask for it", "want": "none"}
 {"text": "share my number with him if he wants it", "want": "none"}

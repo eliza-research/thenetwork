@@ -662,12 +662,15 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   if (polite && PRIVATE_RELAY_COURTESY.test(condition.slice(polite[0].length))) return false;
   if (detached || /^\s*,\s*and\b/i.test(clause)) {
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
-    if (main && (TEXT_REQ.test(main)
-      || (detached && (PRIVATE_CONDITION_STATEMENT.test(main) || PRIVATE_CONDITION_FOLLOWUP.test(main))))) {
+    if (main) {
       const words = main.toLowerCase();
-      return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
-        || INCOMPLETE_CONDITION_ACTION.test(words)
-        || (PRIVATE_CONDITION_ITEM_NAME.test(words) && (PRIVATE_RELAY_ACTION.test(words) || /\btell\b/u.test(words)));
+      const independentStatement = PRIVATE_CONDITION_STATEMENT.test(main)
+        && (detached || (!PRIVATE_CONDITION_ITEM_NAME.test(words) && !UNRESOLVED_RENEWAL_PAYLOAD.test(words)));
+      if (TEXT_REQ.test(main) || PRIVATE_CONDITION_FOLLOWUP.test(main) || independentStatement) {
+        return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
+          || INCOMPLETE_CONDITION_ACTION.test(words)
+          || (PRIVATE_CONDITION_ITEM_NAME.test(words) && (PRIVATE_RELAY_ACTION.test(words) || /\btell\b/u.test(words)));
+      }
     }
   }
   return true;
