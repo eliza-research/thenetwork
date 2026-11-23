@@ -469,6 +469,8 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
     ["Could you let Ana show him this photo?", "none"],
     ["I have Ana assigned to, show him this photo.", "none"],
     ["Please send Ana this photo.", "block"],
+    ["Please send this photo to Ana when you can.", "block"],
+    ["Please send this photo to Elle if she asks.", "none"],
   ].entries()) {
     const messageId = "delegated-selected-photo-" + index;
     clock.advance(MINUTE);
@@ -485,6 +487,7 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   }
   reviewerEnabled=false;expect((await release(selected.itemId)).status).toBe(403);expect(posts).toBe(before);
   expect((await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).length).toBe(0);reviewerEnabled=true;
+  reviewTokens.delete(selected.itemId);
   await restart();expect((await service.photoRelay.item(selected.itemId))!.reviewId).toBe(reviewed!.reviewId);
   known=false;
   const decision=await release(selected.itemId);expect(decision.status).toBe(200);expect(await decision.json()).toMatchObject({ok:true,delivered:false});

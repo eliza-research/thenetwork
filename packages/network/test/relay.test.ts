@@ -229,7 +229,10 @@ test.each([
   ["Please send Sam my number.", "block"],
   ["Please send my number to Sam.", "block"],
   ["Yes, send it to Sam.", "block"],
+  ["Please send my number to Sam when you can.", "block"],
   ["Please send my number to Ari Smith.", "none"],
+  ["Please send my number to Ari Smith when you can.", "none"],
+  ["Please send my number to Ari if he asks.", "none"],
 ])("a named private request keeps the selected swap pending: %s", async (text, decision) => {
   const id = "named-number-" + randomUUID();
   const before = await sharesQueued();
@@ -245,6 +248,7 @@ test.each([
 
 test.each([
   "Please send my number to Ari, thanks.",
+  "Please send my number to Ari when you can.",
   "Yes, send it to Ari.",
 ])("a complete trailing name can finish the selected swap: %s", async text => {
   const id = "named-number-match-" + randomUUID();
