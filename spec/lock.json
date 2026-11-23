@@ -1276,6 +1276,10 @@
         "417e6c44294d",
         "873aff669d03"
       ],
+      "Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question": [
+        "bd0375670fc2",
+        "54c1a0d18207"
+      ],
       "Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave": [
         "a0068a169ab4",
         "c32f1cdc792e"
