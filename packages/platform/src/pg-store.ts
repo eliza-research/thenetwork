@@ -2,6 +2,7 @@
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { confirmedUnderage, minMemberAge, signupAgeAt, textUseAllowedAtAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
+import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { rateCounterCutoff } from "../../core/src/generated/platformRetention.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -110,10 +111,11 @@ export class PgPeopleStore implements PeopleStore {
     return saved && signupAgeAt(saved.initial_minor_age, saved.eligible_at.getTime(), now);
   }
   async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, transaction?: SQL): Promise<boolean> {
+    if (!browserSignupMemberAllowed(member.state)) return false;
     const save = async (tx: SQL) => {
       if (!await this.enrollmentOwnerAllowed(tx, member.personId, e164, phoneHash)) return false;
       const [current] = await tx`select member_id from platform.memberships where person_id = ${member.personId}::uuid
-        and app_id = ${member.app} and member_id = ${member.memberId} and state = ${member.state} for update`;
+        and app_id = ${member.app} and member_id = ${member.memberId} and state = ${member.state} and review is null for update`;
       if (!current) return false;
       await tx`insert into platform.signup_eligibility (person_id, initial_minor_age, eligible_at)
         values (${member.personId}::uuid, ${age.initialMinorAge}, ${ts(age.eligibleAt)})

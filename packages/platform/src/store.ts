@@ -3,6 +3,7 @@
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
 import { confirmedUnderage, keepLaterEligibilityDate, lowerAge, recordedAgeFloorApplies, signupAgeAt } from "../../core/src/generated/memberAge.ts";
+import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { phoneChangePastRetention, rateCounterCutoff, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -270,9 +271,10 @@ export class MemoryPeopleStore implements PeopleStore {
     return saved && signupAgeAt(saved.initialMinorAge, saved.eligibleAt, now);
   }
   async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge) {
+    if (!browserSignupMemberAllowed(member.state)) return false;
     return this.withLock(`person-phone-binding:${member.personId}`, async () => {
       const current = this.members.get(`${member.app}:${member.personId}`);
-      if (current?.memberId !== member.memberId || current.state !== member.state
+      if (current?.memberId !== member.memberId || current.state !== member.state || current.review !== null
         || !await this.enrollmentOwnerAllowed(member.personId, e164, phoneHash)) return false;
       const previous = this.signupAges.get(member.personId);
       this.signupAges.set(member.personId, previous ? {

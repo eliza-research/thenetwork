@@ -218,12 +218,12 @@ type SignupWorld = {
   harness: ReturnType<typeof setup>;
 };
 
-async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Promise<void>, photoStorage: PhotoStorage | null = null) {
+async function withSignupWorld(networks: string[], run: (w: SignupWorld) => Promise<void>, options: { photoStorage?: PhotoStorage; tokens?: string } = {}) {
   const url = await testDb();
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
   const harness = setup();
   const service = new NetworkService({
-    url, clock, instance: "agent-signup-paths-test", log: () => {}, photoStorage, notify: false,
+    url, clock, instance: "agent-signup-paths-test", log: () => {}, photoStorage: options.photoStorage ?? null, tokens: options.tokens, notify: false,
     env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: signupTurnSecret },
     networks: networks.map(id => ({ id, matchingEnabled: false })),
     publicApi: { minStartMs: 0, minVerifyMs: 0, otp: harness.provider },
@@ -498,7 +498,7 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
   let blockedPhoto: string | undefined = "02-first-photo";
   const remove = vi.fn(async (key: string) => { if (key === blockedPhoto) throw new Error("fixture object removal failed"); });
   const storage: PhotoStorage = { kind: "local", put: async () => {}, get: async () => undefined, delete: remove };
-  await withSignupWorld(["friends:nyc", "slop:nyc"], async w => {
+  await withSignupWorld(["friends:nyc", "ntwrk:nyc"], async w => {
     const number = "+12125550184";
     const person = await w.service.accounts.createPerson(number, "otp_sms", null);
     const sql = w.connector.store.sql;
@@ -512,12 +512,12 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
       const rid = hiddenField(opened.html, "rid");
       return { browser, rid, verified: await confirmPhone(w, browser, rid, number) };
     };
-    const signup = async (site: string, state: string, birthdate: string) => {
+    const signup = async (site: string, state: string, birthdate: string, invitation?: string) => {
       const { browser, rid } = await openVerified(site, state);
-      return submitSignup(browser, rid, { firstName: "Jo", birthdate });
+      return submitSignup(browser, rid, { firstName: "Jo", birthdate, ...(invitation === undefined ? {} : { invitation }) });
     };
     const privateRow = () => sql`select initial_minor_age, eligible_at from platform.signup_eligibility where person_id = ${person.id}`;
-    const membership = (app: "friends" | "slop") => w.service.people.getMembership(person.id, app);
+    const membership = (app: "friends" | "ntwrk") => w.service.people.getMembership(person.id, app);
     const firstDate = Date.UTC(2026, 9, 10, 12), laterDate = Date.UTC(2027, 9, 10, 12);
 
     await addPriorPhoto("01-first-photo");
@@ -534,24 +534,38 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
     expect(await privateRow()).toEqual([{ initial_minor_age: 17, eligible_at: new Date(firstDate) }]);
     expect((await openVerified("friends.help", "existing-member")).verified).not.toContain("Finish signup");
 
+    const seed = await w.service.fetch(new Request("http://127.0.0.1/apps/ntwrk/invite/seed", {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-signup-seed" },
+      body: JSON.stringify({ batchId: "8e43de36-74a3-4e40-96f4-a482a53dc1a8",
+        invitations: [{ phone: number, city: "nyc", vouch: "Fixture staff knows the recipient through a local meetup." }] }),
+    }));
+    expect(seed.status).toBe(200);
+    const invitation = new URLSearchParams(new URL((await seed.json()).invitations[0].link).hash.slice(1)).get("invite");
+    if (!invitation) throw new Error("Expected the fixture invitation token");
+
     blockedPhoto = "prior-photo";
     await addPriorPhoto("prior-photo");
-    expect((await signup("slop.date", "failed-later", "2009-10-10")).status).toBe(503);
+    expect((await signup("ntwrk.party", "failed-later", "2009-10-10", invitation)).status).toBe(503);
     expect(await privateRow()).toEqual([{ initial_minor_age: 17, eligible_at: new Date(firstDate) }]);
     expect(await membership("friends")).toMatchObject({ state: "active" });
-    expect(await membership("slop")).toBeUndefined();
-    expect(await sql`select state from platform.consent_events where e164 = ${number} and app_id = 'slop'`).toEqual([]);
+    expect(await membership("ntwrk")).toBeUndefined();
+    expect(await sql`select state from platform.consent_events where e164 = ${number} and app_id = 'ntwrk'`).toEqual([]);
+    expect(await sql`select closed_at from platform.seed_invitations`).toEqual([{ closed_at: null }]);
 
     blockedPhoto = undefined;
-    expect((await signup("slop.date", "confirmed-later", "2009-10-10")).html).toContain("Signup confirmed.");
+    expect((await signup("ntwrk.party", "confirmed-later", "2009-10-10", invitation)).html).toContain("Signup confirmed.");
     expect(await privateRow()).toEqual([{ initial_minor_age: 16, eligible_at: new Date(laterDate) }]);
-    const current = (await membership("slop"))!;
+    const current = (await membership("ntwrk"))!;
     expect(await w.service.people.saveSignupAge(current, number, w.service.accounts.phoneHash(number), {
       initialMinorAge: 17, eligibleAt: firstDate,
     })).toBe(true);
+    expect(await w.service.people.saveSignupAge({ ...current, memberId: "replaced-attempt" }, number, w.service.accounts.phoneHash(number), {
+      initialMinorAge: 15, eligibleAt: laterDate + HOUR,
+    })).toBe(false);
     expect(await privateRow()).toEqual([{ initial_minor_age: 16, eligible_at: new Date(laterDate) }]);
     expect(remove).toHaveBeenCalledTimes(5);
-  }, storage);
+    expect(await sql`select member_id from platform.seed_invitation_attributions`).toEqual([{ member_id: current.memberId }]);
+  }, { photoStorage: storage, tokens: "admin@ntwrk:fixture-signup-seed" });
 }, 60_000);
 
 test.skipIf(!pgAvailable)("cross-app signup does not freeze a temporary browser birthday age in a network member", async () => {
