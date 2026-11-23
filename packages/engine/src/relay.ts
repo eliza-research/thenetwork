@@ -998,9 +998,22 @@ function retractsPrivateRequest(text: string, source: string, request: RegExpMat
 const REPORTED_SWAP_SEGMENT = /(^|[.,!?;\n])\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:said|says?|(?:tells?|told|asks?|asked)\s+(?:me|us))\s*,([^.!?;\n]*)/gu;
 const OWN_SWAP_CONTRAST = /\b(?:but|however)\s+(?:i|we)\b/u;
 
+const TEXT_BODY_LABEL = /^(?:(?:this|these|the|my|our)\s+(?:exact\s+)?(?:text|words|message)|what\s+[\p{L}' -]+\s+(?:said|says|wrote))\s*:\s*/iu;
+
 export function withdrawsRelaySwap(text: string): boolean {
-  const own = text.replace(/[’‘`´]/g, "'").replace(/[“”]/g, '"')
-    .replace(RELAY_QUOTATION, quotedRelaySeparator).trim().toLowerCase();
+  const normalized = text.replace(/[’‘`´]/g, "'").replace(/[“”]/g, '"').trim();
+  const modal = RELAY_MODAL.exec(normalized);
+  const afterModal = normalized.slice(modal?.[0].length ?? 0);
+  const markedPayload = COLON_TEXT_REQ.exec(afterModal)?.[4];
+  const reportedPayload = TEXT_REQ.exec(afterModal)?.[4] ?? "";
+  const label = TEXT_BODY_LABEL.exec(reportedPayload);
+  const payload = markedPayload ?? (label ? reportedPayload.slice(label[0].length) : undefined);
+  if (payload !== undefined) {
+    const quotation = payload.match(RELAY_QUOTATION)?.[0];
+    // An unquoted literal payload extends to the end of the turn.
+    if (!quotation || !payload.startsWith(quotation) || quotation.length < 2 || quotation[0] !== quotation.at(-1)) return false;
+  }
+  const own = normalized.replace(RELAY_QUOTATION, quotedRelaySeparator).toLowerCase();
   const authored = own.replace(REPORTED_SWAP_SEGMENT, (_segment, boundary: string, report: string) => {
     const contrast = OWN_SWAP_CONTRAST.exec(report);
     return contrast ? boundary + report.slice(contrast.index) : boundary;
@@ -1057,7 +1070,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const body = (modal && declarative ? message.replace(/\?$/, "") : message).trim();
     const target = envelope[2]!;
     if (body) ordinaryText = { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
-    if (ordinaryText && relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, false, false, false)) return ordinaryText;
+    if (ordinaryText && relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, false, false, false, false)) return ordinaryText;
   }
 
   const privateRequest = contact ?? photos.find(direct);
@@ -1078,8 +1091,11 @@ export function parseRelayRequest(text: string): RelayRequest {
       || (!!contact && refusesNumberSwap(low, clauses));
     if (ordinaryText && independentNumber) {
       const body = ordinaryText.body.toLowerCase();
-      const containsPrivateInstruction = priorCondition || (PRIVATE_CONDITION_ITEM_NAME.test(body) && PRIVATE_RELAY_ACTION.test(body));
-      if (relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, uncertain, refused, containsPrivateInstruction)) return ordinaryText;
+      const numberWithdrawn = !!contact && refused && withdrawsRelaySwap(t);
+      const containsPrivateInstruction = priorCondition || (PRIVATE_CONDITION_ITEM_NAME.test(body) && PRIVATE_RELAY_ACTION.test(body))
+        || (numberWithdrawn && (withdrawsRelaySwap(body)
+          || relayClauses(ownRelayWords(body)).some(clause => PRIVATE_RELAY_REFERENCE.test(clause.trim()))));
+      if (relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, uncertain, refused, containsPrivateInstruction, numberWithdrawn)) return ordinaryText;
     }
     if (!privateRelayRequestAllowed(refused, uncertain)) return { kind: "none" };
     const address = privateRequestAddress(spoken, privateRequest);

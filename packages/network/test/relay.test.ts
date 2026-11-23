@@ -472,10 +472,9 @@ test.each([
   { text: "Tell Ari I am running late. Wait for Ari to agree. Ari has already agreed. Share my number with Ari.", body: null, decision: "pass", shares: true },
   { text: "Tell Ari: “I am running late.” Please send Sam my number if he asks.", body: "“I am running late.”", decision: "pass" },
   { text: "Tell Sam I am running late. Please send Ari my number if he asks.", body: null, decision: "block" },
-  { text: "Tell Ari I am running late. Please send Ari my number. Don't send my number.", body: null, decision: "none", withdraws: true },
-])("a signed relay envelope separates ordinary words from phone consent: $text", async ({ text, body, decision, shares, withdraws }) => {
+])("a signed relay envelope separates ordinary words from phone consent: $text", async ({ text, body, decision, shares }) => {
   const id = "relay-envelope-boundary-" + randomUUID();
-  await startNumberSwap(id, withdraws ? "bo" : "ari");
+  await startNumberSwap(id, "ari");
   const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
   expect(original).toBeDefined();
   const before = await sharesQueued();
@@ -488,8 +487,70 @@ test.each([
   expect({ response: await response.json(), bodies: messages.map(row => row.body), shares: await sharesQueued() - before,
     pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) }).toMatchObject({
     response: { decision, delivered: false }, bodies: body === null ? [] : [`Bo says: "${body}"`],
-    shares: shares ? 2 : 0, pending: shares || withdraws ? undefined : original,
+    shares: shares ? 2 : 0, pending: shares ? undefined : original,
   });
+}, 60_000);
+
+let envelopeWithdrawalPair = 0;
+test.each([
+  { text: "Tell Ari I am running late. Please send Ari my number. Don't send my number.", body: "I am running late.", decision: "pass", withdraws: true },
+  { text: "Tell Ari: “I am running late.” Please send Ari my number. Don't send my number.", body: "“I am running late.”", decision: "pass", withdraws: true },
+  { text: "Tell Sam I am running late. Please send Ari my number. Don't send my number.", body: null, decision: "block", withdraws: true },
+  { text: "Tell Ari: “The contact number is 212-555-0182.” Please send Ari my number. Don't send my number.", body: null, decision: "hold", withdraws: true },
+  { text: "Tell Ari I asked Ana to share my number. Please send Ari my number. Don't send my number.", body: null, decision: "none", withdraws: true },
+  { text: "Tell Ari I am running late. Please send Ari my number. Never mind.", body: null, decision: "none" },
+  { text: "Tell Ari I am running late. Don't send it. Please send Ari my number.", body: null, decision: "none", withdraws: true },
+  { text: "Tell Ari I am running late. Show him this. Please send Ari my number. Don't send my number.", body: null, decision: "none", withdraws: true },
+  { text: "Tell Ari:\nDon't send my number.", body: "Don't send my number.", decision: "pass" },
+  { text: "Tell Ari this exact text:\nDon't send my number.", body: "this exact text:\nDon't send my number.", decision: "pass" },
+])("a signed relay envelope applies only an authored withdrawal: $text", async ({ text, body, decision, withdraws }) => {
+  const id = "relay-envelope-withdrawal-" + randomUUID();
+  const pair = ++envelopeWithdrawalPair;
+  const senderPhone = "+12125550" + (150 + 2 * pair);
+  const recipientPhone = "+12125550" + (151 + 2 * pair);
+  async function enroll(phone: string, name: string) {
+    for (const [index, line] of ["friends.help", name + ", 29", "I enjoy hiking and cooking",
+      "Saturday afternoons work for me", "Small groups are good"].entries()) {
+      clock.advance(MINUTE);
+      const messageId = id + "-" + name + "-" + index;
+      expect((await signed(TURN_PATH, messageId, JSON.stringify(turn(phone, messageId, line)))).status).toBe(200);
+    }
+    return open(phone, id + "-" + name + "-open");
+  }
+  const sender = await enroll(senderPhone, "Bo");
+  const recipient = await enroll(recipientPhone, "Ari");
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
+    const now = clock.now();
+    state.opps.push({ ...swapMatchTemplate, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY,
+      participants: [sender, recipient], status: [[sender, "yes"], [recipient, "yes"]], contacted: [sender, recipient] });
+    net.importState(state);
+  });
+
+  async function action(messageId: string, ownText: string): Promise<RelaySendRequest> {
+    expect(await open(senderPhone, messageId, ownText)).toBe(sender);
+    return { channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text: ownText };
+  }
+  const before = await sharesQueued();
+  expect(await (await post(await action(id + "-pending", "Please send Ari my number."))).json()).toMatchObject({ decision: "hold" });
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+  const request = await action(id + "-response", text);
+  const expectedSwap = withdraws ? undefined : original;
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(expectedSwap);
+
+  const response = await post(request);
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result).toMatchObject({ decision, delivered: false, replayed: false });
+  expect(await (await post(request)).json()).toEqual({ ...result, replayed: true });
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(expectedSwap);
+  expect(await sharesQueued()).toBe(before);
+  const messages = await sql<{ body: string }[]>`select body from network.messages
+    where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id}
+      and body like 'Bo says:%'`;
+  expect(messages.map(row => row.body)).toEqual(body === null ? [] : [`Bo says: "${body}"`]);
 }, 60_000);
 
 test("an independent direct sentence can finish a signed number swap", async () => {

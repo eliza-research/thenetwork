@@ -435,3 +435,6 @@
 {"text": "If he asks, send Ari my number.", "want": "none"}
 {"text": "Tell Ari I am running late. Wait for Ari to agree. Share my number with Ari.", "want": "none"}
 {"text": "Tell Ari I am running late. Wait for Ari to agree. Ari has already agreed. Share my number with Ari.", "want": "contact_share"}
+{"text": "Tell Ari I am running late. Please send Ari my number. Don't send my number.", "want": "text"}
+{"text": "Tell Ari I asked Ana to share my number. Please send Ari my number. Don't send my number.", "want": "none"}
+{"text": "Tell Ari I am running late. Please send Ari my number. Never mind.", "want": "none"}

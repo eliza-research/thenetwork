@@ -308,8 +308,8 @@ module relay {
   // the private request. The reader checks authorship, scope and any stated completion.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
   // supplies none. Quoted or colon-introduced payload follows the ordinary text path. A later
-  // independent phone directive can use the share path. Its unresolved condition can leave a preceding
-  // ordinary message, but only if the message contains no private instruction or prior assent.
+  // independent phone directive can use the share path. Its unresolved condition or explicit withdrawal
+  // can leave a preceding ordinary message that contains no private instruction or prior assent.
   // Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
@@ -317,9 +317,9 @@ module relay {
   action claimPrivateContact(k: str, refused: bool, uncertain: bool, withdraws: bool): bool =
     claim(k, if (privateRelayRequestAllowed(refused, uncertain)) "share" else if (withdraws) "withdraw" else "none")
 
-  action claimUncertainEnvelopeNumber(k: str, refused: bool, privateBody: bool): bool =
-    if (refused or privateBody) claimPrivateContact(k, refused, true, refused)
-    else claim(k, "text")
+  action claimUnapprovedEnvelopeNumber(k: str, uncertain: bool, refused: bool, privateBody: bool, withdrawn: bool): bool =
+    if (not(privateBody) and ((uncertain and not(refused)) or withdrawn)) claim(k, "text")
+    else claimPrivateContact(k, refused, uncertain, withdrawn)
 
   // The unit commits its effects and the receipt in one transaction (runtime.ts writeUnit, completeAction last).
   pure def committed(e: Endpoint, k: str): Endpoint =
@@ -992,10 +992,31 @@ module relay {
   run uncertainNumberEnvelopeKeepsOrdinaryTextTest =
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
-      .then(claimUncertainEnvelopeNumber("b1", false, false)).then(commitText("b1", "pass", false)).then(answer("b1"))
+      .then(claimUnapprovedEnvelopeNumber("b1", true, false, false, false)).then(commitText("b1", "pass", false)).then(answer("b1"))
       .expect(desk.swaps.exists(sw => sw.src == "A") and desk.log.get("b1").kind == "text"
         and queue.rows.keys().contains("b1") and not(queue.rows.get("b1").send.number)
         and not(numberPending("A")) and not(numberPending("B")) and safety)
+
+  // A signed turn takes back B's pending grant first. Its separate ordinary text uses the text receipt.
+  run withdrawnNumberEnvelopeKeepsOrdinaryTextTest =
+    init
+      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "B"))
+      .then(readPendingSwapReply("B", true, true, false))
+      .then(claimUnapprovedEnvelopeNumber("b2", false, true, false, true))
+      .then(commitText("b2", "pass", false)).then(answer("b2"))
+      .expect(desk.swaps.size() == 0 and desk.log.get("b2").kind == "text"
+        and queue.rows.keys().contains("b2") and not(queue.rows.get("b2").send.number)
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
+
+  // A refusal inside literal text gives the turn no authority to withdraw the sender's pending grant.
+  run literalNumberRefusalKeepsPendingSwapTest =
+    init
+      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
+      .then(readPendingSwapReply("B", false, false, false))
+      .then(claim("b2", "text")).then(commitText("b2", "pass", false)).then(answer("b2"))
+      .expect(desk.swaps.exists(sw => sw.src == "B") and desk.log.get("b2").kind == "text"
+        and queue.rows.keys().contains("b2") and not(queue.rows.get("b2").send.number) and safety)
 
   // The reader found a qualified contact request and separately an explicit text relay. The
   // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.
