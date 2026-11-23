@@ -306,13 +306,20 @@ module relay {
   // signals after claiming the receipt. It includes conditions and timing in the uncertainty signal.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
   // supplies none. An ordinary text envelope follows the text path unless a later independent
-  // directive asks to send the sender's number. For every relay kind the named recipient must be
+  // directive asks to send the sender's number. Quoted or colon-introduced payload is part of the
+  // ordinary message. If a separate phone request is uncertain, including a leading condition, earlier text can be relayed
+  // alone. A private instruction in that text or an explicit refusal prevents this fallback.
+  // For every relay kind the named recipient must be
   // the counterpart of the selected match. Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 
   action claimPrivateContact(k: str, refused: bool, uncertain: bool, withdraws: bool): bool =
     claim(k, if (privateRelayRequestAllowed(refused, uncertain)) "share" else if (withdraws) "withdraw" else "none")
+
+  action claimUncertainEnvelopeNumber(k: str, refused: bool, privateBody: bool): bool =
+    if (refused or privateBody) claimPrivateContact(k, refused, true, refused)
+    else claim(k, "text")
 
   // The unit commits its effects and the receipt in one transaction (runtime.ts writeUnit, completeAction last).
   pure def committed(e: Endpoint, k: str): Endpoint =
@@ -988,6 +995,14 @@ module relay {
       .then(claimPrivateContact("a1", false, true, false)).then(commitNone("a1")).then(answer("a1"))
       .then(claim("a2", "text")).then(commitText("a2", "block", false)).then(answer("a2"))
       .expect(desk.swaps.size() == 0 and desk.log.get("a2").decision == "block" and queue.rows.keys().size() == 0 and safety)
+
+  run uncertainNumberEnvelopeKeepsOrdinaryTextTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claimUncertainEnvelopeNumber("b1", false, false)).then(commitText("b1", "pass", false)).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and desk.log.get("b1").kind == "text"
+        and queue.rows.keys().contains("b1") and not(queue.rows.get("b1").send.number)
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
 
   run delegatedShareKeepsSwapPendingTest =
     init

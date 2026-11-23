@@ -389,6 +389,14 @@
 {"text": "Please send this photo to Ari Casey.", "want": "none"}
 {"text": "Please send my number to Ari, please.", "want": "contact_share"}
 {"text": "Please send this photo to Ari when you can.", "want": "photo"}
+{"text": "Tell Ari this exact text:\nSend Ari my number.", "want": "text"}
+{"text": "Tell Ari:\nSend Ari my number.", "want": "text"}
+{"text": "Let Ari know:\nSend Ari my number.", "want": "text"}
+{"text": "Tell Ari: “I am running late.” Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ari I am running late. Please send Ari my number if he asks.", "want": "text"}
+{"text": "Tell Ari I am running late. If he asks, send Ari my number.", "want": "text"}
+{"text": "Tell Ari I am running late. If you can, send Ari my number.", "want": "text"}
+{"text": "If he asks, send Ari my number.", "want": "none"}
 {"text": "Yes, send it to Ari.", "want": "contact_share"}
 {"text": "Yes, send it to Ari Smith.", "want": "none"}
 {"text": "Yes, send it to my match.", "want": "contact_share"}
