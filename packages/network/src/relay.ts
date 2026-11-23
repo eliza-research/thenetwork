@@ -24,7 +24,7 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
-import { relayNameCollisionRefuses, relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
+import { relayBarePhoneRequestAllowed, relayNamedCandidateAllowed, relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
@@ -68,6 +68,7 @@ export interface RelayMatch {
   /** For choosing the newest match. */
   at: number;
 }
+export type RelayMatchSelection = { match: RelayMatch; to: MemberId } | { reason: string };
 /** What the ConsentNetwork lends the desk. */
 export interface RelayHost {
   app: string;
@@ -150,13 +151,18 @@ const foldRelayName = (name: string) => name.normalize("NFKC").replace(/[‘’]
 const NOTICE = {
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
   ambiguousName: "You've matched with more than one person with that name, so I can't tell who you mean.",
+  ambiguousSwap: "Please name the person you want to send your number to.",
   swapWait: "I'll share your number as soon as they say they want to swap numbers too.",
   swapAlready: "I already asked them; I'll share your number if they want to swap too.",
   photoOff: "I can't send photos to a match yet.",
   undelivered: "I couldn't pass that on right now.",
   late: "I'll pass that on when it's a reasonable hour for them.",
 };
-const swapAsk = (name: string) => `${name} would like to swap numbers with you. If you'd like that too, say "send them my number" in the next 15 minutes and I'll share both.`;
+const swapAsk = (name: string | undefined) => name
+  ? `${name} would like to swap numbers with you. If you'd like that too, say "send ${name} my number" in the next 15 minutes and I'll share both.`
+  : `Your match would like to swap numbers with you. If you'd like that too, name the person you want to send your number to in the next 15 minutes.`;
+
+const liveSwap = (swap: RelaySwap, now: number): boolean => swap.at <= now && now - swap.at <= RELAY_SWAP_TTL_MS;
 /** What the relay thread (and the classifier's context) keeps for a delivered number: never the number. */
 const SHARED_NUMBER = (name: string) => `${name || "They"} shared their number.`;
 
@@ -173,42 +179,52 @@ export class RelayDesk {
     this.s = { threads: x.threads ?? [], log: x.log ?? [], held: x.held ?? [], swaps: x.swaps ?? [] };
   }
 
+  /** The member's open matches (newest first); `matchId` narrows them to that one match. */
   private openMatches(from: MemberId, matchId?: string): RelayMatch[] {
-    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId));
+    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
+      .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1));
   }
 
   /** The member's open match (newest first), if any; `matchId` narrows it to that one match. */
   matchFor(from: MemberId, matchId?: string): RelayMatch | undefined {
-    return this.openMatches(from, matchId).sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
+    return this.openMatches(from, matchId)[0];
   }
 
-  private otherCounterpartMatches(from: MemberId, to: MemberId, name: string): boolean {
-    return this.openMatches(from).some(match => {
-      const other = match.participants.find(id => id !== from && id !== to);
-      const otherName = other === undefined ? undefined : this.host.member(other)?.firstName;
-      return otherName !== undefined && foldRelayName(otherName) === name;
-    });
+  requestMatch({ from, kind, matchId, targetName }: Pick<RelayAsk, "from" | "kind" | "matchId" | "targetName">): RelayMatchSelection {
+    const matches = this.openMatches(from, matchId);
+    const named = targetName === undefined ? undefined : foldRelayName(targetName);
+    const barePhoneRequest = kind === "contact_share" && matchId === undefined && named === undefined;
+    if (barePhoneRequest && matches.length > 1) {
+      const now = this.host.now();
+      const others = new Map(matches.slice(1).map(match => [match.id, match.participants.find(member => member !== from)]));
+      const competingIncoming = this.s.swaps.some(swap => swap.to === from && others.get(swap.matchId) === swap.from && liveSwap(swap, now));
+      if (!relayBarePhoneRequestAllowed(barePhoneRequest, competingIncoming)) return { reason: NOTICE.ambiguousSwap };
+    }
+    const counterparts = new Map<MemberId, RelayMatch>();
+    for (const match of matches) {
+      const to = match.participants.find(member => member !== from);
+      if (to === undefined) continue;
+      const name = this.host.member(to)?.firstName;
+      if (!relayTextRecipientAllowed(named !== undefined, name !== undefined && foldRelayName(name) === named)) continue;
+      if (named === undefined || matchId !== undefined) return { match, to };
+      if (!counterparts.has(to)) counterparts.set(to, match);
+    }
+
+    const first = counterparts.entries().next().value;
+    if (first && relayNamedCandidateAllowed(counterparts.size)) {
+      const [to, match] = first;
+      return { match, to };
+    }
+    return { reason: first ? NOTICE.ambiguousName : NOTICE.noMatch };
   }
 
   /** One member request: decide through the engine, deliver `rendered`, keep the log. Idempotent on `itemId`. */
   async request(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> {
     const prior = this.prior(ask.itemId);
     if (prior) return { ...prior, replayed: true };
-    const match = this.matchFor(ask.from, ask.matchId);
-    if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-    const to = match.participants.find(p => p !== ask.from)!;
-    if (ask.targetName !== undefined) {
-      const targetName = foldRelayName(ask.targetName);
-      const recipient = this.host.member(to)?.firstName;
-      if (!relayTextRecipientAllowed(true, recipient !== undefined && foldRelayName(recipient) === targetName)) {
-        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-      }
-      // spec/relayRequestAddress.md, "A name identifies one recipient on an unselected relay"
-      const selectedItem = ask.matchId !== undefined;
-      if (relayNameCollisionRefuses(selectedItem, !selectedItem && this.otherCounterpartMatches(ask.from, to, targetName))) {
-        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.ambiguousName };
-      }
-    }
+    const selection = this.requestMatch(ask);
+    if ("reason" in selection) return { itemId: ask.itemId, decision: "refused", reason: selection.reason };
+    const { match, to } = selection;
     const now = this.host.now();
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
     const item: RelayItem = ask.kind === "photo"
@@ -300,7 +316,7 @@ export class RelayDesk {
 
   /** "Send them my number": waits for the other member's own request, then both numbers go, each through the engine. */
   private async swap(ask: RelayAsk, match: RelayMatch, to: MemberId, now: number, o: RelayCallOptions): Promise<RelayOutcome> {
-    this.s.swaps = this.s.swaps.filter(x => now - x.at <= RELAY_SWAP_TTL_MS && x.at <= now);
+    this.s.swaps = this.s.swaps.filter(x => liveSwap(x, now));
     const mineValue = o.contactOf?.(ask.from);
     if (!mineValue) return { itemId: ask.itemId, decision: "refused", reason: "I can't share your number right now." };
     const theirs = this.s.swaps.find(x => x.matchId === match.id && x.from === to && x.to === ask.from);
@@ -310,7 +326,7 @@ export class RelayDesk {
       const probe = await this.decide(this.share(ask.itemId, ask.from, to, now, mineValue), match, o);
       if (probe.decision !== "pass") return this.apply(probe, match, this.share(ask.itemId, ask.from, to, now, mineValue), o);
       this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
-      const name = this.host.member(ask.from)?.firstName ?? "Your match";
+      const name = this.host.member(ask.from)?.firstName;
       this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask` });
       return { itemId: ask.itemId, decision: "held", reason: NOTICE.swapWait };
     }
