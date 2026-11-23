@@ -377,3 +377,43 @@
 {"text": "Send him my number. Thanks. Give it to him if he asks.", "want": "none"}
 {"text": "Send him my number. I am at work. Give it to him once I confirm.", "want": "none"}
 {"text": "Send him my number. Thanks. The restaurant is open at eight.", "want": "contact_share"}
+{"text": "Ana has to agree first. Share my number with him.", "want": "none"}
+{"text": "Ana agrees first. Share my number with him.", "want": "none"}
+{"text": "Ana needs to say yes first. Share my number with him.", "want": "none"}
+{"text": "He has to ask first. Share my number with him.", "want": "none"}
+{"text": "He asks first. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to agree. Share my number with him.", "want": "none"}
+{"text": "Only after Ana agrees. Share my number with him.", "want": "none"}
+{"text": "Ana has to agree first; share my number with him.", "want": "none"}
+{"text": "Unless he asks first. Share my number with him.", "want": "none"}
+{"text": "Ana has to agree first. Send him this photo.", "want": "none"}
+{"text": "He has to ask first. Send him this photo.", "want": "none"}
+{"text": "Ana agrees. Share my number with him.", "want": "contact_share"}
+{"text": "He asked already. Share my number with him.", "want": "contact_share"}
+{"text": "No need to wait for Ana to agree. Please send Ari my number.", "want": "contact_share"}
+{"text": "I heard Ana has to ask first about the venue. Please send Ari my number.", "want": "contact_share"}
+{"text": "He has to ask the venue about opening hours. Please send Ari my number.", "want": "contact_share"}
+{"text": "Ari said “Wait for Ana to agree.” Please send Ari my number.", "want": "contact_share"}
+{"text": "He has to ask for my photo first. Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree. Ari has already agreed. Share my number with him.", "want": "contact_share"}
+{"text": "Wait for Ari to agree. Bo has already agreed. Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to approve. Ari has already agreed. Share my number with him.", "want": "none"}
+{"text": "Wait for him to agree. He has already agreed. Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree, please. Share my number with him.", "want": "none"}
+{"text": "Ana has to agree first, but I can send you the schedule. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to agree, but Ari said “I am at work.” Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree. Ari has already agreed!? Share my number with him.", "want": "none"}
+{"text": "Wait for Ari to agree. Ari has already agreed. ? Share my number with him.", "want": "none"}
+{"text": "He has to ask me first. Share my number with him.", "want": "none"}
+{"text": "Ana must approve it first. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to agree to it. Share my number with him.", "want": "none"}
+{"text": "He has to consent first. Share my number with him.", "want": "none"}
+{"text": "Wait until I confirm the number swap. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to approve sharing my number with Ari. Share my number with Ari.", "want": "none"}
+{"text": "Wait for Ana to approve sharing my number with Bo. Share my number with Ari.", "want": "contact_share"}
+{"text": "Ari has to approve my number first. Ari already approved my photo. Share my number with him.", "want": "none"}
+{"text": "Ari has to approve my number first. Ari already approved my number. Share my number with him.", "want": "contact_share"}
+{"text": "Ari must approve this first. Ari already approved that. Share my number with him.", "want": "none"}
+{"text": "Ari must approve sharing my number with him first. Ari already approved sharing my number with her. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to agree to share my number with Ari. Share my number with Ari.", "want": "none"}
+{"text": "Ana must approve sharing my number with Ari first. Ana already approved sharing my number with Ari. Share my number with Ari.", "want": "contact_share"}
