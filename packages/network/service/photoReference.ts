@@ -1,6 +1,6 @@
 import { classifyYesNo, DAY } from "@thenetwork/core";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
-import { parseRelayRequest, relayPhotoReferenceAllowed } from "../../engine/src/relay.ts";
+import { parseRelayRequest, relayPhotoReferenceAllowed, relayStatedDestination } from "../../engine/src/relay.ts";
 import { photoPickFor, photoSlotsMax, type PhotoPickResult } from "../../core/src/generated/photoRelayItem.ts";
 import { maskOf as numbersMask, numbersOf as maskNumbers } from "../../platform/src/photo-relay.ts";
 
@@ -547,7 +547,9 @@ function sendOf(t: string, original: string, ctx: ReaderContext): PhotoReading |
     if (loose) options.push(after(v + 1 + loose.len, loose.target));
     const chosen = options.find(o => hasMarker(o.phrase, ctx));
     if (!chosen) continue;
-    if (!relayPhotoReferenceAllowed(asPhotoRequest(t, words.slice(v, chosen.end)))) return NONE;
+    let end = chosen.end;
+    while (end < words.length && /^#?\d+$/.test(words[end]!)) end++;
+    if (!relayPhotoReferenceAllowed(asPhotoRequest(t, words.slice(v, end)))) return NONE;
     const target = chosen.target.kind === "one" ? chosen.target.thread.recipientMemberId : null;
     const s = scopeOf(ctx, target, false);
     const phraseText = chosen.phrase.join(" ");
@@ -592,6 +594,15 @@ function redirectOf(words: string[], original: string, ctx: ReaderContext, draft
   return { kind: "send", target, result, numbers: numbersOf(result.chosen), wantsSet: r.hadFeature ? r.wantsSet : draft.wantsSet, why: r.hadFeature ? r.why : "this", alsoText: false };
 }
 
+function destinedToDraft(original: string, ctx: ReaderContext, draft: ReaderDraft): boolean {
+  const destination = relayStatedDestination(original);
+  if (destination.kind === "unstated") return true;
+  if (destination.kind === "incomplete") return false;
+  if (destination.name === null) return true;
+  const recipient = ctx.threads.find(th => th.recipientMemberId === draft.recipientMemberId);
+  return recipient !== undefined && normalized(recipient.firstName).split(" ")[0] === normalized(destination.name);
+}
+
 function draftOf(t: string, original: string, ctx: ReaderContext, draft: ReaderDraft): PhotoReading {
   const words = wordsOf(t);
   let k = 0;
@@ -606,7 +617,7 @@ function draftOf(t: string, original: string, ctx: ReaderContext, draft: ReaderD
   const r = resolve(phrase, s, flags, 1);
   const hasReference = r.hadFeature || flags.otherOwner || flags.codeTyped || flags.byLooks;
   const answer = classifyYesNo(original);
-  const yes = !hasReference && answer === "yes";
+  const yes = !hasReference && answer === "yes" && destinedToDraft(original, ctx, draft);
   const no = answer === "no" || /^(?:no|nope|never ?mind|cancel)$/.test(t);
   if (!hasReference && !yes && !no) return NONE;
   return { kind: "draft", hasReference, yes, no, result: hasReference ? r.result : null, numbers: hasReference ? numbersOf(r.result.chosen) : [], wantsSet: r.wantsSet, why: r.why };

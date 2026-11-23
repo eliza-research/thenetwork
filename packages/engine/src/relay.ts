@@ -417,14 +417,36 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
   return classifierError ? { ...result, classifierError } : result;
 }
 
-type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string; targetName?: string } | { kind: "none" };
+type RelayRequest =
+  | { kind: "contact_share"; targetName?: string }
+  | { kind: "photo"; targetName?: string }
+  | { kind: "text"; body: string; targetName?: string }
+  | { kind: "none" };
 
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|rather not|hold off|wait (?:to|before)|not until)\b/;
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
-const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
-const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass|forward|text)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "giu");
-const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward|pass|show)\\s+(?:this|that|the|these|my)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\s+(?:to|with)\\s+${OTHER}`, "giu");
+const RELAY_NAME = String.raw`(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\b)\p{L}[\p{L}'-]{1,30}`;
+const PRIVATE_RELAY_RECIPIENT = String.raw`(?:my (?:match|date)|${RELAY_NAME})`;
+const OTHER = String.raw`(?:them|him|her|${PRIVATE_RELAY_RECIPIENT})`;
+const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
+const RELAY_NAME_CONTINUATION = /^[\p{L}\p{M}\p{N}'-]/u;
+const RELAY_DESTINATION_WORDS = String.raw`(?:over\s+to|to|with)\b`;
+const RELAY_DESTINATION = String.raw`[\s,:–—-]+${RELAY_DESTINATION_WORDS}`;
+const UNPARSED_RELAY_DESTINATION = new RegExp(String.raw`^[\s,:;.!?–—()[\]/"'“”-]*(?:directly\s+to\b|${RELAY_DESTINATION_WORDS})`, "iu");
+const RELAY_WITH_THANKS = /^\s*,?\s*with\s+thanks\s*[.!]*\s*$/iu;
+const CONTACT_REQ = new RegExp(
+  String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
+  + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
+  + String.raw`|^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
+  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
+  "giu",
+);
+const PHOTO_REQ = new RegExp(
+  String.raw`\b(?:send|share|forward|pass|show)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+(?:this|that|the|my|these)\s+(?:photos?|pics?|pictures?|selfies?|images?)\b`
+  + String.raw`|\b(?:send|share|forward|pass|show)\s+(?:this|that|the|these|my)\s+(?:photos?|pics?|pictures?|selfies?|images?)\s+(?:to|with)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`,
+  "giu",
+);
 const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
 const RELAY_ASIDE = /^\s*i(?:'ll\s+not|\s+(?:can'?t|cannot|couldn'?t|didn'?t|mustn'?t|won'?t|wouldn'?t|(?:can|could|did|will|would|must)\s+not))\s+\S/i;
 const INCOMPLETE_RELAY_ASIDE = /\b(?:to|that|if|and|or|because|for|with)\s*$/i;
@@ -454,7 +476,6 @@ function privateShareQualified(text: string, request: RegExpMatchArray): boolean
 
 const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|would|could|did|should|must|shall|'ll)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t|mustn'?t)\s+wait\b/g;
 const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
-const CONTACT_SWAP_NAME = "phone number|number|phone|digits|cell|contact(?: info)?";
 const OWN_SWAP_ITEM = new RegExp(String.raw`\b(?:my (?:${CONTACT_SWAP_NAME})|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b`);
 const SWAP_PROPERTY = new RegExp(OWN_SWAP_ITEM.source + "\\s+(?:(?:is|stays?|remains?)\\s+(?:private|off limits)|can wait)\\b");
 const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to\s+)?(?:send|share|give|pass|forward|text)\b|(?:the|that|our)\s+(?:numbers?\s+)?swap\b)/;
@@ -841,16 +862,47 @@ function privateCourtesy(sentence: string): boolean {
     || (polite !== null && PRIVATE_RELAY_COURTESY.test(words.slice(polite[0].length)));
 }
 
+function normalizeRelayStatement(statement: string): string {
+  return statement.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are")
+    .replace(/^(i|we)'ve\b/u, "$1 have");
+}
+
 function independentRenewalFollowup(sentence: string): boolean {
   const words = sentence.trim().toLowerCase();
   if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
   const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
-  const body = envelope?.at(-1) ?? words;
-  const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
+  const statement = normalizeRelayStatement(envelope?.at(-1) ?? words);
   if (!envelope) return INDEPENDENT_RENEWAL_STATUS.test(statement);
   return PRIVATE_CONDITION_STATEMENT.test(statement) && !PRIVATE_CONDITION_ITEM_NAME.test(statement)
     && !PRIVATE_RELAY_ACTION.test(statement) && !PRIVATE_RELAY_UNCERTAIN.test(statement)
     && !UNRESOLVED_RENEWAL_PAYLOAD.test(statement);
+}
+
+function detachedRelayStatement(after: string): boolean {
+  const lead = /^\s*\.\s*(?:to be clear|with that settled),\s*/iu.exec(after);
+  if (!lead) return false;
+  // The exception applies only to a complete standalone status and its optional time.
+  const statement = normalizeRelayStatement(after.slice(lead[0].length).trim().replace(/[.!]+$/, "").toLowerCase());
+  if (INDEPENDENT_RENEWAL_STATUS.test(statement)) return true;
+  const timeAt = statement.lastIndexOf(" at ");
+  if (timeAt < 0) return false;
+  const timing = statement.slice(timeAt);
+  return LINKED_PRIVATE_TIME.exec(timing)?.[0] === timing
+    && INDEPENDENT_RENEWAL_STATUS.test(statement.slice(0, timeAt));
+}
+
+function relayRecipientIsComplete(text: string, request: RegExpMatchArray, trailingRecipient: string | undefined): boolean {
+  const after = text.slice(request.index! + request[0].length);
+  if (UNPARSED_RELAY_DESTINATION.test(after) && !detachedRelayStatement(after)) {
+    return trailingRecipient === undefined && RELAY_WITH_THANKS.test(after);
+  }
+  if (trailingRecipient === undefined) return true;
+  // The match still identifies a delegated instruction when its destination is incomplete.
+  if (RELAY_NAME_CONTINUATION.test(after)) return false;
+  const tail = after.split(RELAY_SENTENCE, 1)[0]!;
+  const continuation = tail.replace(/^[\s,:–—]+/u, "");
+  return continuation === "" || privateCourtesy(tail) || TRAILING_PRIVATE_CONDITION.test(tail)
+    || (/^\s*[,–—]/u.test(tail) && independentRenewalFollowup(continuation));
 }
 
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[], contact: boolean): boolean {
@@ -948,7 +1000,10 @@ export function parseRelayRequest(text: string): RelayRequest {
 
   if (privateRequest) {
     if (!privateRequestPermitted(t, own, start, privateRequest, [...contacts, ...photos], !!contact)) return { kind: "none" };
-    return { kind: contact ? "contact_share" : "photo" };
+    if (!relayRecipientIsComplete(t.slice(start), privateRequest, privateRequest.groups?.trailingRecipient ?? privateRequest.groups?.affirmedRecipient)) return { kind: "none" };
+    const recipient = privateRequest.groups?.leadingRecipient ?? privateRequest.groups?.trailingRecipient ?? privateRequest.groups?.affirmedRecipient;
+    const targetName = recipient && !IMPLICIT_RELAY_TARGET.test(recipient) ? recipient : undefined;
+    return { kind: contact ? "contact_share" : "photo", ...(targetName === undefined ? {} : { targetName }) };
   }
   return { kind: "none" };
 }
@@ -971,6 +1026,37 @@ function privateRequestPermitted(t: string, own: string, start: number, privateR
   return privateRelayRequestAllowed(refused, uncertain);
 }
 
+const PHOTO_RELAY_INLINE_WITH = /^\s+with\s+(?:(?:my|our)\s+(?!(?:match|date)\b)|(?:the|a|an|this|that|these|those|his|their|its|some|no|me|us)\b)/iu;
+const PHOTO_RELAY_ADDED_DESTINATION = /^[^.!?;\n]*?[\s,](?:and|plus|&)\s+(?:also\s+)?(?:directly\s+|over\s+)?(?:to|with)\b/iu;
+const RELAY_STATED_DESTINATION = /(?:^|[\s,:–—-])(?:directly\s+to|over\s+to|to|with)\b/giu;
+const RELAY_SEND_VERB = /\b(?:send|share|give|pass|forward|text|show)\b/iu;
+const RELAY_AFFIRMATION_LEAD = /^[\s,:!–—-]*(?:(?:yes|yeah|yep|ok|okay|sure|please|go ahead)[\s,:!–—-]*)+$/iu;
+const RELAY_STATED_RECIPIENT = new RegExp(String.raw`^(?<trailingRecipient>${OTHER})`, "iu");
+
+export type RelayStatedDestination = { kind: "unstated" } | { kind: "incomplete" } | { kind: "recipient"; name: string | null };
+
+export function relayStatedDestination(text: string): RelayStatedDestination {
+  const t = text.replace(/[’‘`´]/g, "'").trim();
+  const own = ownRelayWords(t);
+  let found: RelayStatedDestination = { kind: "unstated" };
+  for (const destination of own.matchAll(RELAY_STATED_DESTINATION)) {
+    const lead = own.slice(0, destination.index!).split(RELAY_SENTENCE).at(-1)!;
+    if (!RELAY_SEND_VERB.test(lead) && !RELAY_AFFIRMATION_LEAD.test(lead)) continue;
+    const rest = own.slice(destination.index! + destination[0].length);
+    if (/^with\b/iu.test(destination[0].trim()) && (RELAY_WITH_THANKS.test(" with" + rest) || PHOTO_RELAY_INLINE_WITH.test(" with" + rest))) continue;
+    const gap = /^\s+/u.exec(rest)?.[0].length ?? 0;
+    const recipient = gap > 0 ? RELAY_STATED_RECIPIENT.exec(rest.slice(gap)) : null;
+    if (!recipient) return { kind: "incomplete" };
+    recipient.index = destination.index! + destination[0].length + gap;
+    const name = recipient.groups!.trailingRecipient!;
+    if (!relayRecipientIsComplete(own, recipient, name)) return { kind: "incomplete" };
+    const named = IMPLICIT_RELAY_TARGET.test(name) ? null : name;
+    if (found.kind === "recipient" && (found.name ?? "").toLowerCase() !== (named ?? "").toLowerCase()) return { kind: "incomplete" };
+    found = { kind: "recipient", name: named };
+  }
+  return found;
+}
+
 export function relayPhotoReferenceAllowed(text: string): boolean {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const own = ownRelayWords(t);
@@ -986,6 +1072,9 @@ export function relayPhotoReferenceAllowed(text: string): boolean {
   const lead = prefix.split(RELAY_SENTENCE).at(-1)!, comma = lead.lastIndexOf(",");
   if (comma >= 0 && INCOMPLETE_RELAY_ASIDE.test(lead.slice(0, comma))) return false;
   if (!directRelayLead(prefix) && RELAY_SPEECH_CUE.test(lead)) return false;
+  const after = t.slice(start + request.index! + request[0].length);
+  if (!PHOTO_RELAY_INLINE_WITH.test(after) && !relayRecipientIsComplete(t.slice(start), request, request.groups?.trailingRecipient)) return false;
+  if (PHOTO_RELAY_ADDED_DESTINATION.test(after)) return false;
   return privateRequestPermitted(t, own, start, request, photos, false);
 }
 

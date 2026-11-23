@@ -979,14 +979,29 @@ const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|wh
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
 const ALL_WEAK = /\b(?:either|both)\b(?:\s+of\s+(?:them|(?:those|these)(?:\s+(?:times|options|slots))?)\b)?/g;
 const BOTH_TIME_LEAD = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?both\b/;
-const BOTH_TIME_TAIL = /^\s*(?:(?:work(?:s)?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please)?\s*$/;
+const OFFERED_PAIR_AFFIRMATIVE = String.raw`(?:works?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please`;
+const BOTH_TIME_TAIL = new RegExp(String.raw`^\s*(?:${OFFERED_PAIR_AFFIRMATIVE})?\s*$`);
 const BOTH_TIME_QUALIFIER = /^\s+(?:(?:at|around|by|after|before)\s+\d{1,2}(?::[0-5]\d)?(?:\s*[ap]m)?|\d{1,2}(?::[0-5]\d)?\s*[ap]m|(?:(?:at|in the)\s+)?(?:noon|midnight|mornings?|afternoons?|evenings?|nights?|lunch|after work))\b/;
 const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
 const NAMED_TIME_EXCLUSION = `except|${NAMED_EXCLUSION_PHRASES}`;
 const BOTH_TIME_BOUNDARY = new RegExp(String.raw`[.,;!?\n]|\b(?:but|${NAMED_TIME_EXCLUSION})\b`);
+const PROBE_DAY_LIST_WORD = String.raw`\b(?:${DAY_TOKEN})\b`;
+const DIRECT_PROBE_DAY_LIST = new RegExp(
+  String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
+    + String.raw`(?<days>${PROBE_DAY_LIST_WORD}(?:\s+(?:(?:and|or)\s+)?${PROBE_DAY_LIST_WORD})+)`
+    + String.raw`(?=(?:\s+(?:both|either)\b)?(?:\s+(?:${OFFERED_PAIR_AFFIRMATIVE}))?\s*(?:$|${BOTH_TIME_BOUNDARY.source}))`,
+  "dgu",
+);
+const PROBE_DAY_LIST_TOKEN = new RegExp(PROBE_DAY_LIST_WORD, "gu");
+const ALTERNATIVE_PROBE_DAY_LIST = new RegExp(String.raw`^${PROBE_DAY_LIST_WORD}(?:\s+or\s+${PROBE_DAY_LIST_WORD})+$`);
 const TRAILING_BOTH_DAY_PAIR = new RegExp(
   String.raw`(?:^|[.;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
     + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+both\b`,
+  "dgu",
+);
+const TRAILING_EITHER_DAY_PAIR = new RegExp(
+  String.raw`(?:^|[.;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
+    + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+either\b`,
   "dgu",
 );
 const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
@@ -1037,10 +1052,23 @@ const DAYPART_EXCLUSION = /\b(?:any|every|each)\s+(morning|afternoon|evening|nig
 const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that)\s+)*$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
-type TimeMention = {
-  at: number; end: number; day?: string; minute?: number; part?: "morning" | "afternoon" | "evening";
+type ProbeSpan = { at: number; end: number };
+type TimeMention = ProbeSpan & {
+  day?: string; minute?: number; part?: "morning" | "afternoon" | "evening";
   group?: "weekday" | "weekend"; nightsOnly?: boolean;
 };
+
+function spanContains(outer: ProbeSpan, inner: ProbeSpan): boolean {
+  return outer.at <= inner.at && inner.end <= outer.end;
+}
+
+function directProbeDayLists(text: string): ProbeSpan[] {
+  return [...text.matchAll(DIRECT_PROBE_DAY_LIST)].flatMap(match => {
+    const [at, end] = match.indices!.groups!.days!;
+    // A short form in a complete choice can be a weekday. The verb in “I sat Sunday” cannot.
+    return probeChoiceAuthored(text.slice(0, at)) ? [{ at, end }] : [];
+  });
+}
 
 function clockMinute(m: RegExpMatchArray): number {
   if (m[4]) return m[4] === "noon" ? 12 * 60 : 0;
@@ -1071,7 +1099,7 @@ function probeTimeIsRecurring(text: string, at: number, end: number): boolean {
 function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] {
   const days: TimeMention[] = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
   if (recoverTrailingPair) {
-    for (const pair of text.matchAll(TRAILING_BOTH_DAY_PAIR)) {
+    for (const trailingPair of [TRAILING_BOTH_DAY_PAIR, TRAILING_EITHER_DAY_PAIR]) for (const pair of text.matchAll(trailingPair)) {
       if (!probeChoiceAuthored(text.slice(0, pair.index + 1))) continue;
       const tail = text.slice(pair.index + pair[0].length);
       if (!BOTH_TIME_QUALIFIER.test(tail) && !BOTH_TIME_TAIL.test(tail.split(BOTH_TIME_BOUNDARY, 1)[0]!)) continue;
@@ -1106,6 +1134,88 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
   return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
 }
 
+const NAMED_TIME_JOIN = String.raw`\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)`;
+const BARE_NAMED_TIME_JOIN = new RegExp(`^${NAMED_TIME_JOIN}$`);
+const SHORT_DAY_TOKEN = DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|");
+const JOINED_SHORT_DAY = new RegExp(String.raw`^(${NAMED_TIME_JOIN})(${SHORT_DAY_TOKEN})\b`);
+const SCHEDULING_CONSTRAINT = String.raw`(?:my|our|the) (?:schedule|calendar|availability)`;
+const OFFERED_TIME_REFUSAL_DETAIL = String.raw`(?:for (?:me|us)|(?:in|with) ${SCHEDULING_CONSTRAINT}|on (?:my|our) end|either|at all|at the moment|right now|anymore|unfortunately|this (?:weekend|week))`;
+const OFFERED_TIME_REFUSAL_END = String.raw`(?=(?:\s+${OFFERED_TIME_REFUSAL_DETAIL}\b)*\s*(?:$|[,;.!?\n]|\b(?:and|but|so|though|however|because|since|due to)\b))`;
+const REFUSAL_ADVERB = String.raw`(?:(?:really|just|simply|still|unfortunately|honestly|definitely|absolutely)\s+)?`;
+const OFFERED_TIME_REFUSAL_QUALIFIER = String.raw`${REFUSAL_ADVERB}for\s+(?:me|us)\s+${REFUSAL_ADVERB}`;
+const OFFERED_TIME_REJECTION_STATE = String.raw`good|great|fine|free|available|possible|ideal|an option|a good fit`;
+const OFFERED_TIME_REFUSAL =
+  String.raw`\s*(?:(?:both|all)\s+)?(?:${OFFERED_TIME_REFUSAL_QUALIFIER}|${REFUSAL_ADVERB})(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
+  String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|(?:fit|suit)(?: ${SCHEDULING_CONSTRAINT})?|make it|(?:look|seem)\s+(?:${OFFERED_TIME_REJECTION_STATE})))?|` +
+  String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:${OFFERED_TIME_REJECTION_STATE}|going to work)\b)` + OFFERED_TIME_REFUSAL_END;
+const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
+const QUALIFIED_TIME_REFUSAL = new RegExp(String.raw`^\s*(?:(?:both|all)\s+)?${OFFERED_TIME_REFUSAL_QUALIFIER}`);
+const DIRECT_SHORT_DAY_REFUSAL = new RegExp(
+  String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)\s+)?(?<day>${SHORT_DAY_TOKEN})\b(?=\s+${OFFERED_TIME_REFUSAL_QUALIFIER})(?=${OFFERED_TIME_REFUSAL})`,
+  "dgu",
+);
+const RESTATED_CLOCK_PART = new RegExp(String.raw`^(?:morning|afternoon|evening|night)(?:\s+(?:on\s+)?(?:${DAY_TOKEN}))?$`);
+
+function probeTimeIsRefused(text: string, at: number, end: number): boolean {
+  return negatedAt(text, at, end - at) || REFUSES_OFFERED_TIME.test(text.slice(end));
+}
+
+function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean, dayLists: readonly ProbeSpan[]): TimeMention[] {
+  const mentions = timeMentions(text, recoverTrailingPair);
+  for (const list of dayLists) for (const token of text.slice(list.at, list.end).matchAll(PROBE_DAY_LIST_TOKEN)) {
+    const at = list.at + token.index, end = at + token[0].length;
+    if (mentions.some(mention => mention.at <= at && end <= mention.end)) continue;
+    const day = DAY_WORDS.find(([word]) => token[0].search(word) === 0)?.[1];
+    if (day) mentions.push({ at, end, day });
+  }
+  // A matching restatement keeps the exact clock and can supply its trailing day.
+  for (const clock of mentions.filter(mention => mention.minute !== undefined)) {
+    const alias = mentions.find(part => !part.group && part.minute === undefined && part.part === partOf(clock.minute!)
+      && (!part.day || !clock.day || part.day === clock.day)
+      && RESTATED_CLOCK_PART.test(text.slice(part.at, part.end))
+      && /^\s+in the\s+$/.test(text.slice(clock.end, part.at)));
+    if (!alias) continue;
+    clock.day ??= alias.day;
+    clock.end = alias.end;
+    mentions.splice(mentions.indexOf(alias), 1);
+  }
+  // Recover a short day only at the start of a direct refusal or after a named time and a bare join.
+  const byStart = new Set(mentions.map(mention => mention.at));
+  const recover = (at: number, end: number) => {
+    if (byStart.has(at) || !memberChoiceAt(at) || !probeChoiceAuthored(text.slice(0, at))) return;
+    const token = text.slice(at, end);
+    const day = DAY_WORDS.find(([word]) => token.search(word) === 0)?.[1];
+    if (day) { mentions.push({ at, end, day }); byStart.add(at); }
+  };
+  for (const match of text.matchAll(DIRECT_SHORT_DAY_REFUSAL)) {
+    const [at, end] = match.indices!.groups!.day!;
+    recover(at, end);
+  }
+  for (const mention of [...mentions]) {
+    const tail = JOINED_SHORT_DAY.exec(text.slice(mention.end));
+    if (!tail) continue;
+    const end = mention.end + tail[0].length;
+    if (REFUSES_OFFERED_TIME.test(text.slice(end))) recover(mention.end + tail[1]!.length, end);
+  }
+  return mentions;
+}
+
+/** An independent choice word between complete mentions ends the shared refusal. */
+function joinedProbeRefusals(text: string, mentions: readonly ProbeSpan[], memberChoiceAt: (at: number) => boolean): Set<ProbeSpan> {
+  const ordered = [...mentions].sort((a, b) => a.at - b.at);
+  const refused = new Set<ProbeSpan>();
+  for (let index = ordered.length - 2; index >= 0; index--) {
+    const first = ordered[index]!, next = ordered[index + 1]!;
+    if (first.end > next.at || !BARE_NAMED_TIME_JOIN.test(text.slice(first.end, next.at))
+      || !memberChoiceAt(first.at) || !memberChoiceAt(next.at)) continue;
+    if (refused.has(next) || REFUSES_OFFERED_TIME.test(text.slice(next.end))) {
+      refused.add(first);
+      refused.add(next);
+    }
+  }
+  return refused;
+}
+
 const probeOrdinal = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
 const PROBE_ORDINALS: [RegExp, number][] = [
   [probeOrdinal("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
@@ -1119,20 +1229,48 @@ const ORDINAL_POSITION: Readonly<Record<string, number>> = {
   third: 2, "3rd": 2, fourth: 3, "4th": 3, last: -1, latest: -1,
 };
 const ORDINAL_WORD = String.raw`(?:${Object.keys(ORDINAL_POSITION).join("|")})\b`;
-const ORDINAL_ITEM = String.raw`(?:the\s+)?${ORDINAL_WORD}(?:\s+(?:one|option|slot))?`;
+const ORDINAL_SUFFIX = /^\s+(?:one|option|time|slot)\b/;
+const ORDINAL_ITEM = String.raw`(?:the\s+)?${ORDINAL_WORD}(?:\s+(?:one|option|time|slot)\b)?`;
 const ORDINAL_JOIN = String.raw`(?:\s*(?:,\s*(?:and\s+|or\s+)?|\band\b|\bor\b|&|\/)\s*)`;
-const DIRECT_ORDINAL = new RegExp(String.raw`(?:^|[.,;!]\s*|\bbut\s+)\s*(?:the\s+)?(${ORDINAL_ITEM}(?:${ORDINAL_JOIN}${ORDINAL_ITEM})*)\s+(?:works?|will work|is (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`, "g");
+const ORDINAL_AFFIRMATIVE = String.raw`\s+(?:either\s+)?(?:works?|will work|is (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`;
+const DIRECT_ORDINAL = new RegExp(
+  String.raw`(?:^|[.,;!]\s*|\bbut\s+)\s*(?<items>${ORDINAL_ITEM}(?:${ORDINAL_JOIN}${ORDINAL_ITEM})*)(?:(?<affirmative>${ORDINAL_AFFIRMATIVE})|(?=${OFFERED_TIME_REFUSAL}))`,
+  "dg",
+);
 const BARE_LAST = /^\s*(?:the\s+)?(?:last|latest)(?:\s+(?:one|option|slot))?[.!,\s]*$/;
 const VAGUE_ORDINAL_TIME = /^\s*(?:the\s+)?(?:later|last time)\s+(?:works?|will work|is (?:good|fine))\s*[.!]*$/;
 
-function independentOrdinalChoices(text: string, memberChoiceAt?: (at: number) => boolean): number[][] {
-  if (BARE_LAST.test(text)) return [[-1]];
-  const choices: number[][] = [];
+type OrdinalMention = ProbeSpan & { index: number; choiceEnd?: number };
+
+function readDirectProbeOrdinals(text: string, memberChoiceAt?: (at: number) => boolean) {
+  const choices: number[][] = BARE_LAST.test(text) ? [[-1]] : [];
+  const refusals: OrdinalMention[] = [];
   for (const item of text.matchAll(DIRECT_ORDINAL)) {
     if (quoteStillOpen(text.slice(0, item.index)) || memberChoiceAt?.(item.index + 1) === false) continue;
-    choices.push([...item[1]!.matchAll(new RegExp(ORDINAL_WORD, "g"))].map(word => ORDINAL_POSITION[word[0]]!));
+    const items = item.groups!.items!;
+    if (item.groups!.affirmative) {
+      choices.push([...items.matchAll(new RegExp(ORDINAL_WORD, "g"))].map(word => ORDINAL_POSITION[word[0]]!));
+    } else {
+      const [start] = item.indices!.groups!.items!;
+      for (const word of items.matchAll(new RegExp(ORDINAL_ITEM, "g"))) {
+        const at = start + word.index;
+        const index = ORDINAL_POSITION[word[0].match(new RegExp(ORDINAL_WORD))![0]]!;
+        refusals.push({ at, end: at + word[0].length, index });
+      }
+    }
   }
-  return choices;
+  return { choices, refusals };
+}
+
+function completeProbeOrdinals(text: string, refusals: readonly OrdinalMention[]): OrdinalMention[] {
+  const ordinals = [...refusals];
+  for (const [rule, index] of PROBE_ORDINALS) for (const m of text.matchAll(rule)) {
+    const at = m.index, end = at + m[0].length;
+    if (refusals.some(span => span.at <= at && end <= span.end)) continue;
+    const suffix = ORDINAL_SUFFIX.exec(text.slice(end));
+    ordinals.push({ at, end: end + (suffix?.[0].length ?? 0), index, choiceEnd: end });
+  }
+  return ordinals;
 }
 
 const PAST_PROBE_CUE = /\b(?:was|were|wasn't|weren't|went|came|met|enjoyed|loved|ago)\b/;
@@ -1142,14 +1280,27 @@ const PROBE_TIME_LABEL = /\boption\s+[abc]\b|^\s*[abc]\s+(?:was|were)\b|\bweeken
 const PROBE_CLAUSE_BOUNDARY = /([.,;!?\n]|\b(?:but|though|however)\b)/;
 const CURRENT_PROBE_CHOICE = /^\s+(?:works?|(?:will|would) work|(?:is|would be) (?:good|fine|great|best))(?: for me)?(?: (?:please|thanks))?\s*$/;
 const CURRENT_PROBE_REFUSAL = /^(?:no(?: (?:thanks|thank you))?|(?:neither|none of (?:those|these|them)(?: times| options)?) works?(?: for me)?)$/;
+const DIRECT_MEETING_REFUSAL = new RegExp(
+  String.raw`^(?:i|we)\s+(?:(?:don't|do not)\s+(?:want to|wanna)\s+meet(?:\s+(?:them|him|her|this person|that person))?|`
+    + String.raw`(?:can't|cannot|won't|will not|couldn't)\s+(?:make it|come|attend))$`,
+);
 const EXPLICIT_ALTERNATIVE_RANGE = /(?:^|[.,;!]\s*)\s*(?:any day|any ?time|anything|everything|all|whichever)\s+(?:but|except|other than|apart from|aside from|excluding|barring)\b/;
 const CLARIFIED_ALTERNATIVE_RANGE = new RegExp(
   String.raw`^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:${NAMED_EXCLUSION_RANGE}|(?:any|every|each) (?:morning|afternoon|evening|night)s?)\s+(?:but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that)\s+)*$`,
 );
 
 function isIndependentProbeAnswer(clause: string): boolean {
-  return CURRENT_PROBE_REFUSAL.test(clause.trim()) || independentOrdinalChoices(clause).length > 0 || timeMentions(clause).some(mention =>
+  return CURRENT_PROBE_REFUSAL.test(clause.trim()) || readDirectProbeOrdinals(clause).choices.length > 0 || timeMentions(clause).some(mention =>
     !clause.slice(0, mention.at).trim() && CURRENT_PROBE_CHOICE.test(clause.slice(mention.end)));
+}
+
+function hasDetachedProbeRefusal(text: string): boolean {
+  return sentencesOf(text).some(({ text: sentence, at }) => {
+    const direct = sentence.trim().replace(/[.!;]+$/, "").trim();
+    if (/^["']/.test(direct) || /\bif\b|\?/.test(direct) || COND_RX.test(direct)
+      || !probeChoiceAuthored(text.slice(0, at)) || describesAnotherPerson(direct)) return false;
+    return CURRENT_PROBE_REFUSAL.test(direct) || isCompleteParticipationRefusal(direct) || DIRECT_MEETING_REFUSAL.test(direct);
+  });
 }
 
 function separatePastProbeTimes(text: string): { current: string; past: boolean } {
@@ -1233,13 +1384,15 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const { current: t, unbound } = separateUnboundProbeTimes(historic.current);
   const original = consentScan(body);
   const scoped = (past || unbound && original.answer !== "counter") && original.why !== "conditional" && original.why !== "hedged";
-  const c = scoped ? consentScan(t) : original;
+  let c = scoped ? consentScan(t) : original;
   if (past && c.answer !== "no" && normalized.split(PROBE_CLAUSE_BOUNDARY).some(clause => /^\s*if\b/.test(clause))) {
     return { answer: "unclear", keys: [], why: "conditional" };
   }
   const rejectedTimes = OFFERED_TIME_REJECTION.test(t);
   // spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
-  const namedTimeWithoutOffer = !options.length && (timeMentions(t).length > 0 || independentOrdinalChoices(t).length > 0 || VAGUE_ORDINAL_TIME.test(t));
+  const untimedOrdinals = options.length ? undefined : readDirectProbeOrdinals(t);
+  const namedTimeWithoutOffer = !options.length && (timeMentions(t).length > 0 || !!untimedOrdinals?.choices.length
+    || !!untimedOrdinals?.refusals.length || VAGUE_ORDINAL_TIME.test(t));
   if (untimedProbeTimeRejectionNeedsClarification(options.length > 0, rejectedTimes || namedTimeWithoutOffer, c.why === "affirm" || c.why === "none")) {
     return { answer: "unclear", keys: [], why: "slot" };
   }
@@ -1257,6 +1410,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const individual = new Set<string>(), grouped = new Set<string>();
   const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
+  const qualifiedTimeRefusals = new Map<number, number>();
+  let conditionalTimeRefusal = false;
   const memberChoiceAt = (at: number) => {
     if (!clarifiedTimes) return true;
     const prefix = t.slice(0, at);
@@ -1267,11 +1422,24 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     for (const key of keys) neg.add(key);
     if (clause !== undefined) refusedClauses.add(clause);
   };
+  const rememberQualifiedTimeRefusal = (at: number, end: number) => {
+    if (!probeChoiceAuthored(t.slice(0, at))) return;
+    const tail = t.slice(end);
+    if (!QUALIFIED_TIME_REFUSAL.test(tail)) return;
+    const refusal = REFUSES_OFFERED_TIME.exec(tail)?.[0];
+    if (!refusal) return;
+    const clause = clauseAt(t, at, end - at);
+    if (/\bif\b/.test(clause) || COND_RX.test(clause)) conditionalTimeRefusal = true;
+    else if (c.why === "refusal" || c.why === "mixed") qualifiedTimeRefusals.set(end, end + refusal.length);
+  };
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
     if (!memberChoiceAt(i)) return;
     const cl = clauseAt(t, i, len);
-    if (negatedAt(t, i, len)) return refuse(keys, cl);
+    if (probeTimeIsRefused(t, i, i + len)) {
+      rememberQualifiedTimeRefusal(i, i + len);
+      return refuse(keys, cl);
+    }
     pickedClauses.add(cl);
     for (const k of keys) {
       pos.add(k);
@@ -1293,15 +1461,24 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const alone = (explicitTimesOnly ? EXPLICIT_KEY : /^\s*([abc])[\s.!,)]*$/).exec(t);
   if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); individual.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
+  const dayLists = directProbeDayLists(t);
+  const mentions = completeProbeTimeMentions(t, !explicitTimesOnly || clarifiedTimes, memberChoiceAt, dayLists);
+  const directOrdinals = readDirectProbeOrdinals(t, memberChoiceAt);
+  const ordinals = completeProbeOrdinals(t, directOrdinals.refusals);
+  const joinedRefusals = joinedProbeRefusals(t, [...mentions, ...ordinals], memberChoiceAt);
+  const joinedRefusalClauses = new Set([...joinedRefusals].map(m => clauseAt(t, m.at, m.end - m.at)));
   let weakOrdinalMissing = false;
-  for (const [re, index] of PROBE_ORDINALS) for (const match of t.matchAll(re)) {
-    if (!memberChoiceAt(match.index!)) continue;
-    const option = options.at(index);
-    if (option) mark([option.key], match.index!, match[0].length);
-    else weakOrdinalMissing = true;
+  for (const ordinal of ordinals) {
+    if (!memberChoiceAt(ordinal.at)) continue;
+    const option = options.at(ordinal.index);
+    if (!option) weakOrdinalMissing = true;
+    else if (ordinal.choiceEnd === undefined || joinedRefusals.has(ordinal)) {
+      rememberQualifiedTimeRefusal(ordinal.at, ordinal.end);
+      refuse([option.key], clauseAt(t, ordinal.at, ordinal.end - ordinal.at));
+    }
+    else mark([option.key], ordinal.at, ordinal.choiceEnd - ordinal.at);
   }
-  const ordinalChoices = independentOrdinalChoices(t, memberChoiceAt);
-  const ordinalKeys = ordinalChoices.flatMap(choices => choices.map(choice => options[probeOrdinalIndex(choice, options.length)]?.key));
+  const ordinalKeys = directOrdinals.choices.flatMap(choices => choices.map(choice => options[probeOrdinalIndex(choice, options.length)]?.key));
   for (const key of ordinalKeys) {
     if (key === undefined || neg.has(key)) continue;
     pos.add(key);
@@ -1324,25 +1501,36 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return { key: o.key, day, knownDay: day !== undefined && DAY_WORDS.some(([, name]) => name === day),
       weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute) };
   });
-  for (const m of timeMentions(t, !explicitTimesOnly || clarifiedTimes)) {
+  const matchingOffered = (m: TimeMention) => offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
+    && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
+      m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
+  const unresolvedLists = dayLists.filter(list => {
+    const alternatives = ALTERNATIVE_PROBE_DAY_LIST.test(t.slice(list.at, list.end));
+    return mentions.some(m => {
+      if (!spanContains(list, m)) return false;
+      const matches = matchingOffered(m).length;
+      return matches > 1 || (matches === 0 && !alternatives);
+    });
+  });
+  for (const m of mentions) {
     if (!memberChoiceAt(m.at)) continue;
+    if (unresolvedLists.some(list => spanContains(list, m))) { unresolved.push(m); continue; }
     if (partExclusion && m.at >= partExclusion.index && m.at < partExclusionEnd) continue;
     const prefix = t.slice(0, m.at);
     const exclusion = m.at === partExclusionEnd || NAMED_EXCLUSION.test(prefix);
     const currentAlternative = clarifiedTimes && exclusion && CLARIFIED_ALTERNATIVE_RANGE.test(prefix)
       && CURRENT_PROBE_CHOICE.test(t.slice(m.end).replace(/[.!]\s*$/, ""));
     if (clarifiedTimes && !currentAlternative && probeTimeIsRecurring(t, m.at, m.end)) continue;
-    const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
-      && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
-        m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
-    const refused = exclusion || negatedAt(t, m.at, m.end - m.at);
+    const matching = matchingOffered(m);
+    const refused = exclusion || probeTimeIsRefused(t, m.at, m.end) || joinedRefusals.has(m);
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
     } else if (refused) {
       namedExclusion ||= exclusion;
       explicitAlternative ||= currentAlternative && matching.length > 0;
-      contradictedExclusion ||= exclusion && NEG_AFTER.test(t.slice(m.end));
+      contradictedExclusion ||= exclusion && (NEG_AFTER.test(t.slice(m.end)) || REFUSES_OFFERED_TIME.test(t.slice(m.end)));
       refusedGroup ||= !!m.group;
+      rememberQualifiedTimeRefusal(m.at, m.end);
       refuse(matching, exclusion ? undefined : clauseAt(t, m.at, m.end - m.at));
       if (exclusion) for (const key of matching) namedExcluded.add(key);
     } else if (unbound && !m.day || !matching.length || !m.group && matching.length > 1 && (explicitTimesOnly || !m.part)
@@ -1352,8 +1540,21 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       unresolved.push(m);
     } else mark(matching, m.at, m.end - m.at, true, !!m.group);
   }
+  if (conditionalTimeRefusal) {
+    if (!hasDetachedProbeRefusal(t)) return { answer: "unclear", keys: [], why: "conditional" };
+    if (c.why !== "mixed" && c.why !== "refusal") c = { answer: "no", why: "refusal" };
+  }
+  // Read a general answer without the words already bound to a specific refused time.
+  if (qualifiedTimeRefusals.size) {
+    let remaining = t;
+    for (const [at, end] of [...qualifiedTimeRefusals].sort(([first], [second]) => second - first)) {
+      remaining = `${remaining.slice(0, at)} ${remaining.slice(end)}`;
+    }
+    c = consentScan(remaining);
+  }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
+  for (const list of dayLists) residue = residue.slice(0, list.at) + " ".repeat(list.end - list.at) + residue.slice(list.end);
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(PROBE_DAY_GROUP, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
@@ -1365,7 +1566,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const picked = all.filter(isPicked);
   const open = offered.filter(slot => probeExclusionAlternative(requiredPart !== undefined, requiredPart === slot.part,
     neg.has(slot.key) && !isPicked(slot.key), contradictedExclusion)).map(slot => slot.key);
-  const unclear = { answer: "unclear" as const, keys: [], why: c.why };
+  const unclear = { answer: "unclear" as const, keys: [], why: c.why === "none" && qualifiedTimeRefusals.size ? "slot" as const : c.why };
   const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
@@ -1382,13 +1583,17 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       ? { ...unclear, why: "slot" } : explicitYes(current);
   }
   const strongAll = explicitTimesOnly ? EXPLICIT_ALL.exec(t) ?? (clarifiedTimes ? EXPLICIT_PAIR_ALL.exec(t) : null) : ALL.exec(t);
-  const weakCues = (explicitTimesOnly && !clarifiedTimes) || strongAll ? [] : [...t.matchAll(ALL_WEAK)].filter(cue => memberChoiceAt(cue.index!));
+  const weakCues = (explicitTimesOnly && !clarifiedTimes) || strongAll ? [] : [...t.matchAll(ALL_WEAK)].filter(cue => {
+    const clause = clauseAt(t, cue.index!, cue[0].length);
+    const refusalOnly = joinedRefusalClauses.has(clause) && !pickedClauses.has(clause);
+    return memberChoiceAt(cue.index!) && !(refusalOnly && picked.length > 0);
+  });
   const weakAt = weakCues[0];
   const weakRefusal = weakCues.some(cue => refusedClauses.has(clauseAt(t, cue.index!, cue[0].length)));
   const oneSlot = /(?:\bbut\s+|,\s*)not\s+both[.!\s]*$/.exec(t);
   const weakLimit = oneSlot && weakAt?.[0].startsWith("either") && !quoteStillOpen(t.slice(0, weakAt.index))
     && !describesAnotherPerson(t.slice(0, oneSlot.index)) ? oneSlot.index : t.length;
-  const weakNegated = weakCues.some(cue => cue.index! < weakLimit && negatedAt(t, cue.index!, cue[0].length));
+  const weakNegated = weakCues.some(cue => cue.index! < weakLimit && probeTimeIsRefused(t, cue.index!, cue.index! + cue[0].length));
   if (weakAt && (pos.size || unresolved.length || weakOrdinalMissing || weakRefusal || weakNegated)) {
     if (contradictedExclusion) return { ...unclear, why: "slot" };
     if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t.replace(NO_OTHER_TIMES, ""))) return explicitYes([]);
@@ -1400,6 +1605,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       return probeChoiceAuthored(t.slice(0, cue.index!));
     });
     if (bothCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
+    const eitherCues = weakCues.filter(cue => {
+      if (cue.index! >= weakLimit || !cue[0].startsWith("either")) return false;
+      return probeChoiceAuthored(t.slice(0, cue.index!));
+    });
+    if (eitherCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
     const namesPair = bothCues.some(cue => {
       const clause = clauseAt(t, cue.index!, cue[0].length);
       if (pickedClauses.has(clause) && BOTH_TIME_LEAD.test(clause)) return true;
@@ -1413,13 +1623,14 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
+  if (unresolvedLists.length) return { ...unclear, why: "slot" };
   if (contradictedExclusion || namedExclusion && (open.length === 0 || [...namedExcluded].some(key => strong.has(key)))) {
     return { ...unclear, why: "slot" };
   }
   if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = strongAll ?? weakAt;
-  if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
+  if (allAt && !probeTimeIsRefused(t, allAt.index, allAt.index + allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
     if (clarifiedTimes && !clarifiedBroadTimeChoiceAllowed(strongAll !== null,
       /\b(?:both|either)\b/.test(strongAll?.[0] ?? ""), open.length)) {

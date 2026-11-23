@@ -186,7 +186,7 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
       const key = `r_${receipt.slice(0, 32)}`;
       const kind = request.kind;
       const body = request.kind === "text" ? request.body : undefined;
-      const targetName = request.kind === "text" ? request.targetName : undefined;
+      const targetName = request.targetName;
       result = await rt.unitOfWork(async net => {
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;

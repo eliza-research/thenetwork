@@ -102,3 +102,7 @@
 {"ctx": "H", "text": "send her the photo of Sunset Park", "expect": {"kind": "send", "pick": "NoMatchingPhoto", "numbers": [1, 2, 3, 4, 5, 6]}}
 {"ctx": "H", "text": "send her photos 1 3 4", "expect": {"kind": "send", "pick": "ProposePhotos", "numbers": [1, 3, 4], "wantsSet": true}}
 {"ctx": "H", "text": "send her the dog", "expect": {"kind": "send", "pick": "ProposePhotos", "numbers": [3], "thread": "T1"}}
+{"ctx": "D1", "text": "Yes, send it to Ari9.", "expect": {"kind": "none"}}
+{"ctx": "D1", "text": "Yes, send it to Maya Smith.", "expect": {"kind": "none"}}
+{"ctx": "D1", "text": "yes send it to her old phone", "expect": {"kind": "none"}}
+{"ctx": "D1", "text": "yes, to Ana", "expect": {"kind": "none"}}

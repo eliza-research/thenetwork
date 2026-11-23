@@ -131,6 +131,15 @@ test.skipIf(!pgAvailable)("a photo named in the member's own words is not propos
     "Maya says send Jordan photo 2.",
     "Maya said to send Jordan photo 2.",
     "My friend told me to send Jordan photo 2.",
+    "Please send Jordan photo 2 to Ana.",
+    "Please send photo 2 to Jordan and Ana.",
+    "Please send Jordan photo 2. With that settled, tell them I'm at work. Over to Ana.",
+    "Please send Ana photo 2.",
+    "Please send photo 2 to Herman when you can.",
+    "Please send Jordan photo 2 if he asks.",
+    "Please send him photo 2 to Ana.",
+    "Please send Jordan photo 2 and also to Ana.",
+    "Please send Jordan photo 2 with Ana.",
   ]){
     const said=await say("ari",text);
     expect(said.reply,text).not.toContain("Send Jordan photo 2");
@@ -167,6 +176,17 @@ test.skipIf(!pgAvailable)("a YES that also asks to share the number does not con
   expect(body.senderNotice).not.toContain("photo");
   expect(await offers("vic","wes")).toEqual([{id:offer!.id,phase:"revoked"}]);
 },180_000);
+
+test.skipIf(!pgAvailable)("a YES that names another or an incomplete destination does not confirm a pending photo",async()=>{
+  for(const text of ["Yes, send it to Jordan Smith.","Yes, send it to Ari9.","yes send it to her old phone","yes, to Ana"]){
+    expect((await say("ari","send Jordan photo 2")).reply,text).toContain("Send Jordan photo 2");
+    const said=await say("ari",text);
+    expect(said.reply,text).not.toContain("I'll ask Jordan");
+    expect(await offers("ari","jordan"),text).toEqual([]);
+    await say("ari","no");
+  }
+  expect(await offers("ari","jordan")).toEqual([]);
+},120_000);
 
 test.skipIf(!pgAvailable)("a changed photo set or a lapsed proposal never becomes consent",async()=>{
   const proposed=await say("ari","send Jordan photo 2");
