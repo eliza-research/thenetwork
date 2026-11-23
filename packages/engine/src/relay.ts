@@ -726,12 +726,13 @@ const quotedRelaySeparator = (quotation: string): string => /[.!?…]\s*["']$/.t
 const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"')
   .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length));
 
+function relaySentenceBoundaries(text: string): string {
+  return text.replace(RELAY_QUOTATION, quotation => quotedRelaySeparator(quotation).padStart(quotation.length, " "));
+}
+
 function independentPhoneBoundary(prefix: string, markedPayload: boolean): number | undefined {
   const normalized = prefix.replace(/[“”]/g, '"');
-  // Preserve source offsets, including a sentence mark at the end of a closed quotation.
-  const punctuated = normalized.replace(RELAY_QUOTATION, quotation =>
-    quotedRelaySeparator(quotation).padStart(quotation.length, " "));
-  const end = TEXT_PAYLOAD_END.exec(punctuated)?.[0].length;
+  const end = TEXT_PAYLOAD_END.exec(relaySentenceBoundaries(normalized))?.[0].length;
   if (end === undefined) return undefined;
 
   const colon = ownRelayWords(normalized.slice(0, end)).search(TEXT_PAYLOAD_COLON);
@@ -742,6 +743,17 @@ function independentPhoneBoundary(prefix: string, markedPayload: boolean): numbe
       || !payload.startsWith(quotation) || !/^[\s.!?;…]*$/u.test(payload.slice(quotation.length))) return undefined;
   }
   return end;
+}
+
+function independentWithdrawalBoundary(payload: string, markedPayload: boolean): number | undefined {
+  const words = relaySentenceBoundaries(payload.replace(/[“”]/g, '"'));
+  for (const part of words.matchAll(RELAY_SENTENCE_TEXT)) {
+    const refusal = part[0].trim().toLowerCase();
+    if (!CONTACT_ITEM_REFUSAL.test(refusal) && !DECLINES_PENDING_SEND.test(refusal)) continue;
+    if (words.slice(part.index + part[0].length).startsWith("?")) continue;
+    const end = independentPhoneBoundary(payload.slice(0, part.index), markedPayload);
+    if (end !== undefined) return end;
+  }
 }
 
 function relayClauseLead(prefix: string): string {
@@ -1065,7 +1077,9 @@ export function parseRelayRequest(text: string): RelayRequest {
       contact = phone;
       leadingCondition = true;
     }
-    const message = payload.slice(0, end);
+    const withdrawalEnd = contact === undefined && !photos.some(direct)
+      ? independentWithdrawalBoundary(payload, markedEnvelope !== null) : undefined;
+    const message = payload.slice(0, withdrawalEnd !== undefined && withdrawsRelaySwap(t) ? withdrawalEnd : end);
     const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(message);
     const body = (modal && declarative ? message.replace(/\?$/, "") : message).trim();
     const target = envelope[2]!;
