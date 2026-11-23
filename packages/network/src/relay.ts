@@ -24,7 +24,6 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
-import { pendingSwapWithdrawn } from "../../core/src/generated/relayDecision.ts";
 import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
@@ -101,15 +100,8 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 /** A member asked to swap numbers; waiting for the other member's own request. */
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
-const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|should|must|shall)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t)\s+wait\b/g;
-const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch|won'?t|can'?t|cannot|refuse|decline|private|off limits)\b/;
-const OWN_CONTACT = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/;
-const DECLINES_PENDING_SEND = /\b(?:don'?t|do\s+not)(?:\s+want\s+(?:you\s+)?to)?\s+(?:send|share|give|pass|forward)\s+(?:it|that)\b(?=\s*(?:$|[,.!?;])|\s+yet\b)/;
+export { withdrawsRelaySwap as withdrawsSwap } from "../../engine/src/relay.ts";
 
-export function withdrawsSwap(text: string): boolean {
-  const normalized = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(SWAP_GO_AHEAD, " ");
-  return pendingSwapWithdrawn(OWN_CONTACT.test(normalized), SWAP_WITHHOLDING.test(normalized), DECLINES_PENDING_SEND.test(normalized));
-}
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
 

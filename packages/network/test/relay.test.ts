@@ -14,6 +14,7 @@ import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../..
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {ServiceClient} from "../../observatory/src/sources/service.ts";
+import type {NetworkState} from "../src/network.ts";
 
 const db=`network_relay_${randomUUID().replaceAll("-","")}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
@@ -182,3 +183,85 @@ test("the thread persists after the date: a text 9 days after the meeting is sti
   const rows=await sql`select body from network.messages where app_id='friends' and id like 'relay:%' and member_id=${bo} order by ts desc limit 1`;
   expect(rows[0]?.body).toContain("want to go again next weekend");
 },60_000);
+
+const sharesQueued = async () => (await sql`select id from network.messages where app_id='friends'
+  and direction='outbound' and body like '%asked me to send you%'`).length;
+const pendingNumberSwaps = () => service.runtimeFor("friends")!.unitOfWork(net => net.exportState().relay?.swaps ?? []);
+let swapMatchTemplate: NetworkState["opps"][number] | undefined;
+
+async function startNumberSwap(id: string, who: "ari" | "bo") {
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
+    clock.advance(DAY);
+    const now = clock.now();
+    state.opps = [{ ...swapMatchTemplate, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
+    if (state.relay) state.relay.swaps = [];
+    net.importState(state);
+  });
+  const recipient = who === "ari" ? "Bo" : "Ari";
+  expect(await (await post(await ask(who, id + "-first", "send " + recipient + " my number"))).json())
+    .toMatchObject({ decision: "hold", delivered: false });
+}
+
+test.each([
+  "I would not give Ari my number",
+  "I could not give Ari my number",
+  "I did not give Ari my number",
+  "I mustn't give Ari my number",
+  "I'll not give Ari my number",
+  "My number is off limits, send Ari my number",
+  "I can't believe it, “send Ari my number”",
+])("the relay does not send a private item after %s", async (text) => {
+  const id = "refused-share-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const action = await (await post(await ask("bo", id + "-refusal", text))).json();
+  expect({ action, newShares: await sharesQueued() - before })
+    .toMatchObject({ action: { decision: "none", delivered: false }, newShares: 0 });
+}, 60_000);
+
+test.each([
+  "No need to hesitate, I refuse to share my number",
+  "Don't hesitate, I decline the number swap",
+  "Don't delay, my number stays private",
+  "Don't delay, my number is off limits",
+  "Don't delay, tell them they can't have my number",
+  "No need to wait for my number, I won't share it",
+  "Don't send it to them",
+  "Don't send it please",
+  "Please don't send it to them yet",
+])("the signed turn withdraws a pending swap after %s", async (text) => {
+  const id = "withdrawn-swap-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "bo");
+  await open(phones.bo, id + "-refusal", text);
+  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
+  const action = await (await post(await ask("ari", id + "-second", "send Bo my number"))).json();
+  expect({ pending, action, newShares: await sharesQueued() - before })
+    .toMatchObject({ pending: 0, action: { decision: "hold", delivered: false }, newShares: 0 });
+}, 60_000);
+
+test.each([
+  "I won't lie, send Ari my number",
+  "I can't believe it, send Ari my number",
+  "I can't find my phone, but send Ari my number",
+  "I would not miss it, send Ari my number",
+  "I could not find parking, send Ari my number",
+  "I did not miss your message, send Ari my number",
+  "I mustn't be late, send Ari my number",
+  "I'll not lie, send Ari my number",
+])("the signed action preserves the same pending request after %s", async (text) => {
+  const id = "affirmed-swap-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "bo");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+  const affirmation = await ask("bo", id + "-go-ahead", text);
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
+  expect(await (await post(affirmation)).json()).toMatchObject({ decision: "hold", delivered: false });
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
+  expect(await (await post(await ask("ari", id + "-second", "send Bo my number"))).json())
+    .toMatchObject({ decision: "pass", delivered: false });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);

@@ -31,8 +31,8 @@
 //                  contact share per opportunity.
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
-import { privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
-import { canBeMatched, labelHash, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
+import { canBeMatched, labelHash, LeakGuard, quoteStillOpen, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -450,13 +450,45 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
 // --------------------------------------------------------------------------- member requests
 export type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string } | { kind: "none" };
 
-const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|won'?t|wont|rather not|hold off|wait (?:to|before)|not until)\b/;
-const SHARE_NEG = /\b(?:not going to|not gonna|can'?t(?! wait)|cant(?! wait)|cannot(?! wait)|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not(?!\s+wait\b)|mustn'?t(?!\s+wait\b))\b/;
+const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|rather not|hold off|wait (?:to|before)|not until)\b/;
+const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
 const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
 const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward)\\s+(?:this|that|these|my)\\s+(?:photos?|pics?|pictures?|selfies?)\\s+(?:to|with)\\s+${OTHER}`, "iu");
 const TEXT_REQ = new RegExp(`^\\s*(?:please\\s+)?(?:tell|let|ask)\\s+${OTHER}\\s+(?:know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
+
+const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|would|could|did|should|must|shall|'ll)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t|mustn'?t)\s+wait\b/g;
+const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
+const OWN_SWAP_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/;
+const SWAP_PROPERTY = new RegExp(OWN_SWAP_ITEM.source + "\\s+(?:(?:is|stays?|remains?)\\s+(?:private|off limits)|can wait)\\b");
+const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to\s+)?(?:send|share|give|pass|forward|text)\b|(?:the|that|our)\s+(?:numbers?\s+)?swap\b)/;
+const TRANSFER = "send|share|give|pass|forward|text|disclose|reveal";
+const SWAP_MODAL_REFUSAL = new RegExp(SHARE_NEG.source + "\\s+(?:ever\\s+)?(?:" + TRANSFER + "|have|get)\\b");
+const DECLINES_PENDING_SEND = new RegExp(
+  "^\\s*(?:(?:actually|please|pls|i|no|never mind|nvm)\\s+)*(?:i(?='ll\\b))?(?:(?:don'?t|do\\s+not)(?:\\s+want\\s+(?:you\\s+)?to)?|" +
+  SHARE_NEG.source + ")\\s+(?:" + TRANSFER + ")(?:\\s+out)?\\s+(?:it|that)(?:\\s+(?:to|with)\\s+(?:them|him|her|my (?:match|date)))?(?:\\s+(?:yet|please|pls))*\\s*$",
+);
+const PRIVATE_RELAY_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?|email)|(?:this|that|the|my|these) (?:photos?|pics?|pictures?|selfies?|images?))\b/;
+const PRIVATE_RELAY_ACTION = /\b(?:send(?:ing)?|sent|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\b/;
+const PRIVATE_RELAY_REFERENCE = /\b(?:send|share|give|pass|forward|show|text)\s+(?:it|that|this)\b/;
+const INCOMPLETE_SHARE_REFUSAL = new RegExp(SHARE_NEG.source + "\\s*$");
+const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
+
+// spec/relayDecision.md, "A member can take back a pending number swap"
+function refusesNumberSwap(clauses: readonly string[]): boolean {
+  return clauses.some(clause => pendingSwapWithdrawn(
+    OWN_SWAP_ITEM.test(clause),
+    SWAP_WITHHOLDING.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause) || SWAP_MODAL_REFUSAL.test(clause),
+    DECLINES_PENDING_SEND.test(clause),
+  ));
+}
+
+const relayClauses = (text: string): string[] => text.replace(SWAP_GO_AHEAD, " ").split(RELAY_CLAUSE);
+
+export function withdrawsRelaySwap(text: string): boolean {
+  return refusesNumberSwap(relayClauses(text.replace(/[’‘`´]/g, "'").toLowerCase()));
+}
 
 /**
  * What a member asks the agent to do with their match. Only an explicit, unhedged, unnegated request
@@ -466,12 +498,21 @@ const TEXT_REQ = new RegExp(`^\\s*(?:please\\s+)?(?:tell|let|ask)\\s+${OTHER}\\s
 export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const low = t.toLowerCase();
-  const negated = NEG.test(low), hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(t));
-  const allowed = privateRelayRequestAllowed(negated || SHARE_NEG.test(low), hedged);
-  if (CONTACT_REQ.test(t)) return allowed ? { kind: "contact_share" } : { kind: "none" };
-  if (PHOTO_REQ.test(t)) return allowed ? { kind: "photo" } : { kind: "none" };
+  const contact = CONTACT_REQ.exec(t);
+  const item = contact ?? PHOTO_REQ.exec(t);
+  if (item) {
+    const clauses = relayClauses(low);
+    const hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(t));
+    // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
+    const refused = clauses.some(clause => NEG.test(clause) || INCOMPLETE_SHARE_REFUSAL.test(clause)
+      || (SHARE_NEG.test(clause) && (PRIVATE_RELAY_REFERENCE.test(clause)
+        || (PRIVATE_RELAY_ACTION.test(clause) && PRIVATE_RELAY_ITEM.test(clause)))))
+      || (contact !== null && refusesNumberSwap(clauses));
+    return privateRelayRequestAllowed(refused, hedged || quoteStillOpen(low.slice(0, item.index).replace(/[“”]/g, '"')))
+      ? { kind: contact ? "contact_share" : "photo" } : { kind: "none" };
+  }
   const m = TEXT_REQ.exec(t);
-  if (m && !negated) return { kind: "text", body: m[1]!.trim() };
+  if (m && !NEG.test(low) && !/\bwon'?t\b/.test(low)) return { kind: "text", body: m[1]!.trim() };
   return { kind: "none" };
 }
 

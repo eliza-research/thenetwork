@@ -48,3 +48,13 @@
 {"text": "I couldn't share this pic with her", "want": "none"}
 {"text": "can't wait! send them my number", "want": "contact_share"}
 {"text": "tell them I can't make it at 7", "want": "text"}
+{"text":"I would not give Ari my number","want":"none"}
+{"text":"I could not give Ari my number","want":"none"}
+{"text":"I did not give Ari my number","want":"none"}
+{"text":"I mustn't give Ari my number","want":"none"}
+{"text":"I'll not give Ari my number","want":"none"}
+{"text":"I won't lie, send Ari my number","want":"contact_share"}
+{"text":"I can't believe it, send Ari my number","want":"contact_share"}
+{"text":"I can't find my phone, but send Ari my number","want":"contact_share"}
+{"text":"My number is off limits, send Ari my number","want":"none"}
+{"text":"I can't believe it, “send Ari my number”","want":"none"}
