@@ -132,3 +132,9 @@
 {"text":"I'm 11 1/2 years old","minor":true,"declined":true,"age":11}
 {"text":"I'm 12 and 3 months old","minor":true,"declined":true,"age":12}
 {"text":"She said \"this is true. I'm 12.5 years old.\"","minor":false,"declined":false}
+{"text":"I'm 18 this Friday","minor":true,"age":17,"declined":false}
+{"text":"I'm 18 y.o. this Friday","minor":true,"age":17,"declined":false}
+{"text":"I'll be 18 in two years","minor":false,"declined":false}
+{"text":"I'm turning 18 in two years","minor":false,"declined":false}
+{"text":"I turn 18 in two years","minor":false,"declined":false}
+{"text":"I'm 21 years old. My brother is 18 this Friday.","minor":false,"age":21,"declined":false}

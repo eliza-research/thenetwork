@@ -17,7 +17,7 @@
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
 import { slopRadiusContextAllowed, slopRadiusMilesInBounds, slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, NOT_DISTANT_BIRTHDAY, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -183,8 +183,8 @@ const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: bool
   { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|${NUM_WORD_RX})${NOT_UPCOMING_AGE}[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
   { rx: new RegExp(`(?:\\b(?:my age is|age\\s*[:=-]|age is)\\s*|(?:^|[,.(]\\s*)age\\s+)(\\d{1,2})\\b${NOT_UPCOMING_AGE}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD_RX})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => precedingBirthdayAge(readNumericPhrase(m[1] ?? "")), strict: false },
-  { rx: new RegExp(`\\b(?:${ME}\\s+)?(?:almost|nearly|turning|about to (?:be|turn))\\s+(\\d{1,2}|${NUM_WORD_RX})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi\\b|km|percent|%|feet|ft|times))`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
-  { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD_RX})\\s+(?:in|on|next|this|soon)\\b`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
+  { rx: new RegExp(`\\b(?:${ME}\\s+)?(?:almost|nearly|turning|about to (?:be|turn))\\s+(\\d{1,2}|${NUM_WORD_RX})\\b${NOT_DISTANT_BIRTHDAY}(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi\\b|km|percent|%|feet|ft|times))`), age: m => precedingBirthdayAge(readNumericPhrase(m[1] ?? "")), strict: false },
+  { rx: new RegExp(`\\bi(?:(?:'ll| will) be| turn)\\s+(\\d{1,2}|${NUM_WORD_RX})\\b${NOT_DISTANT_BIRTHDAY}\\s+(?:in|on|next|this|soon)\\b`), age: m => precedingBirthdayAge(readNumericPhrase(m[1] ?? "")), strict: false },
   // Shorthand "27f", "27 m", "27/nb", "f27", "m 31": an age and a gender together.
   { rx: /(?:^|[\s,(\/])(\d{2})\s*\/?\s*(?:f|m|nb|enby|w)(?![a-z0-9'])/, age: m => Number(m[1]), strict: false },
   { rx: LETTER_FIRST_AGE, age: m => Number(m[2]), strict: false },

@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canJoin, directAgreementIdiom, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, NOT_DISTANT_BIRTHDAY, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canJoin, directAgreementIdiom, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { hasOrElseThreat } from "../../core/src/abuse.ts";
@@ -288,9 +288,8 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`${SELF_CURRENT_AGE}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => teenOrAdult(precedingBirthdayAge(ageNumber(m[1] ?? ""))), estimated: true },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
-  { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
-  { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
-  { rx: new RegExp(`\\bi turn\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
+  { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b${NOT_DISTANT_BIRTHDAY}(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult(precedingBirthdayAge(ageNumber(m[1] ?? ""))), estimated: true },
+  { rx: new RegExp(`\\bi(?:(?:'ll| will) be| turn)\\s+(\\d{1,2}|${NUM_WORD})\\b${NOT_DISTANT_BIRTHDAY}\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult(precedingBirthdayAge(ageNumber(m[1] ?? ""))), estimated: true },
   { rx: /\bwhen i turn\s+(1[4-8]|sixteen|seventeen|eighteen)\b/, age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1, estimated: true },
   // "15f here", "16 m", "15/f", "im 15f", "f15".
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:${ME}\\s+)?(1\\d|\\d)\\s*${AGE_SEX_MARKER}(?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },

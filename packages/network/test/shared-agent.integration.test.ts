@@ -1359,6 +1359,29 @@ test("signed fractional ages distinguish an explicit current age from a height o
   }
 }, 60_000);
 
+// spec/memberAge.md, "A near birthday gives an estimate for the present age".
+test("signed birthday wording keeps a distant age separate from an upcoming weekday", async () => {
+  const phone = "+16465550198";
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  expect(joined.ok).toBe(true);
+
+  for (const [i, text] of ["I'll be 18 in two years", "I'm turning 18 in two years", "I turn 18 in two years"].entries()) {
+    clock.advance(MINUTE);
+    expect((await post(turn(`distance-birthday-age-${i}`, phone, text, "friends"))).status).toBe(200);
+    expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  }
+
+  clock.advance(MINUTE);
+  const age = turn("upcoming-weekday-birthday", phone, "I'm 18 y.o. this Friday", "friends");
+  expect((await post(age)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(17);
+}, 60_000);
+
 test("a signed age with months projects the minor's age to other app memberships", async () => {
   const phone = "+12125550197";
   for (const app of [APPS.friends, APPS.slop]) {
