@@ -204,6 +204,20 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
     expect([va.status, va.body]).toEqual([vb.status, vb.body]);
     expect(Math.min(va.ms, vb.ms)).toBeGreaterThanOrEqual(55);
   });
+
+  test("banned number gets no SMS, verify fails, and pre-ban session export returns review", async () => {
+    const c = make(store);
+    const ban = (phone: string) => store.ban({ id: `ban_sec_${phone}`, scope: "phone", personId: null, phoneHash: c.api.accounts.phoneHash(phone), reason: "sim", reportId: null, bannedBy: "staff:1", at: c.clock.t });
+    const banned = newPhone(), late = newPhone();
+    await ban(banned);
+    const beforeSends = c.sends();
+    expect((await c.call("slop", "POST", "/api/auth/otp/start", { phone: banned })).status).toBe(200);
+    expect(c.sends()).toBe(beforeSends);
+    const cookie = await c.login("friends", late);
+    await ban(late);
+    const exp = await c.call("friends", "GET", "/api/me/export", undefined, { cookie });
+    expect([exp.status, exp.body.error]).toEqual([401, "unauthorized"]);
+  });
 });
 
 describe("production host map", () => {
@@ -211,6 +225,14 @@ describe("production host map", () => {
     const api = createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: "production" }, hashKey: "h".repeat(40), sessionSecret: "s".repeat(40), turnstile: { verify: async () => true }, otp: { name: "f", send: async () => ({ code: "123456" }) }, minStartMs: 0, minVerifyMs: 0, log: () => {} });
     expect((await api.fetch(new Request("http://localhost:5102/api/app", { headers: { host: "localhost:5102" } })))!.status).toBe(404);
     expect(await (await api.fetch(new Request("https://slop.date/api/app", { headers: { host: "slop.date" } })))!.json()).toMatchObject({ id: "slop" });
+  });
+
+  test("an Origin with the site's host on plain http is refused outside loopback dev", async () => {
+    const hostMap = { "slop.date": "slop" as const };
+    const prod = createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: "production" }, hostMap, hashKey: "k".repeat(40), sessionSecret: "s".repeat(40), minStartMs: 0, log: () => {}, turnstile: { verify: async () => true }, otp: { name: "fake", send: async () => ({ code: "123456" }) } });
+    const start = (origin: string) => prod.fetch(new Request("https://slop.date/api/auth/otp/start", { method: "POST", headers: { host: "slop.date", "content-type": "application/json", origin }, body: JSON.stringify({ phone: "+12125559901" }) }));
+    expect((await start("http://slop.date"))!.status).toBe(403);
+    expect((await start("https://slop.date"))!.status).toBe(200);
   });
 });
 

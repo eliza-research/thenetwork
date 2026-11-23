@@ -179,19 +179,26 @@ export class OtpService {
     const hourLeft = HOUR - (at % HOUR);
     const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
     // spec/otpLimits.md, "Code sends have limits shared across apps"
+    // Check all four rate limits together first so a later limit refusal never counts against earlier buckets.
+    const phoneKey = keyedHash(this.opts.hashKey, e164);
+    const results = await this.store.hitAll([
+      { bucket: `otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR, rule: { limit: L.perIpPerHour } },
+      { bucket: `otp:phone:${phoneKey}`, windowMs: HOUR, rule: { limit: L.perPhonePerHour, minGapMs: L.minGapMs } },
+      { bucket: `otp:phone_day:${phoneKey}`, windowMs: DAY, rule: { limit: L.perPhonePerDay } },
+      { bucket: "otp:global", windowMs: HOUR, rule: { limit: L.globalPerHour } },
+    ], at);
     let challenge = step(initial, { type: "requestCode" });
-    const byIp = await this.store.hit(`otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.perIpPerHour });
+    const byIp = results[0]!;
     challenge = step(challenge, { type: "readSendAddress", allowed: byIp.ok });
     if (challenge.phase !== "SendPhoneHour") return limited();
-    const phoneKey = keyedHash(this.opts.hashKey, e164);
-    const byPhone = await this.store.hit(`otp:phone:${phoneKey}`, HOUR, at, { limit: L.perPhonePerHour, minGapMs: L.minGapMs });
+    const byPhone = results[1]!;
     const gapLeft = byPhone.prevAt === null ? 0 : L.minGapMs - (at - byPhone.prevAt);
     challenge = step(challenge, { type: "readSendPhoneHour", allowed: byPhone.ok, gapLeft });
     if (challenge.phase !== "SendPhoneDay") return limited(challenge.reason === "LimitedGap" ? gapLeft : hourLeft);
-    const byDay = await this.store.hit(`otp:phone_day:${phoneKey}`, DAY, at, { limit: L.perPhonePerDay });
+    const byDay = results[2]!;
     challenge = step(challenge, { type: "readSendPhoneDay", allowed: byDay.ok });
     if (challenge.phase !== "SendGlobal") return limited(DAY - (at % DAY));
-    const all = await this.store.hit("otp:global", HOUR, at, { limit: L.globalPerHour });
+    const all = results[3]!;
     challenge = step(challenge, { type: "readSendGlobal", allowed: all.ok });
     if (challenge.phase !== "Sending") {
       this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);

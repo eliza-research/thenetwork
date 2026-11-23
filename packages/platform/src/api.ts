@@ -17,7 +17,7 @@ import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } f
 import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
-import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { cloudIdentityTimesValid, cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
   type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck, cloudCachePublication,
@@ -225,7 +225,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
-    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
+    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onEraseAccount: o.onEraseAccount, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
   const sessions = new SessionService(o.store, { now, secret: sessionSecret, phoneHash: e164 => accounts.phoneHash(e164) });
@@ -433,7 +433,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
         const origin = req.headers.get("origin");
         let originHost: string | undefined;
-        try { originHost = origin ? new URL(origin).host : undefined; } catch { /* not a URL */ }
+        // A site is https; plain http is a loopback dev host only.
+        try { const u = origin ? new URL(origin) : undefined; if (u && (u.protocol === "https:" || (dev && u.protocol === "http:" && ["localhost", "127.0.0.1"].includes(u.hostname)))) originHost = u.host; } catch { /* not a URL */ }
         if (origin && appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
       }
       let authenticated: Awaited<ReturnType<typeof auth>>;
@@ -451,7 +452,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const origin = req.headers.get("origin");
       if (origin) {
         let originHost: string | undefined;
-        try { originHost = new URL(origin).host; } catch { /* not a URL */ }
+        // A site is https; plain http is a loopback dev host only.
+        try { const u = new URL(origin); if (u.protocol === "https:" || (dev && u.protocol === "http:" && ["localhost", "127.0.0.1"].includes(u.hostname))) originHost = u.host; } catch { /* not a URL */ }
         if (appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
       }
     }
@@ -465,7 +467,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const withSession = async (fn: (who: Who, a: NonNullable<Awaited<ReturnType<typeof auth>>>) => Promise<Response>): Promise<Response> => {
       const a = await auth();
       if (!a) return json(401, { ok: false, error: "unauthorized" });
-      const res = await fn({ e164: a.session.e164, personId: a.session.personId }, a);
+      const res = await fn({ e164: a.session.e164, personId: a.session.personId, session: a.session.tokenHash }, a);
       if (!res.headers.has("set-cookie")) rotatedCookies(res, a);
       return res;
     };
@@ -705,6 +707,11 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           try {
             const r = await accounts.join(app, who, input, enrollment, b.inviteToken, typeof b.signupView === "string" ? b.signupView : undefined);
             if (!r.ok && r.error === "account_changed") return json(409, { ok: false, error: r.error });
+            if (!r.ok && r.error === "under_age" && who.personId === null) {
+              const response = json(400, { ok: false, error: r.error, message: app.brand.underAge }, { "set-cookie": cookie(appId, "", 0) });
+              response.headers.append("set-cookie", identityCookie(appId, "", 0));
+              return response;
+            }
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {
@@ -725,7 +732,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         });
 
       case "GET /api/me/export":
-        return withSession(async who => (await accounts.held(who.e164))
+        return withSession(async who => (await accounts.held(who.e164) || await accounts.banned(who.e164)
+          || (who.personId !== null && await o.store.isBanned(accounts.phoneHash(who.e164), who.personId)))
           ? json(403, { ok: false, error: "review", message: REVIEW_MESSAGE })
           : json(200, await accounts.exportApp(app, who), { "content-disposition": `attachment; filename="${appId}-export.json"` }));
 
@@ -828,7 +836,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const envelope = stepAuthority(authorityInitial, {
         type: "checkGrantEnvelope",
         envelopeValid: authority.version===1 && authority.app===grant.app && authority.resource===grant.resource
-          && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && !(authority.issuedAt*1000>now())
+          && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && cloudIssuedAtWithinSkew(authority.issuedAt*1000, now())
           && Number.isSafeInteger(authority.expiresAt)
           && typeof authority.sealed==="string" && authority.sealed.length<=16000,
         grantLive: !(authority.expiresAt<=now()),

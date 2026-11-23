@@ -13,7 +13,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
 import {
-  LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PHOTO_VIEW_TTL_MS, PhotoService, sniffType, stripMetadata, withRetry,
+  BadImage, LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PHOTO_VIEW_TTL_MS, PhotoService, sniffType, stripMetadata, withRetry,
   type PhotoRater, type PhotoRefusal,
 } from "../src/photos.ts";
 import { PhotoRelayService, PgPhotoRelayStore } from "../src/photo-relay.ts";
@@ -98,6 +98,12 @@ describe("metadata strip: an allowlist", () => {
     // The frame's own size is its header plus what is left inside it.
     const at = Buffer.from(a).indexOf(Buffer.from("ANMF"));
     expect(a[at + 4]! | (a[at + 5]! << 8)).toBe(16 + rchunk("VP8 ", enc("FRAME1")).length);
+  });
+  test("a WebP chunk length with the top bit set throws BadImage and finishes cleanly", () => {
+    const lengths = [[0xf8, 0xff, 0xff, 0xff], [0xff, 0xff, 0xff, 0xff], [0x00, 0x00, 0x00, 0x80]];
+    const files = lengths.flatMap(l => ["XXXX", "VP8 "].map(t => Uint8Array.from([...cat(enc("RIFF"), [0, 0, 0, 0], enc("WEBP"), enc(t), l)])));
+    const inner = Uint8Array.from([...cat(enc("RIFF"), [0, 0, 0, 0], enc("WEBP"), enc("ANMF"), [28, 0, 0, 0], new Uint8Array(16), enc("VP8 "), [0xf8, 0xff, 0xff, 0xff], [0, 0, 0, 0])]);
+    for (const f of [...files, inner]) expect(() => stripMetadata(f, "image/webp")).toThrow(BadImage);
   });
   test("the type comes from the bytes; a text file named .jpg, or a broken JPEG, is refused", () => {
     expect(sniffType(jpeg())).toBe("image/jpeg");
