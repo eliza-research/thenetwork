@@ -33,7 +33,7 @@
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
 import { relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
-import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, relayMinorEstimate, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -260,7 +260,7 @@ export function classifyRelayText(text: string): { codes: string[]; minorSignal:
   const lower = normalized.toLowerCase();
   const ageText = normalizeAgeInitialism(lower);
   const ageVariants = ageText === lower ? vs : textVariants(ageText);
-  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
+  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
 }
 
 // ----------------------------------------------------------------------------------- photo ids

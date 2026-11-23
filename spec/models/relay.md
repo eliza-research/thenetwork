@@ -10,7 +10,11 @@ Check per-item consent and withdrawal, relay decisions, age restrictions, and er
 
 Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. An operative condition before or after the request can supply uncertainty to the private request rule. A prior condition can still apply when a separate clause follows it or it names a private item that must come first. Reports, quotations, instructions to proceed and unrelated remarks supply no such evidence. A clear statement about the same named actor, action, and any specified item can settle a prior request to wait. The reader keeps the stated item and recipient words when it compares the condition with the completion. If the condition explicitly names the transfer recipient, the reader also compares that recipient with the request. A question leaves the condition open. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
 
-The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message because it mentions an upcoming minor birthday. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader; this model takes the evidence category as input.
+The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message when the sender gives a near-birthday or current school-year cue. The shell checks the cue's speaker and excludes another person's quoted or reported words, a hypothetical and a complete adult school role. A teacher's attribution can explain the speaker's own grade. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader. The model takes the evidence category as input.
+
+### Story: Keep an estimate in the relay item
+
+A member's own estimate can make one message unsafe to relay. The member can still use the match when only the item reader recognizes an estimate. The signed turn can independently record an age and close an unsafe match before the relay action. A member can report what another person said without that report becoming their own age.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -1022,6 +1026,14 @@ module relay {
       .expect(queue.rows.keys().contains("a1") and ep.response.get("a1") == "ok" and failureMeansNoEffect)
 
   // SD-064 (fixed, flag half): Clef reads a minor's words and holds the item; the age signal drops the text.
+  run estimatedMinorBlocksOnlyItsRelayTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "minorRules", false)).then(answer("a1"))
+      .expect(desk.log.get("a1").decision == "block" and desk.log.get("a1").ageSignal
+        and not(queue.rows.keys().contains("a1")) and not(w.minor.get("A")) and w.matchOpen)
+      .then(claim("a2", "text")).then(commitText("a2", "pass", false)).then(answer("a2"))
+      .expect(desk.log.get("a2").decision == "pass" and queue.rows.keys().contains("a2") and safety)
+
   run clefMinorNotKeptTest =
     init
       .then(claim("a1", "text")).then(commitText("a1", "minorClef", false)).then(answer("a1"))
