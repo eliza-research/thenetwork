@@ -179,6 +179,33 @@ export function lawSlopSiteKeepsNoOpenAiSurface(app: AppId): boolean {
   return !siteOffersOpenAi("Slop", app);
 }
 
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function signInSite(site: AppId, app: AppId): AppId {
+  return site === hubHost ? hubHost : app;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawHubPathsSignInOnTheHub(app: AppId): boolean {
+  //@ ensures \result === true
+  return signInSite(hubHost, app) === hubHost;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawAppSiteSignsInOnItself(app: AppId): boolean {
+  //@ ensures \result === true
+  return signInSite(app, app) === app;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawSignInSiteServesTheApp(site: AppId, app: AppId): boolean {
+  //@ ensures \result === true
+  return !hostBindsApp(site, app) || (signInSite(site, app) === site && hostBindsApp(signInSite(site, app), app));
+}
+
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
 //@ pure
 export function scopeFor(tool: ToolName): Scope {
@@ -266,6 +293,12 @@ export function lawReadToolsServeEveryStatus(status: MemberStatus): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
+export function canAuthorize(c: Connection): boolean {
+  return c.phase === "Anonymous" || c.phase === "Revoked";
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
 export function authorize(c: Connection, withWrite: boolean, withProfileRead: boolean): Connection {
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysUnboundHasNoDraft(\result)
@@ -326,12 +359,6 @@ export function canConnect(c: Connection): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
-export function canAuthorize(c: Connection): boolean {
-  return c.phase === "Anonymous" || c.phase === "Revoked";
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
 export function canCallPublicTool(c: Connection, tool: ToolName): boolean {
   return (c.phase === "Anonymous" || c.phase === "Connected") && scopeFor(tool) === "NoScope";
 }
@@ -362,6 +389,24 @@ export function alwaysBoundHostIsServed(c: Connection): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
+export function connect(c: Connection, host: AppId, surface: Surface, openAiEnabled: boolean): Connection {
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysWriteNeedsConnection(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysUnboundHasNoDraft(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysBoundHostIsServed(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysMemberResultsNeedConnection(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysSentProfileWasApproved(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysDailyProfileCap(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysShownCountIsSmall(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> stepSavedProfileNeedsReadAuthority(c, "connect", \result)
+  //@ ensures (inv(c) && canConnect(c)) ==> stepNothingSentAtTheLimit(c, "connect", \result)
+  //@ ensures (inv(c) && canConnect(c)) ==> stepSubmitOnlyForLiveMember(c, "connect", \result)
+  //@ ensures (inv(c) && canConnect(c)) ==> stepReadingNeverAddsUnseen(c, "connect", \result)
+  return { ...c, host: host, surface: surface, phase: configuredHostServes(surface, host, openAiEnabled) ? "Anonymous" : "Unavailable" };
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
 export function lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): boolean {
   //@ ensures \result === true
   return callPublicTool(c, tool, app, false).lastResult === "AppNotAvailable";
@@ -378,24 +423,6 @@ export function lawOpenAiPluginServerNeverNamesSlop(c: Connection, tool: ToolNam
 //@ pure
 export function canCallWithoutAccess(c: Connection, tool: ToolName): boolean {
   return bound(c) && toolListed(c.host, c.surface, tool) && ((c.phase === "Anonymous" && scopeFor(tool) !== "NoScope") || c.phase === "Revoked" || (c.phase === "Connected" && !grantCovers(tool, true, c.hasWrite, c.hasProfileRead)));
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
-export function connect(c: Connection, host: AppId, surface: Surface, openAiEnabled: boolean): Connection {
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysUnboundHasNoDraft(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysBoundHostIsServed(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysMemberResultsNeedConnection(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysSentProfileWasApproved(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysShownCountIsSmall(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> stepSavedProfileNeedsReadAuthority(c, "connect", \result)
-  //@ ensures (inv(c) && canConnect(c)) ==> stepNothingSentAtTheLimit(c, "connect", \result)
-  //@ ensures (inv(c) && canConnect(c)) ==> stepSubmitOnlyForLiveMember(c, "connect", \result)
-  //@ ensures (inv(c) && canConnect(c)) ==> stepReadingNeverAddsUnseen(c, "connect", \result)
-  return { ...c, host: host, surface: surface, phase: configuredHostServes(surface, host, openAiEnabled) ? "Anonymous" : "Unavailable" };
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */

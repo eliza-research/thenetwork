@@ -15,8 +15,12 @@ import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
 import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType, updateHandoffAssetPath } from "../packages/core/src/generated/sitePages.ts";
 import { brandFor } from "../packages/core/src/generated/brandIdentity.ts";
 import {
+  type AgeBand,
   type AgentSignup,
+  type BrowserResult,
   type Event as SignupEvent,
+  type SignupReport,
+  type SiteStatus,
   type Transport,
   enabled as signupEnabled,
   endReportFor,
@@ -27,6 +31,7 @@ import {
   step as signupStep,
   transportFor,
 } from "../packages/core/src/generated/agentSignup.ts";
+import type { Approval } from "../packages/core/src/generated/agentPhoneHandoff.ts";
 
 import type { AppId } from "../packages/core/src/types.ts";
 export type { AppId };
@@ -146,23 +151,37 @@ export function signupMarkers(text: string): SignupMarker[] {
   return out;
 }
 
-const CONNECTOR_CAPABILITIES = [true, false];
+const DIRECT_CREDENTIAL_FLOW = /\/api\/auth\/otp\/(?:start|verify)|session\.cookies/i;
 
-/** The transports a skill of this app reaches when the agent has the capability. */
-function skillTransports(s: Site): Transport[] {
-  const kind = skillKindFor(s.key);
-  return CONNECTOR_CAPABILITIES.map(available => transportFor(kind, available)).filter(t => t !== "NoTransport");
-}
+export type ConnectorSetupPath = "ToolsPresent" | "ConnectorAdded" | "ConnectorNotAdded" | "ConnectorImpossible";
 
-/** Map each marked step to its successful app-specific event. */
-function successfulEvent(s: Site, event: string, transport: Transport): SignupEvent | undefined {
-  const kind = skillKindFor(s.key);
+const SETUP_PATHS: { setup: ConnectorSetupPath; clientCanAdd: boolean | null; connectorTools: boolean }[] = [
+  { setup: "ToolsPresent", clientCanAdd: null, connectorTools: true },
+  { setup: "ConnectorAdded", clientCanAdd: true, connectorTools: true },
+  { setup: "ConnectorNotAdded", clientCanAdd: true, connectorTools: false },
+  { setup: "ConnectorImpossible", clientCanAdd: false, connectorTools: false },
+];
+
+const SETUP_EVENTS = new Set(["checkConnectorSetup", "resumeAfterConnector", "chooseTransport"]);
+
+const valuesOf = <T extends string>(all: Record<T, true>): T[] => Object.keys(all) as T[];
+const BOOLEANS = [true, false];
+const AGE_BANDS = valuesOf<AgeBand>({ AgeNotStated: true, Under13: true, Teen: true, Adult: true });
+const APPROVALS = valuesOf<Approval>({ ApproveExact: true, AskChanges: true, DeclineSignup: true });
+const BROWSER_RESULTS = valuesOf<BrowserResult>({
+  BrowserNewOpen: true, BrowserNewInvited: true, BrowserExisting: true, BrowserWaiting: true, BrowserWrongApp: true, BrowserBelowAge: true,
+  BrowserNeedsInvite: true, BrowserInvalidInvite: true, BrowserHeld: true, BrowserRefused: true, BrowserChanged: true,
+});
+const SITE_STATUSES = valuesOf<SiteStatus>({ SiteNotJoined: true, SiteInvited: true, SiteOnboarding: true, SiteActive: true, SiteStopped: true, SiteOnHold: true });
+
+interface PathContext { setup: ConnectorSetupPath; clientCanAdd: boolean | null; connectorTools: boolean; transport: Transport }
+
+function successfulEvent(s: Site, event: string, path: PathContext): SignupEvent | null | undefined {
   const inviteOnly = brandFor(s.key).joinMode === "InviteOnly";
   switch (event) {
-    case "checkConnectorSetup": return { type: "checkConnectorSetup", clientCanAdd: true };
-    case "resumeAfterConnector": return { type: "resumeAfterConnector" };
-    case "chooseTransport": return { type: "chooseTransport", skillKind: kind,
-      connectorTools: transportFor(kind, true) === transport };
+    case "checkConnectorSetup": return path.clientCanAdd === null ? null : { type: "checkConnectorSetup", clientCanAdd: path.clientCanAdd };
+    case "resumeAfterConnector": return path.clientCanAdd === true ? { type: "resumeAfterConnector" } : null;
+    case "chooseTransport": return { type: "chooseTransport", skillKind: skillKindFor(s.key), connectorTools: path.connectorTools };
     case "readAppFacts": return { type: "readAppFacts", appMatches: true, inviteMode: inviteOnly };
     case "draftProfile": return { type: "draftProfile", statedAge: "Adult" };
     case "decideApproval": return { type: "decideApproval", decision: "ApproveExact" };
@@ -176,43 +195,136 @@ function successfulEvent(s: Site, event: string, transport: Transport): SignupEv
   }
 }
 
-const DIRECT_CREDENTIAL_FLOW = /\/api\/auth\/otp\/(?:start|verify)|session\.cookies/i;
+function branchEvents(s: Site, event: string): SignupEvent[] {
+  const inviteMode = brandFor(s.key).joinMode === "InviteOnly";
+  switch (event) {
+    case "readAppFacts": return BOOLEANS.map(appMatches => ({ type: "readAppFacts" as const, appMatches, inviteMode }));
+    case "draftProfile": return AGE_BANDS.map(statedAge => ({ type: "draftProfile" as const, statedAge }));
+    case "decideApproval": return APPROVALS.map(decision => ({ type: "decideApproval" as const, decision }));
+    case "offerHandoff": return BOOLEANS.map(linkAvailable => ({ type: "offerHandoff" as const, linkAvailable }));
+    case "observeBrowser": return BROWSER_RESULTS.flatMap(result => BOOLEANS.map(appWriteGrant => ({ type: "observeBrowser" as const, result, appWriteGrant })));
+    case "checkSiteStatus": return BOOLEANS.flatMap(siteApp => SITE_STATUSES.map(siteStatus => ({ type: "checkSiteStatus" as const, siteApp, siteStatus })));
+    case "submitProfile": return BOOLEANS.map(accepted => ({ type: "submitProfile" as const, accepted }));
+    case "confirmProfile": return BOOLEANS.map(stillLive => ({ type: "confirmProfile" as const, stillLive }));
+    default: return [];
+  }
+}
 
-/** Replay the marked signup steps against the generated machine for every supported transport. */
-export function signupStepProblems(s: Site, text: string): string[] {
+export interface SignupPath { setup: ConnectorSetupPath; transport: Transport; branch: string | null; phase: string; report: SignupReport }
+
+const eventText = (e: SignupEvent): string => {
+  const { type, ...params } = e;
+  const values = Object.values(params).map(String);
+  return values.length ? `${type}(${values.join(", ")})` : type;
+};
+
+function replayPath(s: Site, list: SignupMarker[], path: PathContext, branch?: { at: number; event: SignupEvent }):
+  { state: AgentSignup; problem?: string } {
+  const label = `(${path.transport}); path ${path.setup}${branch ? `, ${eventText(branch.event)} at line ${list[branch.at]!.line}` : ""}`;
+  let state: AgentSignup = signupStart;
+  let pending = branch;
+  let returned = false;
+  const back = (from: number): number | undefined => {
+    if (!branch || pending || returned) return undefined;
+    for (let k = Math.min(from, list.length - 1); k >= 0; k--) {
+      const e = successfulEvent(s, list[k]!.event, path);
+      if (e != null && signupEnabled(state, e)) return k;
+    }
+    return undefined;
+  };
+  let i = 0;
+  for (let steps = 0; steps < list.length * 3; steps++) {
+    if (i >= list.length) {
+      const k = reportFor(state.phase) === "ReportWorking" ? back(i) : undefined;
+      if (k === undefined) break;
+      returned = true;
+      i = k;
+      continue;
+    }
+    const m = list[i]!;
+    const branched = pending !== undefined && pending.at === i;
+    const event = branched ? pending!.event : successfulEvent(s, m.event, path);
+    if (event === undefined) return { state, problem: `${s.skill}/SKILL.md:${m.line} names "${m.event}", which is not a step of a successful signup` };
+    if (event === null) { i++; continue; }
+    if (!signupEnabled(state, event)) {
+      const k = back(i);
+      if (k === undefined) return { state, problem: `${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} ${label}` };
+      returned = true;
+      i = k;
+      continue;
+    }
+    state = signupStep(state, event);
+    if (!signupInvariants(state)) return { state, problem: `${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule ${label}` };
+    if (branched) pending = undefined;
+    i++;
+    if (reportFor(state.phase) !== "ReportWorking" && (branch !== undefined || path.transport === "NoTransport")) break;
+  }
+  return { state };
+}
+
+export function replaySignupPaths(s: Site, text: string): { problems: string[]; paths: SignupPath[] } {
   const markers = signupMarkers(text);
-  const transports = skillTransports(s);
+  const kind = skillKindFor(s.key);
+  const transports: Transport[] = BOOLEANS.map(available => transportFor(kind, available)).filter(t => t !== "NoTransport");
   const problems: string[] = [];
+  const paths: SignupPath[] = [];
   if (DIRECT_CREDENTIAL_FLOW.test(text)) problems.push(`${s.skill}/SKILL.md describes a direct phone sign-in outside the browser`);
-  if (markers.length === 0) return [...problems, `${s.skill}/SKILL.md has no agentSignup step markers`];
+  if (markers.length === 0) return { problems: [...problems, `${s.skill}/SKILL.md has no agentSignup step markers`], paths };
   for (const m of markers) {
     if (m.transport !== null && !transports.includes(m.transport as Transport)) problems.push(`${s.skill}/SKILL.md:${m.line} marks a step for ${m.transport}, which the ${s.domain} skill does not use (${transports.join(", ")})`);
   }
-  for (const transport of transports) {
-    let state: AgentSignup = signupStart;
-    for (const m of markers.filter(x => x.transport === null || x.transport === transport)) {
-      const event = successfulEvent(s, m.event, transport);
-      if (!event) { problems.push(`${s.skill}/SKILL.md:${m.line} names "${m.event}", which is not a step of a successful signup`); break; }
-      if (!signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (${transport})`); break; }
-      state = signupStep(state, event);
-      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (${transport})`); break; }
-    }
-    if (problems.length) break;
-    const want = endReportFor(transport);
-    const got = reportFor(state.phase);
-    if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${transport} steps end in phase ${state.phase} (${got}), not at ${want}`);
+  if (problems.length) return { problems, paths };
+  for (const setup of SETUP_PATHS) {
+    const path: PathContext = { ...setup, transport: transportFor(kind, setup.connectorTools) };
+    const list = markers.filter(x => x.transport === null || x.transport === path.transport);
+    const main = replayPath(s, list, path);
+    if (main.problem) { problems.push(main.problem); continue; }
+    const want = endReportFor(path.transport);
+    const got = reportFor(main.state.phase);
+    if (got !== want) { problems.push(`${s.skill}/SKILL.md: the ${path.transport} steps of path ${path.setup} end in phase ${main.state.phase} (${got}), not at ${want}`); continue; }
+    paths.push({ setup: path.setup, transport: path.transport, branch: null, phase: main.state.phase, report: got });
+    list.forEach((m, at) => {
+      if (SETUP_EVENTS.has(m.event)) return;
+      const success = successfulEvent(s, m.event, path);
+      const before = list.slice(0, at).reduce<AgentSignup | null>((state, x) => {
+        if (state === null) return null;
+        const e = successfulEvent(s, x.event, path);
+        if (e === null || e === undefined) return state;
+        return signupEnabled(state, e) && reportFor(state.phase) === "ReportWorking" ? signupStep(state, e) : null;
+      }, signupStart);
+      if (before === null || reportFor(before.phase) !== "ReportWorking") return;
+      for (const event of branchEvents(s, m.event)) {
+        if (JSON.stringify(event) === JSON.stringify(success) || !signupEnabled(before, event)) continue;
+        const run = replayPath(s, list, path, { at, event });
+        if (run.problem) { problems.push(run.problem); continue; }
+        const report = reportFor(run.state.phase);
+        if (report === "ReportWorking") problems.push(`${s.skill}/SKILL.md:${m.line}: after ${eventText(event)} the ${path.transport} steps of path ${path.setup} stop in phase ${run.state.phase} with no report`);
+        else paths.push({ setup: path.setup, transport: path.transport, branch: `${eventText(event)} at line ${m.line}`, phase: run.state.phase, report });
+      }
+    });
   }
-  if (!problems.length && transportFor(skillKindFor(s.key), false) === "NoTransport") {
-    let state: AgentSignup = signupStart;
-    for (const m of markers.filter(x => x.transport === null)) {
-      const event = successfulEvent(s, m.event, "NoTransport");
-      if (!event || !signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (NoTransport)`); break; }
-      state = signupStep(state, event);
-      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (NoTransport)`); break; }
-      if (reportFor(state.phase) !== "ReportWorking") break;
+  return { problems: [...new Set(problems)], paths };
+}
+
+export function signupStepProblems(s: Site, text: string): string[] {
+  return replaySignupPaths(s, text).problems;
+}
+
+export const PLUGINS_DIR = join(here, "../plugins");
+
+export function pluginSignupProblems(dir = PLUGINS_DIR): string[] {
+  const problems: string[] = [];
+  for (const plugin of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {
+    const skills = join(dir, plugin.name, "skills");
+    if (!plugin.isDirectory() || !existsSync(skills)) continue;
+    for (const entry of readdirSync(skills, { withFileTypes: true })) {
+      const file = join(skills, entry.name, "SKILL.md");
+      if (!entry.isDirectory() || !existsSync(file)) continue;
+      const s = SITES.find(x => x.skill === entry.name);
+      if (!s) { problems.push(`plugins/${plugin.name}/skills/${entry.name}/SKILL.md names no site`); continue; }
+      const text = readFileSync(file, "utf8").replaceAll("\r\n", "\n");
+      problems.push(...signupStepProblems(s, text).map(p => `plugins/${plugin.name}/skills/${p}`));
     }
-    const want = endReportFor("NoTransport");
-    if (!problems.length && reportFor(state.phase) !== want) problems.push(`${s.skill}/SKILL.md: without connector tools the steps end in phase ${state.phase}, not at ${want}`);
   }
   return problems;
 }
@@ -288,7 +400,10 @@ export function headersFile(): string {
  */
 function writeSkills(s: Site, outdir: string, env: Record<string, string | undefined>, dir: string): string[] {
   const listed = s.app === "ntwrk" ? SITES : [s];
-  const problems = listed.flatMap((x) => signupStepProblems(x, skillText(x.skill, env, dir)));
+  const problems = [
+    ...listed.flatMap((x) => signupStepProblems(x, skillText(x.skill, env, dir))),
+    ...(s.app === "ntwrk" ? pluginSignupProblems() : []),
+  ];
   if (problems.length) return problems;
   const skills = listed.map((x) => {
     const text = skillText(x.skill, env, dir);
@@ -323,11 +438,15 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
     const icon = app.favicon(s.key);
     const favicon = `/favicon-${sha256(icon).slice(0, 8)}.svg`;
     write(join(outdir, favicon.slice(1)), icon);
+    const iconDark = app.favicon(s.key, "DarkScheme");
+    const faviconDark = `/favicon-${sha256(iconDark).slice(0, 8)}.svg`;
+    write(join(outdir, faviconDark.slice(1)), iconDark);
     const cfg = skillsConfig(env);
     const stagingOrigin = stagingSiteOrigins(env)[s.app];
     const siteHost = stagingOrigin ? new URL(stagingOrigin).host : "";
     const input = {
       favicon,
+      faviconDark,
       siteHost,
       skillVersion: skillVersion(skillText(s.skill, env, skillsDir)),
       textLine: cfg.TEXT_LINE,

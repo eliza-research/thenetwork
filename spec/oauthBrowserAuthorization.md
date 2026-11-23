@@ -50,9 +50,34 @@ pure def chooseEntry(flow: BrowserFlow, session: EntrySession, cloudRequired: bo
 
 Phone submission starts or restarts verification until the request reaches consent. Only a code page with a stored phone can verify a code. Only a consent page with a phone accepts a consent decision. A dedicated cancel form can end any bound request. A delayed phone proof, browser retry or Cloud response can advance only the same live stored page and phone binding it began with.
 
+The stored request keeps its step as a word: `phone`, `code`, `consent`, `enrolling` or `enrolled`. Each step gives one stored page. A step that is not one of these words gives the pending enrollment page, so every form on it expires and the browser cannot resume it. Each posted form route gives one form: `phone`, `code`, `consent` or `cancel`. A route that is not one of these words gives the cancel form, which can only end the request.
+
 ```quint
 type StoredPage = PhonePage | CodePage | ConsentPage | SignupEnrollmentPending | EnrolledConsentPage
 type BrowserForm = PhoneForm | CodeForm | ConsentForm | CancelForm | CloudReturn
+
+pure def storedPageOf(stepWord: str): StoredPage =
+  if (stepWord == "phone") PhonePage
+  else if (stepWord == "code") CodePage
+  else if (stepWord == "consent") ConsentPage
+  else if (stepWord == "enrolled") EnrolledConsentPage
+  else SignupEnrollmentPending
+
+pure def browserFormOf(form: str): BrowserForm =
+  if (form == "phone") PhoneForm
+  else if (form == "code") CodeForm
+  else if (form == "consent") ConsentForm
+  else CancelForm
+
+pure def lawOnlyThePhoneStepCanResume(stepWord: str): bool =
+  (storedPageOf(stepWord) == PhonePage) iff (stepWord == "phone")
+
+pure def lawUnknownStepExpiresEveryForm(stepWord: str): bool =
+  (stepWord != "phone" and stepWord != "code" and stepWord != "consent" and stepWord != "enrolled")
+    implies storedPageOf(stepWord) == SignupEnrollmentPending
+
+pure def lawPostedRouteIsNeverACloudReturn(form: str): bool = browserFormOf(form) != CloudReturn
+
 pure def canReadBrowserForm(flow: BrowserFlow): bool = flow.phase == BrowserBound
 pure def browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPhone: bool): bool =
   flow.phase == BrowserBound and page == PhonePage and not(hasPhone)

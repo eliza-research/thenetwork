@@ -1,13 +1,13 @@
 #!/usr/bin/env -S node --import=tsx
 // Builds the SKILL.md snapshots in the two plugins from the one source, sites/skills/<name>/SKILL.md.
-// Never edit a snapshot by hand: change the source, then run this. ChatGPT and Codex import the
-// skills when the plugin is submitted and do not fetch them again, so a change needs a new plugin version.
+// Never edit a snapshot by hand: change the source, then run this. ChatGPT imports the
+// skills when the plugin is submitted and does not fetch them again, so a change needs a new plugin version.
 //   node --import tsx --env-file-if-exists=.env plugins/build.ts           write plugins/openai/skills and plugins/claude/skills
 //   node --import tsx --env-file-if-exists=.env plugins/build.ts --check   exit 1 if a snapshot differs from a fresh build (tests run this)
 //
 // The OpenAI plugin leaves out slop.date: OpenAI requires plugins that suit people aged 13-17
 // (developers.openai.com/plugins/plugin-guidelines). Its copy of the hub skill is cut down to the
-// other apps, and the build fails if "slop" or "dating" is left anywhere in plugins/openai.
+// other apps, and the build fails if slop.date or a dating word is left anywhere in plugins/openai.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Plugin, appOpenAiEndpointPath, endpointHost, endpointPath, openAiManifestApp, pluginEndpoint, pluginListsSkill, skillFor } from "../packages/core/src/generated/agentEntry.ts";
@@ -59,6 +59,9 @@ export const PLUGINS = { openai: pluginSkills("OpenAiPlugin"), claude: pluginSki
 const fill = (text: string, mcpUrl: string) =>
   text.replaceAll("{{BACKEND_ORIGIN}}", DEFAULT_BACKEND_ORIGIN).replaceAll("{{MCP_URL}}", mcpUrl).replaceAll("{{TEXT_LINE}}", DEFAULT_TEXT_LINE);
 
+/** The words that the OpenAI copies must not keep: slop.date and every dating word. */
+export const OPENAI_EXCLUDED = /slop|dating|\bdates?\b|romantic|romance|orientation/i;
+
 /** Remove slop.date from a skill for the OpenAI plugin: inline mentions, then whole table rows and list items. */
 export function withoutSlop(md: string): string {
   const inline = md
@@ -66,7 +69,9 @@ export function withoutSlop(md: string): string {
     .replace(/ntwrk\.party, slop\.date, /g, "ntwrk.party, ")
     .replace(/"leave slop\.date"/g, '"leave peon.biz"')
     .replace(/ Dating details never move\./g, "")
-    .replace(/friends, dating or work/g, "friends or work");
+    .replace(/friends,\s+dating\s+or\s+work/g, "friends or work")
+    .replace(/on(\s+)dates\s+or\s+for\s+work/g, "for$1work")
+    .replace(/dates(\s+)or\s+work/g, "work");
   const out: string[] = [];
   const lines = inline.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -77,7 +82,7 @@ export function withoutSlop(md: string): string {
       let j = i + 1;
       while (j < lines.length && /^ {2}\S/.test(lines[j]!)) j++;
       const item = lines.slice(i, j);
-      if (item.some(l => /slop|dating/i.test(l))) { i = j - 1; continue; }
+      if (item.some(l => OPENAI_EXCLUDED.test(l))) { i = j - 1; continue; }
     }
     out.push(line);
   }
@@ -115,7 +120,7 @@ export function build(): Map<string, string> {
       let text = fill(src, p.mcpUrl(skill));
       if (plugin === "openai") text = withoutSlop(text);
       if (text.includes("{{")) throw new Error(`${plugin}/${skill}: an unfilled {{placeholder}} is left`);
-      if (plugin === "openai" && /slop|dating/i.test(text)) throw new Error(`openai/${skill}: slop.date is still mentioned; extend withoutSlop()`);
+      if (plugin === "openai" && OPENAI_EXCLUDED.test(text)) throw new Error(`openai/${skill}: slop.date or a dating word ("${text.match(OPENAI_EXCLUDED)![0]}") is still in the copy; extend withoutSlop()`);
       const app = p.app(skill);
       for (const url of plugin === "claude" ? [p.mcpUrl(skill), openAiEndpointUrl(app)] : [p.mcpUrl(skill)]) {
         if (!new RegExp(`${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w/])`).test(text)) throw new Error(`${plugin}/${skill}: the skill does not name its connector endpoint ${url} (spec/agentEntry.md)`);

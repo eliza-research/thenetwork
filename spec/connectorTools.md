@@ -2,7 +2,7 @@
 
 Each app has its own MCP connector. The ntwrk.party host serves the connector of every app, each app at its own path, and each app site also serves the connector of its own app. A connection covers one app (the host app). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
 
-The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, `appListed` for the apps that one connection names, `hostBindsApp` and `siteOffersOpenAi` for the app paths of each host, `grantServesApp` for the app of a token, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
+The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, `appListed` for the apps that one connection names, `hostBindsApp` and `siteOffersOpenAi` for the app paths of each host, `signInSite` for the site that the member tool descriptions name for sign-in, `grantServesApp` for the app of a token, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
 
 - The connection. The shell finds the host from the request host and the surface from the path (`connect`). The OAuth pages make the grant (`authorize`, [connector browser authorization](oauthBrowserAuthorization.md)). For each request, the shell makes one connection from the access token: connected with a token, anonymous without one, and with the profile write scope only when the token holds it.
 - The approved profile. The agent reads the profile back and gets the person's approval before it calls `submit_profile` (`approveProfile`). The server cannot see this approval. The shell keeps a grant-bound keyed receipt for each exact profile ([profile submission](mcpProfileSubmission.md)) so retries do not repeat intake.
@@ -84,9 +84,24 @@ pure def lawGrantNeverCrossesApps(grantApp: AppId, requestApp: AppId): bool =
   grantApp != requestApp implies not(grantServesApp(grantApp, requestApp))
 ```
 
+### The member tools name the site where the person signs in
+
+The person confirms the phone and allows access on the site that serves the endpoint. This is the OAuth issuer of that endpoint. For each path on the ntwrk.party host, the sign-in site is ntwrk.party, also for slop, peon and friends. For the `/mcp` endpoint of an app site, the sign-in site is that app site. The descriptions of `check_status`, `get_updates` and `prepare_signup` name the sign-in site. The server instructions name `app_info`, `start_signup`, `check_status`, `read_profile`, `submit_profile`, `get_updates` and `prepare_signup`, and keep the rules in the first 512 characters. On the OpenAI surface of an app other than slop.date, the descriptions and the instructions do not name slop.date or dating.
+
+```quint
+pure def signInSite(site: AppId, app: AppId): AppId = if (site == hubHost) hubHost else app
+
+pure def lawHubPathsSignInOnTheHub(app: AppId): bool = signInSite(hubHost, app) == hubHost
+
+pure def lawAppSiteSignsInOnItself(app: AppId): bool = signInSite(app, app) == app
+
+pure def lawSignInSiteServesTheApp(site: AppId, app: AppId): bool =
+  hostBindsApp(site, app) implies (signInSite(site, app) == site and hostBindsApp(signInSite(site, app), app))
+```
+
 ### Public tools need no sign-in, and member tools need the person's own grant
 
-`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` needs its own explicitly authorized profile read scope. `submit_profile` and `prepare_signup` need the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
+`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` needs its own explicitly authorized profile read scope. `submit_profile` and `prepare_signup` need the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must confirm the phone and allow access on the sign-in site of the endpoint.
 
 ```quint
 type Scope = NoScope | MembershipRead | ProfileWrite | ProfileRead
@@ -159,7 +174,7 @@ pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
 
 ### A connection binds to one host on one surface, and the person connects it in the browser
 
-The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the connection does not list it or when the agent names an app that is not in the app registry. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
+The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the sign-in site of the endpoint, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the connection does not list it or when the agent names an app that is not in the app registry. A member tool without a grant, or without the scope that it needs, answers that the person must confirm the phone and allow access on the sign-in site of the endpoint. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
 
 ```quint
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
@@ -343,7 +358,7 @@ pure def stepNothingSentAtTheLimit(before: Connection, via: str, after: Connecti
 
 ### A Join draft holds only an approved first name and home city, once per grant
 
-On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. Both sites have retired their browser Join page. The reply uses the same live app signup link as `start_signup`, selected by [site enrollment](siteEnrollment.md), and asks the person to continue in their agent. The saved draft does not prefill that flow.
+On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. Both sites have retired their browser Join page. The reply uses the same live app signup link as `start_signup`, selected by [site enrollment](siteEnrollment.md), and tells the agent to continue with the signup instructions. The agent never approves text consent. As the skills say, the person checks the details, types their own birthday and ticks the text consent in the app's browser. The signup form in the browser can show the saved draft one time ([authorization pages](authorizationPages.md)).
 
 ```quint
 pure def canCallPrepareSignup(c: Connection): bool =

@@ -6,11 +6,12 @@ import friendsTokens from "@thenetwork/design-system/friends/tokens.json";
 import networkTokens from "@thenetwork/design-system/network/tokens.json";
 import peonTokens from "@thenetwork/design-system/peon/tokens.json";
 import slopTokens from "@thenetwork/design-system/slop/tokens.json";
-import { BrandMark, brandIdFor, Button, landingLinks, PageShell, privacyFor, termsFor } from "@thenetwork/ui";
-import { type AppKey, type Brand, accentTokens, brandFor } from "../../../packages/core/src/generated/brandIdentity.ts";
+import { BrandMark, brandIdFor, landingLinks, privacyFor, termsFor } from "@thenetwork/ui";
+import { type AppKey, type Brand, type ColorScheme, accentTokens, brandFor, colorSchemes, faviconMedia } from "../../../packages/core/src/generated/brandIdentity.ts";
 import { type SitePage, siteHasPage } from "../../../packages/core/src/generated/sitePages.ts";
 import { buttonPageButtons, UPDATE_HANDOFF_ASSISTANTS } from "../../../packages/notify/src/links.ts";
 import { UPDATE_HANDOFF_TEMPLATE_REFERENCE } from "../../../packages/notify/src/reference.ts";
+import { UpdateHandoffView } from "../../../packages/ui/src/components/UpdateHandoffView.tsx";
 import { landingDescriptionFor } from "../../../packages/ui/src/content/landing.ts";
 import { App, type SiteView } from "./App.tsx";
 import { type SiteData, pageNeedsScript, rootAttributes } from "./site.ts";
@@ -19,6 +20,7 @@ import { type SiteData, pageNeedsScript, rootAttributes } from "./site.ts";
 export interface PageInput extends Omit<SiteData, "links"> {
   /** The path of the site's hashed favicon. */
   favicon: string;
+  faviconDark?: string;
   /** The version in the front matter of the site's skill. */
   skillVersion: string;
   /** The number of the shared text line. */
@@ -45,7 +47,7 @@ export interface RenderedPage {
 export type RenderPage = (app: AppKey, page: SitePage, input: PageInput) => RenderedPage;
 
 /** Draws the favicon of one site as a complete SVG file. */
-export type RenderFavicon = (app: AppKey) => string;
+export type RenderFavicon = (app: AppKey, scheme?: ColorScheme) => string;
 
 function pageText(brand: Brand, page: SitePage): { title: string; description: string } {
   switch (page) {
@@ -74,25 +76,15 @@ function viewOf(app: AppKey, page: SiteView["page"]): SiteView {
   return { page };
 }
 
-/** The chooser has only explicit links and is never hydrated in the browser. */
-function UpdateHandoff({ brand }: { brand: Brand }) {
-  return (
-    <PageShell brand={brand}>
-      <div className="flex max-w-sm flex-col gap-6 pt-8">
-        <h1 className="text-3xl font-semibold tracking-tight">Open your update</h1>
-        <div className="grid gap-3">
-          {buttonPageButtons(UPDATE_HANDOFF_TEMPLATE_REFERENCE, UPDATE_HANDOFF_ASSISTANTS).map(({ href, label }) => (
-            <Button key={label} asChild size="lg" variant="outline" className="h-12 justify-start">
-              <a href={href} rel="noreferrer">{label}</a>
-            </Button>
-          ))}
-        </div>
-      </div>
-    </PageShell>
-  );
-}
-
 const escapeText = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const faviconLinks = (hrefs: Partial<Record<ColorScheme, string>>): string[] =>
+  colorSchemes.flatMap((scheme) => {
+    const href = hrefs[scheme];
+    if (!href) return [];
+    const media = faviconMedia(scheme);
+    return [`<link rel="icon" href="${escapeText(href)}" type="image/svg+xml"${media ? ` media="${escapeText(media)}"` : ""}>`];
+  });
 
 /** Prerenders one page of one site that the site has (the generated `siteHasPage`). */
 export const render: RenderPage = (app, page, input) => {
@@ -105,7 +97,7 @@ export const render: RenderPage = (app, page, input) => {
     `<meta name="description" content="${escapeText(text.description)}">`,
     `<meta name="theme-color" content="${escapeText(accent.light)}" media="(prefers-color-scheme: light)">`,
     `<meta name="theme-color" content="${escapeText(accent.dark)}" media="(prefers-color-scheme: dark)">`,
-    `<link rel="icon" href="${escapeText(input.favicon)}" type="image/svg+xml">`,
+    ...faviconLinks({ LightScheme: input.favicon, DarkScheme: input.faviconDark }),
     ...(page === "JoinPage" ? ['<meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">'] : []),
   ].join("\n    ");
   const site: SiteData = {
@@ -116,7 +108,7 @@ export const render: RenderPage = (app, page, input) => {
   };
   const html = renderToString(
     <StrictMode>
-      {page === "UpdateHandoffPage" ? <UpdateHandoff brand={brand} /> : <App brand={brand} view={viewOf(app, page)} site={site} />}
+      {page === "UpdateHandoffPage" ? <UpdateHandoffView brand={brand} buttons={buttonPageButtons(UPDATE_HANDOFF_TEMPLATE_REFERENCE, UPDATE_HANDOFF_ASSISTANTS)} /> : <App brand={brand} view={viewOf(app, page)} site={site} />}
     </StrictMode>,
   );
   return { brandId: brandIdFor[app], head, rootAttributes: rootAttributes(page, brand, site), html, script: pageNeedsScript(page) };
@@ -124,30 +116,31 @@ export const render: RenderPage = (app, page, input) => {
 
 type MarkColor = "background" | "foreground" | "primary" | "primary-foreground";
 
-const lightColors: Record<BrandId, Record<MarkColor, string>> = {
-  network: networkTokens.color.light,
-  slop: slopTokens.color.light,
-  friends: friendsTokens.color.light,
-  peon: peonTokens.color.light,
+const brandTokens: Record<BrandId, { color: Record<"light" | "dark", Record<MarkColor, string>> }> = {
+  network: networkTokens,
+  slop: slopTokens,
+  friends: friendsTokens,
+  peon: peonTokens,
 };
+
+const schemeKey: Record<ColorScheme, "light" | "dark"> = { LightScheme: "light", DarkScheme: "dark" };
 
 const markAttributes: Record<string, (color: Record<MarkColor, string>) => string> = {
   "size-8": () => "",
   "shrink-0": () => "",
-  "text-foreground": (color) => ` color="${color.foreground}"`,
-  "fill-current": () => ' fill="currentColor"',
   "fill-background": (color) => ` fill="${color.background}"`,
+  "fill-foreground": (color) => ` fill="${color.foreground}"`,
   "fill-primary": (color) => ` fill="${color.primary}"`,
   "fill-primary-foreground": (color) => ` fill="${color["primary-foreground"]}"`,
   "stroke-primary-foreground": (color) => ` stroke="${color["primary-foreground"]}"`,
 };
 
 /**
- * The favicon of one site: the header mark (`BrandMark`) with its token classes written as presentation attributes in the
- * light colors of the brand, because a favicon loads no stylesheet and the content security policy refuses inline styles.
+ * The favicon of one site in one color scheme: the header mark (`BrandMark`) with its token classes written as presentation
+ * attributes in the colors of that scheme, because a favicon loads no stylesheet and the content security policy refuses inline styles.
  */
-export const favicon: RenderFavicon = (app) => {
-  const color = lightColors[brandIdFor[app]];
+export const favicon: RenderFavicon = (app, scheme = "LightScheme") => {
+  const color = brandTokens[brandIdFor[app]].color[schemeKey[scheme]];
   const mark = renderToStaticMarkup(<BrandMark logo={brandFor(app).logo} xmlns="http://www.w3.org/2000/svg" />);
   return mark.replace(/ class="([^"]*)"/g, (_whole, classes: string) =>
     classes

@@ -1,6 +1,6 @@
 // spec/landingEntry.md, "The prompt tells the agent to read the site's skill and follow it"
-import type { BrandId } from "@thenetwork/design-system/brands";
-import type { AppKey } from "../../../core/src/generated/brandIdentity.ts";
+import { type BrandId, brandIds } from "@thenetwork/design-system/brands";
+import { type AppKey, appKeys, designBrandId } from "../../../core/src/generated/brandIdentity.ts";
 import {
   type AgentId,
   type StatusLine,
@@ -22,7 +22,13 @@ import {
 import type { SitePage } from "../../../core/src/generated/sitePages.ts";
 
 /** The `data-brand` value of the design system for each app of the brand record. */
-export const brandIdFor: Record<AppKey, BrandId> = { Ntwrk: "network", Slop: "slop", Peon: "peon", Friends: "friends" };
+export const brandIdFor: Record<AppKey, BrandId> = Object.fromEntries(
+  appKeys.map((app) => {
+    const id = brandIds.find((brand) => brand === designBrandId(app));
+    if (!id) throw new Error(`designBrandId(${app}) is not a design-system brand`);
+    return [app, id];
+  }),
+) as Record<AppKey, BrandId>;
 
 /** What the landing page of one site sends: the prompt, the skill URL it names, and the join message to the shared line. */
 export interface LandingLinks {
