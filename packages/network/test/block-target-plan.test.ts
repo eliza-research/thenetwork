@@ -285,6 +285,44 @@ describe("block and report targets in a group plan", () => {
     expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
   });
 
+  test.each(["Someone else can make Friday with us.", "It was someone else?"])("an unrelated or uncertain opening keeps both questions: %s", async answer => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const pending = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pending()?.targets).toEqual(["b"]);
+    w.propose(["a", "c"]);
+    await w.runUntil(() => w.probed("a"), 2 * DAY);
+    expect(w.probed("a")).toBe(true);
+
+    await w.say("a", answer);
+    expect(pending()?.targets).toEqual(["b"]);
+    expect(w.probed("a")).toBe(true);
+    expect(w.net.safetyReports()).toEqual([]);
+    await w.say("a", "Ben");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
+  test("an affirmative while awaiting feedback cannot file the sole offered report", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    const state = () => w.net.exportState().members.find(m => m.id === "a");
+    await w.run(w.meetings[0]!.at - HOUR - w.clock.now());
+    for (const id of ["a", "b"]) await w.say(id, "Thanks, still coming.");
+    expect(await w.runUntil(() => state()?.awaiting?.kind === "feedback", 2 * DAY)).toBe(true);
+    await w.say("a", "report him, he was creepy");
+    expect(state()?.awaiting?.kind).toBe("feedback");
+    expect(state()?.pendingSafety?.targets).toEqual(["b"]);
+    await w.say("a", "yes");
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(state()?.pendingSafety?.targets).toEqual(["b"]);
+  });
+
   test("someone else in an unrelated reply keeps the safety question", async () => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
     await w.onboard("a", "b");

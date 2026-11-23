@@ -125,7 +125,7 @@ import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
   immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
-  reportRestrictsMatching, safetyQuestionAcceptsName, safetyQuestionAppliesTarget, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer,
+  reportRestrictsMatching, safetyQuestionAcceptsName, safetyQuestionAppliesTarget, safetyQuestionExclusion, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer,
   step as stepSafetyCase,
   type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
@@ -179,13 +179,16 @@ function safetyReplyConsent(text: string) {
 }
 
 function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
-  const reply = safetyName(text).replace(/^(?:no|nope)(?:[,.!?;:]\s*| )/, "");
-  const clause = reply.split(/[,.!?;:]/, 1)[0]!.trim();
-  if (names.some(name => name && clause === `not ${safetyName(name)}`)) return true;
+  const reply = text.normalize("NFKC").trim().replace(/^(?:no|nope)(?:[,.!?;:]\s*|\s+)/i, "");
+  const [opening, punctuation] = reply.split(/([,.!?;:])/, 2);
+  const clause = safetyName(opening!);
+  const rejectsName = names.some(name => name && clause === `not ${safetyName(name)}`);
   const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
-  if (["someone else", "somebody else"].some(phrase => replacement === phrase || replacement.startsWith(`${phrase} `))) return true;
-  if (competing) return false;
-  return ["not him", "not her", "not them"].includes(clause);
+  const rejectsWithCorrection = punctuation !== "?" && /^it was (?:someone|somebody) else$/.test(clause);
+  const refersToAnotherPerson = punctuation !== "?" && ["someone else", "somebody else"].some(phrase =>
+    replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `)));
+  const unnamedRejection = refersToAnotherPerson || ["not him", "not her", "not them"].includes(clause);
+  return safetyQuestionExclusion(rejectsName || rejectsWithCorrection, unnamedRejection, competing);
 }
 
 const SAFETY_TARGET_PREFIX = /^(?:i (?:mean|meant)|it'?s)\s+/;
@@ -2640,16 +2643,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     const named = reply.acceptsName && matches.size === 1 ? matches.values().next().value : undefined;
-    const competing = !!m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
+    const competing = Boolean(m.awaiting);
     const sole = p.targets?.length === 1 ? this.members.get(p.targets[0]!) : undefined;
     const exactConfirmation = !reply.explicitlyNamed && !text.normalize("NFKC").includes("?") && reply.names.some(isSafetyConfirmation);
     const confirmed = safetyQuestionUsesSoleOffer(!!sole, competing, exactConfirmation, matches.size > 0) ? sole : undefined;
     const target = named ?? confirmed;
     const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
     const cancels = reply.cancels || (!competing && reply.refuses);
-    const rulesOutTarget = !!sole && excludesSoleSafetyTarget(text, [this.fullNames.get(sole.id), sole.display, sole.first], !!competing);
+    const rulesOutTarget = !!sole && excludesSoleSafetyTarget(text, [this.fullNames.get(sole.id), sole.display, sole.first], competing);
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
-    if (!safetyQuestionResolves(!!allowedTarget, !!competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return false;
+    if (!safetyQuestionResolves(!!allowedTarget, competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return false;
     m.pendingSafety = undefined;
     if (allowedTarget && safetyQuestionAppliesTarget(true, rulesOutTarget)) {
       this.applyBlock(m, p.verb, p.kind, allowedTarget);

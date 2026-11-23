@@ -335,6 +335,12 @@ export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarg
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function safetyQuestionExclusion(explicitExclusion: boolean, ambiguousExclusion: boolean, competingPrompt: boolean): boolean {
+  return explicitExclusion || (ambiguousExclusion && !competingPrompt);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestion: number): boolean {
   //@ ensures \result === true
   return !(askedAt < oldestQuestion) || !safetyQuestionIsCurrent(askedAt, oldestQuestion);
@@ -345,6 +351,20 @@ export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestio
 export function lawSafetyControlCannotNameTarget(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
   //@ ensures \result === true
   return !(confirmation || refusal || cancellation) || !safetyQuestionAcceptsName(confirmation, refusal, cancellation);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawCompetingPromptNeedsExplicitSafetyExclusion(ambiguousExclusion: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionExclusion(false, ambiguousExclusion, true);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawExplicitSafetyExclusionStillApplies(ambiguousExclusion: boolean, competingPrompt: boolean): boolean {
+  //@ ensures \result === true
+  return safetyQuestionExclusion(true, ambiguousExclusion, competingPrompt);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
@@ -396,13 +416,6 @@ export function safetyQuestionUsesSoleOffer(soleOffer: boolean, competingPrompt:
 
 /** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
 //@ pure
-export function lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean): boolean {
-  //@ ensures \result === true
-  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true);
-}
-
-/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
-//@ pure
 export function lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: boolean, exactConfirmation: boolean, hasNamedMatch: boolean): boolean {
   //@ ensures \result === true
   return !safetyQuestionUsesSoleOffer(soleOffer, true, exactConfirmation, hasNamedMatch);
@@ -413,6 +426,13 @@ export function lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: boolean, e
 export function lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: boolean, competingPrompt: boolean, hasNamedMatch: boolean): boolean {
   //@ ensures \result === true
   return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, false, hasNamedMatch);
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true);
 }
 
 /** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */

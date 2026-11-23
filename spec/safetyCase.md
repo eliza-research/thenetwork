@@ -231,9 +231,9 @@ pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf
 
 ### An unrelated reply keeps a current safety question
 
-This rule applies when the reply reaches the app that holds the safety question. A signed reply can answer or close it only if the gateway received the reply at or after the question opened and at or before the current time. An exact allowed name answers the question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting.
+This rule applies when the reply reaches the app that holds the safety question. A signed reply can answer or close it only if the gateway received the reply at or after the question opened and at or before the current time. An exact allowed name answers the question, even when another prompt is open. A bare confirmation can supply the target only when no other prompt is waiting. Any pending reply slot, including a meeting feedback prompt, counts as another prompt.
 
-An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. A rejection that names somebody else ("it was someone else") ends it the same way even when another prompt is waiting, because it rules out the offered person instead of answering the other prompt. Without a competing prompt, a direct unnamed rejection such as "not him" can end the question in the same way. An incidental mention does not count as a rejection. A competing prompt can still handle the reply after cancellation or exclusion.
+An explicit cancellation ends the question. If the question offered one person, an opening clause that explicitly rejects that person's name also ends it without filing. The complete opening statement "it was someone else" or "it was somebody else" does the same even when another prompt is waiting. A question or an incidental statement about someone else supplies no exclusion. Without a competing prompt, a direct unnamed rejection such as "not him" can end the question in the same way. A competing prompt can still handle the reply after cancellation or exclusion.
 
 Read a bare confirmation, refusal, or cancellation as a control reply, even when the words match a member's name. A control reply cannot select an exact name on the current app or on another app. A member can give a full name or use "I mean" to name someone in the current app when their displayed name matches a control reply.
 
@@ -253,6 +253,15 @@ pure def lawSafetyControlCannotNameTarget(confirmation: bool, refusal: bool, can
 
 pure def safetyQuestionAppliesTarget(allowedTarget: bool, excludesTarget: bool): bool =
   allowedTarget and not(excludesTarget)
+
+pure def safetyQuestionExclusion(explicitExclusion: bool, ambiguousExclusion: bool, competingPrompt: bool): bool =
+  explicitExclusion or (ambiguousExclusion and not(competingPrompt))
+
+pure def lawCompetingPromptNeedsExplicitSafetyExclusion(ambiguousExclusion: bool): bool =
+  not(safetyQuestionExclusion(false, ambiguousExclusion, true))
+
+pure def lawExplicitSafetyExclusionStillApplies(ambiguousExclusion: bool, competingPrompt: bool): bool =
+  safetyQuestionExclusion(true, ambiguousExclusion, competingPrompt)
 
 pure def safetyQuestionResolves(allowedTarget: bool, competingPrompt: bool, cancels: bool, excludesTarget: bool, shortReply: bool): bool =
   safetyQuestionAppliesTarget(allowedTarget, excludesTarget) or cancels or excludesTarget or (not(competingPrompt) and shortReply)
