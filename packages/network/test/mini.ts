@@ -2,7 +2,7 @@
 // engine, a SimClock and a recording channel. Members only say what a test makes them say, so one
 // flow (a meeting, a request retry, a decline) can be driven step by step in a second. The full
 // simulated world (network.test.ts) stays the end-to-end check.
-import { DAY, HOUR, SimClock, type Category, type Facet, type Intent, type Member, type MemberId, type ParticipationState, type Presence, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, SimClock, type Category, type Edge, type Facet, type Intent, type Member, type MemberId, type ParticipationState, type Presence, type Proposal } from "@thenetwork/core";
 import type { MeetingReport, NetworkContext, SimMessage, SimMeta } from "@thenetwork/sim";
 import { ConsentNetwork, type NetworkOptions } from "../src/index.ts";
 
@@ -30,6 +30,7 @@ export class Mini {
   readonly facets: Facet[] = [];
   readonly intents: Intent[] = [];
   readonly presence: Presence[] = [];
+  readonly edges: Edge[] = [];
   net: ConsentNetwork;
   private seq = 0;
   private readonly opts: NetworkOptions;
@@ -76,7 +77,7 @@ export class Mini {
         this.sent.push({ t, to: memberId, body, meta: o?.meta ?? {}, ...(o?.reply ? { reply: true } : {}) });
         return { id: `o${++this.seq}`, ts: t, direction: "outbound", channel: "sms", from: "network", to: memberId, memberId, body, status: "delivered", meta: o?.meta } satisfies SimMessage;
       },
-      snapshot: () => ({ now: this.clock.now(), members: this.members, facets: this.facets, intents: this.intents, presence: this.presence, edges: [], recentProposals: [] }),
+      snapshot: () => ({ now: this.clock.now(), members: this.members, facets: this.facets, intents: this.intents, presence: this.presence, edges: this.edges, recentProposals: [] }),
       recordProposal: () => {},
       recordMeeting: m => { this.meetings.push(m); return `mt${this.meetings.length}`; },
       recordBlock: () => {},

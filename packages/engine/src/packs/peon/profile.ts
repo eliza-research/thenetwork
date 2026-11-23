@@ -9,6 +9,7 @@
 //   - Member.name and Member.age are never read (age is only the core minors gate).
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
+import { peonApplicationAnswered } from "../../../../core/src/generated/peonCapacity.ts";
 import type { World } from "../../world.ts";
 import { JOB_INTENT, SAFETY, SEARCH_INTENT, T, type PeonMode } from "./schema.ts";
 
@@ -206,9 +207,11 @@ function build(w: World): Cache {
     if (r.outcome === "pending" || r.outcome === "accepted") for (const id of r.participants) if (now - r.at <= 28 * DAY) h(id).inFlight++;
     const seat = r.participants.find(id => profiles.get(id)?.kind === "job");
     const cand = r.participants.find(id => profiles.get(id)?.kind === "candidate");
-    if (!seat || !cand || !(r.acceptedBy ?? []).includes(cand)) continue;
-    if (r.outcome === "pending") h(seat).pendingReview++;
-    if ((r.acceptedBy ?? []).includes(seat) || (r.declinedBy ?? []).includes(seat)) h(seat).answered++;
+    if (!seat || !cand) continue;
+    const candidateAccepted = r.acceptedBy?.includes(cand) === true;
+    const employerAnswered = r.acceptedBy?.includes(seat) === true || r.declinedBy?.includes(seat) === true;
+    if (r.outcome === "pending" && candidateAccepted) h(seat).pendingReview++;
+    if (peonApplicationAnswered(r.hireAcceptedAt ?? -1, now, candidateAccepted, employerAnswered)) h(seat).answered++;
   }
   return { profiles, history, extra: new Map() };
 }

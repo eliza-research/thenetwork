@@ -1,5 +1,6 @@
 // In-memory observatory state with change tracking. Both data sources write into a Store; the
 // server sends the full state once and then deltas (only what changed since the last take).
+import { edgeProjectionChange } from "../../core/src/generated/edgeProjection.ts";
 import type { MemberId } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
 import type {
@@ -59,6 +60,7 @@ export class Store {
   private feedSeq = 0;
   private dirtyMembers = new Set<MemberId>();
   private dirtyEdges = new Set<string>();
+  private edgesRemoved = false;
   private dirtyOpps = new Set<string>();
   private removedOpps = new Set<string>();
   private newFeed: ObsFeedItem[] = [];
@@ -84,6 +86,22 @@ export class Store {
     this.edges.set(id, { id, ...e });
     this.dirtyEdges.add(id);
     return true;
+  }
+
+  /** Reconcile a complete, authorized database snapshot. Game edges use addEdge. */
+  replaceEdges(incoming: ReadonlyMap<string, ObsEdge>): void {
+    for (const id of new Set([...this.edges.keys(), ...incoming.keys()])) {
+      const before = this.edges.get(id), after = incoming.get(id);
+      const change = edgeProjectionChange(after !== undefined, JSON.stringify(before) === JSON.stringify(after));
+      if (change === "ReplaceEdge") {
+        this.edges.set(id, after!);
+        this.dirtyEdges.add(id);
+      } else if (change === "RemoveEdge") {
+        this.edges.delete(id);
+        this.dirtyEdges.delete(id);
+        this.edgesRemoved = true;
+      }
+    }
   }
 
   upsertOpp(o: ObsOpportunity) { this.opps.set(o.id, o); this.dirtyOpps.add(o.id); this.removedOpps.delete(o.id); }
@@ -153,7 +171,7 @@ export class Store {
   }
 
   hasChanges() {
-    return this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
+    return this.edgesRemoved || this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
   }
 
   /** Everything that changed since the last call (and bump the version). */
@@ -163,6 +181,7 @@ export class Store {
     const d: ObsDelta = { version: this.version, clock: this.clock, game };
     if (this.envDirty) d.env = this.env;
     if (this.dirtyMembers.size) d.members = [...this.dirtyMembers].map(id => this.members.get(id)!).filter(Boolean);
+    if (this.edgesRemoved) d.reset = true;
     if (this.dirtyEdges.size) d.edges = [...this.dirtyEdges].map(id => this.edges.get(id)!).filter(Boolean);
     if (this.dirtyOpps.size) d.opportunities = [...this.dirtyOpps].map(id => this.opps.get(id)!).filter(Boolean).map(o => withAge(o, this.clock.now));
     if (this.removedOpps.size) d.removedOpportunities = [...this.removedOpps];
@@ -170,6 +189,7 @@ export class Store {
     if (this.runsDirty) d.engineRuns = this.runs;
     if (this.requestsDirty) d.requests = this.requests;
     if (changed) d.stats = this.stats();
+    this.edgesRemoved = false;
     this.dirtyMembers.clear(); this.dirtyEdges.clear(); this.dirtyOpps.clear(); this.removedOpps.clear(); this.newFeed = [];
     this.runsDirty = false; this.envDirty = false; this.requestsDirty = false; this.healthDirty = false;
     return d;

@@ -7,16 +7,20 @@ import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 
-test("a join notice never rides a reply about an opportunity in which the invitee has not said yes", async () => {
+test.each([false, true])("a join notice waits when the invitee or their namesake is in the proposal (%s)", async namesake => {
   const w = new Mini([
     { id: "a", name: "Ana Diaz", age: 31, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"] },
-    { id: "r", name: "Rae Kim", age: 30, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"] },
+    { id: "r", name: "Rae Kim", age: 30, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"], skills: ["climbing_belay"] },
   ], { growth: true, plans: false });
   w.net.init({ ...w.ctx(), invite: (_inviter, first) => first.toLowerCase() });
   await w.onboard("a", "r");
   await w.say("r", "My friend Theo would love this, can you invite them?");
   await w.run(DAY);
-  w.add({ id: "theo", name: "Theo Jones", age: 30, area: "Greenpoint", interests: ["climbing"] });
+  if (namesake) {
+    w.add({ id: "unconfirmed", name: "Theo Hall", age: 31, area: "Greenpoint", interests: ["climbing"] });
+    await w.onboard("unconfirmed");
+  }
+  w.add({ id: "theo", name: "Theo Jones", age: 30, area: "Greenpoint", interests: namesake ? ["jazz"] : ["climbing"] });
   w.members.find(member => member.id === "theo")!.invitedBy = "r";
   // Theo joins in Rae's quiet hours: the standalone notice waits for her window, so it is still
   // pending when Rae writes next, in the same minute (after her quiet hours change back).
@@ -33,7 +37,8 @@ test("a join notice never rides a reply about an opportunity in which the invite
   const opp = [...w.net.opps.values()].find(o => o.participants.includes("a"))!;
   for (let i = 0; i < 4; i++) for (const id of ["a", "r"]) if (w.probed(id)) await w.say(id, "yes");
   expect(opp.participants).toEqual(["a", "r"]);
-  expect(opp.alternates).toContain("theo");
+  expect(opp.alternates).toContain(namesake ? "unconfirmed" : "theo");
+  if (namesake) expect(opp.alternates).not.toContain("theo");
   expect(w.meetings.map(m => m.proposalId)).toEqual([opp.id]);
   const aboutOpp = w.to("r", from).filter(s => s.meta.proposalId === opp.id || (s.meta.probe as { key?: string } | undefined)?.key === opp.id);
   expect(aboutOpp.some(s => s.meta.type === "proposal")).toBe(true);

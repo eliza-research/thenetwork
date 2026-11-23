@@ -58,6 +58,19 @@ export function lawCoveringTripSharesTime(window: PresenceWindow, requested: Pre
   return !presenceWindowCovers(window, requested) || presenceWindowsOverlap(window, requested);
 }
 
+/** Story: Use my travel dates for matching / Shared areas lower cost only during the meeting window (spec/travelPresence.md) */
+//@ pure
+export function meetingAreaInterval(presence: PresenceWindow, requested: PresenceWindow): PresenceWindow {
+  return { from: presence.from > requested.from ? presence.from : requested.from, to: presence.to < requested.to ? presence.to : requested.to };
+}
+
+/** Story: Use my travel dates for matching / Shared areas lower cost only during the meeting window (spec/travelPresence.md) */
+//@ pure
+export function lawMeetingAreaNeedsStrictOverlap(presence: PresenceWindow, requested: PresenceWindow): boolean {
+  //@ ensures \result === true
+  return presenceWindowValid(meetingAreaInterval(presence, requested)) === presenceWindowsOverlap(presence, requested);
+}
+
 /** Story: Tell the Network my travel dates / A signed travel statement saves only the member's own dates in that app (spec/travelPresence.md) */
 //@ pure
 export function travelEntryReplyAllowed(canonicalMember: boolean, activeMemberRow: boolean): boolean {

@@ -112,14 +112,19 @@ export function lookingFor(text: string): AppId[] {
   // "I work at a bank" describes the person, not what they want.
   const t = ` ${text.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/[^\p{L}' ]+/gu, " ").replace(/\s+/g, " ")} `
     .replace(/ (i|i'm|im|i am) (work|working|worked|date|dating|dated) /g, " ");
-  const neg = "(?:not|no|never|don't want|dont want|without)(?: \\S+){0,2} ";
-  const want = (words: string) => new RegExp(` (${words}) `).test(t) && !new RegExp(` ${neg}(${words}) `).test(t);
-  const out: AppId[] = [];
-  if (want("friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew")) out.push("friends");
-  if (want("dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date")) out.push("slop");
-  if (want("work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?")) out.push("peon");
-  if (/ (all|all of (them|it|these)|everything|all three) /.test(t)) for (const a of ["friends", "slop", "peon"] as const) if (!out.includes(a)) out.push(a);
-  return out;
+  const apps = [
+    ["friends", "friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew"],
+    ["slop", "dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date"],
+    ["peon", "work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?"],
+  ] as const;
+  const all = "all apps|all of (?:them|it|these|the apps)|everything|all three";
+  const names = (words: string) => new RegExp(` (${words}) `).test(t);
+  const namesAll = names(all);
+  const neg = `(?:not|no|never|don't want|dont want|without|except|excluding|other than|minus${namesAll ? "|but" : ""})(?: \\S+){0,2} `;
+  const refuses = (words: string) => new RegExp(` ${neg}(${words}) `).test(t);
+  // Broad enrollment needs an explicit all-app choice without a conflicting exclusion.
+  if (namesAll && !refuses(all) && !apps.some(([, words]) => refuses(words))) return apps.map(([app]) => app);
+  return apps.filter(([, words]) => names(words) && !refuses(words)).map(([app]) => app);
 }
 
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */

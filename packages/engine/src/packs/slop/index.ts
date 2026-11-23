@@ -64,7 +64,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     candidatePreRules: SLOP_CANDIDATE_PRE_RULES,
     candidatePostRules: [],
   };
-  const prof = (w: World) => slopProfiles(w.input, w.canonical);
+  const prof = (w: World) => slopProfiles(w.input);
   return {
     id: "slop",
     version: SLOP_PACK_VERSION,
@@ -109,7 +109,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       // Ask instead of proposing: unknown orientation, age range or distance (holds the member back
       // until answered, via the needs_answer rule); goal / dealbreakers / basics (does not hold back).
       extraAsks: (w, id, _mi, lastAsk, add) => {
-        const p = slopProfiles(w.input, w.canonical).get(id);
+        const p = slopProfiles(w.input).get(id);
         if (!p || !slopQuestionSubject(p.adult, p.optedIn, p.paused, w.holds.has(id)) || reviewReason(p, o)) return;
         const intent = w.get(id)!.intents.find(i => i.category === SLOP_LANE);
         const fs = missingFields(p, o);

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { peonPack, PEON_ENGINE_CONFIG, runEngine } from "@thenetwork/engine";
 import { SQL } from "../../core/src/runtime/postgres.ts";
@@ -17,7 +17,7 @@ const database = `network_peon_search_${randomUUID().replaceAll("-", "")}`;
 const local = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}`;
 const url = `${local}/${database}`;
 const secret = "peon-candidate-search-signed-fixture";
-const clock = new SimClock(Date.UTC(2026, 10, 12, 17));
+let clock: SimClock;
 const candidate = "+12125550183";
 const manager = "+12125550184";
 const minor = "+12125550185";
@@ -63,17 +63,21 @@ async function peonReviewItem(memberId: string) {
   return review.items.find((item: { proposal: { participants: string[] } }) => item.proposal.participants.includes(memberId));
 }
 
-async function queuedProbe(oppId: string, memberId: string) {
-  return (await db`select o.id,o.status from platform.outbound o join network.messages m on m.app_id=o.app_id and m.id=o.id
-    where o.app_id='peon' and m.opportunity_id=${oppId} and m.member_id=${memberId} and m.type='probe'`)[0];
+async function queuedProbe(oppId: string, memberId: string, exceptId?: string) {
+  return (await db`select o.id,o.status,m.body from platform.outbound o join network.messages m on m.app_id=o.app_id and m.id=o.id
+    where o.app_id='peon' and m.opportunity_id=${oppId} and m.member_id=${memberId} and m.type='probe'`)
+    .find(row => row.id !== exceptId);
 }
 
 const staff = (path: string, body: object) => service.fetch(new Request(`http://127.0.0.1/apps/peon${path}`, {
   method: "POST", headers: { authorization: "Bearer adm-tok", "content-type": "application/json" }, body: JSON.stringify(body),
 }));
 
-beforeAll(async () => {
+beforeEach(async () => {
   if (!pgAvailable) return;
+  clock = new SimClock(Date.UTC(2026, 10, 12, 17));
+  holdPeonQueue = false;
+  accepted.clear();
   await devPgUp();
   admin = new SQL({ url: `${local}/postgres`, max: 1 });
   await admin.unsafe(`create database ${database}`);
@@ -82,7 +86,7 @@ beforeAll(async () => {
   await start();
 }, 120_000);
 
-afterAll(async () => {
+afterEach(async () => {
   await service?.close();
   await db?.close();
   await admin?.unsafe(`drop database if exists ${database} with (force)`);
@@ -222,4 +226,70 @@ test.skipIf(!pgAvailable)("a signed Peon candidate read-back becomes a Hire prof
   expect((await queuedProbe(pausedItem.oppId, memberId))?.status).toMatch(/^(suppressed_ineligible|expired)$/);
   expect((await turn("close-search-legacy", pausedPhone, `CLOSE INTENT ${legacyReference.toLowerCase()}`)).body.replies).toEqual([`Closed intent ${reference}.`]);
   expect(await status()).toBe("closed");
+});
+
+test.skipIf(!pgAvailable)("a posting displaces the queued manager question and a fresh receipt can book the same introduction", async () => {
+  expect((await turn("join-candidate", candidate, "join peon\nMy name is Rae. I am 29 years old.")).body).toMatchObject({ reason: "joined" });
+  expect((await turn("join-manager", manager, "join peon\nMy name is Sam. I am 36 years old.")).body).toMatchObject({ reason: "joined" });
+  const [owner] = await service.memberApps(candidate);
+  const [employer] = await service.memberApps(manager);
+  expect((await staff(`/employers/${employer!.memberId}/verify`, { company: "Acme", note: "Verified by staff." })).status).toBe(200);
+  expect((await staff("/postings", { managerId: employer!.memberId, title: "data analyst", seniority: 2, openings: 1,
+    payMin: 90, payMax: 125, mode: "remote", must: [{ skill: "sql", level: 2 }] })).status).toBe(200);
+  const draft = await turn("candidate-search", candidate, "PEON JOB SEARCH data analyst; level 2; minimum $85,000; mode remote; skills sql=4");
+  const confirmation = draft.body.replies[0].match(/CONFIRM PEON JOB SEARCH search_[a-p]{16}/)![0];
+  clock.advance(MINUTE);
+  expect((await turn("candidate-confirm-search", candidate, confirmation)).body.replies[0]).toContain("I saved your Peon job search");
+  expect((await staff("/matching", { on: true })).status).toBe(200);
+  const runtime = service.runtimeFor("peon")!;
+  const queue = (runtime.adapter as PeonTestCarrier).queue;
+  for (const phone of [candidate, manager]) await queue.inbound(phone);
+  clock.advance(26 * HOUR);
+  const item = await peonReviewItem(owner!.memberId);
+  expect(item).toBeDefined();
+  expect((await staff(`/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", revision: item.revision })).status).toBe(200);
+  await runtime.deliver();
+  const role = await queuedProbe(item.oppId, owner!.memberId);
+  expect(accepted.has(`tn:${role!.id}`)).toBe(true);
+  clock.advance(MINUTE);
+  holdPeonQueue = true;
+  await turn("candidate-yes-to-role", candidate, "Yes");
+  const interrupted = await queuedProbe(item.oppId, employer!.memberId);
+  expect(interrupted?.status).toBe("pending");
+  const opportunity = () => runtime.net.exportState().opps.find(o => o.id === item.oppId);
+  const employerQuestions = () => runtime.net.exportState().members.find(member => member.id === employer!.memberId)?.asked;
+  const firstSentAt = opportunity()?.sentAt?.[employer!.memberId];
+  const asked = employerQuestions();
+
+  clock.advance(MINUTE);
+  const posting = await turn("manager-starts-different-post", manager, "We're hiring a barista, 1 opening, $40k-$50k, onsite in Manhattan");
+  expect(posting.body.replies.join(" ")).toContain("Reply yes to post it");
+  holdPeonQueue = false;
+  await runtime.deliver();
+  expect(accepted.has(`tn:${interrupted!.id}`)).toBe(false);
+  expect((await queuedProbe(item.oppId, employer!.memberId))?.status).toBe("suppressed_ineligible");
+
+  clock.advance(MINUTE);
+  holdPeonQueue = true;
+  await turn("manager-declines-different-post", manager, "No");
+  await runtime.tick();
+  const fresh = await queuedProbe(item.oppId, employer!.memberId, interrupted!.id);
+  expect(fresh?.status).toBe("pending");
+  expect(opportunity()?.sentAt?.[employer!.memberId]).toBe(firstSentAt);
+  expect(employerQuestions()).toBe(asked);
+
+  const admission = (row: { id: string; body: string }) => db.begin(tx => runtime.peonHireAdmission(tx, {
+    app: "peon", oppId: item.oppId, memberId: employer!.memberId, id: row.id, text: row.body,
+  }));
+  expect(await admission(interrupted!)).toMatchObject({ ok: false });
+  expect(await admission(fresh!)).toEqual({ ok: true });
+  await turn("manager-yes-before-fresh-delivery", manager, "Yes");
+  expect(opportunity()?.stage).toBe("probing");
+
+  holdPeonQueue = false;
+  await runtime.deliver();
+  expect(accepted.has(`tn:${fresh!.id}`)).toBe(true);
+  clock.advance(MINUTE);
+  await turn("manager-yes-after-fresh-delivery", manager, "Yes");
+  expect(opportunity()?.stage).toBe("scheduled");
 });

@@ -33,6 +33,18 @@ pure def lawExcludedNetworkIntentHasNoRoute(specific: NetworkIntentRoute, profes
   networkIntentRoute(false, specific, professional) == NoRoute
 ```
 
+### A direct introduction keeps its hobby purpose
+
+A direct standing-intent introduction in the Friend lane keeps the hobby category when the intent's effective category is hobby. The Friend lane still supplies the relationship type and its pair checks. The proposal's hobby category supplies its preference, fit, and contact checks. Warm-path introductions and other proposal generators keep their category rules.
+
+```quint
+pure def directIntentKeepsHobby(direct: bool, friendLane: bool, hobbyIntent: bool): bool =
+  direct and friendLane and hobbyIntent
+
+pure def lawKeepsHobbyOnlyForDirectFriendIntent(direct: bool, friendLane: bool, hobbyIntent: bool): bool =
+  directIntentKeepsHobby(direct, friendLane, hobbyIntent) iff (direct and friendLane and hobbyIntent)
+```
+
 ### Each cofounder peer explicitly opts in under their app account
 
 The [Cofounder introduction authority](cofounderDispatch.md) requires a live signed standing intent from each peer. That intent is the only source of consent for a cofounder introduction. The direct one-to-one proposal carries both exact intent IDs as internal authorization facts. Events, repeat encounters, warm paths and recruiting prompts use their own purposes. Closing or expiring either intent removes that peer from the next matching run.

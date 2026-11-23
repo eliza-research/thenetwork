@@ -147,6 +147,9 @@ test.skipIf(!pgAvailable).each([
       await adapter.lineSafety(undefined);
       await rt.unitOfWork(n => n.tick(clock.now()));
       expect(await sql`select state from network.opportunities where id=${id}`).toEqual([{ state: "COMPLETED" }]);
+      expect(await sql`select member_id,status from network.participations
+        where app_id='friends' and opportunity_id=${id} and role='participant' order by member_id`)
+        .toEqual([...ids].sort().map(member_id => ({ member_id, status: "accepted" })));
       await rt.deliver();
       const feedbackState = async () => await sql<{id: string; member_id: string; status: string; attempts: number}[]>`select
         message.id,message.member_id,receipt.status,receipt.attempts

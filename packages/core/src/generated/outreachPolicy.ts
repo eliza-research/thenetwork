@@ -129,8 +129,21 @@ export function inviteJoinNoticeCurrent(attributed: boolean, inviteeConsents: bo
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 //@ pure
+export function inviteJoinNoticeConflictsWithRole(sameMember: boolean, sameFirstName: boolean): boolean {
+  return sameMember || sameFirstName;
+}
+
+/** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
+//@ pure
 export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean, inviteeHasRole: boolean): boolean {
   return directMemberTurn && reply && !carriesMemberText && !inviteeHasRole;
+}
+
+/** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
+//@ pure
+export function lawInviteJoinNoticeWaitsForNamesake(sameMember: boolean): boolean {
+  //@ ensures \result === true
+  return inviteJoinNoticeConflictsWithRole(sameMember, true);
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
