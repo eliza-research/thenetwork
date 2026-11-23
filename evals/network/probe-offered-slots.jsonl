@@ -146,3 +146,12 @@
 {"text":"Saturday for me won't work. Thursday works.","answer":"yes","keys":["a"]}
 {"text":"Saturday for me won't work. No thanks.","answer":"no","keys":[]}
 {"text":"Saturday for me doesn't look good.","answer":"unclear","keys":[]}
+{"text":"If Saturday for me won't work, Thursday works.","answer":"unclear","keys":[]}
+{"text":"If Saturday for me won't work.","answer":"unclear","keys":[]}
+{"text":"If Saturday for me doesn't work, Thursday works.","answer":"unclear","keys":[]}
+{"text":"If Saturday for me won't work. No thanks.","answer":"no","keys":[]}
+{"text":"If Saturday for me won't work. I don't want to meet.","answer":"no","keys":[]}
+{"text":"If Saturday for me won't work. Deal me out.","answer":"no","keys":[]}
+{"text":"If Saturday for me won't work. I can't make it.","answer":"no","keys":[]}
+{"text":"If Saturday for me won't work. Ana said, no thanks.","answer":"unclear","keys":[]}
+{"text":"If Saturday for me won't work, no thanks.","answer":"unclear","keys":[]}
