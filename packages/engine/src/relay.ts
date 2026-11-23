@@ -481,6 +481,13 @@ const DECLINES_PENDING_SEND = new RegExp(
   String.raw`(?:\s+(?:yet|please|pls|any\s?more|now|after all))*\s*$`,
 );
 const PRIVATE_RELAY_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?|email)|(?:this|that|the|my|these) (?:photos?|pics?|pictures?|selfies?|images?))\b/;
+const NUMBER_RELAY_ITEM = /\bmy (?:phone number|number|phone|digits|cell|contact(?: info)?|email)\b/;
+const PHOTO_RELAY_ITEM = /\b(?:this|that|the|my|these) (?:photos?|pics?|pictures?|selfies?|images?)\b/;
+// A refusal clause declines only the item it names: a photo refusal does not decline a number share.
+const refusalDeclinesOtherItem = (clause: string, contact: boolean): boolean =>
+  contact
+    ? PHOTO_RELAY_ITEM.test(clause) && !NUMBER_RELAY_ITEM.test(clause)
+    : NUMBER_RELAY_ITEM.test(clause) && !PHOTO_RELAY_ITEM.test(clause);
 const PRIVATE_RELAY_ACTION = /\b(?:send(?:ing)?|sent|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\b/;
 const PRIVATE_RELAY_REFERENCE = /\b(?:send|share|give|pass|forward|show|text)\s+(?:it|that|this)\b(?=\s*(?:$|(?:to|with|yet|please|pls|now)\b))/;
 const INCOMPLETE_SHARE_REFUSAL = new RegExp(SHARE_NEG.source + "\\s*$");
@@ -553,7 +560,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const clauses = relayClauses(low);
     const hedged = HEDGE.test(low) || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
-    const refused = clauses.some(clause => NEG.test(clause) || INCOMPLETE_SHARE_REFUSAL.test(clause)
+    const refused = clauses.some(clause => (NEG.test(clause) && !refusalDeclinesOtherItem(clause, !!contact)) || INCOMPLETE_SHARE_REFUSAL.test(clause)
       || (SHARE_NEG.test(clause) && (PRIVATE_RELAY_REFERENCE.test(clause)
         || (PRIVATE_RELAY_ACTION.test(clause) && PRIVATE_RELAY_ITEM.test(clause)))))
       || (!!contact && refusesNumberSwap(clauses));

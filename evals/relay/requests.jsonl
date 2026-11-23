@@ -101,3 +101,5 @@
 {"text": "I would not want Ana to, send him my number", "want": "none"}
 {"text": "Tell them I can send them my number", "want": "text"}
 {"text": "Tell them I asked Ana to send him my number.", "want": "text"}
+{"text":"Don't send him my photo. Send him my number.","want":"contact_share"}
+{"text":"Don't send him my number. Send him my photo.","want":"photo"}
