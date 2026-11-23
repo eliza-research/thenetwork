@@ -467,6 +467,7 @@ export type RelayRequest =
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|rather not|hold off|wait (?:to|before)|not until)\b/;
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:should i|or not)\b/;
+const ENVELOPE_CONDITION_MARKER = /\b(?:if|when|once|until|till|unless|after|first|wait|later|yet|not|no|ready|only)\b|n't\b/iu;
 const PRIVATE_TIMING_HEDGE = /\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b/iu;
 const RELAY_NAME = String.raw`(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\b)\p{L}[\p{L}'-]{1,30}`;
 const PRIVATE_RELAY_RECIPIENT = String.raw`(?:my (?:match|date)|${RELAY_NAME})`;
@@ -647,6 +648,17 @@ function priorSentenceConditionsShare(source: string, request: RegExpMatchArray,
     }
   }
   return waits.size > 0;
+}
+
+function envelopeConditionUnsettled(body: string): boolean {
+  let open = false;
+  for (const part of body.matchAll(RELAY_SENTENCE_TEXT)) {
+    const sentence = part[0].trim().toLowerCase();
+    if (!sentence) continue;
+    if (PRIOR_ASSENT_COMPLETED.test(sentence)) { open = false; continue; }
+    if (ENVELOPE_CONDITION_MARKER.test(sentence)) open = true;
+  }
+  return open;
 }
 
 const PRIVATE_RELAY_OBJECT = String.raw`(?:(?:(?:my|the|this|that|these|a|any)\s+)?(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})|it|this|that|them|either|both|anything(?:\s+else)?)`;
@@ -1149,7 +1161,10 @@ export function parseRelayRequest(text: string): RelayRequest {
     const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
       privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
     const priorCondition = priorSentenceConditionsShare(t.slice(start), privateRequest, !!contact);
+    const envelopeCondition = independentNumber && ordinaryText !== undefined
+      && envelopeConditionUnsettled(ordinaryText.body);
     const uncertain = leadingCondition || HEDGE.test(low) || privateRelayTimingIsUncertain(spoken, ordinaryBody) || uncertainPrivateTransfer(clauses)
+      || envelopeCondition
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
       || question || privateShareQualified(spoken, privateRequest)
       || priorCondition;

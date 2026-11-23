@@ -453,3 +453,10 @@
 {"text": "Tell Ari to send it. Please send Ari my number if he asks.", "want": "none"}
 {"text": "Tell Ari “Send it.” Please send Ari my number if he asks.", "want": "text"}
 {"text": "Tell Ari I will be there tomorrow. Wait for Ari to agree. Share my number with Ari.", "want": "none"}
+{"text": "Tell him he can have it if he asks. Send him my number.", "want": "text"}
+{"text": "Tell him I'll send it when he asks. Send him my number.", "want": "none"}
+{"text": "Tell him only if he asks. Send him my number.", "want": "text"}
+{"text": "Tell him he has to ask first. Send him my number.", "want": "text"}
+{"text": "Tell him to wait until I say so. Send him my number.", "want": "text"}
+{"text": "Tell him I'm not ready. Send him my number.", "want": "text"}
+{"text": "Tell him no. Send him my number.", "want": "text"}
