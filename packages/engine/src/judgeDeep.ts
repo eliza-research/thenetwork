@@ -15,7 +15,7 @@
 // evals' historical replay, in packages/evals/src/historicalPrompts.ts.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { privateVocabulary } from "./explain.ts";
-import { involvesMinor } from "./filters.ts";
+import { involvedMembers, involvesMinor } from "./filters.ts";
 import {
   attendingRefs, checkMemberFacing, passMessages, ReplyFields, runPass, str,
   type CitedFact, type JudgeRequest, type PassVerdict,
@@ -89,8 +89,9 @@ export const deepDecision = (v: DeepVerdict) => v.verdict === "yes";
  * Returns the first failing reason or null.
  */
 export function hardGate(w: World, c: Pick<Candidate, "participants" | "via" | "category" | "lane"> & { alternates?: MemberId[] }): string | null {
-  if (involvesMinor(w, { participants: c.participants, alternates: c.alternates ?? [], via: c.via })) return "underage";
-  const everyone = [...c.participants, ...(c.via ? [c.via] : [])];
+  const roster = { participants: c.participants, alternates: c.alternates ?? [], via: c.via };
+  if (involvesMinor(w, roster)) return "underage";
+  const everyone = involvedMembers(roster).map(w.canonical);
   for (const id of everyone) if (!w.get(id)) return "unknown_member";
   for (const id of everyone) if (w.holds.has(id)) return "safety_hold";
   for (let i = 0; i < everyone.length; i++) for (let j = i + 1; j < everyone.length; j++) if (w.blocked.has(pairKey(everyone[i]!, everyone[j]!))) return "blocked";

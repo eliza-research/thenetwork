@@ -33,6 +33,7 @@ import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
 import { isMinor, memberReason, publicEventPreferencesAllow, requiredPairValues } from "./filters.ts";
 import { initial as initialFormation, step as stepFormation } from "../../core/src/generated/groupFormation.ts";
+import { anonymousPlanFrameAllowed } from "../../core/src/generated/planDispatch.ts";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { chooseCircle, circleKey, formsGroups, groupLane, leastMiseryUtility, pairCircle, poolCircles, poolGraph, type GroupCircle } from "./group.ts";
@@ -583,10 +584,18 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: st
   // The fixed copy (PLAN_COPY_PUBLIC) and the time phrase are the Network's own words, also allowed.
   const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""} ${menu ?? when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
   const vocab = new Set([...privateVocabulary(w, others)].filter(t => !own.has(t.toLowerCase())));
+  const publicNameWords = new Set([
+    ...tokenize(`${a.label} ${plan.place.name} ${plan.place.area ?? ""} ${when}`).map(t => t.toLowerCase()),
+    ...PLAN_COPY_PUBLIC,
+  ]);
+  const hasName = (part: string) => tokenize(part).some(t => names.has(t.toLowerCase()));
+  const menuHasName = plan.partner && !plan.crewId && !!menu && hasName(menu);
   for (const [i, ar] of [[true, true], [false, true], [false, false]] as const) {
     if (i && !into) continue;
     const text = frame(i, ar);
-    if (!tokenize(text).some(t => names.has(t.toLowerCase())) && checkMemberFacing(text, vocab).ok) return text;
+    const identifying = menuHasName || (i && hasName(into)) || tokenize(text)
+      .some(t => names.has(t.toLowerCase()) && !publicNameWords.has(t.toLowerCase()));
+    if (anonymousPlanFrameAllowed(identifying, checkMemberFacing(text, vocab).ok)) return text;
   }
   return null;
 }

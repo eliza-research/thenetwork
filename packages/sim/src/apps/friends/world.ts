@@ -15,6 +15,7 @@
 // do not), at most 2 booked meetups per member per week and never two in one slot. Proposals past a
 // cap lose that member silently. A proposal naming a member with a CLAIMED age under 18 is dropped
 // and counted (policy violation; must be 0).
+import { requireSimulationCount } from "../../input.ts";
 import { canBeMatched, type MemberId } from "@thenetwork/core";
 import type { Crew } from "@thenetwork/engine/src/plans.ts";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
@@ -96,6 +97,7 @@ const dk = (a: MemberId, b: MemberId) => `${a}>${b}`;
 
 export function createFriendsWorld(o: Omit<FriendsRunOptions, "matcher">): FriendsWorld {
   const weeks = o.weeks ?? 8;
+  requireSimulationCount(weeks, "weeks", 1);
   const personas = o.personas ?? generateFriendsPersonas({ ...o, seed: o.seed });
   return {
     seed: o.seed, weeks, personas, oracle: new FriendsOracle(personas, o.seed, { ...ORACLE_PARAMS, ...(o.params ?? {}) }), state: emptyFriendsState(),
@@ -132,10 +134,15 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       const free = SLOTS.map((s, k) => [s, k] as const).filter(([, k]) => (oracle.free(p.id, week, k) ? oracle.u("ci", p.id, week, k) < 0.85 : oracle.u("ci", p.id, week, k) < 0.05)).map(([s]) => s);
       state.checkIns.set(p.id, free);
     }
+    const independentCrews = state.crews.filter(c => c.handedOff);
     const snapshot = buildFriendsSnapshot(world.personas, state);
     const proposals = matcher.propose({ week, snapshot, rng: new Rng(hash32(o.seed, "matcher", week)) });
     const planInvites = new Map<MemberId, number>(), introInvites = new Map<MemberId, number>(), booked = new Map<MemberId, number>(), bookedSlots = new Set<string>(), answered = new Map<MemberId, number>();
     const canBook = (id: MemberId, slot: number) => (booked.get(id) ?? 0) < bookCap && !bookedSlots.has(`${id}|${slot}`);
+    const reserve = (id: MemberId, slot: number) => {
+      booked.set(id, (booked.get(id) ?? 0) + 1);
+      bookedSlots.add(`${id}|${slot}`);
+    };
 
     proposals.forEach((pr, idx) => {
       const key = `w${week}:${idx}:${pr.kind}`;
@@ -189,7 +196,10 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       }
       const bestOption = () => {
         let best = pr.options[0]!, n = -1;
-        for (const s of pr.options) { const c = [...picks.values()].filter(x => x.includes(s)).length; if (c > n) { n = c; best = s; } }
+        for (const slot of pr.options) {
+          const available = [...picks].filter(([id, slots]) => slots.includes(slot) && canBook(id, slot)).length;
+          if (available > n) { n = available; best = slot; }
+        }
         return { slot: best, n };
       };
       const quorum = pr.kind === "crew_session" || pr.kind === "crew_offer" ? Math.min(pr.quorum, 2) : pr.quorum;
@@ -226,9 +236,10 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         for (const b of going.filter(id => oracle.p(id).hidden.adversary === "bot"))
           for (const v of going.filter(id => isReal(oracle.p(id)))) g.harms.push({ kind: "bot_contact", offender: b, victim: v, reported: oracle.u("report", tkey, b, v) < 0.25 });
         const out = going.filter(id => oracle.backsOut(id, tkey, going.some(j => j !== id && world.disliked.has(dk(id, j)))));
-        g.booked = going.filter(id => !out.includes(id));
-        if (g.booked.length < 2) { g.stage = "backout"; record(tkey, "cancelled", going, at); applyHarms(g.harms, at); return; }
-        for (const id of g.booked) { booked.set(id, (booked.get(id) ?? 0) + 1); bookedSlots.add(`${id}|${slot}`); }
+        const confirmed = going.filter(id => !out.includes(id));
+        if (confirmed.length < 2) { g.stage = "backout"; record(tkey, "cancelled", going, at); applyHarms(g.harms, at); return; }
+        g.booked = confirmed;
+        for (const id of g.booked) reserve(id, slot);
         // 4. the meetup
         g.attended = g.booked.filter(id => oracle.attends(id, tkey, week, slot, pr.venueHood));
         if (g.attended.length < 2) { g.stage = "no_show"; record(tkey, "no_show", g.booked, at); applyHarms(g.harms, at); return; }
@@ -267,13 +278,15 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       }
     });
 
-    // Handed-off crews keep meeting on their own (decaying); members still count it as time together.
-    for (const c of state.crews) {
-      if (!c.handedOff) continue;
+    // Crews handed off before this round can meet independently, within the same booking limits.
+    for (const c of independentCrews) {
       const age = week - c.formedWeek;
       const slot = SLOTS.indexOf(slotOfCrew(c));
-      const came = c.members.filter(id => !state.safetyHolds.some(h => h.memberId === id) && oracle.u("crewself", c.id, id, week) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness) && (booked.get(id) ?? 0) < bookCap);
-      if (came.length < 2 || slot < 0) continue;
+      if (slot < 0) continue;
+      const came = c.members.filter(id => canBook(id, slot) && !state.safetyHolds.some(h => h.memberId === id) &&
+        oracle.u("crewself", c.id, id, week) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness));
+      if (came.length < 2) continue;
+      for (const id of came) reserve(id, slot);
       held(`self:${c.id}:w${week}`, "crew_self", came, c.activityId, hoodOfVenue(c.venueId) ?? oracle.p(c.members[0]!).hidden.home, week, slotDay(week, slot), slotTime(week, slot), c.id);
     }
     // Invitations precede this week's meetups: keep their prior experience fixed, then keep the
@@ -302,7 +315,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       if (res.seeAgain[a]!.includes(b) && res.seeAgain[b]!.includes(a)) { world.mutual.add(k); world.bond.set(k, (world.bond.get(k) ?? 0) + h); }
       if (!res.seeAgain[a]!.includes(b)) world.disliked.add(dk(a, b));
       if (!res.seeAgain[b]!.includes(a)) world.disliked.add(dk(b, a));
-      state.edges.push({ from: a, to: b, type: "met", strength: 0.5, explicit: true, createdAt: slotTime(week, 0) });
+      state.edges.push({ from: a, to: b, type: "met", strength: 0.5, explicit: true, createdAt: at });
     }
     meetups.push({ key, week, day, kind, activity, venueHood, attendees: [...attendees], enjoy: res.enjoy, good: res.good, travel, ...(crewId ? { crewId } : {}) });
     return res;

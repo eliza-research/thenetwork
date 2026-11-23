@@ -52,12 +52,12 @@ export class CostView {
     const todayUse = { day: today, app: 0, shared: 0 };
     for (const r of rows) {
       const d = byDay.get(r.day) ?? { day: r.day, total: 0, byKind: {} };
-      d.total = r4(d.total + r.usd);
-      d.byKind[r.kind] = r4((d.byKind[r.kind] ?? 0) + r.usd);
+      d.total += r.usd;
+      d.byKind[r.kind] = (d.byKind[r.kind] ?? 0) + r.usd;
       byDay.set(r.day, d);
       quantities[r.kind] = (quantities[r.kind] ?? 0) + r.qty;
       total += r.usd; est += r.est;
-      if (r.day === today) { if (r.app_id === "shared") todayUse.shared = r4(todayUse.shared + r.usd); else todayUse.app = r4(todayUse.app + r.usd); }
+      if (r.day === today) { if (r.app_id === "shared") todayUse.shared += r.usd; else todayUse.app += r.usd; }
     }
     // Today's totals for the budget lines: this app (and the shared line) only; the total budget needs every app's rows.
     const b = costBudgetsFromEnv(o.env ?? process.env);
@@ -67,6 +67,12 @@ export class CostView {
       totals = Object.fromEntries(all.map(r => [r.app_id, r.usd]));
     }
     const budgets = budgetLines(totals, { daily: o.everyApp ? b.daily : undefined, byApp: { ...(b.byApp[app] !== undefined ? { [app]: b.byApp[app] } : {}) } });
+    // Round for display only after aggregation and budget shares use the unrounded totals.
+    for (const d of byDay.values()) {
+      d.total = r4(d.total);
+      for (const kind of Object.keys(d.byKind)) d.byKind[kind] = r4(d.byKind[kind]!);
+    }
+    todayUse.app = r4(todayUse.app); todayUse.shared = r4(todayUse.shared);
     return { app, days: [...byDay.values()], today: todayUse, budgets, estimatedShare: total > 0 ? r4(est / total) : 0, quantities };
   }
 

@@ -31,7 +31,8 @@ import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRun
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import { relayConsentStale, relayRecordMayDispatch } from "../../core/src/generated/relayDecision.ts";
 import { cofounderBoundIntentCurrent, cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
-import { hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
+import { hireContactAllowed, managerQuestionDeadline, managerQuestionDeliveryCurrent } from "../../core/src/generated/peonHireDispatch.ts";
+import { probeResponseMs } from "../../core/src/generated/probeDispatch.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalRosterReady, lateArrivalText, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
@@ -45,7 +46,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, pendingSlopIntroductions, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
@@ -59,7 +60,7 @@ import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import { automatedFacetPredicate, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
-import { BlooioAdapter, currentBookingReceipt, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
+import { BlooioAdapter, currentBookingReceipt, currentBookingReceipts, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
@@ -85,7 +86,7 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { NOT_SENT, type QueueRow, type RecipientCheck, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -155,6 +156,7 @@ export interface RuntimeHost {
   log: (line: string) => void;
   conversationNetworkId?(app: AppId, homeCity: string): string | undefined;
   accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash" | "projectRecordedAge">;
+  readonly outboundRecipientKey: RecipientWindowKey;
   photoRelay?: PhotoRelayService;
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
@@ -248,6 +250,8 @@ export class NetworkRuntime {
   private readonly nonce = randomUUID().slice(0, 8);
   private seq = 0;
   lastTick?: { at: number; ran: boolean };
+
+  get outboundRecipientKey(): RecipientWindowKey { return this.host.outboundRecipientKey; }
 
   constructor(private readonly host: RuntimeHost, o: RuntimeOptions) {
     this.id = o.id; this.app = o.app; this.city = o.city; this.cities = o.cities; this.matchingAllowed = o.matchingAllowed;
@@ -456,8 +460,13 @@ export class NetworkRuntime {
     if (contact.body !== body || !candidate || participants.length !== 2 || !participants.includes(seat.manager)
       || !participants.includes(memberId) || !this.matchingAllowed || !saved?.state.matchingEnabled) return false;
     const now = this.clock.now(), reveal = contact.type === "proposal", statuses = new Map(opp.status);
+    const managerProbe = !reveal && memberId === seat.manager;
+    const slot = managerProbe ? saved.state.members.find(member => member.id === memberId)?.awaiting : undefined;
+    if (!managerQuestionDeliveryCurrent(managerProbe, slot?.kind === "probe" && slot.oppId === opp.id, slot?.probeReceiptId === contact.id)) return false;
+    const original = opp.sentAt?.[memberId];
+    const deadline = managerProbe ? managerQuestionDeadline(opp.deadline, original !== undefined, original ?? 0, probeResponseMs) : opp.deadline;
     const phase = reveal ? opp.stage === "scheduled" && now < (opp.meetingAt ?? 0) && opp.bookedTold?.includes(memberId) === true
-      : opp.stage === "probing" && now < opp.deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
+      : opp.stage === "probing" && now < deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
     const accepted = (id: MemberId) => statuses.get(id) === (reveal ? "yes" : "available") && opp.contacted.includes(id);
     const humanReview = review?.decision === "approve" && !review.invalidated && !!review.reviewer && review.reviewer !== SIM_AUTO_REVIEWER;
     if (!hireContactAllowed(true, humanReview, phase, memberId === seat.manager, reveal, accepted(candidate), accepted(seat.manager))) return false;
@@ -931,6 +940,22 @@ export class NetworkRuntime {
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
       type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
     const now = this.clock.now();
+    if ((this.app.id === "slop" || this.app.id === "peon") && state) {
+      const introductions = this.app.id === "slop" ? pendingSlopIntroductions(state.opps, state.interactions)
+        : state.opps.filter(opp => opp.seat && opp.seatAcceptedAt === undefined && opp.meetingAt !== undefined
+          && (opp.stage === "scheduled" || (opp.stage === "done" && !opp.finalized)));
+      const originalNotices = introductions.flatMap(opp =>
+        opp.participants.map(memberId => ({ oppId: opp.id, memberId, revision: 0, lane: null })));
+      if (originalNotices.length) await this.scoped(async tx => {
+        const receipts = await currentBookingReceipts(tx, this.app.id, originalNotices);
+        for (const [index, receipt] of receipts) {
+          const at = receipt?.sent_at?.getTime();
+          if (!receipt || at === undefined || !bookingNoticeReceived(receipt.status, at, now)) continue;
+          const { oppId, memberId } = originalNotices[index]!;
+          this.initialInviteReceipts.set(bookingNoticeReceiptKey(oppId, memberId), { kind: "accepted", at });
+        }
+      });
+    }
     const bookingReceiptsNeeded = (state?.opps ?? []).filter(opp => {
       if (opp.seat || opp.meetingAt === undefined) return false;
       const elapsed = now - opp.meetingAt;

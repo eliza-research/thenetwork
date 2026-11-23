@@ -2,10 +2,12 @@ import { CITY_TZ, fromLocal, localParts, temporaryPresenceWindow, validAge, type
 import {
   soloReplyHasRoom, soloEventAgeAllowed, soloEventCityAllowed, soloEventEligible, soloEventPrecedes,
 } from "../../core/src/generated/soloConcierge.ts";
+import { requestedAreaAllowsEvent, recommendationLocation } from "../../core/src/generated/plansLocation.ts";
 import { presenceWindowCovers, presenceWindowsOverlap, type PresenceWindow } from "../../core/src/generated/travelPresence.ts";
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
+import { plansPlaceQuestion, publicPlanLocation } from "../src/classify.ts";
 import { NEIGHBORHOOD, travelMinutes } from "../src/geo.ts";
 import { statedWindows } from "../src/plans.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
@@ -13,6 +15,7 @@ import { readPublicEvents } from "./public-events.ts";
 import { automatedFacetPredicate, presenceOf } from "./snapshot.ts";
 
 type Period = "today" | "tomorrow" | "this weekend" | "this week" | "next seven days";
+interface SoloRequest { period: Period; area?: string; mentioned?: boolean }
 type Option = { event: NetworkEvent & { listing: NonNullable<NetworkEvent["listing"]> }; fit: number; minutes?: number; scheduled: boolean };
 interface SoloReply { body: string; publicLinks: string[] }
 const NY = CITY_TZ.nyc;
@@ -20,9 +23,13 @@ const when = new Intl.DateTimeFormat("en-US", { timeZone: NY, weekday: "short", 
 const like = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /** Recognize a solo request without claiming arbitrary open conversation or proposal replies. */
-export function soloConciergeRequest(text: string): Period | undefined {
+export function soloConciergeRequest(text: string): SoloRequest | undefined {
   const request = /^(?:(?:anything fun|what(?:['’]s| is) happening) (today|tomorrow|this weekend|this week)|(?:find|show me|suggest|recommend) (?:some )?(?:public )?(?:events|things to do)(?: (today|tomorrow|this weekend|this week))?)[.!?]?$/i.exec(text.trim());
-  if (request) return (request[1] ?? request[2] ?? "next seven days").toLowerCase() as Period;
+  if (request) return { period: (request[1] ?? request[2] ?? "next seven days").toLowerCase() as Period };
+  const localized = /^(?:any plans|anything fun|what(?:['’]s| is) happening|(?:find|show me|suggest|recommend) (?:some )?(?:public )?(?:events|things to do))(?: (today|tomorrow|this weekend|this week))? ((?:in|near|around|at|by) [^!?\r\n]+?)(?: (today|tomorrow|this weekend|this week))?[!?]?$/i.exec(text.trim());
+  if (!localized) return;
+  const place = publicPlanLocation(localized[2]!, true);
+  if (place.mentioned) return { period: (localized[1] ?? localized[3] ?? "next seven days").toLowerCase() as Period, ...place };
 }
 
 function requestedWindow(period: Period, now: number): PresenceWindow {
@@ -43,11 +50,14 @@ function requestedWindow(period: Period, now: number): PresenceWindow {
 const precedes = (a: Option, b: Option) => soloEventPrecedes(a.fit, a.minutes ?? Number.MAX_SAFE_INTEGER, a.event.start, b.fit, b.minutes ?? Number.MAX_SAFE_INTEGER, b.event.start);
 
 /** Read only this app member's allowed inputs and the operator's published catalog. */
-export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "activeMembership" | "lowestAge">, owner: MemberCommandOwner, period: Period, now: number): Promise<SoloReply | undefined> {
+export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "activeMembership" | "lowestAge">, owner: MemberCommandOwner, request: SoloRequest, now: number): Promise<SoloReply | undefined> {
   const binding = await memberCommandOwner(tx, accounts, owner);
   if (!binding?.member) return;
   const age = await accounts.lowestAge(owner.e164, binding.person);
   if (!validAge(age)) return;
+  if (recommendationLocation(request.area !== undefined, request.mentioned === true) === "AskForArea") {
+    return { body: plansPlaceQuestion, publicLinks: [] };
+  }
   const { member } = binding;
   const app = owner.app.id, id = owner.memberId;
   const [events, rawPresence, facets] = await Promise.all([
@@ -66,11 +76,12 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   const home = member.home_city === "nyc" && member.home_area ? NEIGHBORHOOD.get(member.home_area) : undefined;
   const travelLimit = member.prefs.maxTravelMinutes;
   const limit = typeof travelLimit === "number" && Number.isFinite(travelLimit) && travelLimit >= 0 ? travelLimit : undefined;
-  const requested = requestedWindow(period, now);
+  const requested = requestedWindow(request.period, now);
   const options: Option[] = [];
 
   for (const event of events) {
     if (!event.listing) continue;
+    if (!requestedAreaAllowsEvent(request.area !== undefined, event.area === request.area)) continue;
     const eventWindow = { from: event.start, to: event.end };
     const away = trips.some(p => p.city !== event.city && presenceWindowsOverlap(p.window, eventWindow));
     const visiting = trips.some(p => p.city === event.city && presenceWindowCovers(p.window, eventWindow));

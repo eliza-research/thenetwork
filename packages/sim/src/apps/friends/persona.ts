@@ -2,6 +2,7 @@
 // STATED side (what they would tell the agent at onboarding; domain research C6). The snapshot
 // (snapshot.ts) shows only the stated side, filtered by profile richness, plus the verification
 // results and safety cues the Network itself observed. See docs/results/2026-10-08-friends-pack.md.
+import { requireSimulationCount } from "../../input.ts";
 import type { MemberId } from "@thenetwork/core";
 import { ACTIVITIES } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, type FriendsSlot, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
@@ -116,6 +117,7 @@ const energyBucket = (x: number): FriendsStated["energy"] => (x < 0.38 ? "low" :
 
 export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] {
   const n = o.n ?? FRIENDS_DEFAULTS.n;
+  requireSimulationCount(n, "Friends population", 0);
   const minorShare = o.minorShare ?? FRIENDS_DEFAULTS.minorShare, liarShare = o.minorLiarShare ?? FRIENDS_DEFAULTS.minorLiarShare;
   const adv = { ...FRIENDS_DEFAULTS.adversaryShares, ...(o.adversaryShares ?? {}) };
   const mix = { ...FRIENDS_DEFAULTS.richnessMix, ...(o.richnessMix ?? {}) };

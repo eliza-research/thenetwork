@@ -1,5 +1,6 @@
 // Discrete-event scheduler over a SimClock. Events are ordered by (time, insertion seq), so
 // simultaneous events run in the order they were scheduled: deterministic and replayable.
+import { requirePositiveSimulationValue } from "./input.ts";
 import type { SimClock } from "@thenetwork/core";
 
 export type RunMode = "discrete" | "accelerated" | "realtime";
@@ -62,7 +63,9 @@ export class Scheduler {
   readonly queue = new EventQueue();
   private handlers = new Map<string, (ev: ScheduledEvent<any>) => void | Promise<void>>();
   processed = 0;
-  constructor(readonly clock: SimClock, private opts: SchedulerOptions) {}
+  constructor(readonly clock: SimClock, private opts: SchedulerOptions) {
+    if (opts.mode === "accelerated" && opts.speed !== undefined) requirePositiveSimulationValue(opts.speed, "accelerated speed");
+  }
 
   on<T>(kind: string, handler: (ev: ScheduledEvent<T>) => void | Promise<void>) { this.handlers.set(kind, handler as any); }
   at<T>(t: number, kind: string, data: T) { return this.queue.push(Math.max(t, this.clock.now()), kind, data); }
@@ -72,18 +75,24 @@ export class Scheduler {
   async runUntil(until: number): Promise<void> {
     const sleep = this.opts.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
     const speed = this.opts.mode === "realtime" ? 1 : this.opts.speed ?? 1440;
+    let waitedUntil = this.clock.now();
     while (this.queue.size) {
       const next = this.queue.peek()!;
       if (next.at > until) break;
       if (this.opts.mode !== "discrete") {
-        const wallMs = (next.at - this.clock.now()) / speed;
-        if (wallMs > 0) await sleep(wallMs);
+        const wallMs = (next.at - Math.max(this.clock.now(), waitedUntil)) / speed;
+        if (wallMs > 0) {
+          await sleep(wallMs);
+          waitedUntil = next.at;
+          // An earlier event can arrive during the wait. Read the queue again.
+          continue;
+        }
       }
-      this.queue.pop();
-      this.clock.set(Math.max(next.at, this.clock.now()));
-      const h = this.handlers.get(next.kind);
-      if (!h) throw new Error(`no handler for event kind ${next.kind}`);
-      await h(next);
+      const due = this.queue.pop()!;
+      this.clock.set(Math.max(due.at, this.clock.now()));
+      const h = this.handlers.get(due.kind);
+      if (!h) throw new Error(`no handler for event kind ${due.kind}`);
+      await h(due);
       this.processed++;
     }
     if (this.clock.now() < until) this.clock.set(until);

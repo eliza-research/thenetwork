@@ -39,11 +39,17 @@ await withSignedTurnFixture(async ({ service, createMember, sendTurn }) => {
       const before = await memberships(member);
       member.output = [];
       if (event.type === "leaveProfileApp") {
-        const { response } = await sendTurn(member.phone, `leave ${APPS[target].domain}`, { app: target });
+        const other = target === "slop" ? "friends" : "slop";
+        const otherMayText = await service.accounts.optedIn(other, member.phone);
+        const { response } = await sendTurn(member.phone,
+          target === "slop" ? "leave slop date" : "unsubscribe from friends dot help");
         if (joined(before[target === "slop" ? 0 : 1]) && (response.outcome !== "handled"
           || response.consent?.state !== "opted_out"
           || response.consent.scope !== "app"
           || response.consent.app !== target)) throw new Error("A member's leave did not return an app opt-out");
+        if (await service.accounts.optedIn(target, member.phone)
+          || await service.accounts.optedIn(other, member.phone) !== otherMayText)
+          throw new Error("A member's leave did not preserve app consent scope");
         return "accepted";
       }
       const subject = event.kind === "ReadSomeoneElse" ? "Jordan's" : "my";
