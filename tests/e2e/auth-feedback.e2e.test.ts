@@ -53,7 +53,7 @@ browserTest("failed security checks give recovery feedback, a passed check clear
       await page.goto(`http://127.0.0.1:${server.port}/join`);
       await page.waitForFunction(() => (window as any).sdkCallbacks);
     };
-    const error = async () => (await page.locator('form [role="alert"]').count()) ? await page.locator('form [role="alert"]').textContent() : "";
+    const error = async () => (await page.locator('form [role="alert"]').allTextContents())[0] ?? "";
     const send = () => page.getByRole("button", { name: "Text me a code" }).click();
     const phone = page.getByLabel("Mobile number");
 

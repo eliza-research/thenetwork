@@ -8,7 +8,9 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. A condition on the recipient's assent or a later time supplies uncertainty to the private request rule. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
+
+The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message because it mentions an upcoming minor birthday. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader; this model takes the evidence category as input.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -300,10 +302,10 @@ module relay {
   }
 
   // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
-  // signals after claiming the receipt. Only a private request the reader has identified as explicit gets here.
+  // signals after claiming the receipt. It includes conditions and timing in the uncertainty signal.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
-  // supplies no private request. A later independent directive can supply one. The signed relay
-  // tests cover this reader boundary for both item kinds.
+  // supplies none. A later independent directive can supply one, and an ordinary text envelope
+  // still follows the text path. Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 
@@ -552,11 +554,12 @@ module relay {
   }
 
   // ------------------------------------------------------------------------------------------ staff
-  // RelayDesk.release (relay.ts:402-421), a unit of work (service.ts:2777).
+  // RelayDesk.release reads both current canonical parties in the staff unit of work.
+  // A text content hold can be overridden. A current party hold still prevents delivery.
   action staffRelease(iid: str, refuse: bool): bool = {
     val h = desk.held.get(iid)
     val decided = desk.with("held", desk.held.set(iid, h.with("status", "released").with("hasText", false)))
-    val canGo = h.kind == "text" and h.hasText and not(partiesBlock(w, h.src, h.dst))
+    val canGo = h.kind == "text" and h.hasText and not(partiesBlock(w, h.src, h.dst)) and not(partiesHold(w, h.src, h.dst))
     val s = { key: iid, iid: iid, src: h.src, dst: h.dst, number: false, ask: false, at: w.now }
     val o = deliver(w, decided, queue, s, refuse)
     val rec = { kind: h.kind, src: h.src, dst: h.dst, decision: "pass", contactShared: false, ageSignal: false, staff: "released",
@@ -953,6 +956,14 @@ module relay {
       .then(queueSend("a1")).then(queueSend("b2"))
       .expect(numberSent("A") and numberSent("B") and safety)
 
+  // The reader found a qualified contact request and separately an explicit text relay. The
+  // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.
+  run qualifiedRequestAndQuotedTextTest =
+    init
+      .then(claimPrivateContact("a1", false, true, false)).then(commitNone("a1")).then(answer("a1"))
+      .then(claim("a2", "text")).then(commitText("a2", "block", false)).then(answer("a2"))
+      .expect(desk.swaps.size() == 0 and desk.log.get("a2").decision == "block" and queue.rows.keys().size() == 0 and safety)
+
   run delegatedShareKeepsSwapPendingTest =
     init
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
@@ -1130,6 +1141,12 @@ module relay {
       .then(queueFail("a1"))
       .then(staffRelease("b1", false))
       .expect(not(releaseReadsDelivered) and safety)
+
+  run staffCannotReleaseAfterPartyHoldTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "hold", false)).then(answer("a1"))
+      .then(safetyHold("B")).then(staffRelease("a1", false))
+      .expect(not(queue.rows.keys().contains("a1")) and not(desk.held.get("a1").hasText) and safety)
 
   // SD-133 (fixed): a held item that waits past the SLA raises the alert at the next SLA check.
   run heldSlaAlertTest =

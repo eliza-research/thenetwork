@@ -1017,7 +1017,7 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
   const lp = localParts(slot.start, ev.tz);
   const day = (lp.weekday + 1) % 7;
   const weekend = cfg.sendTime.weekendDays.includes(day);
-  if (ev.quietHours && withinQuietHours(lp.hour, ...ev.quietHours)) return 0;
+  if (ev.quietHours && withinQuietHours(lp.hour + lp.minute / 60, ...ev.quietHours)) return 0;
   if (ev.away?.some(a => a.start < slot.end && a.end > slot.start)) return 0;
   const calendar = calendarAvailability(ev.calendar, slot, now);
   if (calendar === "busy") return 0;

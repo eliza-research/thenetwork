@@ -13,6 +13,19 @@ export const ratingMaxBytes: number = 4194304;
 /** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md) */
 export const photoMaxPerMessage: number = 4;
 
+/** Story: Let slop use my photos for private matching / Only a shared or Slop line can accept photos for Slop (spec/photoPolicy.md) */
+//@ pure
+export function textPhotoLineAllowed(sharedLine: boolean, slopLine: boolean): boolean {
+  return sharedLine || slopLine;
+}
+
+/** Story: Let slop use my photos for private matching / Only a shared or Slop line can accept photos for Slop (spec/photoPolicy.md) */
+//@ pure
+export function lawDedicatedOtherLineCannotTakeSlopPhoto(sharedLine: boolean, slopLine: boolean): boolean {
+  //@ ensures \result === true
+  return !(!sharedLine && !slopLine) || !textPhotoLineAllowed(sharedLine, slopLine);
+}
+
 /** Story: Let slop use my photos for private matching / The rater requires an adult age without a failed age check (spec/photoPolicy.md) */
 //@ pure
 export function photoSubjectAllowed(adult: boolean, ageCheckFailed: boolean): boolean {

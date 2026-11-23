@@ -3,7 +3,7 @@
 // print what the observatory shows (funnel, outcomes vs ground truth, unsafe proposals by cause,
 // dispatch skips, fairness over time, the graph the Network learned, the review gate, and the
 // judge scorer's invariant, canary-leak and minor-contact counts).
-//   node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random]
+//   node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random|off]
 //       [--network consent|stub] [--review auto|human]
 // With --review human nobody reviews, so every queued opportunity expires unsent (a check of the gate).
 import { parseArgs } from "node:util";
@@ -15,10 +15,26 @@ const { values: a } = parseArgs({ options: {
   days: { type: "string", default: "14" }, seed: { type: "string", default: "1" }, engine: { type: "string", default: "engine-v1" }, personas: { type: "string", default: "0" },
   network: { type: "string", default: "consent" }, review: { type: "string", default: "auto" },
 } });
+
+function choice<T extends string>(name: string, value: string | undefined, allowed: readonly T[]): T {
+  const selected = allowed.find(option => option === value);
+  if (selected !== undefined) return selected;
+  console.error(`invalid --${name}: ${JSON.stringify(value)} (expected ${allowed.join("|")})`);
+  process.exit(2);
+}
+
+const engine = choice("engine", a.engine, ["engine-v1", "random", "off"]);
+const network = choice("network", a.network, ["consent", "stub"]);
+const review = choice("review", a.review, ["auto", "human"]);
+const seed = Number(a.seed);
+if (!a.seed?.trim() || !Number.isFinite(seed)) {
+  console.error("--seed must be a finite number");
+  process.exit(2);
+}
 const days = Number(a.days);
 const g = new GameSource({
-  seed: Number(a.seed), days, engine: a.engine as "engine-v1" | "random", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
-  network: a.network as "consent" | "stub", review: a.review as "auto" | "human",
+  seed, days, engine, personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
+  network, review,
 });
 const t0 = performance.now();
 await g.init();
@@ -30,8 +46,9 @@ const count = <T>(xs: T[], f: (x: T) => string | undefined) => xs.reduce<Record<
 const opps = s.opportunities.filter(o => o.source !== "shadow");
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const unsafe = opps.filter(o => o.oracle?.unsafe);
+const proactivePerMemberWeek = s.stats.scorecard?.find(m => m.key === "attention_burden")?.value ?? 0;
 const report = {
-  world: { seed: Number(a.seed), days, engine: a.engine, network: a.network, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
+  world: { seed, days, engine, network, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
   review: s.network?.review,
   judge: s.stats.judge,
   proposals: {
@@ -45,7 +62,7 @@ const report = {
     showRate: r3(s.stats.attended / Math.max(1, s.stats.attended + s.stats.noShows + s.stats.cancelledWithNotice)),
     meanEnjoyment: r3(s.stats.enjoymentSum / Math.max(1, s.stats.enjoymentN)),
     membersWhoMet: s.members.filter(m => m.counters.meetings > 0).length,
-    proactivePerMemberPerWeek: r3(s.stats.proactive / Math.max(1, s.stats.joined) / (days / 7)),
+    proactivePerMemberPerWeek: r3(proactivePerMemberWeek),
     optOuts: s.stats.optOuts, blocks: s.stats.blocks, safetyFlags: s.stats.adversarialAttempts, invariantViolations: s.stats.invariantViolations,
   },
   engineRunsByDay: s.engineRuns.map(r => ({ day: Math.floor((r.at - s.clock.start) / DAY) + 1, city: r.city, candidates: r.funnel.generated, eligible: r.funnel.eligible, budgetSkips: r.funnel.budgetSkips, proposals: r.proposals, gini: r3(r.fairness.gini), zeroExposure: r3(r.fairness.zeroExposureShare) })),

@@ -344,12 +344,22 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
     for (const m of outbound(r.records).filter(m => m.msg.meta?.type === "feedback_request")) expect(m.msg.body).toMatch(/(^|[.!] )How did your date with .+ go\? If anything felt wrong/);
   });
 
-  await each("one date at a time: no member is booked for a second date before the first one has happened", r => {
-    const byMember = new Map<MemberId, { t: number; at: number }[]>();
-    for (const x of r.records) if (x.type === "meeting_scheduled") for (const id of x.participants) byMember.set(id, [...(byMember.get(id) ?? []), { t: x.t, at: x.at }]);
-    for (const [id, ms] of byMember) {
-      const s = ms.sort((a, c) => a.t - c.t);
-      for (let i = 1; i < s.length; i++) expect([id, s[i]!.t >= s[i - 1]!.at]).toEqual([id, true]);
+  await each("one date at a time: a member has at most one active future booking", r => {
+    const byMember = new Map<MemberId, { proposalId: string; at: number }>();
+    const closed = new Set<string>();
+    for (const record of [...r.records].sort((first, second) => first.t - second.t)) {
+      if (record.type === "network_log" && record.kind === "opportunity_closed" && typeof record.detail.proposalId === "string") {
+        closed.add(record.detail.proposalId);
+      }
+      if (record.type !== "meeting_scheduled") continue;
+      for (const memberId of record.participants) {
+        const previous = byMember.get(memberId);
+        const overlapping = previous && previous.proposalId !== record.proposalId
+          && previous.at > record.t && !closed.has(previous.proposalId);
+        expect([memberId, previous?.proposalId, record.proposalId, Boolean(overlapping)])
+          .toEqual([memberId, previous?.proposalId, record.proposalId, false]);
+        byMember.set(memberId, record);
+      }
     }
   });
 

@@ -4,7 +4,7 @@
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 export type NetworkTextProjection = "SkipRecordedText" | "ProjectOpportunityText" | "ProjectUnboundText";
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
-export type AcknowledgementPhase = "AcknowledgementStarting" | "AwaitingReadToken" | "MarkingInboxSeen" | "InboxSeen" | "NoInboxRead" | "DeliveryUnchanged" | "DeliveryActed";
+export type AcknowledgementPhase = "AcknowledgementStarting" | "AwaitingReadToken" | "MarkingInboxSeen" | "InboxSeen" | "NoInboxRead";
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export interface AcknowledgementFlow { phase: AcknowledgementPhase }
 
@@ -13,8 +13,7 @@ export type Event =
   | { type: "selectInboxRead"; withToken: boolean }
   | { type: "resolveInboxReadToken"; valid: boolean }
   | { type: "selectShownSubjects"; hasVisibleItems: boolean }
-  | { type: "recordInboxSeen" }
-  | { type: "readDeliveryClosure"; deliveryClosed: boolean };
+  | { type: "recordInboxSeen" };
 
 /** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
 export const threadUpdateCommand: string = "updates";
@@ -234,21 +233,28 @@ export function sometimesLeavesInboxUnchanged(flow: AcknowledgementFlow): boolea
 
 /** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md) */
 //@ pure
-export function canReadDeliveryClosure(flow: AcknowledgementFlow): boolean {
-  return flow.phase === "AcknowledgementStarting";
+export function pendingDeliveryMayClose(pending: boolean): boolean {
+  return pending;
 }
 
 /** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md) */
 //@ pure
-export function readDeliveryClosure(flow: AcknowledgementFlow, deliveryClosed: boolean): AcknowledgementFlow {
-  //@ ensures (inv(flow) && canReadDeliveryClosure(flow)) ==> stepInboxResponseFollowsSeenWrite(flow, "readDeliveryClosure", \result)
-  return { phase: deliveryClosed ? "DeliveryActed" : "DeliveryUnchanged" };
+export function pendingDeliveryMayExpire(pending: boolean, sentAt: number, cutoff: number): boolean {
+  return pendingDeliveryMayClose(pending) && sentAt < cutoff;
 }
 
 /** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md) */
 //@ pure
-export function sometimesRecordsDeliveryAction(flow: AcknowledgementFlow): boolean {
-  return flow.phase === "DeliveryActed";
+export function lawClosedDeliveryCannotCount(sentAt: number, cutoff: number): boolean {
+  //@ ensures \result === true
+  return !pendingDeliveryMayClose(false) && !pendingDeliveryMayExpire(false, sentAt, cutoff);
+}
+
+/** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawDeliveryAtCutoffRemainsPending(pending: boolean, cutoff: number): boolean {
+  //@ ensures \result === true
+  return !pendingDeliveryMayExpire(pending, cutoff, cutoff);
 }
 
 /** Do the rules allow this event in this state? */
@@ -258,7 +264,6 @@ export function enabled(current: AcknowledgementFlow, event: Event): boolean {
   if (event.type === "resolveInboxReadToken") return canResolveInboxReadToken(current);
   if (event.type === "selectShownSubjects") return canSelectShownSubjects(current);
   if (event.type === "recordInboxSeen") return canRecordInboxSeen(current);
-  if (event.type === "readDeliveryClosure") return canReadDeliveryClosure(current);
   return false;
 }
 
@@ -271,7 +276,6 @@ export function step(current: AcknowledgementFlow, event: Event): Acknowledgemen
   if (event.type === "resolveInboxReadToken") return canResolveInboxReadToken(current) ? resolveInboxReadToken(current, event.valid) : current;
   if (event.type === "selectShownSubjects") return canSelectShownSubjects(current) ? selectShownSubjects(current, event.hasVisibleItems) : current;
   if (event.type === "recordInboxSeen") return canRecordInboxSeen(current) ? recordInboxSeen(current) : current;
-  if (event.type === "readDeliveryClosure") return canReadDeliveryClosure(current) ? readDeliveryClosure(current, event.deliveryClosed) : current;
   return current;
 }
 
@@ -293,7 +297,6 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "resolveInboxReadToken" && typeof raw.valid === "boolean") return { type: "resolveInboxReadToken", valid: raw.valid };
   if (raw.type === "selectShownSubjects" && typeof raw.hasVisibleItems === "boolean") return { type: "selectShownSubjects", hasVisibleItems: raw.hasVisibleItems };
   if (raw.type === "recordInboxSeen") return { type: "recordInboxSeen" };
-  if (raw.type === "readDeliveryClosure" && typeof raw.deliveryClosed === "boolean") return { type: "readDeliveryClosure", deliveryClosed: raw.deliveryClosed };
   return undefined;
 }
 
@@ -311,7 +314,7 @@ export function parseState(x: unknown): AcknowledgementFlow | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AcknowledgementStarting" || raw.phase === "AwaitingReadToken" || raw.phase === "MarkingInboxSeen" || raw.phase === "InboxSeen" || raw.phase === "NoInboxRead" || raw.phase === "DeliveryUnchanged" || raw.phase === "DeliveryActed") && Object.keys(raw).length === 1)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AcknowledgementStarting" || raw.phase === "AwaitingReadToken" || raw.phase === "MarkingInboxSeen" || raw.phase === "InboxSeen" || raw.phase === "NoInboxRead") && Object.keys(raw).length === 1)) return undefined;
   const parsed: AcknowledgementFlow = ({ phase: raw.phase });
   return inv(parsed) ? parsed : undefined;
 }

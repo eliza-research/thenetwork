@@ -1,6 +1,6 @@
 # Read and acknowledge inbox updates
 
-The caller enters with the member identity established by the authenticated app or the thread. The scheduler keeps the member's surface activity, inbox rows, token records, and delivery outcomes in the notify store. The store owns first writes and the scheduler uses their results to decide what to expose or count.
+The caller enters with the member identity established by the authenticated app or the thread. The scheduler keeps the member's surface activity, inbox rows, token records, and delivery outcomes in the notify store. The store owns first writes and commits each delivery outcome with its surface count. The scheduler uses the read and token results to decide what to expose.
 
 ## Story: See my own updates on the surface I am using
 
@@ -114,8 +114,7 @@ Touch the surface before the read. After selecting the update items, record thos
 
 ```quint
 type AcknowledgementPhase =
-  AcknowledgementStarting | AwaitingReadToken | MarkingInboxSeen | InboxSeen | NoInboxRead |
-  DeliveryUnchanged | DeliveryActed
+  AcknowledgementStarting | AwaitingReadToken | MarkingInboxSeen | InboxSeen | NoInboxRead
 type AcknowledgementFlow = { phase: AcknowledgementPhase }
 pure val initial: AcknowledgementFlow = { phase: AcknowledgementStarting }
 
@@ -143,12 +142,17 @@ pure def sometimesLeavesInboxUnchanged(flow: AcknowledgementFlow): bool = flow.p
 
 ### Count a delivery action only when the store closes a pending delivery
 
-For token use, the shell looks for a delivery among the token's stored items. For a reply in the thread, it checks the member's pending deliveries. Record the acted outcome on the surface only for a successful change from a pending delivery.
+For token use, the shell looks for a delivery among the token's stored items. For a reply in the thread, it checks the member's pending deliveries. The store closes an acted delivery and counts it on the surface that acted in one mutation. The expiry sweep closes still-pending deliveries sent strictly before the cutoff and counts them on their recorded targets in the same mutation. A failed count write leaves the delivery pending. A repeated action or sweep cannot count a closed delivery again.
 
 ```quint
-pure def canReadDeliveryClosure(flow: AcknowledgementFlow): bool = flow.phase == AcknowledgementStarting
-pure def readDeliveryClosure(flow: AcknowledgementFlow, deliveryClosed: bool): AcknowledgementFlow =
-  { phase: if (deliveryClosed) DeliveryActed else DeliveryUnchanged }
+pure def pendingDeliveryMayClose(pending: bool): bool = pending
 
-pure def sometimesRecordsDeliveryAction(flow: AcknowledgementFlow): bool = flow.phase == DeliveryActed
+pure def pendingDeliveryMayExpire(pending: bool, sentAt: int, cutoff: int): bool =
+  pendingDeliveryMayClose(pending) and sentAt < cutoff
+
+pure def lawClosedDeliveryCannotCount(sentAt: int, cutoff: int): bool =
+  not(pendingDeliveryMayClose(false)) and not(pendingDeliveryMayExpire(false, sentAt, cutoff))
+
+pure def lawDeliveryAtCutoffRemainsPending(pending: bool, cutoff: int): bool =
+  not(pendingDeliveryMayExpire(pending, cutoff, cutoff))
 ```

@@ -20,7 +20,7 @@ import { statedDealbreaker } from "./score.ts";
 export const SLOP_LANE = "romance" as const;
 /** The relationship lane of every slop.date match (spec/matchLane.md). */
 export const SLOP_MATCH_LANE: MatchLane = "Date";
-const prof = (w: World) => slopProfiles(w.input, w.canonical);
+const prof = (w: World) => slopProfiles(w.input);
 
 /** A member's age range: stated; else the narrow fallback after a silent ask; else (asks off) the default guess; undefined = ask. */
 export function ageRangeOf(p: SlopProfile, o: SlopPackOptions): [number, number] | undefined {

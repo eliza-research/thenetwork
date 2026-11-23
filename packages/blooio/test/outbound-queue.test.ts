@@ -11,7 +11,10 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
-import { OutboundQueue, type AppChecks, type QueueOptions } from "../src/outbound-queue.ts";
+import { BlooioAdapter } from "../src/adapters/blooio-adapter.ts";
+import { BlooioClient } from "../src/blooio/client.ts";
+import { parseBlooioWebhook } from "../src/blooio/webhook.ts";
+import { OutboundQueue, recipientWindowHasher, type AppChecks, type QueueOptions } from "../src/outbound-queue.ts";
 import { ChannelSendError, type ChannelAdapter, type SendRequest, type StatusUpdate } from "../src/types.ts";
 
 const user = process.env.USER ?? "postgres";
@@ -40,7 +43,8 @@ function recorder() {
 
 const checks = (extra: Partial<AppChecks> = {}): AppChecks => ({ live: () => true, ...extra });
 const queue = (sql: SQL, provider: ChannelAdapter, o: Partial<QueueOptions> = {}) =>
-  new OutboundQueue({ sql, clock, provider, line: LINE, app: "friends", checks: checks(), newChatsPerLinePerDay: 1000, perLinePerDay: 1000, ...o });
+  new OutboundQueue({ sql, clock, provider, line: LINE, app: "friends", checks: checks(), newChatsPerLinePerDay: 1000, perLinePerDay: 1000,
+    recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"), ...o });
 
 describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
   beforeAll(async () => {
@@ -128,6 +132,21 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.map(call => call.idempotencyKey)).toEqual(["tn:quiet-claim-probe"]);
   });
 
+  test("a Los Angeles queue row follows its market's quiet hours without a saved zone", async () => {
+    const local = new SimClock(Date.UTC(2026, 9, 9, 13));
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, { clock: local });
+    const id = "quiet-los-angeles";
+    await q.enqueue(a, [{ id, to: "+12125553218", kind: "transactional", text: "Your meeting reminder.", city: "la" }]);
+    await q.drain();
+    expect(calls).toHaveLength(0);
+    expect(await q.statusOf(id)).toBe("deferred_quiet_hours");
+
+    local.set(Date.UTC(2026, 9, 9, 16));
+    await q.drain();
+    expect(calls.map(call => call.idempotencyKey)).toEqual([`tn:${id}`]);
+  });
+
   test("a worker that stopped mid-send: the other worker's next drain recovers the row (no restart needed) and sends it with the same key", async () => {
     const { calls, provider } = recorder();
     const w1 = queue(a, provider, { instance: "worker-1" });
@@ -158,6 +177,83 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(await q1.statusOf("receipt-order")).toBe("read");
     expect(await q1.applyStatus(receipt("failed"))).toBeUndefined();
     expect(await q2.applyStatus(receipt("sent"))).toBeUndefined();
+  });
+
+  test("the recipient cap survives erasure of a delivered nonmember payload", async () => {
+    // spec/outboundAdmission.md, "Apply line controls and sending caps before checking the text"
+    // spec/outboundReceipt.md, "A terminal receipt preserves the recipient cap after payload erasure"
+    const local = new SimClock(clock.now());
+    const line = "+12125550528";
+    const calls: string[] = [];
+    const provider = new BlooioAdapter(new BlooioClient({ apiKey: "synthetic-queue-test", fetch: async (_request, init) => {
+      const key = new Headers(init?.headers).get("Idempotency-Key")!;
+      calls.push(key);
+      const status = key === "tn:recipient-terminal-acceptance" ? "delivered" : "sent";
+      return Response.json({ data: { id: `local:${key}`, status, protocol: "imessage" } }, { status: 201 });
+    } }), line);
+    const q = queue(a, provider, { clock: local, line, perRecipientPerHour: 1 });
+    const first = "recipient-window-first", next = "recipient-window-next";
+    const payload = { to: "+12125553224", kind: "transactional", text: "Your invitation is ready.", timeZone: NY } as const;
+    await q.enqueue(a, [{ id: first, ...payload }]);
+    await q.drain();
+    expect(await q.statusOf(first)).toBe("sent");
+
+    await q.enqueue(a, [{ id: next, ...payload, text: "Your invitation is still available." }]);
+    await q.drain();
+    const status = async (id: string) => (await a`select status,attempts from platform.outbound where id=${id}`)[0];
+    expect(await status(next)).toEqual({ status: "retry_scheduled", attempts: 0 });
+    expect(calls).toEqual([`tn:${first}`]);
+
+    const receipt = (id: string, state: "delivered" | "read" | "failed") => {
+      const event = parseBlooioWebhook(JSON.stringify({ id: `${id}-${state}`, type: `message.${state}`,
+        created_at: local.now(), data: { message_id: `local:tn:${id}`, protocol: "imessage" },
+      }), local.now());
+      if (event.kind !== "status") throw new Error("The native receipt did not parse");
+      return event;
+    };
+    const acceptance = new Date(local.now());
+    const peer = queue(b, provider, { clock: local, line, perRecipientPerHour: 1 });
+    await Promise.all([q.applyStatus(receipt(first, "delivered")), peer.applyStatus(receipt(first, "read"))]);
+    expect(await q.statusOf(first)).toBe("read");
+    const [terminal] = await a`select member_id,to_address,body,sent_at from platform.outbound where id=${first}`;
+    expect(terminal).toEqual({ member_id: null, to_address: null, body: null, sent_at: acceptance });
+
+    local.advance(5 * 60_000);
+    await Promise.all([q.drain(), peer.drain()]);
+    expect({ next: await status(next), calls }).toEqual({ next: { status: "retry_scheduled", attempts: 0 }, calls: [`tn:${first}`] });
+    const window = (id: string) => a`select recipient_key,sent_at from platform.outbound_recipient_window where outbound_id=${id}`;
+    const key = recipientWindowHasher("synthetic-recipient-window");
+    expect(await window(first)).toEqual([{ recipient_key: key(line, payload.to), sent_at: acceptance }]);
+
+    const acceptedAsDelivered = { ...payload, to: "+12125553225" };
+    await q.enqueue(a, [{ id: "recipient-terminal-acceptance", ...acceptedAsDelivered }]);
+    await q.drain();
+    expect(await q.statusOf("recipient-terminal-acceptance")).toBe("delivered");
+    expect(await window("recipient-terminal-acceptance")).toEqual([{
+      recipient_key: key(line, acceptedAsDelivered.to), sent_at: new Date(local.now()),
+    }]);
+
+    const failedPayload = { ...payload, to: "+12125553226" };
+    const failed = "recipient-definitive-failure", afterFailure = "recipient-after-definitive-failure";
+    await q.enqueue(a, [{ id: failed, ...failedPayload }]);
+    await q.drain();
+    expect(await q.applyStatus(receipt(failed, "failed"))).toMatchObject({ status: "failed" });
+    expect(await window(failed)).toEqual([]);
+    await q.enqueue(a, [{ id: afterFailure, ...failedPayload }]);
+    await q.drain();
+    expect(await status(afterFailure)).toEqual({ status: "sent", attempts: 1 });
+
+    local.advance(55 * 60_000);
+    await q.purge();
+    expect(await window(first)).toEqual([]);
+    await q.drain();
+    expect(await status(next)).toEqual({ status: "sent", attempts: 1 });
+
+    const ordinary = "recipient-ordinary-at-cap", compliance = "recipient-compliance-at-cap";
+    await q.enqueue(a, [{ id: ordinary, ...payload }, { id: compliance, ...payload, kind: "compliance", text: "You're unsubscribed." }]);
+    await q.drain();
+    expect(await status(ordinary)).toEqual({ status: "retry_scheduled", attempts: 0 });
+    expect(await status(compliance)).toEqual({ status: "sent", attempts: 1 });
   });
 
   test("unknown acceptance: an authoritative 'never admitted' sends again with the same key; a row nothing resolves ends failed_unknown after its TTL, and both are counted while they wait", async () => {

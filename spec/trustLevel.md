@@ -22,7 +22,7 @@ pure def levelForScore(score: int, held: bool): TrustLevel =
 
 ### An explicit attempt to bypass contact consent triggers watch
 
-The classifier distinguishes a request for another member’s private phone number with an explicit intention to contact them directly. One such attempt reaches watch on a clean record. An ordinary extraction signal adds two points.
+The classifier distinguishes a request for another member’s private phone number with an explicit intention to contact them directly. One such attempt reaches watch on a clean record. An ordinary extraction signal adds two points. A direct affirmative request for another person’s WhatsApp handle is an ordinary extraction signal. The classifier’s handle pattern requires an explicit request to send or give a third-person handle. References to the sender’s own account, a public venue, or a request that the sender quotes do not add points.
 
 ```quint
 pure def contactExtractionRisk(explicitBypass: bool): int =
@@ -30,6 +30,24 @@ pure def contactExtractionRisk(explicitBypass: bool): int =
 
 pure def lawExplicitContactBypassTriggersWatch(explicitBypass: bool): bool =
   levelForScore(contactExtractionRisk(explicitBypass), false) == (if (explicitBypass) Watch else Ok)
+```
+
+### A choice of alternatives does not supply a threat signal
+
+The inbound and relay readers share the threat phrase rule. A terminal
+“or else” can supply a threat signal. When the phrase introduces a
+choice, it supplies no threat signal unless the continuation states a
+harmful consequence.
+
+```quint
+pure def orElseIsThreat(terminal: bool, harmfulConsequence: bool): bool =
+  terminal or harmfulConsequence
+
+pure def lawNonterminalOrElseNeedsHarm(harmfulConsequence: bool): bool =
+  orElseIsThreat(false, harmfulConsequence) == harmfulConsequence
+
+pure def lawTerminalOrElseSuppliesThreat(harmfulConsequence: bool): bool =
+  orElseIsThreat(true, harmfulConsequence)
 ```
 
 ### A hold stays in place until staff lift it

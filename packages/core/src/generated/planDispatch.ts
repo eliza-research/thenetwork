@@ -132,6 +132,19 @@ export function checkAllowance(invite: PlanDispatch, admitted: boolean): PlanDis
 
 /** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
 //@ pure
+export function anonymousPlanFrameAllowed(hasIdentifyingText: boolean, passesLeakCheck: boolean): boolean {
+  return !hasIdentifyingText && passesLeakCheck;
+}
+
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
+//@ pure
+export function lawIdentifyingPlanFrameCannotSend(passesLeakCheck: boolean): boolean {
+  //@ ensures \result === true
+  return !anonymousPlanFrameAllowed(true, passesLeakCheck);
+}
+
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
+//@ pure
 export function canRenderInvite(invite: PlanDispatch): boolean {
   return invite.phase === "RenderingInvite";
 }
