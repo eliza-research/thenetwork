@@ -25,6 +25,8 @@ test.skipIf(!pgAvailable).each([
     slots: three, text: "Both Saturday and Sunday except Sunday.", picked: [saturday.start] },
   { scene: "both follows the abbreviated offered days",
     slots: three, text: "Sat and Sun both, not Thursday.", picked: weekend },
+  { scene: "a trailing clock does not silently select mismatched times",
+    slots: three, text: "Sat and Sun both at 11am.", picked: [] },
   { scene: "an unavailable partly named pair needs clarification",
     slots: [thursday, friday, saturday], text: "Sat and Sun both.", picked: [] },
   { scene: "an unrelated refusal cannot complete one named choice",
