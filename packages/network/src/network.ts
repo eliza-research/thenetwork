@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, directAgreementIdiom, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, readParticipationWithdrawal, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, directAgreementIdiom, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -136,7 +136,7 @@ import { currentPairAllowed } from "../../core/src/generated/currentPairRestrict
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -171,9 +171,9 @@ const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
 const COMPLETE_SAFETY_CONTROL = /^(?:(?:yes|yeah|sure|ok(?:ay)?)[\s,!.]+)?(?:yes|yeah|yep|yup|sure(?: thing)?|ok(?:ay)?|correct|no|nope|nah|naw|not (?:right )?now)(?:[\s,]+(?:please|pls|thanks|thank you))?$/;
 
 function safetyReplyConsent(text: string) {
+  if (isCompleteParticipationRefusal(text)) return "no";
   const normalized = safetyName(text);
-  const complete = COMPLETE_SAFETY_CONTROL.test(normalized) || ACK_ONLY.test(normalized)
-    || directAgreementIdiom(text) || readParticipationWithdrawal(text).reading === "DirectWithdrawal";
+  const complete = COMPLETE_SAFETY_CONTROL.test(normalized) || ACK_ONLY.test(normalized) || directAgreementIdiom(text);
   return complete ? consentOf(text).answer : "unclear";
 }
 
