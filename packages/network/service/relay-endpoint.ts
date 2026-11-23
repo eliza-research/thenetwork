@@ -228,10 +228,16 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
     } else {
       let key = `r_${receipt.slice(0, 32)}`;
       result = await rt.unitOfWork(async net => {
-        // The canonical owners' word on both members of the match the desk will pick (fails closed).
-        const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
-        const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
-        const photo = request.kind === "photo" && match ? await d.photos?.approvedForParty(app, match.id, memberId) : undefined;
+        const from = memberId as MemberId;
+        const selection = net.relayRequestMatch({ from, kind: request.kind, matchId: itemId ?? undefined, targetName: request.targetName });
+        if ("reason" in selection) {
+          const r: StoredRelay = { decision: "block", notice: request.kind === "photo" && request.targetName === undefined ? NOTICE.photo : selection.reason };
+          rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, r); };
+          return r;
+        }
+        const { match } = selection;
+        const canonical = await rt.relayParties([...match.participants]);
+        const photo = request.kind === "photo" ? await d.photos?.approvedForParty(app, match.id, memberId) : undefined;
         if (request.kind === "photo" && !photo) {
           const r: StoredRelay = {decision:"block",notice:NOTICE.photo};
           rt.unit.completeAction = async tx => {await lock(tx);await complete(tx,r);};
@@ -240,10 +246,10 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
         if (photo) key = photo.itemId;
         const hook = d.hookFor?.(app);
         const outcome = await net.relayRequest(
-          { itemId: key, from: memberId as MemberId, kind: request.kind, ...(photo ? {photoIds:[photo.photoId]} : {}),
+          { itemId: key, from, kind: request.kind, ...(photo ? {photoIds:[photo.photoId]} : {}),
             ...(request.kind === "text" ? { text: request.body } : {}), ...(request.targetName !== undefined ? { targetName: request.targetName } : {}),
-            ...(itemId !== null ? { matchId: itemId } : {}) },
-          { ...(photo ? {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]}} : {}), ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
+            matchId: match.id },
+          { ...(photo ? {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]}} : {}), ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), canonical },
         );
         const r = stored(outcome);
         // Committed with the relay log, the messages and the queued rows of this unit (runtime.ts writeUnit).

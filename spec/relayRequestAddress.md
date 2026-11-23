@@ -21,23 +21,42 @@ pure def lawNamedRelayRequiresTheSelectedCounterpart(named: bool): bool =
   named implies not(relayTextRecipientAllowed(named, false))
 ```
 
-### A name identifies one recipient on an unselected relay
+### Use a named recipient only when one counterpart has that name
 
-If a signed relay does not select an item, the service keeps its newest open
-mutual match. For a named request to that counterpart, refuse the relay when a
-different person in another open mutual match has the same name. Multiple
-opportunities with the same person do not make their name ambiguous. A
-selected item must still come from the original turn and keeps its exact
-match. The name must match that counterpart. A photo also needs the current
-consent and review for that match. A refusal leaves any existing swap or photo
-selection in place.
+When the member names a recipient without selecting a match, look for the
+name in the member's open mutual matches. If exactly one counterpart has
+that name, use the newest open match with that person. Several open matches
+with the same person still name one counterpart. If zero or more than one
+counterpart has that name, refuse the request. A selected match must still
+be open and its counterpart's name must agree. If the request does not name
+a recipient or select a match, use the newest open match as before. Use the
+same match to check both accounts, a selected photo, and delivery.
 
 ```quint
-pure def relayNameCollisionRefuses(selectedItem: bool, otherCounterpartMatches: bool): bool =
-  not(selectedItem) and otherCounterpartMatches
+pure def relayNamedCandidateAllowed(distinctCounterparts: int): bool =
+  distinctCounterparts == 1
 
-pure def lawNameCollisionRefusesOnlyAnUnselectedRelay(selectedItem: bool, otherCounterpartMatches: bool): bool =
-  relayNameCollisionRefuses(selectedItem, otherCounterpartMatches) == (not(selectedItem) and otherCounterpartMatches)
+pure def lawNamedRelayAcceptsExactlyOneDistinctCounterpart(distinctCounterparts: int): bool =
+  relayNamedCandidateAllowed(distinctCounterparts) == (distinctCounterparts == 1)
+```
+
+### An unnamed number request leaves a different pending match alone
+
+A number swap needs a request from each person on the same match. The swap
+notice asks the recipient to name the person who requested the swap, using
+only the first name already shown in the match. When a number request has
+no name or selected match, do not use the newest match if a different open
+match has a live incoming swap for that member. Ask the member to name the
+recipient. Open no swap and expose no number. An expired request or a closed
+match cannot prevent using the newest match. A named or selected request
+still uses the same current-match, consent and safety checks.
+
+```quint
+pure def relayBarePhoneRequestAllowed(barePhoneRequest: bool, competingIncoming: bool): bool =
+  not(barePhoneRequest and competingIncoming)
+
+pure def lawCompetingIncomingSwapNeedsARecipient(barePhoneRequest: bool): bool =
+  relayBarePhoneRequestAllowed(barePhoneRequest, true) == not(barePhoneRequest)
 ```
 
 ### Polite wording still needs a direct request to send a private item

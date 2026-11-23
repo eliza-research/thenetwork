@@ -291,7 +291,7 @@ test("an unselected named relay uses the newest opportunity with the same person
   expect(await pendingNumberSwaps()).toEqual([expect.objectContaining({ to: sam, matchId: "same-person-new" })]);
 }, 60_000);
 
-test("an unselected named relay does not switch from the newest match to an older person", async () => {
+test("an unselected named relay reaches its unique counterpart on an older match", async () => {
   const [sam] = await namedRelaySams();
   await setNamedRelayMatches([
     { id: "other-person-old", other: sam, dayOffset: 1 },
@@ -299,10 +299,63 @@ test("an unselected named relay does not switch from the newest match to an olde
   ]);
   const response = await post(await ask("bo", "other-person-text", "Could you tell Sam I am nearby?"));
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ decision: "block", delivered: false });
+  expect(await response.json()).toMatchObject({ decision: "pass", delivered: false });
+  const sent = await sql`select member_id, opportunity_id from network.messages
+    where app_id='friends' and direction='outbound' and type='relay' and body like '%I am nearby%'`;
+  expect([...sent]).toEqual([{ member_id: sam, opportunity_id: "other-person-old" }]);
   const number = await post(await ask("bo", "other-person-number", "Please send Sam my number."));
-  expect(await number.json()).toMatchObject({ decision: "block", delivered: false });
-  expect(await pendingNumberSwaps()).toEqual([]);
+  expect(await number.json()).toMatchObject({ decision: "hold", delivered: false });
+  expect(await pendingNumberSwaps()).toEqual([expect.objectContaining({ to: sam, matchId: "other-person-old" })]);
+}, 60_000);
+
+test.each(["live", "expired", "closed"] as const)("a bare number reply uses only the intended match with a %s older request", async state => {
+  const [sam] = await namedRelaySams();
+  const matchId = `phone-reply-${state}`;
+  const older = matchId + "-older", newest = matchId + "-newest";
+  await setNamedRelayMatches([{ id: older, other: sam, dayOffset: 1 }, { id: newest, other: ari, dayOffset: 2 }]);
+
+  const messageId = matchId + "-sam", text = "Please send Bo my number.";
+  expect(await open(namedRelayPhones[0], messageId, text)).toBe(sam);
+  const oldRequest = await post({ channel: "blooio", messageId, app: "friends", itemId: null, memberId: sam, text });
+  expect(await oldRequest.json()).toMatchObject({ decision: "hold", delivered: false });
+  expect(await sql`select member_id from network.messages
+    where app_id='friends' and direction='outbound' and opportunity_id=${older} and body like '%send Sam my number%'`).toEqual([{ member_id: bo }]);
+
+  if (state === "expired") clock.advance(12 * MINUTE);
+  const newRequest = await post(await ask("ari", matchId + "-ari", "Please send Bo my number."));
+  expect(await newRequest.json()).toMatchObject({ decision: "hold", delivered: false });
+  if (state === "expired") clock.advance(3 * MINUTE);
+  if (state === "closed") {
+    await service.runtimeFor("friends")!.unitOfWork(net => {
+      const snapshot = net.exportState();
+      snapshot.opps = snapshot.opps.map(opportunity => opportunity.id === older
+        ? { ...opportunity, stage: "closed", closedFrom: "scheduled" }
+        : opportunity);
+      net.importState(snapshot);
+    });
+  }
+
+  const before = await sharesQueued();
+  const original = await pendingNumberSwaps();
+  expect(original).toHaveLength(2);
+  const bare = await post(await ask("bo", matchId + "-bare", "Please send them my number."));
+  if (state === "live") {
+    expect(await bare.json()).toMatchObject({ decision: "block", delivered: false, senderNotice: expect.stringContaining("name the person") });
+    expect(await pendingNumberSwaps()).toEqual(original);
+    expect(await sharesQueued()).toBe(before);
+
+    const named = await post(await ask("bo", matchId + "-named", "Please send Sam my number."));
+    expect(await named.json()).toMatchObject({ decision: "pass", delivered: false });
+    expect(await pendingNumberSwaps()).toEqual([expect.objectContaining({ matchId: newest, from: ari })]);
+  } else {
+    expect(await bare.json()).toMatchObject({ decision: "pass", delivered: false });
+  }
+  expect(await sharesQueued()).toBe(before + 2);
+  const delivered = await sql`select member_id, opportunity_id from network.messages
+    where app_id='friends' and direction='outbound' and opportunity_id in (${older}, ${newest}) and body like '%asked me to send you%'`;
+  const expected = state === "live" ? { to: sam, match: older } : { to: ari, match: newest };
+  expect([...delivered]).toEqual(expect.arrayContaining([bo, expected.to].map(member_id => ({ member_id, opportunity_id: expected.match }))));
+  expect(delivered).toHaveLength(2);
 }, 60_000);
 
 const sharesQueued = async () => (await sql`select id from network.messages where app_id='friends'
