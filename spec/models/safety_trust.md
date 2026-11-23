@@ -1768,11 +1768,16 @@ module safety_trust {
       .expect(not(safetyQuestionUsesSoleOffer(true, false, false, false)) and
         not(safetyQuestionUsesSoleOffer(true, true, true, false)) and
         not(safetyQuestionUsesSoleOffer(true, false, true, true)))
-      .then(answerWhoBySoleOffer(ANA_S, false, true, true).fail())
       .then(answerWhoShared(ANA_S, "peon", false, false))
       .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set())
       .then(answerWhoBySoleOffer(ANA_S, false, true, false))
       .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.subject == BEN_S))
+
+  run unmatchedExplicitNameDoesNotUseSoleOfferTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(answerWhoBySoleOffer(ANA_S, false, true, true).fail())
 
   run unrelatedRepliesKeepWhoTest =
     init
