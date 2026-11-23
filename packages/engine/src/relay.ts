@@ -458,7 +458,11 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
 }
 
 // --------------------------------------------------------------------------- member requests
-export type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string; targetName?: string } | { kind: "none" };
+export type RelayRequest =
+  | { kind: "contact_share"; targetName?: string }
+  | { kind: "photo"; targetName?: string }
+  | { kind: "text"; body: string; targetName?: string }
+  | { kind: "none" };
 
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|rather not|hold off|wait (?:to|before)|not until)\b/;
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
@@ -736,6 +740,24 @@ function namedPrivateRecipient(transfer: RegExpExecArray | undefined): string | 
   return name && !PRIVATE_RECIPIENT_REFERENCE.test(name) ? name : undefined;
 }
 
+function privateRequestAddress(text: string, request: RegExpMatchArray): { targetName?: string } | null {
+  const tail = text.slice(request.index! + request[0].length).split(RELAY_SENTENCE, 1)[0]!;
+  const matched = LINKED_PRIVATE_SEND.exec(request[0]) ?? undefined;
+  const namesAfterAffirmation = matched !== undefined && matched.groups?.recipient === undefined
+    && matched.groups?.destination === undefined && /^\s+(?:to|with)\b/i.test(tail);
+  const phrase = request[0] + tail;
+  const transfer = namesAfterAffirmation ? LINKED_PRIVATE_SEND.exec(phrase) ?? undefined : matched;
+  const destination = transfer?.groups?.destination;
+  if (namesAfterAffirmation && destination === undefined) return null;
+  const targetName = namedPrivateRecipient(transfer);
+  if (targetName === undefined) return {};
+  if (destination !== undefined) {
+    const remaining = phrase.slice(transfer!.index + transfer![0].length);
+    if (!PRIVATE_RELAY_COURTESY.test(remaining) && !/^\s*[,–—]/u.test(remaining)) return null;
+  }
+  return { targetName };
+}
+
 function linkedTransferMatchesRequest(transfer: RegExpExecArray, request: RegExpMatchArray, contact: boolean): boolean {
   if (contact ? transfer.groups?.photo : transfer.groups?.contact) return false;
   const recipient = namedPrivateRecipient(transfer);
@@ -933,7 +955,8 @@ export function parseRelayRequest(text: string): RelayRequest {
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)
       || (!!contact && refusesNumberSwap(low, clauses));
     if (!privateRelayRequestAllowed(refused, uncertain)) return { kind: "none" };
-    return { kind: contact ? "contact_share" : "photo" };
+    const address = privateRequestAddress(spoken, privateRequest);
+    return address === null ? { kind: "none" } : { kind: contact ? "contact_share" : "photo", ...address };
   }
   return { kind: "none" };
 }

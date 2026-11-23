@@ -226,6 +226,35 @@ async function startNumberSwap(id: string, who: "ari" | "bo") {
 }
 
 test.each([
+  ["Please send Sam my number.", "block"],
+  ["Please send my number to Sam.", "block"],
+  ["Yes, send it to Sam.", "block"],
+  ["Please send my number to Ari Smith.", "none"],
+])("a named private request keeps the selected swap pending: %s", async (text, decision) => {
+  const id = "named-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const response = await post(await ask("bo", id + "-reply", text));
+  expect(response.status).toBe(200);
+  expect({
+    response: await response.json(),
+    newShares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length,
+  }).toMatchObject({ response: { decision, delivered: false }, newShares: 0, pending: 1 });
+}, 60_000);
+
+test.each([
+  "Please send my number to Ari, thanks.",
+  "Yes, send it to Ari.",
+])("a complete trailing name can finish the selected swap: %s", async text => {
+  const id = "named-number-match-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  expect(await (await post(await ask("bo", id + "-reply", text))).json()).toMatchObject({ decision: "pass", delivered: false });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
   "Give him my number if he asks.",
   "Send him my number. Scratch that. Send it. If he asks.",
   "Give Ari my number if Ari asks.",

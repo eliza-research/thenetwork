@@ -464,10 +464,11 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   expect(audited.some(row=>row.actor===staffId&&!row.ok&&row.detail?.phase==="result"&&row.detail?.delivered===false)).toBe(true);
   const reviewed=await service.photoRelay.item(selected.itemId);expect(reviewed).toMatchObject({state:"approved",actionId:null});
   expect((await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).length).toBe(0);expect(posts).toBe(before);
-  for (const [index, text] of [
-    "Tell Ana to send him my photo.",
-    "Could you let Ana show him this photo?",
-    "I have Ana assigned to, show him this photo.",
+  for (const [index, [text, decision]] of [
+    ["Tell Ana to send him my photo.", "none"],
+    ["Could you let Ana show him this photo?", "none"],
+    ["I have Ana assigned to, show him this photo.", "none"],
+    ["Please send Ana this photo.", "block"],
   ].entries()) {
     const messageId = "delegated-selected-photo-" + index;
     clock.advance(MINUTE);
@@ -477,7 +478,7 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
     expect(openResult, JSON.stringify(openResult)).toMatchObject({ outcome: "open", memberId: from });
     const response = await post(RELAY_PATH, { channel: "blooio", messageId, app: "slop", memberId: from, itemId: null, text });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ decision: "none", delivered: false });
+    expect(await response.json()).toMatchObject({ decision, delivered: false });
     expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: null });
     expect(await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).toHaveLength(0);
     expect(posts).toBe(before);

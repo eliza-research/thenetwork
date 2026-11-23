@@ -323,6 +323,17 @@ module relay {
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
 
+  // The shell reads the name. RelayDesk applies the existing relayRequestAddress.md guard before swapping.
+  pure def relayTextRecipientAllowed(named: bool, counterpartMatches: bool): bool =
+    not(named) or counterpartMatches
+
+  action commitPrivateRecipientMismatch(k: str, named: bool, counterpartMatches: bool): bool = all {
+    ep.phase.get(k) == "claimed", ep.kind.get(k) == "share", not(w.erased.get(owner(k))),
+    not(relayTextRecipientAllowed(named, counterpartMatches)),
+    ep' = committed(ep, k),
+    w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
+  }
+
   // The endpoint unit before the desk decides (relay-endpoint.ts:231-232): sync the unsent items, and record in the
   // ghost what a decision that can deliver still reads as delivered (Q-relay-1, SD-252).
   pure def readGhost(x: World, d: Desk, gh: Ghost, src: str, dst: str): Ghost =
@@ -744,11 +755,13 @@ module relay {
   }
 
   // One fault at most per committed request keeps the random simulation on long, interesting traces; faults
-  // still combine across requests. "rateTheirs"/"rateMine": the engine's rate limit; "refuseAsk",
+  // still combine across requests. "wrongRecipient" supplies the shell's mismatched-name result.
+  // "rateTheirs"/"rateMine": the engine's rate limit; "refuseAsk",
   // "refuseTheirs", "refuseMine": Network.send refuses (the conversation streak or the leak guard).
-  pure val FAULTS = Set("none", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
+  pure val FAULTS = Set("none", "wrongRecipient", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
   action commit(k: str, tc: str, fault: str): bool =
     if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
+    else if (ep.kind.get(k) == "share" and fault == "wrongRecipient") commitPrivateRecipientMismatch(k, true, false)
     else if (ep.kind.get(k) == "share")
       commitShare(k, fault == "rateTheirs", fault == "rateMine", fault == "refuseAsk", fault == "refuseTheirs", fault == "refuseMine")
     else if (ep.kind.get(k) == "withdraw") commitWithdraw(k)
@@ -969,6 +982,15 @@ module relay {
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
       .then(claim("b1", "none")).then(commitNone("b1")).then(answer("b1"))
       .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
+
+  run namedPrivateRecipientMismatchKeepsSwapPendingTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claim("b1", "share")).then(commitPrivateRecipientMismatch("b1", true, false)).then(answer("b1"))
+      .expect(ep.receipt.get("b1") == "completed" and desk.swaps.exists(sw => sw.src == "A")
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
       .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
       .expect(numberPending("A") and numberPending("B") and safety)
 
