@@ -16,6 +16,19 @@ export function lawNamedRelayRequiresTheSelectedCounterpart(named: boolean): boo
   return !named || !relayTextRecipientAllowed(named, false);
 }
 
+/** Story: Ask the agent to relay my own words / Use a named recipient only when one counterpart has that name (spec/relayRequestAddress.md) */
+//@ pure
+export function relayNamedCandidateAllowed(distinctCounterparts: number): boolean {
+  return distinctCounterparts === 1;
+}
+
+/** Story: Ask the agent to relay my own words / Use a named recipient only when one counterpart has that name (spec/relayRequestAddress.md) */
+//@ pure
+export function lawNamedRelayAcceptsExactlyOneDistinctCounterpart(distinctCounterparts: number): boolean {
+  //@ ensures \result === true
+  return relayNamedCandidateAllowed(distinctCounterparts) === (distinctCounterparts === 1);
+}
+
 /** Story: Ask the agent to relay my own words / Polite wording still needs a direct request to send a private item (spec/relayRequestAddress.md) */
 //@ pure
 export function relayIsIndirectQuestion(question: boolean, modalRequest: boolean, directAction: boolean, adviceQuestion: boolean): boolean {

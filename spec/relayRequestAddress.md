@@ -11,9 +11,7 @@ ask, or let the recipient know something. The message can contain a
 negation or a question of its own. The ordinary text leak and safety
 checks still apply. A quoted or reported instruction does not direct
 the agent. A named recipient must match the counterpart of the selected
-mutual match. When the sender names a recipient, the selected mutual match is
-the open match whose counterpart has that name. When no open match has that
-name, or more than one does, the request is refused.
+mutual match.
 
 ```quint
 pure def relayTextRecipientAllowed(named: bool, counterpartMatches: bool): bool =
@@ -21,6 +19,25 @@ pure def relayTextRecipientAllowed(named: bool, counterpartMatches: bool): bool 
 
 pure def lawNamedRelayRequiresTheSelectedCounterpart(named: bool): bool =
   named implies not(relayTextRecipientAllowed(named, false))
+```
+
+### Use a named recipient only when one counterpart has that name
+
+When the member names a recipient without selecting a match, look for the
+name in the member's open mutual matches. If exactly one counterpart has
+that name, use the newest open match with that person. Several open matches
+with the same person still name one counterpart. If zero or more than one
+counterpart has that name, refuse the request. A selected match must still
+be open and its counterpart's name must agree. If the request does not name
+a recipient or select a match, use the newest open match as before. Use the
+same match to check both accounts, a selected photo, and delivery.
+
+```quint
+pure def relayNamedCandidateAllowed(distinctCounterparts: int): bool =
+  distinctCounterparts == 1
+
+pure def lawNamedRelayAcceptsExactlyOneDistinctCounterpart(distinctCounterparts: int): bool =
+  relayNamedCandidateAllowed(distinctCounterparts) == (distinctCounterparts == 1)
 ```
 
 ### Polite wording still needs a direct request to send a private item

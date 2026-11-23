@@ -24,7 +24,7 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
-import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
+import { relayNamedCandidateAllowed, relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
@@ -68,6 +68,7 @@ export interface RelayMatch {
   /** For choosing the newest match. */
   at: number;
 }
+export type RelayMatchSelection = { match: RelayMatch; to: MemberId } | { reason: string };
 /** What the ConsentNetwork lends the desk. */
 export interface RelayHost {
   app: string;
@@ -184,30 +185,34 @@ export class RelayDesk {
     return this.openMatches(from, matchId)[0];
   }
 
-  /** The member's open matches whose counterpart has this first name. */
-  private namedMatches(from: MemberId, targetName: string): RelayMatch[] {
-    return this.openMatches(from).filter(m => foldRelayName(this.host.member(m.participants.find(p => p !== from)!)?.firstName ?? "") === foldRelayName(targetName));
+  requestMatch({ from, matchId, targetName }: Pick<RelayAsk, "from" | "matchId" | "targetName">): RelayMatchSelection {
+    const matches = this.openMatches(from, matchId);
+    const named = targetName === undefined ? undefined : foldRelayName(targetName);
+    const counterparts = new Map<MemberId, RelayMatch>();
+    for (const match of matches) {
+      const to = match.participants.find(member => member !== from);
+      if (to === undefined) continue;
+      const name = this.host.member(to)?.firstName;
+      if (!relayTextRecipientAllowed(named !== undefined, name !== undefined && foldRelayName(name) === named)) continue;
+      if (named === undefined || matchId !== undefined) return { match, to };
+      if (!counterparts.has(to)) counterparts.set(to, match);
+    }
+
+    const first = counterparts.entries().next().value;
+    if (first && relayNamedCandidateAllowed(counterparts.size)) {
+      const [to, match] = first;
+      return { match, to };
+    }
+    return { reason: first ? NOTICE.ambiguousName : NOTICE.noMatch };
   }
 
   /** One member request: decide through the engine, deliver `rendered`, keep the log. Idempotent on `itemId`. */
   async request(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> {
     const prior = this.prior(ask.itemId);
     if (prior) return { ...prior, replayed: true };
-    let match = this.matchFor(ask.from, ask.matchId);
-    if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-    if (ask.targetName !== undefined && ask.matchId === undefined) {
-      const named = this.namedMatches(ask.from, ask.targetName);
-      if (named.length === 0) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-      if (named.length > 1) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.ambiguousName };
-      match = named[0]!;
-    }
-    const to = match.participants.find(p => p !== ask.from)!;
-    if (ask.targetName !== undefined) {
-      const recipient = this.host.member(to)?.firstName;
-      if (!relayTextRecipientAllowed(true, recipient !== undefined && foldRelayName(recipient) === foldRelayName(ask.targetName))) {
-        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
-      }
-    }
+    const selection = this.requestMatch(ask);
+    if ("reason" in selection) return { itemId: ask.itemId, decision: "refused", reason: selection.reason };
+    const { match, to } = selection;
     const now = this.host.now();
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
     const item: RelayItem = ask.kind === "photo"

@@ -330,7 +330,9 @@ module relay {
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
 
-  // The shell reads the name. RelayDesk applies the existing relayRequestAddress.md guard before swapping.
+  // The shell reads the name. RelayDesk resolves one distinct counterpart from open matches and applies
+  // the relayRequestAddress.md guard before swapping. The endpoint checks the same match for current
+  // account authority and any selected photo before the desk acts. It never chooses a different match.
   pure def relayTextRecipientAllowed(named: bool, counterpartMatches: bool): bool =
     not(named) or counterpartMatches
 

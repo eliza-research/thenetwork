@@ -76,7 +76,7 @@ beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218","+12125550227","+12125550228","+12125550229","+12125550230"]).toContain(input.to);
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218","+12125550227","+12125550228","+12125550229","+12125550230","+12125550231"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){
       posts++;sent.push(input);
       if(input.approvedPhotos){
@@ -581,8 +581,8 @@ test.each([
 }, 60_000);
 
 test("a signed photo request respects the intended item and separately preserves approval", async () => {
-  const sender = "+12125550229", recipient = "+12125550230";
-  for (const [phone, name] of [[sender, "Nia"], [recipient, "Pat"]] as const) {
+  const sender = "+12125550229", recipient = "+12125550230", newerRecipient = "+12125550231";
+  for (const [phone, name] of [[sender, "Nia"], [recipient, "Pat"], [newerRecipient, "Cora"]] as const) {
     for (const [index, text] of [
       "slop.date", name + ", 29", "I'm a woman into women. I live in Greenpoint and love climbing and live music",
       "I'm a woman looking for women, 25 to 35, within 5 miles of 11222", "A long-term relationship, no smokers",
@@ -703,4 +703,19 @@ test("a signed photo request respects the intended item and separately preserves
   expect(await service.photoRelay.item(renewed.itemId)).toMatchObject({ state: "approved", actionId: "photo-selection:" + renewed.itemId });
   expect(await sql`select status from platform.outbound where id=${`relay:${renewed.itemId}`}`).toEqual([{ status: "accepted" }]);
   expect(posts).toBe(beforeShare + 2);
+
+  const newerPerson = (await service.accounts.personFor(newerRecipient))!;
+  const newerTo = (await service.people.getMembership(newerPerson.id, "slop"))!.memberId;
+  const newer = "slop.scoped-photo-newer-pair";
+  clock.advance(MINUTE);
+  await fixturePair(false, "slop", [from, newerTo], newer);
+  const intended = await service.photoRelay.select("slop", person.id, match, upload.value.id, "relay-fixture-v1", true, "fixture-photo-for-pat");
+  const unrelated = await service.photoRelay.select("slop", person.id, newer, upload.value.id, "relay-fixture-v1", true, "fixture-photo-for-cora");
+  if (!intended || !unrelated) throw new Error("Named photo fixture selection failed");
+  expect(await service.photoRelay.review(intended.itemId, staffId, "safe")).toBe(true);
+  expect(await service.photoRelay.review(unrelated.itemId, staffId, "safe")).toBe(true);
+  expect(await send("scoped-photo-named-older", "Send Pat my photo.")).toMatchObject({ decision: "pass", delivered: true });
+  expect(sent.at(-1)).toMatchObject({ to: recipient, approvedPhotos: [expect.objectContaining({ itemId: intended.itemId, recipientMemberId: to })] });
+  expect(await service.photoRelay.item(unrelated.itemId)).toMatchObject({ state: "approved", actionId: null });
+  expect(await sql`select id from platform.outbound where id=${`relay:${unrelated.itemId}`}`).toHaveLength(0);
 }, 120_000);

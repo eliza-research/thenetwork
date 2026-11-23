@@ -293,6 +293,19 @@ test("a named number request waits on the unique match with that name, even when
   expect((await pendingNumberSwaps()).filter(swap => swap.matchId === "named-sam-swap-a")).toHaveLength(1);
 }, 60_000);
 
+test("two open matches with the same person use the newest match for a named request", async () => {
+  await ensureSams();
+  await resetNamedMatches([
+    { id: "repeat-sam-old", other: samA, dayOffset: 1 },
+    { id: "repeat-sam-new", other: samA, dayOffset: 2 },
+    { id: "repeat-sam-ari", other: ari, dayOffset: 3 },
+  ]);
+  const response = await post(await ask("bo", "repeat-sam-swap", "Please send Sam my number."));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "hold", delivered: false });
+  expect(await pendingNumberSwaps()).toEqual([expect.objectContaining({ matchId: "repeat-sam-new", from: bo, to: samA })]);
+}, 60_000);
+
 const sharesQueued = async () => (await sql`select id from network.messages where app_id='friends'
   and direction='outbound' and body like '%asked me to send you%'`).length;
 const pendingNumberSwaps = () => service.runtimeFor("friends")!.unitOfWork(net => net.exportState().relay?.swaps ?? []);
