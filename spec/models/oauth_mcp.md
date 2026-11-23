@@ -96,17 +96,22 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //    host renders the page) hold no state and are not in this model.
 //
 // Comparison record (2026-11-22, working tree of vibestack-frontend after 53a589d4; handler.ts, apps.ts, store.ts,
-// pg-store.ts, pages.ts and tools.ts read beside this model). The host, app, consents and prefill items above agree
-// with the code. Known drift that this comparison does not fix:
+// pg-store.ts, pages.ts and tools.ts read beside this model; compared again with the working tree after 723bc367,
+// which removes comments and adds the birthday field of the signup form). The host, app, consents and prefill items
+// above agree with the code. The signup form sends a birthday and the server computes the age from it; the model
+// keeps age as a class (minor, under13) and does not model the Join submission, so it names no form field. Known
+// drift that this comparison does not fix:
 //  - submitProfile and prepareSignup: the code counts every well-formed profile or draft call of a grant before the
 //    status check (mcp: store.hit on profile:grant when args.ok), and spec/connectorTools.md says that a refused call
 //    counts too. The model counts only calls that pass the status check, and quotaTest and quotaCountsAccepted keep
 //    the earlier SD-395 rule. The code and the spec agree, so the model is stale here.
 //  - The H:, T:, P: and K: line numbers in the older comments are for claude/formal-main and do not match this branch.
-//  - witness_prefillShown needs about 13 chosen steps; random simulation at max-steps=60 and max-samples=10000 did not
-//    reach it (2026-11-22). The trace prefillOnceTest reaches the state. The host and app parameters of the tool
-//    calls and of the consent POST also made witness_fullFlowUpdate and witness_withheldSeen depend on the seed, so the
-//    step now also calls ownEndpointTools and approveRead (the endpoint of the grant or the request).
+//  - Reachability (2026-11-22, not drift): witness_prefillShown needs about 15 chosen steps and two sign-ins of one
+//    client and app, and the three request ids are used early by random sign-ins, so random simulation at
+//    max-steps=60 and max-samples=10000 did not reach it. The host and app parameters of the tool calls and of the
+//    consent POST, and the person and app of an inbox item, made witness_fullFlowUpdate and witness_withheldSeen
+//    unreachable at max-samples=1000. The step now also calls ownEndpointTools, approveRead, grantItemFamily and
+//    draftSignupFamily. They pick arguments of existing actions and add no transition.
 //  - toolInvalidGrant writes a revocation audit row (SD-394, everyRevocationAudited). The code does not: when a tool
 //    answer is invalid_grant (mcp) or the grant owner changed (grantAuthorityCurrent), handler.ts calls revokeGrant,
 //    and neither revokeGrant nor the store's revokeGrant writes an oauth.audit row. This was so before f50b9c21 too.
@@ -989,11 +994,14 @@ module oauth_mcp {
     nondet h = HOSTS.oneOf()
     // The progress families are listed twice: the simulator picks among enabled branches, so this
     // doubles their weight against the environment. ownEndpointTools and approveRead pick, among the
-    // hosts and apps that `h` and `a` can take, the endpoint of the grant or of the request. They add no
-    // behaviour; the calls on any other host or app stay in toolFamily and approveReadOn.
+    // hosts and apps that `h` and `a` can take, the endpoint of the grant or of the request.
+    // draftSignupFamily walks one signup with a prefill, and grantItemFamily picks the person and app
+    // of a grant for an inbox item. They add no behaviour; the calls with any other arguments stay in toolFamily,
+    // approveReadOn, flowFamily and the environment.
     any {
       flowFamily(r, c, n, a, h, b, b2), clientFamily(r, t), toolFamily(t, h, a), ownEndpointTools(t, h, a),
       flowFamily(r, c, n, a, h, b, b2), clientFamily(r, t), toolFamily(t, h, a), ownEndpointTools(t, h, a),
+      draftSignupFamily(r), grantItemFamily(i, kind, b),
       // the environment: the person cancels or revokes, a process stops, clocks and the sweep,
       // the network and its inbox, staff and account changes
       any {
@@ -1017,6 +1025,43 @@ module oauth_mcp {
   action clientFamily(r: int, t: int): bool = any {
     exchCheck(r), exchRedeem(r), exchReplay(r),
     refrCheck(t), refrRotate(t), revokeEndpoint(t), revokeAccessToken(t),
+  }
+  /**
+   * One signup with a prefill, for client cF, app friends, number n2 and its new person p2: a new person comes for n2
+   * (createPerson); two sign-ins start (startAuth on an unused request), take the number (enterPhone) and the code
+   * (enterCode); one is approved (approveRead, approveCommit) and exchanged (exchCheck, exchRedeem); the agent saves a
+   * draft through prepare_signup at the endpoint of that grant (prepareSignup); the other sign-in opens the signup form
+   * (openSignup). These are the same actions as in flowFamily, clientFamily, toolFamily and the environment, so they
+   * add no behaviour; they only pick the arguments of one signup for a random walk. REQS has three request ids and
+   * each is used once, and random sign-ins use them early, so the walk also continues requests that flowFamily started.
+   */
+  action draftSignupFamily(x: int): bool = {
+    val q = oa.reqs.get(x)
+    val mine = q.live and q.client == "cF" and q.app == "friends"
+    val waiting = REQS.filter(y => oa.reqs.get(y).live and oa.reqs.get(y).client == "cF" and oa.reqs.get(y).app == "friends")
+    val granted = REQS.filter(g => liveG(oa, g) and oa.grants.get(g).client == "cF" and oa.grants.get(g).app == "friends"
+      and oa.grants.get(g).person == "p2")
+    val drafted = granted.filter(g => oa.drafts.get(g).exists and not(oa.drafts.get(g).used))
+    val ready = oa.toks.keys().filter(t => oa.toks.get(t).kind == "access" and granted.contains(oa.toks.get(t).g))
+    any {
+      createPerson("n2"),
+      all { waiting.size() < 2, granted.size() == 0 or waiting.size() == 0, startAuth(x, "cF", "friends") },
+      all { mine, q.step == "phone" or (q.step == "code" and q.phone != "n2"), enterPhone(x, "n2") },
+      all { mine, q.step == "code", q.phone == "n2", enterCode(x) },
+      all { mine, granted.size() == 0, waiting.size() == 2, approveRead(x, false) },
+      approveCommit(x, false), exchCheck(x), exchRedeem(x),
+      all { drafted.size() == 0, waiting.size() > 0, ready.size() > 0, prepareSignup(ready.fold(0, (m, t) => if (t > m) t else m), "friends", "friends") },
+      all { mine, drafted.size() > 0, openSignup(x) },
+    }
+  }
+  /** The network sends an inbox item to the person and app of a live grant (produceItem with those arguments). */
+  action grantItemFamily(i: int, kind: str, leaky: bool): bool = {
+    val held = REQS.filter(g => liveG(oa, g) and oa.grants.get(g).person != NONE)
+    all {
+      held.size() > 0,
+      nondet g = held.oneOf()
+      produceItem(i, oa.grants.get(g).person, oa.grants.get(g).app, kind, leaky),
+    }
   }
   /** The client calls a tool. */
   action toolFamily(t: int, h: str, a: str): bool = any { getUpdates(t, h, a), checkStatus(t, h, a), submitProfile(t, h, a), prepareSignup(t, h, a) }

@@ -154,7 +154,7 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     const field = (name: string) => new RegExp(`name="${name}" value="([^"]+)"`).exec(form)?.[1] ?? "";
     const sent = await flow.post("/oauth/authorize/signup", {
       decision: "join", signupView: field("signupView"), consentVersion: field("consentVersion"), smsConsent: "yes",
-      firstName: "Ash", age: "33", homeCity: "nyc", invitation: "",
+      firstName: "Ash", birthdate: "1993-01-15", homeCity: "nyc", invitation: "",
     });
     const html = await sent.text();
     expect(html).toMatch(/invitation/i);

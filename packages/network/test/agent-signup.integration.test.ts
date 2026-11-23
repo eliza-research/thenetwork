@@ -98,7 +98,7 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       const joined = await browser("/oauth/authorize/signup", {
         rid, decision: "join", signupView: hiddenField(form, "signupView"),
         consentVersion: hiddenField(form, "consentVersion"),
-        firstName: "Ari", age: "29", homeCity: "nyc", smsConsent: "yes",
+        firstName: "Ari", birthdate: "1997-01-15", homeCity: "nyc", smsConsent: "yes",
       });
       expect(joined.status).toBe(200);
       const approvalForm = await joined.text();
@@ -302,7 +302,7 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
     expect(second.html).toContain('action="/oauth/authorize/signup"');
     expect(finishSignupComesFirst(second.html)).toBe(true);
     const rid2 = hiddenField(second.html, "rid");
-    const joined = await submitSignup(browser, rid2, { firstName: "Noa", age: "31" });
+    const joined = await submitSignup(browser, rid2, { firstName: "Noa", birthdate: "1995-01-15" });
     expect(joined.status).toBe(200);
     expect(joined.html).toContain("Signup confirmed.");
     expect(joined.html).not.toContain('action="/oauth/authorize/signup"');
@@ -317,7 +317,7 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
   });
 }, 60_000);
 
-test.skipIf(!pgAvailable)("slop.date: an age under 13 typed on the signup page is refused and a higher age later does not undo it", async () => {
+test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup page is refused and a higher age later does not undo it", async () => {
   await withSignupWorld(["slop:nyc"], async w => {
     const site = "slop.date", number = "+12125550165";
     const browser = browserOn(w, site);
@@ -326,28 +326,28 @@ test.skipIf(!pgAvailable)("slop.date: an age under 13 typed on the signup page i
     const consent = await confirmPhone(w, browser, rid, number);
     expect(finishSignupComesFirst(consent)).toBe(true);
 
-    const refused = await submitSignup(browser, rid, { firstName: "Kit", age: "12" });
+    const refused = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "2014-01-15" });
     expect(refused.status).toBe(400);
-    expect(refused.html).toContain("You can’t join this app at the age entered.");
+    expect(refused.html).toContain("You can’t join this app with the birthday entered.");
     expect(refused.html).not.toContain('name="code"');
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
 
-    const retried = await submitSignup(browser, rid, { firstName: "Kit", age: "30" });
+    const retried = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "1996-01-15" });
     expect(retried.status).toBe(400);
-    expect(retried.html).toContain("You can’t join this app at the age entered.");
+    expect(retried.html).toContain("You can’t join this app with the birthday entered.");
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
     expect(await w.connector.store.sql`select id from oauth.grants where client_id=${opened.clientId}`).toEqual([]);
   });
 }, 60_000);
 
-test.skipIf(!pgAvailable)("friends.help: a teen age typed on the signup page joins but can never be matched", async () => {
+test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup page joins but can never be matched", async () => {
   await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
     const site = "friends.help", number = "+12125550166";
     const browser = browserOn(w, site);
     const opened = await openConnection(w, site, browser, "teen");
     const rid = hiddenField(opened.html, "rid");
     await confirmPhone(w, browser, rid, number);
-    const joined = await submitSignup(browser, rid, { firstName: "Jo", age: "15" });
+    const joined = await submitSignup(browser, rid, { firstName: "Jo", birthdate: "2011-01-15" });
     expect(joined.status).toBe(200);
     expect(joined.html).toContain("Signup confirmed.");
     const person = await w.service.accounts.personFor(number);
@@ -368,12 +368,12 @@ test.skipIf(!pgAvailable)("ntwrk.party: the signup page requires an invitation a
     const consent = await confirmPhone(w, browser, rid, number);
     expect(finishSignupComesFirst(consent)).toBe(true);
 
-    const missing = await submitSignup(browser, rid, { firstName: "Ash", age: "33", invitation: "" });
+    const missing = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "" });
     expect(missing.form).toMatch(/name="invitation"[^>]*required/);
     expect(missing.status).toBe(400);
     expect(missing.html).toContain("Enter a valid invitation for this app.");
 
-    const unknown = await submitSignup(browser, rid, { firstName: "Ash", age: "33", invitation: "A".repeat(43) });
+    const unknown = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "A".repeat(43) });
     expect(unknown.status).toBe(400);
     expect(unknown.html).toContain("Enter a current invitation for this app.");
     expect(await w.service.accounts.personFor(number)).toBeUndefined();

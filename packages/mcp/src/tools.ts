@@ -147,7 +147,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     {
       name: "submit_profile",
       title: `Send my profile to ${host.name}`,
-      description: `After the person joined ${host.name} and allowed access, sends ${host.name} what they told you about themselves in this conversation (what they are looking for, interests, when and where they are free), in their own words, as if they had texted it. Read it back to them and send it only after they agree. Never include a phone number, a code, an email address or anything about another person.`,
+      description: `After the person joined ${host.name} and allowed access, sends ${host.name} what they told you about themselves in this conversation (what they are looking for, interests, when and where they are free), in their own words, as if they had texted it. Read it back to them and send it only after they agree. Never include a phone number, a code, an email address, a birthday, an age or anything about another person.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -271,7 +271,7 @@ function publicInfo(a: McpApp) {
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
         ? `The person texts "${a.keyword}" as their first message to The Network's line. ` + (publicSignupUsesBrowser(a.id)
           ? `They can also open ${publicSignupUrl(a)} and verify their own phone there.` : skillSignup(a))
-        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (friends, dating or work) and adds the right apps. ${skillSignup(a)}`,
+        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (friends, dating or work) and adds the right apps. A person aged 13 to 17 is offered only friends and their own help, never dating or work. ${skillSignup(a)}`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
     adults_only: a.adultsOnly,

@@ -100,13 +100,13 @@ export function consentPage(at: PageApp, rid: string, clientName: string | null,
   return respond(app, "Allow access", view, { formTargets: [redirectOrigin], status: o.unavailable ? 503 : 200 });
 }
 
-export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error" | "prefill">;
+export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error" | "birthdateError" | "prefill">;
 export type SignupPrefill = NonNullable<AuthSignupViewProps["prefill"]>;
 
 /** The verified browser's transient form for confirming the app's signup. */
 export function signupPage(at: PageApp, rid: string, options: SignupPageOptions) {
   const { app, siteOrigin } = pageAppOf(at);
-  return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), siteOrigin, rid, ...options }), { status: options.error ? 400 : 200 });
+  return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), siteOrigin, rid, ...options }), { status: options.error || options.birthdateError ? 400 : 200 });
 }
 
 const messageReplies = {

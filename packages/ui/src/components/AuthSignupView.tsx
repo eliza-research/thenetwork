@@ -20,6 +20,8 @@ export type AuthSignupViewProps = Omit<AuthShellProps, "title" | "chrome" | "chi
   signupView: string;
   /** The handler's user-facing error for a rejected signup. */
   error?: string;
+  /** The handler's user-facing error for a refused birthday. */
+  birthdateError?: string;
   prefill?: { firstName: string; homeCity?: "nyc" | "sf" };
 };
 
@@ -27,7 +29,7 @@ export type AuthSignupViewProps = Omit<AuthShellProps, "title" | "chrome" | "chi
  * Confirm this app's signup and text consent in the verified browser before allowing assistant access.
  * @model spec/authorizationPages.md
  */
-export function AuthSignupView({ rid, consent, requiresInvitation, signupView, error, prefill, siteOrigin = "", ...props }: AuthSignupViewProps) {
+export function AuthSignupView({ rid, consent, requiresInvitation, signupView, error, birthdateError, prefill, siteOrigin = "", ...props }: AuthSignupViewProps) {
   return (
     <AuthShell title="Confirm your signup" siteOrigin={siteOrigin} {...props}>
       <form method="post" action="/oauth/authorize/signup" className="flex flex-col gap-4" aria-describedby={error ? "signup-error" : undefined}>
@@ -35,12 +37,13 @@ export function AuthSignupView({ rid, consent, requiresInvitation, signupView, e
         <input type="hidden" name="decision" value="join" />
         <input type="hidden" name="signupView" value={signupView} />
         <input type="hidden" name="consentVersion" value={consent.version} />
-        {prefill?.firstName && !error ? <p className="text-sm text-muted-foreground">Check the details from your agent, add your age and finish.</p> : null}
+        {prefill?.firstName && !error && !birthdateError ? <p className="text-sm text-muted-foreground">Check the details from your agent, add your birthday and finish.</p> : null}
         <Field label="First name" controlId="signup-first-name">
           <Input name="firstName" type="text" autoComplete="given-name" maxLength={50} required defaultValue={prefill?.firstName || undefined} />
         </Field>
-        <Field label="Age" controlId="signup-age">
-          <Input name="age" type="number" inputMode="numeric" min={1} max={120} step={1} required />
+        <Field label="Birthday" controlId="signup-birthdate" error={birthdateError}
+          description="If you are under 18, we never match you for dates or for work. Friendship is the only kind of introduction open to people under 18, and only with people close to your own age.">
+          <Input name="birthdate" type="date" autoComplete="off" required />
         </Field>
         <Field label="Home city" controlId="signup-home-city">
           <select name="homeCity" defaultValue={prefill?.homeCity ?? ""} required className={`${focusRing} h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground`}>

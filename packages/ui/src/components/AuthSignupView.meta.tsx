@@ -13,6 +13,7 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
   examples: {
     "Invitation required": { app: "Ntwrk", requiresInvitation: true },
     "Signup error": { error: "Check your details and try again." },
+    "Birthday refused": { birthdateError: "Enter your birthday. It must be a real date, not after today.", prefill: { firstName: "Ari", homeCity: "sf" } },
     "Prefilled from the agent": { prefill: { firstName: "Ari", homeCity: "sf" } },
     "Rendered by ntwrk.party": { siteOrigin: "https://friends.help" },
   },
@@ -28,6 +29,14 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
       await expect(canvasElement.querySelector("input[name=phone], input[name=code]")).toBeNull();
       await expect((canvasElement.querySelector("input[name=invitation]") as HTMLInputElement).required).toBe(false);
       await expect(canvasElement.querySelector("input[name=consentVersion]")?.getAttribute("value")).toBe("example");
+      const birthday = page.getByLabelText<HTMLInputElement>("Birthday");
+      await expect(birthday.getAttribute("name")).toBe("birthdate");
+      await expect(birthday.type).toBe("date");
+      await expect(birthday.required).toBe(true);
+      await expect(birthday.value).toBe("");
+      await expect(canvasElement.querySelector("input[name=age]")).toBeNull();
+      await expect(page.getByText(/never match you for dates or for work/)).toBeTruthy();
+      await expect(page.queryByText(/will introduce|we introduce you/i)).toBeNull();
       const hrefs = [...canvasElement.querySelectorAll("a")].map(a => a.getAttribute("href"));
       await expect(hrefs).toEqual(["/", "/terms#sms", "/terms", "/privacy", "/privacy", "/terms"]);
     },
@@ -41,13 +50,23 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
       await expect(name.value).toBe("Ari");
       await expect(name.readOnly).toBe(false);
       await expect((canvasElement.querySelector("select[name=homeCity]") as HTMLSelectElement).value).toBe("sf");
-      await expect((canvasElement.querySelector("input[name=age]") as HTMLInputElement).value).toBe("");
+      await expect((canvasElement.querySelector("input[name=birthdate]") as HTMLInputElement).value).toBe("");
       await expect(page.getByRole<HTMLInputElement>("checkbox").checked).toBe(false);
-      await expect(page.getByText("Check the details from your agent, add your age and finish.")).toBeTruthy();
+      await expect(page.getByText("Check the details from your agent, add your birthday and finish.")).toBeTruthy();
       await expect(page.getByRole("button", { name: "Finish signup" })).toBeTruthy();
       await expect(canvasElement.querySelector("input[name=phone], input[name=code]")).toBeNull();
     },
-    "Invitation required": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    "Birthday refused": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      const page = within(canvasElement);
+      const birthday = page.getByLabelText<HTMLInputElement>("Birthday");
+      await expect(birthday.value).toBe("");
+      await expect(birthday.getAttribute("aria-invalid")).toBe("true");
+      await expect(birthday.getAttribute("aria-describedby")).toContain("signup-birthdate-error");
+      await expect(canvasElement.querySelector("#signup-birthdate-error")?.textContent).toBe("Enter your birthday. It must be a real date, not after today.");
+      await expect(page.queryByText("Check the details from your agent, add your birthday and finish.")).toBeNull();
+      await expect((canvasElement.querySelector("input[name=firstName]") as HTMLInputElement).value).toBe("Ari");
+    },
+        "Invitation required": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       await expect((canvasElement.querySelector("input[name=invitation]") as HTMLInputElement).required).toBe(true);
       await expect(within(canvasElement).getByText("Invitation link")).toBeTruthy();
     },

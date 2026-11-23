@@ -50,7 +50,7 @@ async function openSignup(e: Env, domain: string, clientId: string, phone: strin
 const shows = (html: string, firstName: string, city: string) =>
   new RegExp(`name="firstName"[^>]*value="${firstName}"`).test(html) && html.includes(`<option value="${city}" selected="">`);
 const blank = (html: string) => !/name="firstName"[^>]*value="/.test(html) && !/<option value="(nyc|sf)" selected/.test(html);
-const neverPrefilledAgeOrConsent = (html: string) => !/name="age"[^>]*value="/.test(html) && !/name="smsConsent"[^>]*checked/.test(html);
+const neverPrefilledAgeOrConsent = (html: string) => !/name="age"/.test(html) && !/name="birthdate"[^>]*value="/.test(html) && !/name="smsConsent"[^>]*checked/.test(html);
 
 async function draftFor(e: Env, domain: string, phone: string, fields: Record<string, unknown> = { firstName: "Ari", homeCity: "sf" }) {
   const c = await connect(e, domain, phone, { scope: "membership:read profile:write" });
@@ -59,7 +59,7 @@ async function draftFor(e: Env, domain: string, phone: string, fields: Record<st
   return c.client.client_id as string;
 }
 
-test("the same client's next authorization shows the approved draft once; the person edits it, types the age and ticks consent", async () => {
+test("the same client's next authorization shows the approved draft once; the person edits it, types the birthday and ticks consent", async () => {
   const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
   const first = await openSignup(e, "friends.help", clientId, PHONE_A);
   expect(shows(first.form, "Ari", "sf")).toBe(true);
@@ -70,13 +70,13 @@ test("the same client's next authorization shows the approved draft once; the pe
   await first.post("/oauth/authorize/signup", { decision: "skip", signupView: field(first.form, "signupView") });
   expect(blank(await (await first.post("/oauth/authorize/signup", { decision: "open" })).text())).toBe(true);
   expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
-  const unticked = await first.join({ firstName: "Rae", age: "29", homeCity: "sf" });
+  const unticked = await first.join({ firstName: "Rae", birthdate: "1997-01-15", homeCity: "sf" });
   const refused = await unticked.text();
   expect(refused).toContain("Review and accept the current text message terms to continue.");
   expect(shows(refused, "Rae", "sf")).toBe(true);
   expect(neverPrefilledAgeOrConsent(refused)).toBe(true);
   expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
-  const joined = await first.join({ firstName: "Rae", age: "29", homeCity: "sf", smsConsent: "yes" });
+  const joined = await first.join({ firstName: "Rae", birthdate: "1997-01-15", homeCity: "sf", smsConsent: "yes" });
   expect(await joined.text()).toContain("Signup confirmed.");
   const person = await e.accounts.personFor(PHONE_A);
   expect((await e.people.getMembership(person!.id, "friends"))!.firstName).toBe("Rae");
@@ -103,7 +103,7 @@ test("another client, another app, another phone, an expired draft and a stale g
   expect(blank((await openSignup(revoked, "friends.help", revokedClient, PHONE_A)).form)).toBe(true);
 });
 
-test("a recorded age below 13 hides and scrubs the draft; an age below 13 on the form is refused and a teen joins unmatched", async () => {
+test("a recorded age below 13 hides and scrubs the draft; a birthday below 13 on the form is refused and a teen joins unmatched", async () => {
   const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
   await e.accounts.recordAge(PHONE_A, undefined, 12);
   expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
@@ -116,8 +116,8 @@ test("a recorded age below 13 hides and scrubs the draft; an age below 13 on the
   const child = setup(), childClient = await draftFor(child, "friends.help", PHONE_A);
   const page = await openSignup(child, "friends.help", childClient, PHONE_A);
   expect(shows(page.form, "Ari", "sf")).toBe(true);
-  const refused = await (await page.join({ firstName: "Ari", age: "12", homeCity: "sf", smsConsent: "yes" })).text();
-  expect(refused).toContain("You can’t join this app at the age entered.");
+  const refused = await (await page.join({ firstName: "Ari", birthdate: "2014-01-15", homeCity: "sf", smsConsent: "yes" })).text();
+  expect(refused).toContain("You can’t join this app with the birthday entered.");
   expect(neverPrefilledAgeOrConsent(refused)).toBe(true);
   expect(await child.accounts.personFor(PHONE_A)).toBeUndefined();
 
@@ -125,11 +125,46 @@ test("a recorded age below 13 hides and scrubs the draft; an age below 13 on the
   await teen.accounts.recordAge(PHONE_A, undefined, 15);
   const teenPage = await openSignup(teen, "friends.help", teenClient, PHONE_A);
   expect(shows(teenPage.form, "Ari", "sf")).toBe(true);
-  expect(await (await teenPage.join({ firstName: "Ari", age: "29", homeCity: "sf", smsConsent: "yes" })).text()).toContain("Signup confirmed.");
+  expect(await (await teenPage.join({ firstName: "Ari", birthdate: "1997-01-15", homeCity: "sf", smsConsent: "yes" })).text()).toContain("Signup confirmed.");
   const person = await teen.accounts.personFor(PHONE_A);
   const lowest = (await teen.people.getPerson(person!.id))!.lowestAge;
   expect(lowest).toBe(15);
   expect(canBeMatched(lowest)).toBe(false);
+});
+
+test("the birthday is refused when it is missing, malformed, impossible, in the future or over 120 years ago, and the age counts on the Clock date", async () => {
+  const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
+  const page = await openSignup(e, "friends.help", clientId, PHONE_A);
+  expect(page.form).toContain('name="birthdate"');
+  expect(page.form).toContain('type="date"');
+  expect(page.form).not.toContain('name="age"');
+  for (const birthdate of ["", "1997-1-15", "15/01/1997", "1997-02-30", "2023-02-29", "1997-13-01", "2026-10-09", "1905-10-07", "29"]) {
+    const sent = { firstName: "Ari", homeCity: "sf", smsConsent: "yes", ...(birthdate ? { birthdate } : {}) };
+    const refused = await page.join(sent);
+    expect(refused.status).toBe(400);
+    const html = await refused.text();
+    expect(html).toContain("Enter your birthday. It must be a real date, not after today.");
+    expect(/<input[^>]*name="birthdate"[^>]*>/.exec(html)?.[0]).toContain('aria-invalid="true"');
+    if (birthdate.length > 4) expect(html).not.toContain(birthdate);
+    expect(neverPrefilledAgeOrConsent(html)).toBe(true);
+    expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
+  }
+  const dayBefore = await (await page.join({ firstName: "Ari", birthdate: "2013-10-09", homeCity: "sf", smsConsent: "yes" })).text();
+  expect(dayBefore).toContain("You can’t join this app with the birthday entered.");
+  expect(dayBefore).not.toContain("2013-10-09");
+  expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
+
+  const leap = setup(), leapClient = await draftFor(leap, "friends.help", PHONE_A);
+  const leapPage = await openSignup(leap, "friends.help", leapClient, PHONE_A);
+  expect(await (await leapPage.join({ firstName: "Ari", birthdate: "2012-02-29", homeCity: "sf", smsConsent: "yes" })).text()).toContain("Signup confirmed.");
+  expect((await leap.people.getPerson((await leap.accounts.personFor(PHONE_A))!.id))!.lowestAge).toBe(14);
+
+  const birthday = setup(), birthdayClient = await draftFor(birthday, "friends.help", PHONE_A);
+  const birthdayPage = await openSignup(birthday, "friends.help", birthdayClient, PHONE_A);
+  expect(await (await birthdayPage.join({ firstName: "Ari", birthdate: "2013-10-08", homeCity: "sf", smsConsent: "yes" })).text()).toContain("Signup confirmed.");
+  const thirteen = (await birthday.people.getPerson((await birthday.accounts.personFor(PHONE_A))!.id))!.lowestAge;
+  expect(thirteen).toBe(13);
+  expect(canBeMatched(thirteen)).toBe(false);
 });
 
 test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also when two forms of the same client open at once", async () => {

@@ -22,7 +22,8 @@ import {
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
   type AuthPage, type AuthView, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
-  canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial, solveCheck,
+  ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial,
+  signupClockDay, solveCheck,
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
@@ -729,8 +730,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (decision !== "open" && !(decision === "join" && exactForm)) return expired();
     const enrollment = await availableSignup(c, who);
     if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
-    const showSignup = (error?: string, prefill?: SignupPrefill) => {
-      const response = signupPage(c, r.id, { ...enrollment, signupView, error, prefill });
+    const showSignup = (error?: string, prefill?: SignupPrefill, birthdateError?: string) => {
+      const response = signupPage(c, r.id, { ...enrollment, signupView, error, prefill, birthdateError });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;
     };
@@ -741,12 +742,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const version = form.get("consentVersion");
     if (!browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version))
       return showSignup("Review and accept the current text message terms to continue.", sent);
-    const age = form.get("age") ?? "";
+    const typedBirthdate = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(form.get("birthdate") ?? "");
+    const birth = typedBirthdate ? { year: Number(typedBirthdate[1]), month: Number(typedBirthdate[2]), day: Number(typedBirthdate[3]) } : undefined;
+    const today = calendarDateOfDay(signupClockDay(now()));
+    if (!birth || !birthdateAccepted(birth, today)) return showSignup(undefined, sent, "Enter your birthday. It must be a real date, not after today.");
     const input = parseJoin({
-      firstName: form.get("firstName"), age: /^[0-9]{1,3}$/.test(age) ? Number(age) : undefined,
+      firstName: form.get("firstName"), age: ageOnDate(birth, today),
       homeCity: form.get("homeCity"), consent: { sms: true, version },
     });
-    if (!input) return showSignup("Enter your first name, age and home city.", sent);
+    if (!input) return showSignup("Enter your first name, birthday and home city.", sent);
     const typedInvitation = form.get("invitation");
     const invitation = signupInvitation(c.app, typedInvitation);
     if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.", sent);
@@ -758,8 +762,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
-        const error = joined.error === "under_age" ? "You can’t join this app at the age entered."
-          : joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
+        if (joined.error === "under_age") return showSignup(undefined, sent, "You can’t join this app with the birthday entered.");
+        const error = joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
           : joined.error === "consent_wording" ? "The text message terms changed. Open signup again to review them."
           : "We couldn’t finish signup. Return to the connection page or try again later.";
         return showSignup(error, sent);

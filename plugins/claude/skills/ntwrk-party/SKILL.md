@@ -7,7 +7,7 @@ metadata:
   app: ntwrk
   site: https://ntwrk.party
   operator: Eliza Research Corporation
-  version: "1.4.0"
+  version: "1.5.0"
 ---
 
 # The Network
@@ -25,7 +25,10 @@ Never invent age, profile facts, consent, verification, saved data or introducti
 A draft is not saved until the site confirms it. A saved profile is not a match.
 
 The Network helps people find the connections they ask for: friends, dating or work.
-Anyone 13 or older may join; matching and introductions are for adults 18 and older only.
+Anyone 13 or older may join. Today, matching and introductions are for adults 18 and older only.
+People aged 13–17 get their own help: answers, public events and plans for themselves.
+They are never matched on dates or for work. If introductions ever open to people under 18,
+they are friendship introductions only, with people close to their own age.
 It asks before any introduction. A saved general profile does not enroll the person
 in another app or start matching.
 
@@ -46,14 +49,21 @@ in another app or start matching.
    Confirm `id` is `ntwrk`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
    and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
    these facts.
-3. Ask for their stated age first and use the lowest age they state. Explain and <!-- agentSignup: draftProfile -->
-   stop below 13. Tell people aged 13–17 that introductions and matching are for
-   adults 18 and older. Draft their confirmed first name, age and home region.
+3. Ask for their birthday first, not only their age. Use it in this conversation only, <!-- agentSignup: draftProfile -->
+   to explain what they get. Use the lowest age that any statement gives. Never send a
+   birthday or an age through a tool; the person types their birthday on the app's
+   signup page. Explain and stop below 13. Tell people aged 13–17 what they get today:
+   their own help, with answers, public events and plans for themselves. They are never
+   matched on dates or for work. Today nobody under 18 is introduced to anyone. If
+   introductions ever open to them, they are friendship introductions only, with people
+   close to their own age. Never promise them an introduction.
+   Draft their confirmed first name and home region.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
    or ZIP code or pick an incorrect region.
    Draft a general profile with interests, availability and the kinds of connections
-   they want: friends, dating or work. Keep separate app details out. These
+   they want: friends, dating or work. For ages 13–17, offer only friends and their own
+   help; never offer dates or work. Keep separate app details out. These
    interests do not enroll the person in another app.
 4. Show the exact draft and the app's current text consent wording. Explain <!-- agentSignup: decideApproval -->
    recurring texts, variable frequency, possible message and data rates, STOP
@@ -67,7 +77,7 @@ in another app or start matching.
    browser cookie. The person handles all credentials in their own browser.
 6. The app's browser confirms their own phone, or uses its current verified <!-- agentSignup: observeBrowser -->
    session. For an eligible new membership, choose **Finish signup** there,
-   check or enter the same first name and home region, enter the same age and
+   check or enter the same first name and home region, type their own birthday and
    tick the current text consent.
    The Network is invitation-only. The browser checks any invitation assigned to
    the verified phone or the forwarded invitation the person provides.
@@ -88,7 +98,7 @@ in another app or start matching.
    approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->
    profile as `about` (10–1200 characters). Do not include credentials, invitation
-   secrets or details from another app. If there is a refusal, a timeout or
+   secrets, a birthday, an age or details from another app. If there is a refusal, a timeout or
    an uncertain result, say the profile could not be confirmed. Do not resend it.
 9. With `submitted: true` for this app and this call, confirm that the same <!-- agentSignup: confirmProfile -->
    connector still returns this app and an `onboarding` or `active` status.
@@ -100,8 +110,9 @@ in another app or start matching.
 
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
-send invitations, or change another app. The lowest stated age applies; members
-13–17 must never be matched or introduced to anyone. No background checks are run.
+send invitations, or change another app. The lowest stated age applies. Members
+13–17 are never matched on dates or for work, and today they are not introduced to
+anyone. No background checks are run.
 
 Text STOP stops every text from the shared line; "leave ntwrk.party" leaves this
 app only. Export/deletion support is help@ntwrk.party. Do not invoke destructive

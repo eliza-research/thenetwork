@@ -43,7 +43,7 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
     id, name, domain, what, keyword,
     joinMode: p.joinMode,
     ages: { join: p.minJoinAge, match: p.minMatchAge },
-    adultsOnly: ["Matching and introductions to other people are for adults 18 or older only. Nobody under 18 is ever matched or introduced.", ...(extra.adultsOnly ?? [])],
+    adultsOnly: ["Today, matching and introductions to other people are for adults 18 or older only, and nobody under 18 is introduced to anyone.", "Dating and work matching are for adults 18 or older only. Nobody under 18 is ever matched on dates or for work.", "If introductions ever open to people under 18, they are friendship introductions only, with people close to their own age.", ...(extra.adultsOnly ?? [])],
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,
       smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`,

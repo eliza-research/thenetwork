@@ -14,7 +14,8 @@ export const slopPrivacy: LegalText = {
         <>
           <ul>
             <li><strong>Your phone number</strong>, to check that it is yours and to text you.</li>
-            <li><strong>Your short profile</strong>: first name, age, area (neighbourhood or ZIP code), interests and one line about you.</li>
+            <li><strong>Your age</strong>. You type your birth date on the signup page, or you tell us your age. We count your age from the birth date and keep the age, not the birth date. We use it only to apply the age rules: who can join, and that members under 18 are never matched on dates or for work. Other members never see it.</li>
+            <li><strong>Your short profile</strong>: first name, area (neighbourhood or ZIP code), interests and one line about you.</li>
             <li><strong>What you tell the matchmaker</strong> by text.</li>
             <li><strong>Dating preferences</strong> you tell the matchmaker: who you want to meet, age range, and deal-breakers. They are sensitive. We never show them to other members, never quote them in an introduction, and never use them outside slop.date, even if you ask us to copy details to another service.</li>
             <li><strong>Photos, adults only</strong>: if you are an adult (18 or older by the age you gave us), you can choose to send photos. The matchmaker may form a private impression from them to help it suggest people. Any rating like this stays inside the matchmaker. It is never shown to you, to other members or to anyone else. We never ask members under 18 for photos and never rate them.</li>
@@ -63,7 +64,7 @@ export const slopPrivacy: LegalText = {
     },
     {
       heading: "Age",
-      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the matchmaker for their own questions only. slop.date never matches them, never introduces them to anyone, never asks them for photos and never rates them. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
+      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the matchmaker for their own questions, public events and plans only. slop.date never matches them on dates, never asks them for photos and never rates them. Today, no member under 18 is introduced to anyone. If introductions ever open to members under 18, they will be friendship introductions only, with people close to their own age. We ask for your birth date or your age at signup to apply these rules. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
     },
     {
       heading: "Security and changes",
