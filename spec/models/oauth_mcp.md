@@ -18,6 +18,8 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 
 ```quint
 // quint-check: max-steps=60 max-samples=10000 verify-steps=5
+// quint-witness: witness_heldReadsOnHold heldStatusReachableTest
+// quint-witness: witness_prefillShown prefillReachableTest
 //
 // Model of the MCP OAuth server and its tools: packages/mcp/src/handler.ts (H), tools.ts (T),
 // pg-store.ts (P), hooks.ts (K), and the parts of packages/network/service/service.ts (SVC) and
@@ -107,12 +109,10 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //    counts too. The model counts only calls that pass the status check, and quotaTest and quotaCountsAccepted keep
 //    the earlier SD-395 rule. The code and the spec agree, so the model is stale here.
 //  - The H:, T:, P: and K: line numbers in the older comments are for claude/formal-main and do not match this branch.
-//  - Reachability (2026-11-22, not drift): witness_prefillShown needs about 15 chosen steps and two sign-ins of one
-//    client and app, and the three request ids are used early by random sign-ins, so random simulation at
-//    max-steps=60 and max-samples=10000 did not reach it. The host and app parameters of the tool calls and of the
-//    consent POST, and the person and app of an inbox item, made witness_fullFlowUpdate and witness_withheldSeen
-//    unreachable at max-samples=1000. The step now also calls ownEndpointTools, approveRead, grantItemFamily and
-//    draftSignupFamily. They pick arguments of existing actions and add no transition.
+//  - A held member reading status and a draft shown on a second authorization use named witness traces.
+//    They replay existing transitions. The independent random safety check uses the same step and bounds.
+//    The step's ownEndpointTools, approveRead, grantItemFamily and draftSignupFamily pick arguments of
+//    existing actions and add no transition.
 //  - toolInvalidGrant writes a revocation audit row (SD-394, everyRevocationAudited). The code does not: when a tool
 //    answer is invalid_grant (mcp) or the grant owner changed (grantAuthorityCurrent), handler.ts calls revokeGrant,
 //    and neither revokeGrant nor the store's revokeGrant writes an oauth.audit row. This was so before f50b9c21 too.
@@ -1394,6 +1394,10 @@ module oauth_mcp {
       .then(closeOpp(1)).then(getUpdates(1, "friends", "friends"))
       .expect(gh.last.items == Set() and ib.items.get(1).seen and noStaleUpdate and safety)
 
+  run heldStatusReachableTest =
+    init.then(connect(1, "cF", false)).then(staffHold("p1")).then(checkStatus(1, "friends", "friends"))
+      .expect(not(witness_heldReadsOnHold))
+
   /** SD-428 fix (e2e "a member on a staff hold reads on_hold and cannot submit a profile"). */
   run heldActiveTest =
     init.then(connect(1, "cF", false)).then(staffHold("p1")).then(checkStatus(1, "friends", "friends"))
@@ -1536,6 +1540,11 @@ module oauth_mcp {
   run consentOtherHostTest =
     init.then(startAuth(1, "cN", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveReadOn(1, "friends", false))
       .expect(gh.last.kind == "pageOtherHost" and pc.appr.get(1) == "idle" and oa.grants.get(1).st == "none" and safety)
+
+  run prefillReachableTest =
+    init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1, "friends", "friends"))
+      .then(startAuth(3, "cF", "friends")).then(enterPhone(3, "n1")).then(enterCode(3)).then(openSignup(3))
+      .expect(not(witness_prefillShown))
 
   /**
    * signup-draft-prefill.test.ts: the agent saves a draft through prepare_signup; a new request of the same client,
