@@ -891,7 +891,7 @@ const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
  */
 const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
-const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:both|all)\s+)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|aren'?t\b|weren'?t\b|can'?t\b|cannot\b)/;
+const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -992,6 +992,12 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
 const NAMED_TIME_JOIN = String.raw`\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)`;
 const BARE_NAMED_TIME_JOIN = new RegExp(`^${NAMED_TIME_JOIN}$`);
 const JOINED_SHORT_DAY = new RegExp(String.raw`^(${NAMED_TIME_JOIN})(${DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|")})\b`);
+const OFFERED_TIME_REFUSAL_END = String.raw`(?=\s*(?:(?:for (?:me|us)|either|at all|right now)\s*)*(?:$|[,;.!?\n]|\b(?:and|but|so|though|however|because|since)\b))`;
+const OFFERED_TIME_REFUSAL =
+  String.raw`\s*(?:(?:both|all)\s+)?(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
+  String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|fit|suit|make it))?|` +
+  String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:good|great|fine|free|available|possible|ideal|an option|a good fit)\b)` + OFFERED_TIME_REFUSAL_END;
+const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
 
 /** Reuse the full time spans. An independent choice word between times ends the shared refusal. */
 function joinedTimeRefusals(text: string, mentions: TimeMention[], memberChoiceAt: (at: number) => boolean): Set<TimeMention> {
@@ -1002,7 +1008,7 @@ function joinedTimeRefusals(text: string, mentions: TimeMention[], memberChoiceA
     const tail = JOINED_SHORT_DAY.exec(text.slice(mention.end));
     if (!tail) continue;
     const at = mention.end + tail[1]!.length, end = mention.end + tail[0].length;
-    if (byStart.has(at) || !NEG_AFTER.test(text.slice(end)) || !memberChoiceAt(at)) continue;
+    if (byStart.has(at) || !REFUSES_OFFERED_TIME.test(text.slice(end)) || !memberChoiceAt(at)) continue;
     const day = DAY_WORDS.find(([word]) => tail[2]!.search(word) === 0)?.[1];
     if (day) { mentions.push({ at, end, day }); byStart.add(at); }
   }
@@ -1012,7 +1018,7 @@ function joinedTimeRefusals(text: string, mentions: TimeMention[], memberChoiceA
     const first = ordered[index]!, next = ordered[index + 1]!;
     if (first.end > next.at || !BARE_NAMED_TIME_JOIN.test(text.slice(first.end, next.at))
       || !memberChoiceAt(first.at) || !memberChoiceAt(next.at)) continue;
-    if (refused.has(next) || NEG_AFTER.test(text.slice(next.end))) {
+    if (refused.has(next) || REFUSES_OFFERED_TIME.test(text.slice(next.end))) {
       refused.add(first);
       refused.add(next);
     }
