@@ -568,7 +568,11 @@ const POLITE_PRIVATE_CONDITION =
   /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when(?:ever)?\s+you\s+(?:can|get a chance|have a chance))\b|^whenever(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)|you(?:'re| are)\s+ready))?\b/iu;
 const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
-const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?(?:let me know|tell me(?:\s+how it went)?)\s*$/iu;
+const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
+const PRIVATE_RESPONSE_FOLLOWUP = new RegExp(
+  String.raw`^whenever\s+${OTHER}\s+(?:repl(?:y|ies)|responds?)\s*,\s*(?:please\s+)?tell me(?:\s+how it went)?\s*$`,
+  "iu",
+);
 const INDEPENDENT_WHEN_QUESTION = /^when(?:ever)?\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
 const PRIVATE_CONDITION_ITEM_NAME = new RegExp(String.raw`\b(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})\b`, "u");
 const INCOMPLETE_CONDITION_ACTION = new RegExp(
@@ -637,6 +641,7 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   }
   const polite = POLITE_PRIVATE_CONDITION.exec(condition);
   if (polite && PRIVATE_RELAY_COURTESY.test(condition.slice(polite[0].length))) return false;
+  if (detached && PRIVATE_RESPONSE_FOLLOWUP.test(condition)) return false;
   if (detached || /^\s*,\s*and\b/i.test(clause)) {
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
     if (main && (TEXT_REQ.test(main)
