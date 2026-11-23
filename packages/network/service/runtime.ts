@@ -267,12 +267,13 @@ export class NetworkRuntime {
       ...o.network,
       ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
       engine: { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine },
-      app: o.app, review: "human", store: this.store,
+      app: o.app, city: o.city, review: "human", store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
+      // Only an event the live ledger accepted is stored: a replay must give the live ledger (SD-156).
+      onLedger: e => { if (this.capital.onLedger(e)) this.unit.capital.push(e); },
       onAgeStated: (memberId, age, o) => {
         if (profileAgeCounts(o.explicit, o.declined, canBeMatched(age))) {
           this.unit.ages.push({ memberId, age: recordedChatAge(age, this.app.minJoinAge, o.declined) });
@@ -601,11 +602,21 @@ export class NetworkRuntime {
       matchId = request.matchId;
       from = request.from;
     } else {
-      const [rec] = await tx<{ opportunity_id: string; from_member: MemberId; to_member: MemberId; decision: string; review: string | null; reasons: string[] }[]>`
-        select opportunity_id,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      const [rec] = await tx<{ opportunity_id: string; from_member: MemberId; to_member: MemberId; kind: string; at: Date | string; decision: string; review: string | null; reasons: string[] }[]>`
+        select opportunity_id,from_member,to_member,kind,at,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to) return no("relay:not_passed");
       const withdrawn = rec.reasons.includes(SWAP_WITHDRAWN);
       if (!relayRecordMayDispatch(rec.decision === "pass", rec.review === "rejected", withdrawn)) return no(withdrawn ? SWAP_WITHDRAWN : "relay:not_passed");
+      if (rec.kind === "contact_share") {
+        // A number swap goes both ways or not at all: the other share of the same swap must still be passed and not ended unsent.
+        const [other] = await tx<{ decision: string; review: string | null; reasons: string[] | null; status: string | null }[]>`
+          select r.decision,r.review,r.reasons,o.status from network.relay_records r
+          left join platform.outbound o on o.app_id = r.app_id and o.id = 'relay:' || r.item_id
+          where r.app_id=${app} and r.opportunity_id=${rec.opportunity_id} and r.kind='contact_share'
+            and r.from_member=${rec.to_member} and r.to_member=${rec.from_member} and r.at=${rec.at} limit 1`;
+        if (!other || !relayRecordMayDispatch(other.decision === "pass", other.review === "rejected", !!other.reasons?.includes(SWAP_WITHDRAWN))
+          || (other.status && NOT_SENT.test(other.status))) return no("relay:swap_partner");
+      }
       from = rec.from_member;
       matchId = rec.opportunity_id;
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
@@ -809,11 +820,16 @@ export class NetworkRuntime {
     }) as Promise<T>;
   }
 
-  /** The stored state of this network (inside an app-scoped transaction). */
-  private async loadState(): Promise<NetworkState | undefined> {
+  /**
+   * The stored state of this network (inside an app-scoped transaction). `fence`: the caller imports the state into
+   * `this.net`, so its row version becomes the one the queue fence compares (stateCurrent). A read that only looks at
+   * the stored state (health, sharedContext) must not move the fence: this replica's memory stays old.
+   */
+  private async loadState(fence = false): Promise<NetworkState | undefined> {
     return this.scoped(async tx => {
-      const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
+      const [r] = await tx`select state, xmin::text as v from network.network_state where id = ${this.pg.id}`;
       const s = r?.state;
+      if (fence) this.pg.seen = r?.v;
       // A state without its relay log gets it back from network.relay_records (store.ts).
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id, this.pg.id);
     });
@@ -827,8 +843,8 @@ export class NetworkRuntime {
    * about an opportunity that closed.
    */
   async start() {
-    // The ledger starts from what is stored (events this process did not emit), oldest first.
-    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
+    // The ledger starts from what is stored (events this process did not emit), oldest first, ordered by t, seq (SD-153).
+    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, seq`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
     // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"
@@ -846,7 +862,7 @@ export class NetworkRuntime {
       load: async () => {
         this.unit = newUnit();
         await this.refresh();
-        const state = await this.loadState();
+        const state = await this.loadState(true);
         this.net.setGatheringRepeatSources([]);
         if (state?.matchingEnabled && this.matchingAllowed && this.id === "ntwrk:nyc" && this.host.accountsFor) {
           // A read failure must retry the unit. Only a successful scan may retire an unbooked source.
@@ -1378,7 +1394,13 @@ export class NetworkRuntime {
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
+      // The run summaries keep the top pairs with their members and scores (summarizeRun): the pairs that name them go.
+      await tx`update network.matching_runs set summary = jsonb_set(summary, '{top}', coalesce((select jsonb_agg(t order by n) from jsonb_array_elements(summary->'top') with ordinality as x(t, n)
+          where not coalesce(t->'participants', '[]'::jsonb) @> to_jsonb(${id}::text)), '[]'::jsonb))
+        where app_id = ${app} and jsonb_typeof(summary->'top') = 'array' and position(${`"${id}"`} in (summary->'top')::text) > 0`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
+      // Profile suggestion batches go in this transaction too, not only when the membership row is removed later.
+      await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
@@ -1471,11 +1493,23 @@ export class NetworkRuntime {
    * out to the host (the inbox). An error leaves the rows in the queue for the next tick.
    */
   private async drainQueue() {
+    if (!(await this.stateCurrent())) { this.host.log(`[deliver] the stored state is newer than this replica's: the queue waits (${this.id})`); return; }
     let ds: Delivery[];
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
+    // A drain that stopped after the queue commit lost its in-memory status changes: copy finished statuses back from platform.outbound.
+    await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
+      where m.app_id = ${this.app.id} and m.direction = 'outbound' and m.status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[])
+      and o.id = m.id and o.app_id = m.app_id and o.status <> all(${`{${WAITING_STATUSES.join(",")}}`}::text[])`);
     await this.projectNotifications();
+  }
+
+  /** True when the stored Network state is the one this replica last loaded or saved (or none is stored). `tx`: lock it for share until the caller commits. */
+  async stateCurrent(tx?: SQL): Promise<boolean> {
+    const read = (t: SQL) => tx ? t`select xmin::text as v from network.network_state where id = ${this.pg.id} for share` : t`select xmin::text as v from network.network_state where id = ${this.pg.id}`;
+    const [r] = tx ? await read(tx) : await this.scoped(read);
+    return !r || r.v === this.pg.seen;
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
@@ -1511,7 +1545,8 @@ export class NetworkRuntime {
     const rows = ds.filter(d => d.status !== this.adapter.storedStatus && (!only || only.has(d.id)));
     if (!rows.length) return;
     await this.scoped(async tx => {
-      for (const d of rows) await tx`update network.messages set status = ${d.status} where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
+      for (const d of rows) await tx`update network.messages set status = coalesce((select o.status from platform.outbound o where o.id = ${d.id} and o.app_id = ${this.app.id}), ${d.status})
+        where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
     });
   }
 
@@ -1577,7 +1612,7 @@ export class NetworkRuntime {
   /** A unit that waits for the lock (an inbound message or a staff action), then delivery. */
   async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T, scheduling?: CalendarSchedulingTarget): Promise<T> {
     const out = await this.withSchedulingCalendar(scheduling, () => runStored(this.net, this.store, fn));
-    await this.deliver();
+    await this.deliver().catch(e => this.host.log(`[deliver] delivery after a committed unit failed (${this.id}): ${(e as Error).message}`));
     return out;
   }
 
@@ -1626,16 +1661,19 @@ export class NetworkRuntime {
       const memberContext = stepContext(membership, { type: "checkMember", memberAndModeExist: state !== null });
       if (memberContext.phase !== "CheckingLabels" || state === null) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
-      const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
+      const ids = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.map(m => m.id)];
+      const forbidden = [...ids, ...snapshot.members.flatMap(m => {
         const first = m.name.trim().split(/\s+/)[0] ?? "";
         // A shared first name is also the caller's own public name. Keep other full names private.
         const otherName = m.name.trim().toLowerCase() !== firstName.toLowerCase() ? [m.name] : [];
-        return m.id === memberId ? [m.id] : [m.id, ...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
+        return m.id === memberId ? [] : [...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
       const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
       // spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
-      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: safe(firstName) && safe(member.homeCity) });
+      // The caller's own first name is public to their agent: another member's name inside it ("Ann" in "Ann-Marie",
+      // a member named "Nyc") is not a leak. The home city is the service's own code (nyc, sf) and needs no check.
+      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: outputLeaks(firstName, { forbidden: ids, facts, contacts: true }).length === 0 });
       if (labels.phase !== "CheckingFacets") return null;
       const facets = snapshot.facets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
         !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value)).map(f => f.value);
@@ -1645,9 +1683,11 @@ export class NetworkRuntime {
       });
       if (ready.phase !== "ContextReady") return null;
       const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
+      // The Network may hold a minor whose person-level age is adult (a school sign, a member report): single-player too.
+      const minor = (await this.loadState())?.members.find(m => m.id === memberId)?.minor === true;
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: null, singlePlayer: contextSinglePlayer(present, present && canBeMatched(await accounts.lowestAge(e164, binding.person))),
+        activeItems: null, singlePlayer: contextSinglePlayer(present, present && !minor && canBeMatched(await accounts.lowestAge(e164, binding.person))),
       };
     });
   }
