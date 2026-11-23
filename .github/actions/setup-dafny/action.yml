@@ -1,0 +1,59 @@
+name: Set up pinned Dafny
+description: Install the verified, self-contained Dafny release and its bundled solver on Ubuntu x64.
+outputs:
+  source:
+    description: Where the verified release archive came from.
+    value: ${{ steps.install.outputs.source }}
+runs:
+  using: composite
+  steps:
+    - id: release
+      shell: bash
+      run: |
+        [[ "$RUNNER_OS" == Linux && "$RUNNER_ARCH" == X64 ]]
+        echo 'file=dafny-4.11.0-x64-ubuntu-22.04.zip' >> "$GITHUB_OUTPUT"
+        echo 'sha256=a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179' >> "$GITHUB_OUTPUT"
+    - name: Restore the pinned Dafny release archive
+      id: cache
+      continue-on-error: true
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ runner.temp }}/${{ steps.release.outputs.file }}
+        key: dafny-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.release.outputs.sha256 }}
+    - name: Verify and extract Dafny 4.11.0
+      id: install
+      shell: bash
+      env:
+        RELEASE_FILE: ${{ steps.release.outputs.file }}
+        RELEASE_SHA: ${{ steps.release.outputs.sha256 }}
+      run: |
+        archive="$RUNNER_TEMP/$RELEASE_FILE"
+        verified() { printf '%s  %s\n' "$RELEASE_SHA" "$1" | sha256sum --check --strict --status; }
+        download() {
+          curl --fail --silent --show-error --location --retry 2 --retry-max-time 30 \
+            --connect-timeout 8 --max-time 25 --remove-on-error --output "$archive.part" "$@" &&
+            verified "$archive.part" && mv -f -- "$archive.part" "$archive"
+        }
+        if [[ -f "$archive" ]] && verified "$archive"; then
+          source=cache
+        elif download "https://github.com/dafny-lang/dafny/releases/download/v4.11.0/$RELEASE_FILE"; then
+          source=release
+        else
+          echo '::warning::Dafny release download was unavailable or failed its checksum. Trying the official asset API.'
+          download -H 'Accept: application/octet-stream' \
+            https://api.github.com/repos/dafny-lang/dafny/releases/assets/286103254
+          source=asset-api
+        fi
+        directory=$(mktemp -d "$RUNNER_TEMP/dafny-release.XXXXXX")
+        unzip -q "$archive" -d "$directory"
+        "$directory/dafny/dafny" --version
+        echo "$directory/dafny" >> "$GITHUB_PATH"
+        echo "source=$source" >> "$GITHUB_OUTPUT"
+        echo "Verified Dafny release from $source"
+    - name: Save the verified Dafny release archive
+      if: steps.cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ runner.temp }}/${{ steps.release.outputs.file }}
+        key: dafny-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.release.outputs.sha256 }}

@@ -25,6 +25,7 @@ on:
       - 'pnpm-workspace.yaml'
       - '.nvmrc'
       - '.github/workflows/vibespec.yml'
+      - '.github/actions/setup-dafny/**'
   pull_request:
     paths:
       - 'spec/**'
@@ -48,6 +49,7 @@ on:
       - 'pnpm-workspace.yaml'
       - '.nvmrc'
       - '.github/workflows/vibespec.yml'
+      - '.github/actions/setup-dafny/**'
   workflow_dispatch:
     inputs:
       cold_formal_cache:
@@ -93,9 +95,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: dafny-lang/setup-dafny-action@be023fc606339d46ed6b077dcb8614d0279ded31 # v1
-        with:
-          dafny-version: '4.11.0'
+      - uses: ./.github/actions/setup-dafny
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
