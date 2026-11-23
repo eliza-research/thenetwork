@@ -480,8 +480,10 @@ const DECLINES_PENDING_SEND = new RegExp(
   String.raw`(?:(?:it|that)(?:\s+(?:to|with)\s+${PENDING_SWAP_RECIPIENT})?|${PENDING_SWAP_RECIPIENT}\s+(?:it|that|anything))` +
   String.raw`(?:\s+(?:yet|please|pls|any\s?more|now|after all))*\s*$`,
 );
-const CONTACT_RELAY_ITEM = String.raw`my\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)`;
-const PHOTO_RELAY_ITEM = String.raw`(?:this|that|the|my|these)\s+(?:photos?|pics?|pictures?|selfies?|images?)`;
+const CONTACT_RELAY_NAME = "phone number|number|phone|digits|cell|contact(?: info)?|email";
+const PHOTO_RELAY_NAME = "photos?|pics?|pictures?|selfies?|images?";
+const CONTACT_RELAY_ITEM = String.raw`my\s+(?:${CONTACT_RELAY_NAME})`;
+const PHOTO_RELAY_ITEM = String.raw`(?:this|that|the|my|these)\s+(?:${PHOTO_RELAY_NAME})`;
 const PRIVATE_RELAY_ITEM = new RegExp(String.raw`\b(?:${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "u");
 
 // Exempt a refusal only when the other item is the transfer verb's complete object.
@@ -513,6 +515,14 @@ const uncertainPrivateTransfer = (clauses: readonly string[]): boolean => clause
 const INCOMPLETE_SHARE_REFUSAL = new RegExp(SHARE_NEG.source + "\\s*$");
 const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 const RELAY_SENTENCE = /[.!?;…\n]+/;
+const PRIVATE_RELAY_OBJECT = String.raw`(?:(?:(?:my|the|this|that|these|a|any)\s+)?(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})|it|this|that|them|either|both|anything(?:\s+else)?)`;
+const CONTINUES_PRIVATE_REFUSAL = new RegExp(
+  String.raw`^\s*(?:(?:or|nor|neither)\b|(?:and|also|not|same\s+(?:for|with))\s+${PRIVATE_RELAY_OBJECT}\b|${PRIVATE_RELAY_OBJECT}\s+(?:either|neither|too|as well)\s*$)`,
+  "u",
+);
+const LATE_PRIVATE_RETRACTION = /^[,\s–—]*(?:(?:actually|wait|sorry)[,\s]+)?(?:no|wait|scratch that|cancel that|take that back|hold on|never ?mind|nvm|i(?:'ve| have)? changed my mind|(?:[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*\s*)+)(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$/iu;
+const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said|asks?|asked|(?:tells?|told)\s+(?:me|us))\s*$/iu;
+const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
 const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;
 
@@ -547,10 +557,29 @@ function refusesNumberSwap(clauses: readonly string[]): boolean {
 const relayClauses = (text: string): string[] => text.replace(SWAP_GO_AHEAD, " ").split(RELAY_CLAUSE);
 
 function refusesPrivateItem(text: string, otherItemRefusal: RegExp): boolean {
-  return text.split(RELAY_SENTENCE).some(sentence => !otherItemRefusal.test(sentence)
-    && relayClauses(sentence).some(clause => NEG.test(clause) || INCOMPLETE_SHARE_REFUSAL.test(clause)
+  const sentences = text.split(RELAY_SENTENCE);
+  // Punctuation can separate an object from its refusal without changing what the refusal covers.
+  return sentences.some((sentence, index) => otherItemRefusal.test(sentence)
+    ? CONTINUES_PRIVATE_REFUSAL.test(sentences[index + 1] ?? "")
+    : relayClauses(sentence).some(clause => NEG.test(clause) || INCOMPLETE_SHARE_REFUSAL.test(clause)
       || (SHARE_NEG.test(clause) && (PRIVATE_RELAY_REFERENCE.test(clause)
         || (PRIVATE_RELAY_ACTION.test(clause) && PRIVATE_RELAY_ITEM.test(clause))))));
+}
+
+function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean {
+  const end = request.index! + request[0].length;
+  return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
+}
+
+function retractsPrivateRequest(text: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
+  const end = request.index! + request[0].length;
+  if (text.slice(end).split(RELAY_SENTENCE).some(sentence => LATE_PRIVATE_RETRACTION.test(sentence))) return true;
+  return privateRequests.some(candidate => {
+    if (candidate.index! < end || candidate[0].toLowerCase() === request[0].toLowerCase() || reportsPrivateRequest(text, candidate)) return false;
+    const lead = text.slice(end, candidate.index!).split(RELAY_SENTENCE).at(-1)!;
+    const correction = PRIVATE_RELAY_CORRECTION.exec(lead);
+    return correction !== null && DIRECT_RELAY_LEAD.test(lead.slice(correction[0].length));
+  });
 }
 
 // A simple third-person attribution introduces a report through the next sentence boundary.
@@ -580,7 +609,8 @@ export function parseRelayRequest(text: string): RelayRequest {
   const start = own.length - own.trimStart().length;
   const contacts = [...spoken.matchAll(CONTACT_REQ)];
   const photos = [...spoken.matchAll(PHOTO_REQ)];
-  const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!));
+  const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!))
+    && !reportsPrivateRequest(spoken, candidate);
   const contact = contacts.find(direct);
   const privateRequest = contact ?? photos.find(direct);
   if (privateRequest) {
@@ -589,6 +619,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const hedged = HEDGE.test(low) || uncertainPrivateTransfer(clauses) || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
+      || retractsPrivateRequest(spoken, privateRequest, [...contacts, ...photos])
       || (!!contact && refusesNumberSwap(clauses));
     return privateRelayRequestAllowed(refused, hedged)
       ? { kind: contact ? "contact_share" : "photo" } : { kind: "none" };

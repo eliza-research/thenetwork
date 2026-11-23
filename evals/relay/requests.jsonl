@@ -133,3 +133,26 @@
 {"text": "Don't send him my photo. Send him my number tomorrow.", "want": "none"}
 {"text": "Don't send him my number. If you want to, send him my photo.", "want": "none"}
 {"text": "Don't send him my number. Envíale mi foto.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Or my number.", "want": "none"}
+{"text": "Send him my photo. Don't send my number. Or this photo.", "want": "none"}
+{"text": "Don't send my photo. My number neither. Send him my number.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Same for my number.", "want": "none"}
+{"text": "Send him my number. Scratch that.", "want": "none"}
+{"text": "Send him my number. Wait.", "want": "none"}
+{"text": "Send him my photo. Actually, no.", "want": "none"}
+{"text": "Send him my photo — actually, no.", "want": "none"}
+{"text": "Send him my photo, hold on.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. ❌", "want": "none"}
+{"text": "Send him my number. ❌", "want": "none"}
+{"text": "Send him my photo. 🚫", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Instead, send her my email.", "want": "none"}
+{"text": "Send him my number, instead send her my email.", "want": "none"}
+{"text": "Send him my number, Ana said.", "want": "none"}
+{"text": "Send him my photo, Ana said.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. 👍", "want": "contact_share"}
+{"text": "Don't send my photo. Could you kindly send him my number?", "want": "contact_share"}
+{"text": "Don't send my number. Would you send him my photo?", "want": "photo"}
+{"text": "Don't send my photo. Saturday works. Send him my number.", "want": "contact_share"}
+{"text": "Scratch that. Send him my number.", "want": "contact_share"}
+{"text": "Send him my number. Ana says, scratch that.", "want": "contact_share"}
+{"text": "Send him my photo, Ana said. Please send him my number.", "want": "contact_share"}
