@@ -120,6 +120,11 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
     const afterFeedback = w.net.exportState();
     const settled = afterFeedback.opps.find(o => o.id === source.id)!;
     expect(settled).toMatchObject({ finalized: true, feedbackFrom: ids });
+    if (evidence === "staged_booking") {
+      const history = (id: string) => afterFeedback.members.find(member => member.id === id)?.availHistory;
+      expect(history("a")).toEqual([{ at, outcome: "attended" }]);
+      expect(history("c")).toBeUndefined();
+    }
     if (evidence === "old_revision") {
       settled.scheduleRevision = 1;
       w.net.importState(afterFeedback);
@@ -192,5 +197,59 @@ test("friends crew reach fills only compatible seats in exposure order", async (
   expect(w.log("organizing_reach").map(event => event.detail)).toEqual([
     { planId: session?.plan?.id, host: "crew-a", max: 10, reserved: 2, added: 2 },
   ]);
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+});
+
+// spec/meetingSettlement.md, "A settled Friends plan teaches the actual booked time"
+test("settled Friday attendance supports a new Friends review once at the actual booked time", async () => {
+  const activity = "group_run";
+  const venue = PLAN_VENUES.find(v => v.activities.includes(activity) && v.hours.weekday[1] >= 20)!;
+  const ids = ["a", "b", "c"];
+  const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30,
+    area: venue.area, interests: ["running", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+    plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
+  for (const id of ids) w.facets.push({ id: id + ":verified", memberId: id, kind: "fact", value: "Verified",
+    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  await w.onboard(...ids);
+
+  const at = Date.UTC(2026, 9, 9, 23);
+  const now = Date.UTC(2026, 9, 15, 13);
+  const future = at + 7 * DAY;
+  const source = w.net["submitPlan"]({ id: "original-run", city: "nyc", activityId: activity, venueId: venue.id,
+    place: { name: venue.name, area: venue.area }, window: { start: at - HOUR, end: at },
+    invited: ids, alternates: [], hostId: "a", partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3,
+    probeDeadline: at - HOUR, score: 0.8, u: {}, familiar: {}, createdAt: at - DAY, category: "social",
+  }, at - DAY);
+  const state = w.net.exportState();
+  const completed = state.opps.find(o => o.id === source.id)!;
+  completed.stage = "done";
+  completed.meetingAt = at;
+  completed.status = ids.map(id => [id, "yes"]);
+  completed.bookedAt = Object.fromEntries(ids.map(id => [id, at - HOUR]));
+  const prior = Array.from({ length: 39 }, (_, i) => ({ at: at - (365 + 39 - i) * DAY, outcome: "accepted" as const }));
+  for (const member of state.members) member.availHistory = [...prior, { at, outcome: "accepted" }];
+  w.net.importState(state);
+  const receipts = new Map<string, InitialInviteReceipt>();
+  for (const id of ids) {
+    receipts.set(meetingFeedbackKey(source.id, id, 0), { kind: "accepted", at: at + 3 * HOUR });
+    receipts.set(bookingNoticeReceiptKey(source.id, id, 0), { kind: "accepted", at: at - HOUR });
+  }
+  w.net.init({ ...w.ctx(), initialInviteReceipt: id => receipts.get(id) });
+  w.clock.set(at + 4 * HOUR);
+  for (const id of ids) await w.say(id, "We all came. It was great. I'd do it again.");
+  await w.net.tick(w.clock.now());
+  const persisted = w.net.exportState();
+  const settled = persisted.opps.find(o => o.id === source.id)!;
+  expect(settled).toMatchObject({ finalized: true, settledAttendance: { a: "Attended", b: "Attended", c: "Attended" } });
+  const expected = ids.map(() => [...prior.slice(1), { at, outcome: "accepted" }, { at, outcome: "attended" }]);
+  expect.soft(persisted.members.map(m => m.availHistory)).toEqual(expected);
+  w.restart();
+  w.clock.set(now);
+  await w.net.tick(now);
+  const restarted = w.net.exportState();
+  expect.soft(restarted.members.map(m => m.availHistory)).toEqual(expected);
+  expect(restarted.opps.find(o => o.plan?.repeatOf === source.id)).toMatchObject({
+    generator: "friends_repeat", stage: "review", participants: ids, plan: { window: { start: future } },
+  });
   expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
 });
