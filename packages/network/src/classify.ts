@@ -1118,8 +1118,8 @@ const ORDINAL_POSITION: Readonly<Record<string, number>> = {
 const ORDINAL_WORD = String.raw`(?:${Object.keys(ORDINAL_POSITION).join("|")})\b`;
 const ORDINAL_SUFFIX = /^\s+(?:one|option|time|slot)\b/;
 const ORDINAL_ITEM = String.raw`(?:the\s+)?${ORDINAL_WORD}(?:\s+(?:one|option|time|slot)\b)?`;
-const ORDINAL_JOIN = String.raw`(?:\s*(?:,\s*(?:and\s+|or\s+)?|\band\b|\bor\b|&|\/)\s*)`;
-const ORDINAL_AFFIRMATIVE = String.raw`\s+(?:either\s+)?(?:works?|will work|is (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`;
+const ORDINAL_JOIN = String.raw`(?:\s*(?:,\s*(?:and\s+|or\s+)?|\band\b|\bor\b|&|\/)\s*|\s+)`;
+const ORDINAL_AFFIRMATIVE = String.raw`\s+(?:either\s+)?(?:works?|will work|(?:is|are) (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`;
 const DIRECT_ORDINAL = new RegExp(
   String.raw`(?:^|[.,;!]\s*|\bbut\s+)\s*(?<items>${ORDINAL_ITEM}(?:${ORDINAL_JOIN}${ORDINAL_ITEM})*)(?:(?<affirmative>${ORDINAL_AFFIRMATIVE})|(?=${OFFERED_TIME_REFUSAL}))`,
   "dg",

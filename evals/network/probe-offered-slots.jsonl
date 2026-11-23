@@ -164,3 +164,13 @@
 {"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"Sat and Sun please.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Sat or Sun are fine.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"the 2nd 3rd either work","answer":"yes","keys":["b","c"]}
+{"text":"the 1st 2nd 3rd either work","answer":"yes","keys":["a","b","c"]}
+{"text":"the 2nd 3rd work","answer":"yes","keys":["b","c"]}
+{"text":"the first second either work","answer":"yes","keys":["a","b"]}
+{"text":"the 2nd 3rd don't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"the 2nd 3rd don't work, Sunday works","answer":"yes","keys":["c"]}
+{"text":"the 2nd and 3rd are good","answer":"yes","keys":["b","c"]}
+{"text":"the first and second are good","answer":"yes","keys":["a","b"]}
+{"text":"the 2nd 3rd are good","answer":"yes","keys":["b","c"]}
+{"text":"the 2nd and 3rd are fine","answer":"yes","keys":["b","c"]}
