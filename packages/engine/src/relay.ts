@@ -553,7 +553,7 @@ const RELAY_SENTENCE = new RegExp(`[${RELAY_SENTENCE_MARKS}]+`);
 const RELAY_SENTENCE_TEXT = new RegExp(`[^${RELAY_SENTENCE_MARKS}]+`, "g");
 const PRIOR_ASSENT_NAME = String.raw`(?!(?:i|we|you|me|us|it|this|that|she|he|they|them|him|her)\b)[\p{L}][\p{L}'-]{1,30}`;
 const PRIOR_ASSENT_ACTOR = String.raw`(?:she|he|they|them|him|her|my\s+(?:match|date)|${PRIOR_ASSENT_NAME})`;
-const PRIOR_ASSENT_ACTION = String.raw`(?:agrees?|approves?|says?\s+(?:yes|ok(?:ay)?|so)|asks?|requests?)`;
+const PRIOR_ASSENT_ACTION = String.raw`(?:agrees?(?:\s+to\s+(?:it|this|that))?|approves?(?:\s+(?:it|this|that))?|says?\s+(?:yes|ok(?:ay)?|so)|asks?(?:\s+(?:me|us))?|requests?)`;
 const PRIOR_ASSENT_ITEM = String.raw`(?:\s+for\s+(?:it|me|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM}))?`;
 const PRIOR_ASSENT_CONDITIONS = [
   String.raw`${PRIOR_ASSENT_ACTOR}\s+(?:(?:has|have)\s+to|needs?\s+to|must|has\s+got\s+to)\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,

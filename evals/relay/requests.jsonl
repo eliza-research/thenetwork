@@ -404,3 +404,6 @@
 {"text": "Wait for Ana to agree, but Ari said “I am at work.” Share my number with him.", "want": "none"}
 {"text": "Wait for Ari to agree. Ari has already agreed!? Share my number with him.", "want": "none"}
 {"text": "Wait for Ari to agree. Ari has already agreed. ? Share my number with him.", "want": "none"}
+{"text": "He has to ask me first. Share my number with him.", "want": "none"}
+{"text": "Ana must approve it first. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to agree to it. Share my number with him.", "want": "none"}
