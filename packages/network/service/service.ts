@@ -126,12 +126,12 @@ import {
 } from "../../platform/src/invite-links.ts";
 import { SeedInvitations } from "../../platform/src/seed-invitations.ts";
 import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
-import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
+import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type ConsentEvent, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
-import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
+import type { Membership, PeopleStore, PendingText, Person, SignupAge } from "../../platform/src/store.ts";
 import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
@@ -1260,6 +1260,7 @@ export class NetworkService implements RuntimeHost {
       findInvitation: (app, token, at, verifiedPhone) => this.referralFor(app, token, at, verifiedPhone),
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       commitReferredJoin: ctx => this.commitReferredJoin(ctx),
+      commitBrowserSignup: (ctx, consent) => this.commitBrowserSignup(ctx, consent),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
       onForget: async (ctx, reason) => {
         // The app's photos go first (leave, delete everything, a new owner of the number).
@@ -1326,8 +1327,27 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
-    if (ctx.signupAge) await this.removeMinorMedia(ctx.person.id);
     if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge })) throw new JoinReviewRequired();
+    await this.welcomeBrowserJoin(rt, ctx);
+  }
+
+  private async commitBrowserSignup(ctx: JoinHookContext & { signupAge: SignupAge }, consent: ConsentEvent) {
+    const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
+    if (!rt || ctx.membership.state !== "active") throw new JoinReviewRequired();
+    await rt.scoped(async tx => {
+      const store = new PgPeopleStore(tx);
+      const phoneHash = this.accounts.phoneHash(ctx.e164);
+      if (!await store.admitMembership(ctx.membership, consent, phoneHash, tx)) throw new JoinReviewRequired();
+      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx })) throw new JoinReviewRequired();
+      if (!await store.saveSignupAge(ctx.membership, ctx.e164, phoneHash, ctx.signupAge, tx)) throw new JoinReviewRequired();
+      // The birth-derived date and app rows roll back if the existing minor-media cleanup fails.
+      await this.removeMinorMedia(ctx.person.id);
+    });
+    // Enrollment is durable. The ordinary inbound path can still welcome a new member if projection fails.
+    await this.welcomeBrowserJoin(rt, ctx).catch(() => this.log(`[join] browser welcome waits for inbound (${rt.id})`));
+  }
+
+  private async welcomeBrowserJoin(rt: NetworkRuntime, ctx: JoinHookContext) {
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
     await this.learnJoinProfile(rt, ctx.person.id, ctx.e164, ctx.membership);
   }
@@ -1370,13 +1390,15 @@ export class NetworkService implements RuntimeHost {
       await accounts.store.putMembership(ctx.membership);
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
-      if (ctx.signupAge) await accounts.store.saveSignupAge(ctx.person.id, ctx.signupAge);
       if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
       if ("kind" in referral) {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
       }
+      if (ctx.signupAge) {
+        if (!await new PgPeopleStore(tx).saveSignupAge(ctx.membership, ctx.e164, accounts.phoneHash(ctx.e164), ctx.signupAge, tx)) throw new JoinReviewRequired();
+        await this.removeMinorMedia(ctx.person.id);
+      }
     });
-    if (ctx.signupAge) await this.removeMinorMedia(ctx.person.id);
     // The token is consumed and attribution is durable. A failed welcome can retry independently,
     // and the joined profile follows whichever call sends the welcome.
     const project = memberReferral ? this.projectInvitationJoin(rt, ctx.membership.memberId) : this.projectSeedWelcome(rt, ctx.membership.memberId);

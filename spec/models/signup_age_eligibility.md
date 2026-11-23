@@ -10,6 +10,8 @@ The model covers one verified person and their shared floor. `enroll` is the pri
 
 An additional app checks the effective age for admission. Its durable member age comes from independent evidence. The separate age projection keeps a browser-only minor restriction while the member is under 18 and can release it on time in both apps. A signed test covers browser signup followed by enrollment in another app.
 
+Acceptance means the transaction committed the current verified membership and Network member. A failed attempt leaves any earlier eligibility date and initial age unchanged. The media cleanup occurs before the transaction commits. Welcome and profile projection use the accepted membership after commit.
+
 ```quint
 // quint-check: max-steps=14 max-samples=4000 verify-steps=8
 // quint-witness: witness_birthdayAdvances birthdayAdvancesTest
@@ -71,5 +73,13 @@ module signup_age_eligibility {
   run additionalAppAgeAdvancesTest = init.then(enroll(true, true, 17, 2)).then(enrollAdditionalApp(25))
     .expect(matchingAge(s) == 17 and s.appRecordedAge == 25).then(advance).then(advance)
     .expect(not(witness_additionalAppAgeAdvances))
+
+  run failedSignupLeavesPrivateAgeUnchangedTest = init.then(enroll(true, false, 17, 2))
+    .expect(s.eligibleAt == -1 and s.signupAge == -1).then(enroll(true, true, 17, 2))
+    .then(enroll(true, false, 16, 3)).expect(s.eligibleAt == 2 and s.signupAge == 17)
+
+  run onlyAcceptedLaterSignupDelaysEligibilityTest = init.then(enroll(true, true, 17, 2))
+    .then(enroll(true, true, 16, 3)).then(enroll(true, true, 17, 1))
+    .expect(s.eligibleAt == 3 and s.signupAge == 16)
 }
 ```

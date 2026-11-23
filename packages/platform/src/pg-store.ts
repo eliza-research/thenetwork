@@ -2,6 +2,7 @@
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { confirmedUnderage, minMemberAge, signupAgeAt, textUseAllowedAtAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
+import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { rateCounterCutoff } from "../../core/src/generated/platformRetention.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -109,12 +110,21 @@ export class PgPeopleStore implements PeopleStore {
       from platform.signup_eligibility where person_id = ${personId}::uuid`;
     return saved && signupAgeAt(saved.initial_minor_age, saved.eligible_at.getTime(), now);
   }
-  async saveSignupAge(personId: string, age: SignupAge, tx = this.sql) {
-    await tx`insert into platform.signup_eligibility (person_id, initial_minor_age, eligible_at)
-      values (${personId}::uuid, ${age.initialMinorAge}, ${ts(age.eligibleAt)})
-      on conflict (person_id) do update set
-        initial_minor_age = least(platform.signup_eligibility.initial_minor_age, excluded.initial_minor_age),
-        eligible_at = greatest(platform.signup_eligibility.eligible_at, excluded.eligible_at)`;
+  async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, transaction?: SQL): Promise<boolean> {
+    if (!browserSignupMemberAllowed(member.state)) return false;
+    const save = async (tx: SQL) => {
+      if (!await this.enrollmentOwnerAllowed(tx, member.personId, e164, phoneHash)) return false;
+      const [current] = await tx`select member_id from platform.memberships where person_id = ${member.personId}::uuid
+        and app_id = ${member.app} and member_id = ${member.memberId} and state = ${member.state} and review is null for update`;
+      if (!current) return false;
+      await tx`insert into platform.signup_eligibility (person_id, initial_minor_age, eligible_at)
+        values (${member.personId}::uuid, ${age.initialMinorAge}, ${ts(age.eligibleAt)})
+        on conflict (person_id) do update set
+          initial_minor_age = least(platform.signup_eligibility.initial_minor_age, excluded.initial_minor_age),
+          eligible_at = greatest(platform.signup_eligibility.eligible_at, excluded.eligible_at)`;
+      return true;
+    };
+    return transaction ? save(transaction) : this.sql.begin(save);
   }
   private ageTail: Promise<unknown> = Promise.resolve();
   private ageCleanup?: (phoneHash: string, age: number) => Promise<void>;
@@ -224,21 +234,22 @@ export class PgPeopleStore implements PeopleStore {
     const [owner] = await tx<{ phone_hash: string | null; lowest_age: number | null; verified: boolean }[]>`select p.phone_hash,least(p.lowest_age,f.lowest_age) as lowest_age,
         exists (select 1 from platform.phone_identities ph where ph.person_id=p.id and ph.hold is null
           ${e164 === undefined ? tx`` : tx`and ph.e164=${e164}`}) as verified
-      from platform.people p left join platform.age_floor f on f.phone_hash=p.phone_hash where p.id=${personId}::uuid and p.deleted_at is null`;
+      from platform.people p left join platform.age_floor f on f.phone_hash=p.phone_hash
+      where p.id=${personId}::uuid and p.deleted_at is null for update of p`;
     const banned = !!owner && await this.isBanned(phoneHash ?? owner.phone_hash ?? "", personId, tx);
     return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned) && !confirmedUnderage(owner?.lowest_age ?? -1);
   }
 
-  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, signupAge?: SignupAge): Promise<boolean> {
-    return this.sql.begin(async tx => {
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, transaction?: SQL): Promise<boolean> {
+    const admit = async (tx: SQL) => {
       if (!await this.enrollmentOwnerAllowed(tx, m.personId, consent.e164, phoneHash)) return false;
       await tx`delete from platform.suppression where phone_hash=${phoneHash}`;
       await this.putMembership(m, tx);
       await this.addConsent(consent, tx);
-      if (signupAge) await this.saveSignupAge(m.personId, signupAge, tx);
       await tx`update platform.sessions set person_id=${m.personId}::uuid where e164=${consent.e164} and person_id is null`;
       return true;
-    });
+    };
+    return transaction ? admit(transaction) : this.sql.begin(admit);
   }
 
   async addConsent(e: ConsentEvent, db = this.sql) {

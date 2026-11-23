@@ -161,6 +161,8 @@ export interface AccountHooks {
   findInvitation?(app: AppId, token: string, at: number, verifiedPhone: string): Promise<EnrollmentReferral | undefined>;
   /** Commit the referred membership, opt-in, session attachment, Network member and invitation together. */
   commitReferredJoin?(ctx: JoinHookContext & { referral: EnrollmentReferral }): Promise<void>;
+  /** Commit a browser minor's membership, Network member and private eligibility together. */
+  commitBrowserSignup?(ctx: JoinHookContext & { signupAge: SignupAge }, consent: ConsentEvent): Promise<void>;
   /** Create the network member (the service mounts this). A throw undoes the join. */
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
@@ -506,9 +508,11 @@ export class Accounts {
       joinedAt: at, leftAt: null,
     };
     const referredJoin = ageCheck.referred && referral;
-    if (!referredJoin) {
-      const consent = { e164: who.e164, app: app.id, state: "opted_in" as const, source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
-      if (!await this.store.admitMembership(membership, consent, this.phoneHash(who.e164), signupAge)) return { ok: false, error: "review" };
+    const commitBrowserSignup = signupAge && this.hooks.commitBrowserSignup;
+    const phoneHash = this.phoneHash(who.e164);
+    const optIn: ConsentEvent = { e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
+    if (!referredJoin && !commitBrowserSignup) {
+      if (!await this.store.admitMembership(membership, optIn, phoneHash)) return { ok: false, error: "review" };
     }
     let hook: { ok: true } | { ok: false; error: unknown };
     try {
@@ -517,20 +521,23 @@ export class Accounts {
         recordedAge: signupAge ? null : lowestAge(recordedAge, known.independent) ?? null, input, signupAge,
       };
       if (referredJoin) await this.hooks.commitReferredJoin!({ ...ctx, referral: referredJoin });
-      else await this.hooks.onJoin?.(ctx);
+      else if (signupAge && commitBrowserSignup) await commitBrowserSignup({ ...ctx, signupAge }, optIn);
+      else {
+        await this.hooks.onJoin?.(ctx);
+        if (signupAge && !await this.store.saveSignupAge(membership, who.e164, phoneHash, signupAge)) throw new JoinReviewRequired();
+      }
       hook = { ok: true };
     } catch (e) {
       hook = { ok: false, error: e };
     }
     const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
     if (result.phase === "JoinHookFailed" && !hook.ok) {
-      if (hook.error instanceof JoinReviewRequired) return { ok: false, error: "review" };
-      if (referredJoin) {
-        if (hook.error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
-      } else {
+      if (!referredJoin && !commitBrowserSignup && (signupAge || !(hook.error instanceof JoinReviewRequired))) {
         await this.store.forgetMembership(person.id, app.id, at, membership.memberId);
         await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
       }
+      if (hook.error instanceof JoinReviewRequired) return { ok: false, error: "review" };
+      if (referredJoin && hook.error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
       throw hook.error;
     }
     if (result.phase !== "Created") return { ok: false, error: "invalid" };
