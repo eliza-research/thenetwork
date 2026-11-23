@@ -99,6 +99,7 @@
 {"text":"I'm 12 and my record collection","minor":false,"declined":false}
 {"text":"I'm 12.5 y.o., in two years","minor":false,"declined":false}
 {"text":"I'm 15 and a quarter miles away","minor":false,"declined":false}
+{"text":"I'm 17 and a quarter years old tomorrow","minor":false,"declined":false}
 {"text":"I'm 12 and a half years old","minor":true,"declined":true,"age":12}
 {"text":"I'm 11 1/2 years old","minor":true,"declined":true,"age":11}
 {"text":"I'm 12 and 3 months old","minor":true,"declined":true,"age":12}
