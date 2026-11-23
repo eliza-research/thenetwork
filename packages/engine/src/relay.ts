@@ -537,7 +537,7 @@ const RELAY_UNPUNCTUATED_DOUBT =
 const COLLOQUIAL_RETRACTION = /^[,\s–—]*(?:lol|haha|ok(?:ay)?|oh|ugh|nah|hmm)[,\s]+(?:never ?mind|nvm|wait\s*[,–—]\s*no)\b(\s*[,;:–—]\s*|\s*)/iu;
 const COLLOQUIAL_RETRACTION_REASON = /^(?:i|we|he|she|they)\b/iu;
 const COLLOQUIAL_RETRACTION_ITEM = new RegExp(
-  String.raw`^(?:(?:my|the|this|that|these)\s+)?(?:(?<contact>${CONTACT_RELAY_NAME})|${PHOTO_RELAY_NAME})\b\s*(?:[,;:–—]|$)`,
+  String.raw`^(?:about\s+)?(?:(?:my|the|this|that|these)\s+)?(?:(?<contact>${CONTACT_RELAY_NAME})|${PHOTO_RELAY_NAME})\b\s*(?:[,;:–—]|$)`,
   "iu",
 );
 const RELAY_STOP_SYMBOL = String.raw`[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*`;
