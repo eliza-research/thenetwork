@@ -218,6 +218,9 @@ test("fresh Slop onboarding preserves the member's age and matching tags across 
     'Translate this: “I’m underage.”',
     'Caption for the photo: "Hello. Age: 15',
     '“I’m in seventh grade.”',
+    "He said 'my parents' place is too far. I'm 12 years old.'",
+    'He said ‘my parents’ place is too far. I’m 12 years old.’',
+    "She said 'cause I'm underage'",
   ]) {
     const quoted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
     expect(quoted.state, text).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
@@ -228,10 +231,14 @@ test("fresh Slop onboarding preserves the member's age and matching tags across 
     'Yesterday, I told her “I’m underage.”',
     'I’ve literally said “I’m underage.”',
     'Yesterday I told her “I’m in 7th grade.”',
+    "I replied late 'cause I'm underage.",
+    'I replied late ’cause I’m underage.',
+    'I replied late, ’cause I’m underage.',
+    "She said 'we are friends' and I'm underage.",
   ]) {
-    const repeated = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
-    expect(repeated.state, text).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
-    expect(repeated.tags).toEqual([]);
+    const restricted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
+    expect(restricted.state, text).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
+    expect(restricted.tags).toEqual([]);
   }
 
   const own = slopOnboarding.read(fresh.state, "I'm in 7th grade.", [], { now, age: 29 });
@@ -240,10 +247,15 @@ test("fresh Slop onboarding preserves the member's age and matching tags across 
 }, 60_000);
 
 test.each([
-  ["third-party nested quote", "+17185550182", 'She said "For a meme: ‘I’m underage.’"'],
-  ["translation of quoted dialogue", "+17185550183", 'Translate this: “I’m underage.”'],
-  ["unfinished caption with an exact age", "+17185550184", 'Caption for the photo: "Hello. Age: 15'],
-])("a signed review preserves adult matching and age for %s", async (scenario, phone, text) => {
+  ["third-party nested quote", "+17185550182", 'She said "For a meme: ‘I’m underage.’"', 29, false],
+  ["translation of quoted dialogue", "+17185550183", 'Translate this: “I’m underage.”', 29, false],
+  ["unfinished caption with an exact age", "+17185550184", 'Caption for the photo: "Hello. Age: 15', 29, false],
+  ["a possessive in reported speech", "+17185550185", "He said 'my parents' place is too far. I'm 12 years old.'", 29, false],
+  ["a direct disclosure after an elision", "+17185550186", "I replied late 'cause I'm underage.", 17, true],
+  ["a direct disclosure after a closing quote", "+17185550187", "She said 'we are friends' and I'm underage.", 17, true],
+  ["reported speech beginning with an elision", "+17185550188", "She said 'cause I'm underage'", 29, false],
+  ["a direct disclosure after a comma and elision", "+17185550189", "I replied late, ’cause I’m underage.", 17, true],
+])("a signed review attributes age evidence for %s", async (scenario, phone, text, floor, minor) => {
   const app = APPS.friends;
   await service.accounts.invite(app, phone);
   const person = (await service.accounts.personFor(phone))!;
@@ -255,7 +267,7 @@ test.each([
   expect((await post(turn(scenario, phone, text, app.id))).status).toBe(200);
   const stored = (await service.runtimeFor(app.id)!.pg.load())?.members.find(row => row.id === joined.membership.memberId);
   const state = { floor: await service.accounts.lowestAge(phone, person), minor: stored?.minor, signal: stored?.minorSignal };
-  expect(state, text).toEqual({ floor: 29, minor: false, signal: false });
+  expect(state, text).toEqual({ floor, minor, signal: minor });
 }, 60_000);
 
 // spec/travelPresence.md, "Tell the Network my travel dates"
