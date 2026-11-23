@@ -252,6 +252,32 @@ test.each([
 }, 60_000);
 
 test.each([
+  "Send him my number. He can have it if he asks.",
+  "Send him my number. Give it to him if he asks.",
+  "Send him my number. Give it to him when dinner is ready.",
+  "Send him my number. Send it to him after I finish work.",
+  "Send him my number. He can have it once Ari approves.",
+  "Send him my number. Only give it to him if he asks.",
+  "Send him my number. Give it to him on Friday.",
+  "Send him my number. Thanks. Give it to him once I confirm.",
+  "Send him my number. She can have it when she asks.",
+  "Send him my number. He can have it unless he says no.",
+])("a condition in the next sentence cannot arm or complete a signed number swap: %s", async text => {
+  const id = "conditional-next-sentence-" + randomUUID();
+  await resetSwapMatch(id);
+  const before = await sharesQueued();
+  const conditional = await post(await ask("bo", id + "-conditional", text));
+  expect(conditional.status).toBe(200);
+  const requested = await conditional.json();
+  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
+  const counterpart = await post(await ask("ari", id + "-counterpart", "Send Bo my number."));
+  expect(counterpart.status).toBe(200);
+  expect({ requested, pending, counterpart: await counterpart.json(), newShares: await sharesQueued() - before })
+    .toMatchObject({ requested: { decision: "none", delivered: false }, pending: 0,
+      counterpart: { decision: "hold", delivered: false }, newShares: 0 });
+}, 60_000);
+
+test.each([
   "I would not give Ari my number",
   "I could not give Ari my number",
   "I did not give Ari my number",
@@ -455,6 +481,17 @@ test.each([
   { text: "Send him my number. Ok nevermind about the number.", shares: false },
   { text: "Send him my number. Ok nevermind about the photo.", shares: true },
   { text: "Send him my number. Ok nevermind about dinner.", shares: true },
+  { text: "Send him my number. He can have it if he asks.", shares: false },
+  { text: "Send him my number. Give it to him if he asks.", shares: false },
+  { text: "Send him my number. Give it to him when dinner is ready.", shares: false },
+  { text: "Send him my number. Give it to him after dinner.", shares: false },
+  { text: "Send him my number. Send it to him after I finish work.", shares: false },
+  { text: "Send him my number. He can have it once Ari approves.", shares: false },
+  { text: "Send him my number. Give it to him, and tell me if he asks.", shares: true },
+  { text: "Send him my number. Give it to him, and tell me when dinner is ready.", shares: true },
+  { text: "Send him my number. Dinner will be ready after I finish work.", shares: true },
+  { text: "Send him my number. Let me know if he asks.", shares: true },
+  { text: "Send him my number. He asked if he can have it.", shares: true },
   { text: "Send him my number. Don't send my photo. Or my number.", shares: false },
   { text: "Don't send my photo. My number neither. Send him my number.", shares: false },
   { text: "Send him my number. Don't send my photo. Same goes for my cell.", shares: false },
