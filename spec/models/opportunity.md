@@ -20,9 +20,16 @@ The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a
 
 The same declined action covers a standalone “afraid not,” “not a chance,” or
 “no chance.” A qualified use of those words stays in the unresolved action.
-The probe reader also removes explicitly excluded options. Its fallback
-selection keeps any stated time-of-day limit before it calls the modeled
-answer action.
+The probe reader also removes explicitly excluded options. A trailing
+refusal to the offered time applies to each time in its list, including
+its ordinal position, clock or part of the day. A daypart that restates
+an exact clock keeps that clock and its named day together. A scheduling
+reason can follow the refusal. A separate affirmative clause can select
+another offered time. A broad yes with “both” in the refused
+list leaves the time choice open when the member chooses no other
+time. Fallback selection keeps any stated time-of-day limit before
+calling the modeled answer action. The signed booking test checks the
+selected start.
 
 A negative or conditional cancellation uses the same booked-reply guard. Exact local start and date-only selection use the one-booking rule in the executable spec. The standalone state machine uses deterministic traces for the special interpretations and abstracts from a second simultaneous booked reply. A [number-swap withdrawal](../opportunityLifecycle.md#a-number-swap-refusal-does-not-decline-the-booked-meeting) keeps the booking unless the member also refuses attendance. The relay model owns the transfer state. The trace below follows the booked slot and makes sure the counterpart receives cancellation only after the attendance refusal.
 
@@ -1307,6 +1314,15 @@ module opportunity {
       .then(answer("a", "offered_time_choice", ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw == NO_AW and stat(s, "o2", "a") == "available" and safety)
       .expect(not(witness_explicitTimeChoice))
+
+  run joinedTimeRefusalKeepsProbeOpenTest =
+    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "timed_slot_ambiguity", ALL_OPEN)).then(settled)
+      .expect(mm(s, "a").aw.timeChoice and stat(s, "o2", "a") == "probing"
+        and op(s, "o2").accepted.get("a") == "" and op(s, "o2").revealSent == Set() and safety)
+      .then(answer("a", "offered_time_choice", ALL_OPEN)).then(settled)
+      .expect(mm(s, "a").aw == NO_AW and stat(s, "o2", "a") == "available" and safety)
 
   // SD-075 (791ff6a, opportunity-withdraw-yes.test.ts): a yes, then "actually no, sorry" with no slot: the
   // yes is taken back; b replaces a; b and c say yes; the names go to b and c only.

@@ -8,14 +8,20 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. An operative condition before or after the request can supply uncertainty to the private request rule. A prior condition can still apply when a separate clause follows it or it names a private item that must come first. Reports, quotations, instructions to proceed and unrelated remarks supply no such evidence. A clear statement about the same named actor, action, and any specified item can settle a prior request to wait. The reader keeps the stated item and recipient words when it compares the condition with the completion. If the condition explicitly names the transfer recipient, the reader also compares that recipient with the request. A question leaves the condition open. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. An operative condition before or after the request can supply uncertainty to the private request rule. A prior condition can still apply when a separate clause follows it or it names a private item that must come first. Reports, quotations, instructions to proceed and unrelated remarks supply no such evidence. A clear statement about the same named actor, action, and any specified item can settle a prior request to wait. The reader keeps the stated item and recipient words when it compares the condition with the completion. If the condition explicitly names the transfer recipient, the reader also compares that recipient with the request. A question leaves the condition open. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. The reader checks a complete recipient against the selected match, including a recipient after a dash or the words “over to.” An unresolved destination after a question, in a quotation, or in a separate directive leaves the private request unapproved. An ordinary courtesy or an independent scheduling statement can follow a complete request. Phone swaps and durable queue acceptance remain separate.
 
-The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message because it mentions an upcoming minor birthday. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader; this model takes the evidence category as input.
+The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message when the sender gives a near-birthday or current school-year cue. The shell checks the cue's speaker and excludes another person's quoted or reported words, a hypothetical and a complete adult school role. A teacher's attribution can explain the speaker's own grade. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader. The model takes the evidence category as input.
+
+### Story: Keep an estimate in the relay item
+
+A member's own estimate can make one message unsafe to relay. The member can still use the match when only the item reader recognizes an estimate. The signed turn can independently record an age and close an unsafe match before the relay action. A member can report what another person said without that report becoming their own age.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
 // quint-check: max-steps=25 max-samples=10000 verify-steps=3
+// quint-witness: witness_bothNumbersGo swapBothAskTest
+// quint-witness: witness_deferredFlushed deferredTextFlushedTest
 //
 // Relay between two matched members (PRD 40.5; AGENTS.md founder decision 9 and "Relay (#7)").
 // Module plan: docs/research/2026-11-07-state-machines.md section 6.8. Findings: docs/research/quint-findings/relay.md.
@@ -320,6 +326,17 @@ module relay {
 
   action commitNone(k: str): bool = all {
     ep.phase.get(k) == "claimed", ep.kind.get(k) == "none",
+    ep' = committed(ep, k),
+    w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
+  }
+
+  // The shell reads the name. RelayDesk applies the existing relayRequestAddress.md guard before swapping.
+  pure def relayTextRecipientAllowed(named: bool, counterpartMatches: bool): bool =
+    not(named) or counterpartMatches
+
+  action commitPrivateRecipientMismatch(k: str, named: bool, counterpartMatches: bool): bool = all {
+    ep.phase.get(k) == "claimed", ep.kind.get(k) == "share", not(w.erased.get(owner(k))),
+    not(relayTextRecipientAllowed(named, counterpartMatches)),
     ep' = committed(ep, k),
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
@@ -745,11 +762,13 @@ module relay {
   }
 
   // One fault at most per committed request keeps the random simulation on long, interesting traces; faults
-  // still combine across requests. "rateTheirs"/"rateMine": the engine's rate limit; "refuseAsk",
+  // still combine across requests. "wrongRecipient" supplies the shell's mismatched-name result.
+  // "rateTheirs"/"rateMine": the engine's rate limit; "refuseAsk",
   // "refuseTheirs", "refuseMine": Network.send refuses (the conversation streak or the leak guard).
-  pure val FAULTS = Set("none", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
+  pure val FAULTS = Set("none", "wrongRecipient", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
   action commit(k: str, tc: str, fault: str): bool =
     if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
+    else if (ep.kind.get(k) == "share" and fault == "wrongRecipient") commitPrivateRecipientMismatch(k, true, false)
     else if (ep.kind.get(k) == "share")
       commitShare(k, fault == "rateTheirs", fault == "rateMine", fault == "refuseAsk", fault == "refuseTheirs", fault == "refuseMine")
     else if (ep.kind.get(k) == "withdraw") commitWithdraw(k)
@@ -955,7 +974,17 @@ module relay {
       .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
       .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
       .then(queueSend("a1")).then(queueSend("b2"))
-      .expect(numberSent("A") and numberSent("B") and safety)
+      .expect(safety)
+      .expect(not(witness_bothNumbersGo))
+
+  run deferredTextFlushedTest =
+    init
+      .then(setQuiet("B", true))
+      .then(claim("a1", "text")).then(commitText("a1", "pass", false)).then(answer("a1"))
+      .expect(desk.deferred.exists(s => s.key == "a1"))
+      .then(setQuiet("B", false)).then(tickFlush(Set())).then(queueSend("a1"))
+      .expect(safety)
+      .expect(not(witness_deferredFlushed))
 
   // The reader found a qualified contact request and separately an explicit text relay. The
   // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.
@@ -980,6 +1009,15 @@ module relay {
       .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
       .then(claim("b1", "none")).then(commitNone("b1")).then(answer("b1"))
       .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
+
+  run namedPrivateRecipientMismatchKeepsSwapPendingTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claim("b1", "share")).then(commit("b1", "pass", "wrongRecipient")).then(answer("b1"))
+      .expect(ep.receipt.get("b1") == "completed" and desk.swaps.exists(sw => sw.src == "A")
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
       .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
       .expect(numberPending("A") and numberPending("B") and safety)
 
@@ -1022,6 +1060,14 @@ module relay {
       .expect(queue.rows.keys().contains("a1") and ep.response.get("a1") == "ok" and failureMeansNoEffect)
 
   // SD-064 (fixed, flag half): Clef reads a minor's words and holds the item; the age signal drops the text.
+  run estimatedMinorBlocksOnlyItsRelayTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "minorRules", false)).then(answer("a1"))
+      .expect(desk.log.get("a1").decision == "block" and desk.log.get("a1").ageSignal
+        and not(queue.rows.keys().contains("a1")) and not(w.minor.get("A")) and w.matchOpen)
+      .then(claim("a2", "text")).then(commitText("a2", "pass", false)).then(answer("a2"))
+      .expect(desk.log.get("a2").decision == "pass" and queue.rows.keys().contains("a2") and safety)
+
   run clefMinorNotKeptTest =
     init
       .then(claim("a1", "text")).then(commitText("a1", "minorClef", false)).then(answer("a1"))
