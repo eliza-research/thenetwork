@@ -1,6 +1,6 @@
 import { relayKindAllowed, teenFriendMaxAge } from "../../core/src/generated/friendIntroAge.ts";
 import { ageOnDay } from "../../core/src/generated/memberAge.ts";
-import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayBlockNotice, relayClassifierReading, relayClassifierReads, relayConsentStale, relayVerdict, type RelayBlockNotice } from "../../core/src/generated/relayDecision.ts";
+import { pendingSwapWithdrawn, privateRelayRequestAddressed, privateRelayRequestAllowed, relayBlockNotice, relayClassifierReading, relayClassifierReads, relayConsentStale, relayVerdict, type RelayBlockNotice } from "../../core/src/generated/relayDecision.ts";
 import { canBeMatched, labelHash, latestDayKeyOf, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 const RELAY_POLICY_VERSION = "relay-1.0.0";
@@ -439,6 +439,37 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;
 
 const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"').replace(RELAY_QUOTATION, " ").trim();
+const ownRelayWordsAt = (text: string): string => text.replace(/[“”]/g, '"').replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length));
+const quotedRelaySeparator = (quotation: string): string => /[.!?…]\s*["']$/.test(quotation) ? ";" : " ";
+const RELAY_SENTENCE = /[.!?;…\n]+/;
+const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
+const RELAY_ASIDE = /^\s*i(?:'ll\s+not|\s+(?:can'?t|cannot|couldn'?t|didn'?t|mustn'?t|won'?t|wouldn'?t|(?:can|could|did|will|would|must)\s+not))\s+\S/i;
+const INCOMPLETE_RELAY_ASIDE = /\b(?:to|that|if|and|or|because|for|with)\s*$/i;
+const RELAY_SPEECH_CUE = /\b(?:say|says|said|tell|tells|told|ask|asks|asked|asking|hear|heard|quote|quoted|reply|replied|repeat|repeated|report|reported|instruct|instructed|request|requested|let|letting)\b/i;
+const PRIVATE_RELAY_POST_ATTRIBUTION = /(?:[,–—]|\s-+\s)\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
+const PRIVATE_RELAY_NEXT_ATTRIBUTION = /^\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)(?:\s+(?:so|that|this|it))?\s*$/iu;
+const TEXT_PRIVATE_DIRECTIVE_LEAD = /^\s*(?:(?:\p{L}[\p{L}'-]*\s+)?to\s+|you\s+(?:can|may|should|must)\s+)?(?:(?:please|just|kindly|pls)\s+)*$/iu;
+
+function directRelayLead(prefix: string): boolean {
+  const clause = prefix.replace(/[“”]/g, '"').replace(RELAY_QUOTATION, quotedRelaySeparator).split(RELAY_SENTENCE).at(-1)!;
+  if (DIRECT_RELAY_LEAD.test(clause)) return true;
+  const comma = clause.lastIndexOf(",");
+  const aside = clause.slice(0, comma);
+  return comma >= 0 && RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)
+    && DIRECT_RELAY_LEAD.test(clause.slice(comma + 1).replace(/^\s*(?:but|however)\b/i, ""));
+}
+
+const privateRelayMatches = (own: string, pattern: RegExp): RegExpMatchArray[] => [...own.matchAll(new RegExp(pattern.source, "giu"))];
+const reportsPrivateRequest = (own: string, at: number): boolean => {
+  const [here = "", next = ""] = own.slice(at).split(RELAY_SENTENCE, 2);
+  return PRIVATE_RELAY_POST_ATTRIBUTION.test(here) || PRIVATE_RELAY_NEXT_ATTRIBUTION.test(next);
+};
+
+export function relayRequestDirectAt(text: string, at: number): boolean {
+  const t = text.replace(/[’‘`´]/g, "'");
+  const own = ownRelayWordsAt(t);
+  return own.slice(at, at + 1).trim() !== "" && privateRelayRequestAddressed(directRelayLead(t.slice(0, at)), reportsPrivateRequest(own, at));
+}
 
 // spec/relayDecision.md, "A member can take back a pending number swap"
 function refusesNumberSwap(clauses: readonly string[]): boolean {
@@ -459,8 +490,11 @@ export function withdrawsRelaySwap(text: string): boolean {
 export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const spoken = ownRelayWords(t);
-  const contact = CONTACT_REQ.test(spoken);
-  if (contact || PHOTO_REQ.test(spoken)) {
+  const own = ownRelayWordsAt(t);
+  const contacts = privateRelayMatches(own, CONTACT_REQ), photos = privateRelayMatches(own, PHOTO_REQ);
+  const addressed = (request: RegExpMatchArray) => relayRequestDirectAt(t, request.index!);
+  const contact = contacts.some(addressed);
+  if (contact || photos.some(addressed)) {
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
     const hedged = HEDGE.test(low) || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
@@ -474,7 +508,9 @@ export function parseRelayRequest(text: string): RelayRequest {
   }
   const low = t.toLowerCase();
   const m = TEXT_REQ.exec(t);
-  if (m && !NEG.test(low) && !/\bwon'?t\b/.test(low)) return { kind: "text", body: m[1]!.trim() };
+  const bodyStart = m ? m.index + m[0].length - m[1]!.length : 0;
+  const delegates = (request: RegExpMatchArray) => request.index! >= bodyStart && TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(bodyStart, request.index!));
+  if (m && !contacts.some(delegates) && !photos.some(delegates) && !NEG.test(low) && !/\bwon'?t\b/.test(low)) return { kind: "text", body: m[1]!.trim() };
   return { kind: "none" };
 }
 

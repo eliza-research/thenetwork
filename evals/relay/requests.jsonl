@@ -101,3 +101,6 @@
 {"text": "I would not want Ana to, send him my number", "want": "none"}
 {"text": "Tell them I can send them my number", "want": "text"}
 {"text": "Tell them I asked Ana to send him my number.", "want": "text"}
+{"text": "send him my number - Ana said", "want": "none"}
+{"text": "send him my number. Ana said so", "want": "none"}
+{"text": "show him this photo -- Ana says", "want": "none"}

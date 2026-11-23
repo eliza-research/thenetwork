@@ -378,8 +378,8 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
         if (state !== "none" && state !== "onboarding") for (const id of ["a", "b"]) w.facets.push({
           id: `${id}-availability`, memberId: id, kind: "availability_pattern", value: "Usually free Tuesday evening", tags: ["evening:Tue"],
           scope: "agent_private", provenance: "said", confidence: 1, confirmedByMember: true, observedAt: START,
-          validFrom: state === "future" ? START + 30 * DAY : state === "starts_now" ? START + 2 * HOUR : START - DAY,
-          validTo: state === "expired" ? START - 1 : state === "ends_now" ? START + 2 * HOUR : START + 60 * DAY,
+          validFrom: state === "future" ? START + 30 * DAY : state === "starts_now" ? START + HOUR : START - DAY,
+          validTo: state === "expired" ? START - 1 : state === "ends_now" ? START + HOUR : START + 60 * DAY,
         });
         w.restart();
         const opp = w.propose(["a", "b"]);
@@ -388,7 +388,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
         w.net.review(opp, "approve", { reviewer: "sim" });
         expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
         const probe = w.sent.find(x => x.meta.probe?.key === opp && x.meta.timeOptions?.length);
-        expect(probe?.t).toBe(START + 2 * HOUR);
+        expect(probe?.t).toBe(START + HOUR);
         expect(probe!.meta.timeOptions!.length).toBeGreaterThanOrEqual(2);
         offered.set(state, probe!.meta.timeOptions);
       }

@@ -3122,7 +3122,6 @@ export class NetworkService implements RuntimeHost {
   }
 
   review(user: StaffUser, oppId: string, decision: ReviewDecision, o: Omit<ReviewOptions, "reviewer">, rt = this.main) {
-    // The reviewer of record is the signed-in person (reviewerOfRecord), never a body field; time on the item is clamped.
     const secondsSpent = typeof o.secondsSpent === "number" && Number.isFinite(o.secondsSpent) ? Math.min(Math.max(0, o.secondsSpent), MAX_REVIEW_SECONDS) : undefined;
     const opts: ReviewOptions = { ...o, secondsSpent, reviewer: user.id };
     const detail = { decision, reason: o.reason ?? null, revision: o.revision ?? null, ...(o.swapOut ? { swapOut: o.swapOut } : {}), ...(o.explanations || o.objective ? { edited: [...Object.keys(o.explanations ?? {}).map(k => `explanation:${k}`), ...(o.objective !== undefined ? ["objective"] : [])] } : {}) };
@@ -4559,11 +4558,6 @@ export class NetworkService implements RuntimeHost {
   }
 }
 
-/**
- * The reviewer of record (critical path item 6; docs/admin-console.md 4.6): the signed-in person the
- * console names in X-Network-Staff-Id, taken only from a request that carries the console's own token
- * (NETWORK_SERVICE_CONSOLE_TOKEN). From any other token the header is ignored and the token is the actor.
- */
 export function reviewerOfRecord(req: Request, user: StaffUser, consoleToken: string | undefined): { user: StaffUser; actor: StepActor } {
   const token = { user, actor: "SharedToken" as const };
   const named = req.headers.get("x-network-staff-id")?.trim();

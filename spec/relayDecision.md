@@ -30,6 +30,21 @@ pure def lawPrivateRelayRequiresUnqualifiedConsent(refused: bool, uncertain: boo
   (refused or uncertain) implies not(privateRelayRequestAllowed(refused, uncertain))
 ```
 
+### Only the member's own direct request authorizes a private item
+
+A contact share or photo send counts only when the member asks the agent for it directly: the words before the request in its sentence are empty, a courtesy such as "please" or "can you", or a complete aside such as "I can't believe it,". An instruction for a third party ("tell Ana to send him my number"), reported speech ("Ana said to give him my number", "send him my number, Ana says"), a quotation, or a message that the member asks the agent to relay ("tell them I can send them my number") does not authorize the item. Changed (verification 2026-11-23, relay requests gate): the reader took any "send him my number" inside the text as the member's request -> only a directly addressed request counts, because an instruction to or from someone else is not the member's consent.
+
+```quint
+pure def privateRelayRequestAddressed(directLead: bool, reported: bool): bool =
+  directLead and not(reported)
+
+pure def lawReportedPrivateRequestIsNotConsent(directLead: bool): bool =
+  not(privateRelayRequestAddressed(directLead, true))
+
+pure def lawIndirectPrivateRequestIsNotConsent(reported: bool): bool =
+  not(privateRelayRequestAddressed(false, reported))
+```
+
 ### A member can take back a pending number swap
 
 An instruction to cancel or withhold the member's own contact share withdraws their pending swap. A direct refusal such as "don't send it" also withdraws it while it is pending. A go-ahead such as "don't hesitate" or "no need to wait" leaves the request in place unless the member also refuses it. The shell recognizes these phrases in the member's own message.

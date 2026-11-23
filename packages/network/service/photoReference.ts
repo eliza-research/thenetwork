@@ -1,5 +1,6 @@
 import { classifyYesNo, DAY } from "@thenetwork/core";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
+import { relayRequestDirectAt } from "../../engine/src/relay.ts";
 import { photoPickFor, photoSlotsMax, type PhotoPickResult } from "../../core/src/generated/photoRelayItem.ts";
 import { maskOf as numbersMask, numbersOf as maskNumbers } from "../../platform/src/photo-relay.ts";
 
@@ -107,6 +108,19 @@ function wordsOf(t: string): string[] {
     .map(w => w.replace(/^["'(\[]+/, "").replace(/["')\]?:;.!]+$/, ""))
     .filter(Boolean);
 }
+
+function wordStarts(t: string): number[] {
+  return [...t.matchAll(/[^ ,&]+|[,&]/g)]
+    .map(m => ({ at: m.index + /^["'(\[]*/.exec(m[0])![0].length, w: m[0].replace(/^["'(\[]+/, "").replace(/["')\]?:;.!]+$/, "") }))
+    .filter(x => x.w).map(x => x.at);
+}
+
+const REPORTED_YES = new Set(["say", "says", "said", "tell", "tells", "told", "ask", "asks", "asked"]);
+
+const directVerbs = (t: string, words: string[]): boolean[] => {
+  const starts = wordStarts(t);
+  return words.map((w, i) => !VERBS.has(w) || relayRequestDirectAt(t, starts[i]!));
+};
 
 const bit = (n: number, count: number): number => (n >= 1 && n <= count ? 2 ** (n - 1) : 0);
 const plain = (w: string): string => (w.endsWith("'s") ? w.slice(0, -2) : w);
@@ -593,7 +607,7 @@ function draftOf(t: string, original: string, ctx: ReaderContext, draft: ReaderD
   const r = resolve(phrase, s, flags, 1);
   const hasReference = r.hadFeature || flags.otherOwner || flags.codeTyped || flags.byLooks;
   const answer = classifyYesNo(original);
-  const yes = !hasReference && answer === "yes";
+  const yes = !hasReference && answer === "yes" && directVerbs(t, words).every(Boolean) && !words.some(w => REPORTED_YES.has(w));
   const no = answer === "no" || /^(?:no|nope|never ?mind|cancel)$/.test(t);
   if (!hasReference && !yes && !no) return NONE;
   return { kind: "draft", hasReference, yes, no, result: hasReference ? r.result : null, numbers: hasReference ? numbersOf(r.result.chosen) : [], wantsSet: r.wantsSet, why: r.why };
