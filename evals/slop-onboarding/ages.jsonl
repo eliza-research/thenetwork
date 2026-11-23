@@ -185,3 +185,17 @@
 {"text":"She said \"For a meme: ‘I’m underage.’\"","minor":false}
 {"text":"Translate this: “I’m underage.”","minor":false}
 {"text":"Caption for the photo: \"Hello. Age: 15","minor":false}
+{"text":"I have homework","minor":true}
+{"text":"I've got homework","minor":true}
+{"text":"I have so much homework","minor":true}
+{"text":"finishing my homework","minor":true}
+{"text":"studying for my math test","minor":true}
+{"text":"I have a math test tomorrow","minor":true}
+{"text":"I'm grounded","minor":true}
+{"text":"im grounded","minor":true}
+{"text":"my mom grounded me","minor":true}
+{"text":"I'm grounded this weekend","minor":true}
+{"text":"My kid has homework","minor":false}
+{"text":"I have homework to grade","minor":false}
+{"text":"my son is grounded","minor":false}
+{"text":"She said \"I have homework\"","minor":false}

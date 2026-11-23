@@ -202,6 +202,9 @@ const MINOR_SIGNS: { rx: RegExp; age?: (m: RegExpExecArray) => number }[] = [
   { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)\\s+grade\\b`), age: m => Number(m[1]) + 5 },
   { rx: /\bi go to (?:high|middle) school\b/ },
   { rx: /\bmy (?:mom|mum|dad|parents) (?:won'?t|wont|doesn'?t|don'?t) let me\b/ },
+  { rx: /\b(?:i\s+(?:have|got|gotta)|i'?ve\s+got|finishing|studying\s+for|doing)\s+(?:my\s+|a\s+|so\s+much\s+)?(?:homework|hw|(?:math|chem|bio|history|physics|spanish|english|algebra|geometry)\s+(?:test|quiz|homework)|finals|midterms|a\s+quiz)\b(?!\s+to\s+grade\b)/ },
+  { rx: new RegExp(`\\b${ME}\\s+grounded\\b`) },
+  { rx: /\bmy\s+(?:mom|mum|dad|parents|mother|father)\s+grounded\s+me\b/ },
 ];
 
 function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Cand<true> } {
