@@ -135,9 +135,14 @@ jobs:
         env:
           DEPLOY_TARGET: production
 
-  matching:
+  matching-pack:
+    name: matching (${{ matrix.pack }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: [ntwrk, slop, peon, friends]
     outputs:
       ntwrk: ${{ steps.gates.outputs.ntwrk }}
       slop: ${{ steps.gates.outputs.slop }}
@@ -157,27 +162,45 @@ jobs:
       - name: Pinned matching simulations
         id: gates
         shell: bash
+        env:
+          PACK: ${{ matrix.pack }}
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          packs=(ntwrk slop peon friends)
-          pids=()
-          for pack in "${packs[@]}"; do
-            /usr/bin/time -f 'elapsed=%e user=%U sys=%S rss_kib=%M' \
-              pnpm run sim --only matching --matching-pack "$pack" 2>&1 | sed -u "s/^/[$pack] /" &
-            pids+=("$!")
-          done
-          failed=0
-          for index in "${!pids[@]}"; do
-            pack=${packs[$index]}
-            if wait "${pids[$index]}"; then
-              printf '%s=success\n' "$pack" >> "$GITHUB_OUTPUT"
-            else
-              echo "Matching simulations failed for $pack"
-              failed=1
+          /usr/bin/time -f 'elapsed=%e user=%U sys=%S rss_kib=%M' \
+            pnpm run sim --only matching --matching-pack "$PACK"
+          printf '%s=success\n' "$PACK" >> "$GITHUB_OUTPUT"
+        timeout-minutes: ${{ matrix.pack == 'slop' && 45 || 30 }}
+
+  matching:
+    # The matrix is successful only when each runner finishes its own pack successfully.
+    if: ${{ always() }}
+    needs: [matching-pack]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ntwrk: ${{ steps.gates.outputs.ntwrk }}
+      slop: ${{ steps.gates.outputs.slop }}
+      peon: ${{ steps.gates.outputs.peon }}
+      friends: ${{ steps.gates.outputs.friends }}
+    steps:
+      - name: All matching packs completed and passed
+        id: gates
+        env:
+          MATCHING: ${{ needs.matching-pack.result }}
+          NTWRK: ${{ needs.matching-pack.outputs.ntwrk }}
+          SLOP: ${{ needs.matching-pack.outputs.slop }}
+          PEON: ${{ needs.matching-pack.outputs.peon }}
+          FRIENDS: ${{ needs.matching-pack.outputs.friends }}
+        run: |
+          for gate in MATCHING NTWRK SLOP PEON FRIENDS; do
+            if [ "${!gate}" != success ]; then
+              echo "Matching simulations did not pass: $gate (${!gate:-missing})"
+              exit 1
             fi
           done
-          exit "$failed"
-        timeout-minutes: 30
+          for pack in ntwrk slop peon friends; do
+            printf '%s=success\n' "$pack" >> "$GITHUB_OUTPUT"
+          done
 
   offline:
     # Preserve the required check name and require positive completion from every matching pack.
