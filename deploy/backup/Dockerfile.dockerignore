@@ -5,7 +5,8 @@
 !pnpm-workspace.yaml
 !tsconfig.json
 !deploy/backup/
-!packages/
+!packages/*/package.json
+!packages/core/
 **/node_modules
 **/.env
 **/.env.*
