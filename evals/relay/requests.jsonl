@@ -460,3 +460,9 @@
 {"text": "Tell him to wait until I say so. Send him my number.", "want": "text"}
 {"text": "Tell him I'm not ready. Send him my number.", "want": "text"}
 {"text": "Tell him no. Send him my number.", "want": "text"}
+{"text": "Tell him only if Ari asks. Taylor agreed. Send him my number.", "want": "text"}
+{"text": "Tell him no. Ari agreed? Send him my number.", "want": "text"}
+{"text": "Tell him I'm not ready. Ari agreed. Send him my number.", "want": "text"}
+{"text": "Tell him only after Ari agrees. Ari agreed? Send him my number.", "want": "text"}
+{"text": "Tell him only after Ari agrees. Ari agreed. Send him my number.", "want": "contact_share"}
+{"text": "Tell him “If it rains, bring a jacket.” Send him my number.", "want": "contact_share"}

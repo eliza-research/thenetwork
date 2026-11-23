@@ -610,16 +610,15 @@ function assentKey(actor: string, action: string, item: string): string {
 }
 
 // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
-function priorSentenceConditionsShare(source: string, request: RegExpMatchArray, contact: boolean): boolean {
-  const prefix = source.slice(0, request.index!).replace(/[“”]/g, '"')
-    .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length - 1) + quotedRelaySeparator(quotation));
+function priorSentenceConditionsShare(source: string, request: RegExpMatchArray, contact: boolean, envelope = false): boolean {
+  const prefix = relaySentenceBoundaries(source.replace(/[“”]/g, '"'));
   const waits = new Set<string>();
   for (const part of prefix.matchAll(RELAY_SENTENCE_TEXT)) {
     const end = part.index! + part[0].length;
     if (end === prefix.length) continue;
     const continuation = part[0].search(PRIOR_ASSENT_CONTINUATION);
     const opening = continuation < 0 ? part[0] : part[0].slice(0, continuation);
-    if (opening !== source.slice(part.index, part.index! + opening.length)) continue;
+    if (!envelope && opening !== source.slice(part.index, part.index! + opening.length)) continue;
     const sentence = opening.trim().toLowerCase().replace(/(?:,\s*|\s+)(?:please|thanks|thank you)$/, "");
     const confirm = PRIOR_SENDER_CONFIRM.exec(sentence);
     if (confirm) {
@@ -645,20 +644,12 @@ function priorSentenceConditionsShare(source: string, request: RegExpMatchArray,
     if (completed && !/^[\s.!?;…]*\?/u.test(source.slice(end))) {
       const item = completed.item ? priorAssentItemKey(completed.item, request, contact) : "";
       if (item !== undefined) waits.delete(assentKey(completed.actor!, (completed.shortAction ?? completed.longAction)!, item));
+    } else if (envelope && ENVELOPE_CONDITION_MARKER.test(sentence)) {
+      // An unclear condition or refusal cannot be settled by a claim about an unrelated assent.
+      return true;
     }
   }
   return waits.size > 0;
-}
-
-function envelopeConditionUnsettled(body: string): boolean {
-  let open = false;
-  for (const part of body.matchAll(RELAY_SENTENCE_TEXT)) {
-    const sentence = part[0].trim().toLowerCase();
-    if (!sentence) continue;
-    if (PRIOR_ASSENT_COMPLETED.test(sentence)) { open = false; continue; }
-    if (ENVELOPE_CONDITION_MARKER.test(sentence)) open = true;
-  }
-  return open;
 }
 
 const PRIVATE_RELAY_OBJECT = String.raw`(?:(?:(?:my|the|this|that|these|a|any)\s+)?(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})|it|this|that|them|either|both|anything(?:\s+else)?)`;
@@ -1160,9 +1151,9 @@ export function parseRelayRequest(text: string): RelayRequest {
     const clauses = relayClauses(low);
     const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
       privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
-    const priorCondition = priorSentenceConditionsShare(t.slice(start), privateRequest, !!contact);
+    const priorCondition = priorSentenceConditionsShare(t.slice(start, start + privateRequest.index!), privateRequest, !!contact);
     const envelopeCondition = independentNumber && ordinaryText !== undefined
-      && envelopeConditionUnsettled(ordinaryText.body);
+      && priorSentenceConditionsShare(ordinaryText.body + ".", privateRequest, true, true);
     const uncertain = leadingCondition || HEDGE.test(low) || privateRelayTimingIsUncertain(spoken, ordinaryBody) || uncertainPrivateTransfer(clauses)
       || envelopeCondition
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
