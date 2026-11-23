@@ -295,14 +295,16 @@ test("closing the pair or a recipient STOP after classification and the async di
       let closedEarly=false;const closing=fixturePair(true).then(()=>{closedEarly=true;});
       await sleep(50);expect(closedEarly).toBe(false);
       release();
-      const stage = await Promise.race([dispatch.atGate.then(() => "dispatch"), pending.then(() => "suppressed")]);
-      if (stage === "dispatch") {
-        expect(await waitFor(pairClosed)).toBe(true);
-        dispatch.resume();
-      }
+      const reachedDispatch=await Promise.race([dispatch.atGate.then(()=>true),pending.then(()=>false)]);
+      expect(await waitFor(pairClosed)).toBe(true);
+      dispatch.resume();
+      expect(await(await pending).json()).toMatchObject({decision:"pass",delivered:false});
       await closing;
-      expect(await pairClosed()).toBe(true);
-      expect(await (await pending).json()).toMatchObject({ decision: "pass", delivered: false });
+      const [outbound]=await sql`select o.status from platform.inbound i
+        cross join lateral jsonb_each(i.action_receipts) receipt
+        join platform.outbound o on o.id=receipt.value->'response'->>'outboundId'
+        where i.id=${`msg:${request.channel}:${request.messageId}`}`;
+      expect(outbound?.status).toBe(reachedDispatch?"suppressed_ineligible":"expired");
       expect(posts).toBe(before);
     } finally {classifyGate=undefined;classifyEntered=undefined;release?.();dispatch.resume();}
   }
