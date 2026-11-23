@@ -971,7 +971,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       || [...pickedClauses].some(clause => refusedClauses.has(clause))
       || weakNegated) return { ...unclear, why: "slot" };
     const chosen = picked.filter(key => !neg.has(key));
-    return chosen.length ? explicitYes(pickedTimes(chosen, open)) : { ...unclear, why: "slot" };
+    const fewest = !neg.size && weakCues.some(cue => cue[0].startsWith("both")) ? 2 : 1;
+    return chosen.length >= fewest ? explicitYes(pickedTimes(chosen, open)) : { ...unclear, why: "slot" };
   }
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
