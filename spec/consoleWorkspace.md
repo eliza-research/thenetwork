@@ -331,6 +331,22 @@ pure val eval_witness_sometimesReportHeld = (
   ("actOnReport", HoldPersonStep),
   ("receiveReportAnswer", true)
 )
+
+pure val eval_witness_sometimesReportBanned = (
+  ("receiveViewer", RealWithService, true, false, false, false, false),
+  ("receiveReport", false),
+  ("typeReportNote", 5),
+  ("actOnReport", BanPhoneStep),
+  ("receiveReportAnswer", true)
+)
+
+pure val eval_witness_sometimesReportDismissed = (
+  ("receiveViewer", RealWithService, true, false, false, false, false),
+  ("receiveReport", false),
+  ("typeReportNote", 5),
+  ("actOnReport", DismissStep),
+  ("receiveReportAnswer", true)
+)
 ```
 
 ## Story: See what members asked for
