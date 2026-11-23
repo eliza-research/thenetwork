@@ -746,9 +746,9 @@ module safety_trust {
   pure def safetyQuestionUsesSoleOffer(soleOffer: bool, competing: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
     soleOffer and not(competing) and exactConfirmation and not(hasNamedMatch)
 
-  action answerWhoBySoleOffer(m: Mid, competing: bool, exactConfirmation: bool): bool =
+  action answerWhoBySoleOffer(m: Mid, competing: bool, exactConfirmation: bool, explicitlyNamed: bool): bool =
     all {
-      safetyQuestionUsesSoleOffer(s.pendingWho.get(m).offered, competing, exactConfirmation, false),
+      safetyQuestionUsesSoleOffer(s.pendingWho.get(m).offered, competing, exactConfirmation and not(explicitlyNamed), false),
       answerWho(m),
     }
 
@@ -762,6 +762,14 @@ module safety_trust {
       s' = { ...s, lastAction: "whoReplyPreserved" },
     }
   }
+
+  pure def safetyQuestionAcceptsName(confirmation: bool, refusal: bool, cancellation: bool): bool =
+    not(confirmation or refusal or cancellation)
+
+  // The reader preserves Unicode word boundaries and reads the complete reply before it strips
+  // courtesy words. An explicitly marked name does not become an implicit control.
+  pure def safetyQuestionNamedReading(confirmation: bool, refusal: bool, cancellation: bool, explicitlyNamed: bool): bool =
+    safetyQuestionAcceptsName(not(explicitlyNamed) and confirmation, not(explicitlyNamed) and refusal, cancellation)
 
   action receiveWhoControl(m: Mid, competing: bool, refuses: bool, cancels: bool): bool = {
     val p = s.pendingWho.get(m)
@@ -1108,7 +1116,7 @@ module safety_trust {
       disclose(k, app, a, meant, kind, flag),
       report(a, app, b, verb, kind, flag),
       answerWho(m),
-      answerWhoBySoleOffer(m, flag, flag2),
+      answerWhoBySoleOffer(m, flag, flag2, risk == 2),
       keepWhoAfterUnrelatedReply(m, flag, flag2),
       receiveWhoControl(m, flag, flag2, risk == 1),
       excludeWhoTarget(m),
@@ -1760,9 +1768,10 @@ module safety_trust {
       .expect(not(safetyQuestionUsesSoleOffer(true, false, false, false)) and
         not(safetyQuestionUsesSoleOffer(true, true, true, false)) and
         not(safetyQuestionUsesSoleOffer(true, false, true, true)))
+      .then(answerWhoBySoleOffer(ANA_S, false, true, true).fail())
       .then(answerWhoShared(ANA_S, "peon", false, false))
       .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set())
-      .then(answerWhoBySoleOffer(ANA_S, false, true))
+      .then(answerWhoBySoleOffer(ANA_S, false, true, false))
       .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.subject == BEN_S))
 
   run unrelatedRepliesKeepWhoTest =
@@ -1779,6 +1788,10 @@ module safety_trust {
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .expect(not(safetyQuestionNamedReading(true, false, false, false)) and
+        not(safetyQuestionNamedReading(false, true, false, false)) and
+        not(safetyQuestionNamedReading(false, false, true, true)) and
+        safetyQuestionNamedReading(false, true, false, true))
       .then(receiveWhoControl(ANA_S, true, false, false))
       .then(receiveWhoControl(ANA_S, true, true, false))
       .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set() and s.personBlocks == Set())
