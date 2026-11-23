@@ -149,7 +149,7 @@ pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
 
 ### A connection binds to one host on one surface, and the person connects it in the browser
 
-The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the surface does not offer it. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
+The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the surface does not offer it or when the agent names an app that is not in the app registry. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
 
 ```quint
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
@@ -196,8 +196,11 @@ pure def authorize(c: Connection, withWrite: bool, withProfileRead: bool): Conne
 pure def canCallPublicTool(c: Connection, tool: ToolName): bool =
   (c.phase == Anonymous or c.phase == Connected) and scopeFor(tool) == NoScope
 
-pure def callPublicTool(c: Connection, tool: ToolName, app: AppId): Connection =
-  { ...c, lastResult: if (appOffered(c.surface, app)) PublicFacts else AppNotAvailable }
+pure def callPublicTool(c: Connection, tool: ToolName, app: AppId, appRegistered: bool): Connection =
+  { ...c, lastResult: if (appRegistered and appOffered(c.surface, app)) PublicFacts else AppNotAvailable }
+
+pure def lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): bool =
+  callPublicTool(c, tool, app, false).lastResult == AppNotAvailable
 
 pure def canCallWithoutAccess(c: Connection, tool: ToolName): bool =
   bound(c) and toolListed(c.host, c.surface, tool) and

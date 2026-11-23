@@ -1,14 +1,4 @@
 import { setTimeout as waitForMs } from "node:timers/promises";
-// The remote MCP server and its OAuth 2.1 authorization server, as one fetch handler that the
-// service mounts next to the platform's /api/*. Each site's Worker forwards /mcp, /oauth/* and
-// /.well-known/oauth-* to the shared backend, so every site is its own issuer. ntwrk.party serves every app,
-// each at its own path (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path"):
-//   https://ntwrk.party/mcp             The Network; https://ntwrk.party/mcp/<app> each other app (the resource names the app)
-//   https://ntwrk.party/mcp/slop/openai  the same app on the OpenAI surface (ChatGPT, Codex)
-//   https://slop.date/mcp               an app site's own endpoint, for its own app only
-// Spec: MCP 2026-07-28 (Streamable HTTP, stateless, per-request _meta; initialize kept for 2025-03-26
-// to 2025-11-25 clients), OAuth 2.1 with PKCE S256, RFC 7591 (registration), RFC 8414 and RFC 9728
-// (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
 import { createHmac } from "node:crypto";
 import { devShortcutsAllowed, ipBucket, parseJoin, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
@@ -21,7 +11,7 @@ import {
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
-  type AuthPage, type AuthView, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
+  type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
   ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial,
   signupClockDay, solveCheck,
 } from "../../core/src/generated/authorizationPages.ts";
@@ -325,7 +315,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
   const resourceFor = (c: Pick<Ctx, "issuer" | "host" | "app">, surface: Surface) => resourceOf(c.issuer, c.host.id, c.app.id, surface);
   const prmUrl = (resource: string) => { const u = new URL(resource); return `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`; };
-  /** RFC 8707: the canonical form of a resource parameter and the app it names, or undefined when it is not an MCP endpoint of this host. */
   function servedResource(raw: string, c: Pick<Ctx, "issuer" | "host">): { app: McpAppId; surface: Surface; resource: string } | undefined {
     let u: URL;
     try { u = new URL(raw); } catch { return undefined; }
@@ -743,7 +732,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version))
       return showSignup("Review and accept the current text message terms to continue.", sent);
     const typedBirthdate = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(form.get("birthdate") ?? "");
-    const birth = typedBirthdate ? { year: Number(typedBirthdate[1]), month: Number(typedBirthdate[2]), day: Number(typedBirthdate[3]) } : undefined;
+    const birth: CalendarDate | undefined = typedBirthdate ? { year: Number(typedBirthdate[1]), month: Number(typedBirthdate[2]), day: Number(typedBirthdate[3]) } : undefined;
     const today = calendarDateOfDay(signupClockDay(now()));
     if (!birth || !birthdateAccepted(birth, today)) return showSignup(undefined, sent, "Enter your birthday. It must be a real date, not after today.");
     const input = parseJoin({
@@ -1234,8 +1223,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!m) return "invalid";
     const at = now();
     const t = await store.getToken(sha256hex(m[1]!));
-    // RFC 8707: a token minted for another resource (another site, another app's path, or the other surface) is refused.
-    // spec/connectorTools.md, "a grant covers only its own app"
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource
       || !grantServesApp(connectorApp[t.app], connectorApp[c.app.id])) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);

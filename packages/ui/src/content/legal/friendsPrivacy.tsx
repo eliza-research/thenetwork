@@ -63,7 +63,7 @@ export const friendsPrivacy: LegalText = {
     },
     {
       heading: "Age",
-      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the agent for their own ideas, questions, public events and plans. They are never matched on dates or for work. Today, no member under 18 is introduced to anyone. Today friends.help does not put them in a group. If introductions ever open to members under 18, they will be friendship introductions only, with people close to their own age. We ask for your birth date or your age at signup to apply these rules. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
+      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the agent for their own ideas, questions, public events and plans. They are never matched on dates or for work. Today, no member under 18 is introduced to anyone. Today friends.help does not put them in a group. If introductions ever open to members under 18, they will be friendship introductions only, with people within 2 years of their own age. We ask for your birth date or your age at signup to apply these rules. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
     },
     {
       heading: "Security and changes",

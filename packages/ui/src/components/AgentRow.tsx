@@ -19,7 +19,7 @@ export type AgentRowProps = Omit<ComponentProps<"nav">, "children"> & {
 };
 
 /**
- * The agents of the app in their fixed order, each as a logo tile. The row has only the agents of `landingAgents` (spec/landingEntry.md, "The agent row never shows an agent that the app's connector refuses"), and a tile shows only where the generated `tileShown` allows it.
+ * The agents in their fixed order, each as a logo tile. A tile shows only where the generated `tileShown` allows it.
  * @model spec/landingEntry.md
  */
 export function AgentRow({ app, links, mounted = false, device = "NotDetected", onChoose, className, "aria-label": label = "Open your agent", ...props }: AgentRowProps) {

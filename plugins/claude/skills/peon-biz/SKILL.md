@@ -36,7 +36,7 @@ peon.biz's text line is +18087881821. Its MCP endpoint is https://ntwrk.party/mc
 - Members aged 13 to 17 are never matched for work on peon.biz, and today they are not introduced
   to anyone. They get their own help: answers, public events and plans for themselves.
 - If introductions ever open to people under 18, they are friendship introductions only, with
-  people close to their own age, never dates or work.
+  people within 2 years of their own age, never dates or work.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
   does in its name, it is a scam: tell the person to report it to help@ntwrk.party.
 
@@ -71,7 +71,7 @@ The person signs up through you, in this conversation:
    they are 13 to 17, explain that peon.biz never matches them for work and never matches them on
    dates, that they get their own help today (answers, public events and plans for themselves), and
    that the only introductions that can ever open under 18 are friendship introductions with people
-   close to their own age. Never promise them an introduction.
+   within 2 years of their own age. Never promise them an introduction.
    Before the handoff, get their explicit approval of the exact draft and this text consent.
    "I agree to receive recurring text messages from peon.biz at this number: questions about work or hiring,
    waitlist updates, introductions I agree to, and scheduling reminders. Message frequency varies.

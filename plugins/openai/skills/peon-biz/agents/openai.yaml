@@ -3,6 +3,6 @@ dependencies:
   tools:
     - type: mcp
       value: peon-biz
-      description: The MCP endpoint of peon.biz on The Network. app_info needs no sign-in. check_status and submit_profile need the person to sign in themselves in the browser.
+      description: The MCP endpoint of peon.biz. app_info needs no sign-in. check_status and submit_profile need the person to sign in themselves in the browser.
       transport: streamable_http
       url: https://ntwrk.party/mcp/peon/openai

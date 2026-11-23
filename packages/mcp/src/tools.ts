@@ -20,7 +20,6 @@ import { outputLeaks } from "./leaks.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
-/** The generated name of each tool (spec/connectorTools.md, "Each surface offers every app"). */
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
   read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool",
@@ -271,7 +270,7 @@ function publicInfo(a: McpApp) {
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
         ? `The person texts "${a.keyword}" as their first message to The Network's line. ` + (publicSignupUsesBrowser(a.id)
           ? `They can also open ${publicSignupUrl(a)} and verify their own phone there.` : skillSignup(a))
-        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (friends, dating or work) and adds the right apps. A person aged 13 to 17 is offered only friends and their own help, never dating or work. ${skillSignup(a)}`,
+        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (friends, dating or work) and adds the right apps. For a person aged 13 to 17, the agent never adds dating or work, and today nobody under 18 is introduced to anyone. ${skillSignup(a)}`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
     adults_only: a.adultsOnly,

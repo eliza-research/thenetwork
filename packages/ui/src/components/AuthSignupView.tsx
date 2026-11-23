@@ -20,7 +20,6 @@ export type AuthSignupViewProps = Omit<AuthShellProps, "title" | "chrome" | "chi
   signupView: string;
   /** The handler's user-facing error for a rejected signup. */
   error?: string;
-  /** The handler's user-facing error for a refused birthday. */
   birthdateError?: string;
   prefill?: { firstName: string; homeCity?: "nyc" | "sf" };
 };
@@ -42,7 +41,7 @@ export function AuthSignupView({ rid, consent, requiresInvitation, signupView, e
           <Input name="firstName" type="text" autoComplete="given-name" maxLength={50} required defaultValue={prefill?.firstName || undefined} />
         </Field>
         <Field label="Birthday" controlId="signup-birthdate" error={birthdateError}
-          description="If you are under 18, we never match you for dates or for work. Friendship is the only kind of introduction open to people under 18, and only with people close to your own age.">
+          description="If you are under 18, we never match you for dates or for work, and today we do not introduce you to anyone. If introductions open to people under 18, they will be friendship introductions only, with people within 2 years of your own age.">
           <Input name="birthdate" type="date" autoComplete="off" required />
         </Field>
         <Field label="Home city" controlId="signup-home-city">

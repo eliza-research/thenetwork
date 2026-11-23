@@ -7,10 +7,6 @@ import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appOffere
 
 export { MCP_APP_IDS, isMcpAppId, type McpAppId };
 
-/**
- * Which client surface a request comes from. "openai" serves ChatGPT and Codex clients. It offers every app,
- * slop included (spec/connectorTools.md, "Each surface offers every app").
- */
 export type Surface = "full" | "openai";
 
 /** The generated app name of each registry id (spec/connectorTools.md:9). */
@@ -32,7 +28,6 @@ export interface McpApp {
   /** Rules that apply to adults only, in plain words. */
   adultsOnly: string[];
   links: { site: string; join: string; privacy: string; terms: string; smsTerms: string | null; support: string };
-  /** False: not listed or offered on the OpenAI surface (the registry can disable an app there; spec/connectorTools.md). */
   openai: boolean;
 }
 
@@ -43,7 +38,7 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
     id, name, domain, what, keyword,
     joinMode: p.joinMode,
     ages: { join: p.minJoinAge, match: p.minMatchAge },
-    adultsOnly: ["Today, matching and introductions to other people are for adults 18 or older only, and nobody under 18 is introduced to anyone.", "Dating and work matching are for adults 18 or older only. Nobody under 18 is ever matched on dates or for work.", "If introductions ever open to people under 18, they are friendship introductions only, with people close to their own age.", ...(extra.adultsOnly ?? [])],
+    adultsOnly: ["Today, matching and introductions to other people are for adults 18 or older only, and nobody under 18 is introduced to anyone.", "Dating and work matching are for adults 18 or older only. Nobody under 18 is ever matched on dates or for work.", "If introductions ever open to people under 18, they are friendship introductions only, with people within 2 years of their own age.", ...(extra.adultsOnly ?? [])],
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,
       smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`,

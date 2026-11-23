@@ -28,7 +28,7 @@ friends.help helps people make friends through small group plans at public place
 Anyone 13 or older may join. Today, matching and introductions are for adults 18 and older only.
 People aged 13–17 get their own help: answers, public events and plans for themselves.
 They are never matched on dates or for work. If introductions ever open to people under 18,
-they are friendship introductions only, with people close to their own age. Groups usually
+they are friendship introductions only, with people within 2 years of their own age. Groups usually
 have 3–6 people. Other members see only the first name and neighbourhood, not the
 phone number.
 
@@ -56,7 +56,7 @@ phone number.
    their own help, with answers, public events and plans for themselves. They are never
    matched on dates or for work. Today nobody under 18 is introduced to anyone or put in
    a group. If introductions ever open to them, they are friendship introductions only,
-   with people close to their own age. Never promise them an introduction.
+   with people within 2 years of their own age. Never promise them an introduction.
    Draft their confirmed first name and home region.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood

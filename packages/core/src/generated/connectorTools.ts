@@ -28,7 +28,7 @@ export interface UpdateRead { shown: number; tokenLeft: boolean; otherLeft: bool
 export type Event =
   | { type: "callWithoutAccess"; tool: ToolName }
   | { type: "authorize"; withWrite: boolean; withProfileRead: boolean }
-  | { type: "callPublicTool"; tool: ToolName; app: AppId }
+  | { type: "callPublicTool"; tool: ToolName; app: AppId; appRegistered: boolean }
   | { type: "connect"; host: AppId; surface: Surface; openAiEnabled: boolean }
   | { type: "callAfterOwnerChange" }
   | { type: "callCheckStatus" }
@@ -312,7 +312,7 @@ export function authorize(c: Connection, withWrite: boolean, withProfileRead: bo
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
-export function callPublicTool(c: Connection, tool: ToolName, app: AppId): Connection {
+export function callPublicTool(c: Connection, tool: ToolName, app: AppId, appRegistered: boolean): Connection {
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysBoundHostIsServed(\result)
@@ -325,13 +325,20 @@ export function callPublicTool(c: Connection, tool: ToolName, app: AppId): Conne
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPublicTool", \result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPublicTool", \result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPublicTool", \result)
-  return { ...c, lastResult: appOffered(c.surface, app) ? "PublicFacts" : "AppNotAvailable" };
+  return { ...c, lastResult: appRegistered && appOffered(c.surface, app) ? "PublicFacts" : "AppNotAvailable" };
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
 export function canCallPublicTool(c: Connection, tool: ToolName): boolean {
   return (c.phase === "Anonymous" || c.phase === "Connected") && scopeFor(tool) === "NoScope";
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
+export function lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): boolean {
+  //@ ensures \result === true
+  return callPublicTool(c, tool, app, false).lastResult === "AppNotAvailable";
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
@@ -812,7 +819,7 @@ export function step(current: Connection, event: Event): Connection {
   //@ ensures inv(\result)
   if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool) ? callWithoutAccess(current, event.tool) : current;
   if (event.type === "authorize") return canAuthorize(current) ? authorize(current, event.withWrite, event.withProfileRead) : current;
-  if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool) ? callPublicTool(current, event.tool, event.app) : current;
+  if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool) ? callPublicTool(current, event.tool, event.app, event.appRegistered) : current;
   if (event.type === "connect") return canConnect(current) ? connect(current, event.host, event.surface, event.openAiEnabled) : current;
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current) ? callAfterOwnerChange(current) : current;
   if (event.type === "callCheckStatus") return canCallCheckStatus(current) ? callCheckStatus(current) : current;
@@ -843,7 +850,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool")) return { type: "callWithoutAccess", tool: raw.tool };
   if (raw.type === "authorize" && typeof raw.withWrite === "boolean" && typeof raw.withProfileRead === "boolean") return { type: "authorize", withWrite: raw.withWrite, withProfileRead: raw.withProfileRead };
-  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends")) return { type: "callPublicTool", tool: raw.tool, app: raw.app };
+  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends") && typeof raw.appRegistered === "boolean") return { type: "callPublicTool", tool: raw.tool, app: raw.app, appRegistered: raw.appRegistered };
   if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };
   if (raw.type === "callCheckStatus") return { type: "callCheckStatus" };

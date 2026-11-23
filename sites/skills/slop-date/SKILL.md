@@ -29,7 +29,7 @@ Anyone 13 or older may join. Dating matches and introductions are for adults 18 
 slop.date never matches anyone under 18 on dates. People aged 13–17 get their own help:
 answers, public events and plans for themselves. Today nobody under 18 is introduced to
 anyone. If introductions ever open to people under 18, they are friendship introductions
-only, with people close to their own age.
+only, with people within 2 years of their own age.
 Introductions require both people to agree. Joining now saves a profile for later;
 it does not mean introductions have started.
 
@@ -57,7 +57,7 @@ it does not mean introductions have started.
    slop.date will not match them on dates. Tell them what they get today: their own
    help, with answers, public events and plans for themselves. Today nobody under 18 is
    introduced to anyone. If introductions ever open to them, they are friendship
-   introductions only, with people close to their own age. Never promise them an
+   introductions only, with people within 2 years of their own age. Never promise them an
    introduction. Draft their confirmed first name and home region.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood

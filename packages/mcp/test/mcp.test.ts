@@ -1,5 +1,3 @@
-// MCP over Streamable HTTP: 2026-07-28 (per-request _meta and headers) and the legacy initialize
-// handshake, the OpenAI surface that offers every app, and tool inputs that never take a phone or a code.
 import { describe, expect, test } from "vitest";
 import { defaultApps } from "../src/apps.ts";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
@@ -144,6 +142,18 @@ describe("surface=openai offers every app", () => {
     expect((await call(env, OPENAI, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
     expect((await rpc(env, `${origin("slop.date")}/mcp/openai`, "tools/list")).res.status).toBe(404);
     expect((await rpc(env, `${origin("ntwrk.party")}/mcp/slop/openai`, "tools/list")).res.status).toBe(200);
+  });
+
+  test("a public tool answers that an app is not available when the agent names an app that is not in the registry", async () => {
+    const env = setup();
+    for (const endpoint of [NTWRK, OPENAI]) {
+      for (const name of ["app_info", "start_signup"] as const) {
+        const r = await call(env, endpoint, name, { app: "buddies" });
+        expect(r.res.status).toBe(200);
+        expect(r.body!.result.isError).toBe(true);
+        expect(r.body!.result.content[0].text).toBe("That app is not available here.");
+      }
+    }
   });
 
   test("an OpenAI client is put on the OpenAI surface even at /mcp, and cannot register on slop.date's own site", async () => {

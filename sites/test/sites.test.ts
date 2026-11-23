@@ -529,7 +529,7 @@ test("members aged 13 to 17 are told they are never matched on dates, and nothin
       expect(t, f).toMatch(/Ask for their birthday/);
       expect(t, f).toMatch(/Never send a birthday or an age through a tool/);
       expect(t, f).toMatch(/never matche[sd] (them )?on dates/i);
-      expect(t, f).toMatch(/friendship introductions (only, )?with people close to their own age/);
+      expect(t, f).toMatch(/friendship introductions (only, )?with people within 2 years of their own age/);
       expect(t, f).toContain("Never promise them an introduction.");
       expect(t, f).not.toMatch(/introductions and matching are for adults 18 and older\./);
     }
@@ -538,7 +538,7 @@ test("members aged 13 to 17 are told they are never matched on dates, and nothin
     expect(privacy).toContain("Today, no member under 18 is introduced to anyone.");
   }
   expect(read(SITES.find((s) => s.app === "slop")!, "SKILL.md").replace(/\s+/g, " ")).toContain("slop.date will not match them on dates");
-  expect(read(SITES.find((s) => s.app === "ntwrk")!, "SKILL.md").replace(/\s+/g, " ")).toContain("For ages 13–17, offer only friends and their own help; never offer dates or work.");
+  expect(read(SITES.find((s) => s.app === "ntwrk")!, "SKILL.md").replace(/\s+/g, " ")).toContain("For ages 13–17, draft only friends interests and their own help; never offer dates or work, and never say that these interests lead to an introduction today.");
 });
 
 test("peon.biz says a person reviews every introduction; no compliance gate blocks joining", () => {

@@ -65,7 +65,8 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(md.headers.get("content-type")).toBe("text/plain; charset=utf-8");
       const text = await md.text();
       expect(text).toContain(`name: ${s.skill}`);
-      expect(text).toContain(`https://${s.domain}/mcp`);
+      expect(text).toContain(`https://${st.sites.ntwrk.site.domain}${app === "ntwrk" ? "/mcp" : `/mcp/${app}`}`);
+      if (app !== "ntwrk") expect(text).not.toContain(`https://${s.domain}/mcp`);
       if (app !== "peon") {
         expect(text).toContain("native connector authorization");
         expect(text).toContain("Call `submit_profile` once");
@@ -540,7 +541,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(invite.instructions_for_person).toContain("Use a forwarded invitation in the app's browser");
       expect(invite.instructions_for_person).toContain("connector authorization");
       expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
-      for (const app of ["peon", "friends"] as const) {
+      for (const app of ["slop", "peon", "friends"] as const) {
         const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app } }));
         expect(info.join.how).toContain(`texts "${app}" as their first message`);
         const open = toolData(await signup(app));
@@ -550,7 +551,6 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect((await st.site(app, path)).status).toBe(200);
         expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code on that page");
       }
-      expect((await signup("slop")).body!.result.isError).toBe(true);
       expect((await sql`select count(*)::int as n from oauth.grants`)[0]!.n).toBe(0);
     }, T);
 
@@ -653,8 +653,6 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         for (const app of ["ntwrk", "friends"] as const) expect((await rpc(pilot, app, "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list", {}, token)).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
-        // Founder decision 2026-11-18 (spec/connectorTools.md, "Each surface offers every app"): the OpenAI surface offers slop,
-        // and ChatGPT reaches slop at the ntwrk.party endpoint of slop; this slop.date token is not valid there.
         expect(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })).apps.map((a: { id: string }) => a.id)).toContain("slop");
         expect((await (await pilot.site("ntwrk", "/.well-known/oauth-protected-resource/mcp/slop/openai")).json()).resource).toBe(`${pilot.sites.ntwrk.origin}/mcp/slop/openai`);
         expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
@@ -797,7 +795,6 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect(pilot.url).not.toBe(st.url);
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list")).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
-        // The OpenAI surface offers slop (spec/connectorTools.md, "Each surface offers every app"); slop.date's own site still has none.
         const publicApps = toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
         expect(publicApps.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
         const phone = newPhone();
@@ -1006,7 +1003,6 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
     }, T);
 
     test("the OpenAI surface offers slop at ntwrk.party, and slop.date answers 404 at its own /mcp/openai", async () => {
-      // Founder decision 2026-11-18 (spec/connectorTools.md, "Each surface offers every app").
       const list = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
       expect(list.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
       const hub = toolData(await rpc(st, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: { app: "slop" } }));

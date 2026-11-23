@@ -21,7 +21,9 @@ function hiddenField(html: string, name: string): string {
 }
 
 function finishSignupComesFirst(html: string): boolean {
-  const open = html.indexOf('name="decision" value="open"'), approve = html.indexOf('name="decision" value="approve"');
+  const decisions = [...html.matchAll(/<button\b[^>]*>/g)].map(m => m[0])
+    .filter(tag => /\sname="decision"/.test(tag)).map(tag => /\svalue="([^"]*)"/.exec(tag)?.[1]);
+  const open = decisions.indexOf("open"), approve = decisions.indexOf("approve");
   return open >= 0 && approve >= 0 && open < approve;
 }
 
@@ -369,7 +371,7 @@ test.skipIf(!pgAvailable)("ntwrk.party: the signup page requires an invitation a
     expect(finishSignupComesFirst(consent)).toBe(true);
 
     const missing = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "" });
-    expect(missing.form).toMatch(/name="invitation"[^>]*required/);
+    expect(missing.form).toMatch(/<input\b(?=[^>]*\sname="invitation")(?=[^>]*\srequired)[^>]*>/);
     expect(missing.status).toBe(400);
     expect(missing.html).toContain("Enter a valid invitation for this app.");
 
