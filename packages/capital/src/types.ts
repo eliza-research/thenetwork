@@ -1,4 +1,4 @@
-// Network capital (NC) ledger types. Design: docs/design/2026-10-07-growth-capital-ownership.md
+// Network capital (NC) ledger types. Design: docs/design/2026-10-07-growth-capital.md
 // section 2; PRD Section 39.2. NC is an internal, private, itemized ledger. It is never shown to
 // other members and never read by anyone else's matching or ranking.
 import type { MemberId } from "../../core/src/types.ts";

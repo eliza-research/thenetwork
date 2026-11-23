@@ -2,7 +2,7 @@
 
 Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-08-network-capital.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
 
-Spec: [docs/design/2026-10-07-growth-capital-ownership.md](../design/2026-10-07-growth-capital-ownership.md), section 2 ("the doc"), and PRD Section 39.2. **No LLM calls, $0.** Tests run with API keys unset and without `LIVE_TESTS`. The text is hand-written. The tables are copied from the generated output of the commands below.
+Spec: [docs/design/2026-10-07-growth-capital.md](../design/2026-10-07-growth-capital.md), section 2 ("the doc"), and PRD Section 39.2. **No LLM calls, $0.** Tests run with API keys unset and without `LIVE_TESTS`. The text is hand-written. The tables are copied from the generated output of the commands below.
 
 ## Result in one paragraph
 

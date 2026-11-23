@@ -254,6 +254,7 @@
 {"text": "Send him my photo. 🚫📸 I'll show him myself.", "want": "none"}
 {"text": "give him my number if he asks", "want": "none"}
 {"text": "send him my number whenever he asks", "want": "none"}
+{"text": "send him my number. but wait until he asks", "want": "none"}
 {"text": "give him my number every time he asks", "want": "none"}
 {"text": "send him my number every time he asks", "want": "none"}
 {"text": "give him my photo every time he asks", "want": "none"}
@@ -417,3 +418,20 @@
 {"text": "Ari must approve sharing my number with him first. Ari already approved sharing my number with her. Share my number with him.", "want": "none"}
 {"text": "Wait for Ana to agree to share my number with Ari. Share my number with Ari.", "want": "none"}
 {"text": "Ana must approve sharing my number with Ari first. Ana already approved sharing my number with Ari. Share my number with Ari.", "want": "contact_share"}
+{"text": "Wait until he asks. Share my number with him.", "want": "none"}
+{"text": "Wait till he asks. Share my number with him.", "want": "none"}
+{"text": "Hold it until he asks. Share my number with him.", "want": "none"}
+{"text": "Only if he asks. Share my number with him.", "want": "none"}
+{"text": "When he asks. Share my number with him.", "want": "none"}
+{"text": "He's gotta ask first. Share my number with him.", "want": "none"}
+{"text": "He doesn't have to ask first. Share my number with him.", "want": "contact_share"}
+{"text": "Wait until Ari asks. Ari asked. Share my number with him.", "want": "contact_share"}
+{"text": "Wait until Ari asks again. Ari asked. Share my number with him.", "want": "none"}
+{"text": "Wait until Ari asks again. Ari asked again. Share my number with him.", "want": "contact_share"}
+{"text": "Wait till he asks nicely. Send him my number.", "want": "none"}
+{"text": "Only if he requests my number explicitly. Send him my number.", "want": "none"}
+{"text": "Only if he asks politely. Send him my photo.", "want": "none"}
+{"text": "Wait until he asks why, tell him we can talk Friday. Send him my number.", "want": "contact_share"}
+{"text": "Nobody's gotta ask first. Share my number with him.", "want": "contact_share"}
+{"text": "Send him my number. It is for work on Friday.", "want": "contact_share"}
+{"text": "Send him my number. It is for him on Friday.", "want": "none"}
