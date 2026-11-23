@@ -32,7 +32,7 @@
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
-import { relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
+import { relayEnvelopeTextAllowed, relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
 import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
@@ -468,6 +468,7 @@ const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|ra
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t|cannot|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|mustn'?t|won'?t|not ready to|no way|refuse to|(?:will|would|could|did|should|must|shall|'ll)\s+not)(?!\s+wait\b)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
+const PHONE_RELAY_ITEM = /\bmy\s+(?:phone number|number|phone|digits|cell)\b/i;
 const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass|forward|text)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "giu");
 const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward|pass|show)\\s+(?:this|that|the|these|my)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\s+(?:to|with)\\s+${OTHER}`, "giu");
 const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
@@ -477,6 +478,8 @@ const RELAY_SPEECH_CUE = /\b(?:say|says|said|tell|tells|told|ask|asks|asked|aski
 
 const RELAY_MODAL = /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\s+(?:please\s+)?/i;
 const TEXT_REQ = new RegExp(`^(?:please\\s+)?(tell|let|ask)\\s+(${OTHER})\\s+(know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
+const COLON_TEXT_REQ = new RegExp(`^(?:please\\s+)?(tell|let|ask)\\s+(${OTHER})(\\s+know)?\\s*:\\s*(.{2,})$`, "isu");
+const POSSIBLE_COLON_NAME_TAIL = /^[\p{L}\p{M}'-]+(?:[ \t]+\p{Lu}[\p{L}\p{M}'-]*)*[ \t]*:/u;
 const TEXT_PRIVATE_DIRECTIVE_LEAD = /^\s*(?:(?:\p{L}[\p{L}'-]*\s+)?to\s+|you\s+(?:can|may|should|must)\s+)?(?:(?:please|just|kindly|pls)\s+)*$/iu;
 const IMPLICIT_RELAY_TARGET = /^(?:them|him|her|my (?:match|date))$/i;
 const SHARE_CONDITION = /\b(?:if|when)\s+(?:she|he|they|my (?:match|date))(?:(?:'s|'re)|\s+(?:is|are))?\s+(?:asks?|wants?|requests?|ready|interested|says?\s+(?:so|yes|ok(?:ay)?))\b/;
@@ -555,6 +558,8 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 const RELAY_SENTENCE_MARKS = String.raw`.!?;…\n`;
 const RELAY_SENTENCE = new RegExp(`[${RELAY_SENTENCE_MARKS}]+`);
 const RELAY_SENTENCE_TEXT = new RegExp(`[^${RELAY_SENTENCE_MARKS}]+`, "g");
+const TEXT_PAYLOAD_END = new RegExp(String.raw`^[\s\S]*[${RELAY_SENTENCE_MARKS}]`, "u");
+const TEXT_PAYLOAD_COLON = /(?<!\d):|:(?!\d)/u;
 const PRIOR_ASSENT_NAME = String.raw`(?!(?:i|we|you|me|us|it|this|that|she|he|they|them|him|her)\b)[\p{L}][\p{L}'-]{1,30}`;
 const PRIOR_ASSENT_ACTOR = String.raw`(?<actor>she|he|they|them|him|her|my\s+(?:match|date)|${PRIOR_ASSENT_NAME})`;
 const PRIOR_ASSENT_ACTION = String.raw`(?:(?<action>agree|approve|ask|request|consent)s?|says?\s+(?:yes|ok(?:ay)?|so))`;
@@ -721,11 +726,33 @@ const quotedRelaySeparator = (quotation: string): string => /[.!?…]\s*["']$/.t
 const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"')
   .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length));
 
-function directRelayLead(prefix: string): boolean {
+function independentPhoneBoundary(prefix: string, markedPayload: boolean): number | undefined {
+  const normalized = prefix.replace(/[“”]/g, '"');
+  // Preserve source offsets, including a sentence mark at the end of a closed quotation.
+  const punctuated = normalized.replace(RELAY_QUOTATION, quotation =>
+    quotedRelaySeparator(quotation).padStart(quotation.length, " "));
+  const end = TEXT_PAYLOAD_END.exec(punctuated)?.[0].length;
+  if (end === undefined) return undefined;
+
+  const colon = ownRelayWords(normalized.slice(0, end)).search(TEXT_PAYLOAD_COLON);
+  if (markedPayload || colon >= 0) {
+    const payload = normalized.slice(colon + 1, end).trim();
+    const quotation = payload.match(RELAY_QUOTATION)?.[0];
+    if (!quotation || quotation.length < 2 || quotation[0] !== quotation.at(-1)
+      || !payload.startsWith(quotation) || !/^[\s.!?;…]*$/u.test(payload.slice(quotation.length))) return undefined;
+  }
+  return end;
+}
+
+function relayClauseLead(prefix: string): string {
   // Treat a complete quoted sentence as a boundary without reading its words as consent.
-  const clause = prefix.replace(/[“”]/g, '"')
+  return prefix.replace(/[“”]/g, '"')
     .replace(RELAY_QUOTATION, quotedRelaySeparator)
     .split(RELAY_SENTENCE).at(-1)!;
+}
+
+function directRelayLead(prefix: string): boolean {
+  const clause = relayClauseLead(prefix);
   if (DIRECT_RELAY_LEAD.test(clause)) return true;
   const comma = clause.lastIndexOf(",");
   const aside = clause.slice(0, comma);
@@ -995,37 +1022,65 @@ export function parseRelayRequest(text: string): RelayRequest {
   const photos = [...spoken.matchAll(PHOTO_REQ)];
   const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!))
     && !reportsPrivateRequest(spoken, candidate);
-  const contact = contacts.find(direct);
-  const privateRequest = contact ?? photos.find(direct);
+  let contact = contacts.find(direct);
   const modal = RELAY_MODAL.exec(t);
-  const envelope = TEXT_REQ.exec(t.slice(modal?.[0].length ?? 0));
+  const afterModal = t.slice(modal?.[0].length ?? 0);
+  const markedEnvelope = COLON_TEXT_REQ.exec(afterModal);
+  if (markedEnvelope?.[1]!.toLowerCase() === "let" && !markedEnvelope[3]) return { kind: "none" };
+  const envelope = markedEnvelope ?? TEXT_REQ.exec(afterModal);
+  let ordinaryText: Extract<RelayRequest, { kind: "text" }> | undefined;
+  let delegatedPrivate = false;
+  let independentNumber = false;
+  let leadingCondition = false;
   if (envelope && (envelope[1]!.toLowerCase() !== "let" || envelope[3])) {
     const payload = envelope[4]!;
     const bodyStart = t.length - payload.length;
+    // A name that reaches the colon can be longer than the supported recipient grammar.
+    if (!markedEnvelope && !envelope[3] && POSSIBLE_COLON_NAME_TAIL.test(payload)
+      && !/\bthat\s*$/iu.test(t.slice(0, bodyStart))) return { kind: "none" };
     const delegates = (candidate: RegExpMatchArray) => TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(bodyStart, start + candidate.index!));
-    // An outer delegation does not subsume a later direct request. A declarative text body is separate.
-    if (!contacts.some(delegates) && !photos.some(delegates)) {
-      const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(payload);
-      const body = (modal && declarative ? payload.replace(/\?$/, "") : payload).trim();
-      const target = envelope[2]!;
-      if (body) return { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
+    delegatedPrivate = markedEnvelope === null && (contacts.some(delegates) || photos.some(delegates));
+    const phone = contact ?? contacts.find(candidate => PHONE_RELAY_ITEM.test(candidate[0])
+      && !reportsPrivateRequest(spoken, candidate)
+      && PRIVATE_CONDITION_MAIN.test(relayClauseLead(t.slice(0, start + candidate.index!)).trim() + " " + candidate[0]));
+    const end = phone && PHONE_RELAY_ITEM.test(phone[0])
+      ? independentPhoneBoundary(t.slice(bodyStart, start + phone.index!), markedEnvelope !== null)
+      : undefined;
+    independentNumber = end !== undefined;
+    // A leading condition can separate a phone clause from the text. It cannot grant consent.
+    if (independentNumber && contact === undefined) {
+      contact = phone;
+      leadingCondition = true;
     }
+    const message = payload.slice(0, end);
+    const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(message);
+    const body = (modal && declarative ? message.replace(/\?$/, "") : message).trim();
+    const target = envelope[2]!;
+    if (body) ordinaryText = { kind: "text", body, ...(IMPLICIT_RELAY_TARGET.test(target) ? {} : { targetName: target }) };
+    if (ordinaryText && relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, false, false, false)) return ordinaryText;
   }
 
+  const privateRequest = contact ?? photos.find(direct);
   if (privateRequest) {
     const privateModal = RELAY_MODAL.exec(spoken);
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
     const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
       privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
-    const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
+    const priorCondition = priorSentenceConditionsShare(t.slice(start), privateRequest, !!contact);
+    const uncertain = leadingCondition || HEDGE.test(low) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
       || question || privateShareQualified(spoken, privateRequest)
-      || priorSentenceConditionsShare(t.slice(start), privateRequest, !!contact);
+      || priorCondition;
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)
       || (!!contact && refusesNumberSwap(low, clauses));
+    if (ordinaryText && independentNumber) {
+      const body = ordinaryText.body.toLowerCase();
+      const containsPrivateInstruction = priorCondition || (PRIVATE_CONDITION_ITEM_NAME.test(body) && PRIVATE_RELAY_ACTION.test(body));
+      if (relayEnvelopeTextAllowed(delegatedPrivate, independentNumber, uncertain, refused, containsPrivateInstruction)) return ordinaryText;
+    }
     if (!privateRelayRequestAllowed(refused, uncertain)) return { kind: "none" };
     const address = privateRequestAddress(spoken, privateRequest);
     return address === null ? { kind: "none" } : { kind: contact ? "contact_share" : "photo", ...address };

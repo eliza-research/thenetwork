@@ -444,6 +444,54 @@ test.each([
   expect(await sharesQueued()).toBe(before + 2);
 }, 60_000);
 
+test("a reported delegation beside a direct sentence can finish a signed number swap", async () => {
+  const id = "reported-delegation-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const text = "Tell them I asked Ana to send him my number. Please send Ari my number.";
+  expect(await (await post(await ask("bo", id + "-direct", text))).json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
+  { text: "Tell Ari this exact text:\nSend Ari my number.", body: "this exact text:\nSend Ari my number.", decision: "pass" },
+  { text: "Tell Ari what Ana said:\nI am at dinner.\nSend Ari my number.", body: "what Ana said:\nI am at dinner.\nSend Ari my number.", decision: "pass" },
+  { text: "Tell Ari:\nSend Ari my number.", body: "Send Ari my number.", decision: "pass" },
+  { text: "Let Ari know:\nSend Ari my number.", body: "Send Ari my number.", decision: "pass" },
+  { text: "Tell Ari: “I am running late.” Please send Ari my number.", body: null, decision: "pass", shares: true },
+  { text: "Tell Ari: “I am running late.” Please send Sam my number.", body: null, decision: "block" },
+  { text: "Tell Sam:\nSend Ari my number.", body: null, decision: "block" },
+  { text: "Tell Ari Casey:\nSend Ari my number.", body: null, decision: "none" },
+  { text: "Let Ari:\nSend Ari my number.", body: null, decision: "none" },
+  { text: "Tell Ari: The contact number is 212-555-0182.", body: null, decision: "hold" },
+  { text: "Tell Ari I am running late. Please send Ari my number if he asks.", body: "I am running late.", decision: "pass" },
+  { text: "Tell Ari I am running late. If he asks, send Ari my number.", body: "I am running late.", decision: "pass" },
+  { text: "Tell Ari I am running late. If you can, send Ari my number.", body: "I am running late.", decision: "pass" },
+  { text: "If he asks, send Ari my number.", body: null, decision: "none" },
+  { text: "Tell Ari I am running late. Wait for Ari to agree. Share my number with Ari.", body: null, decision: "none" },
+  { text: "Tell Ari I am running late. Wait for Ari to agree. Ari has already agreed. Share my number with Ari.", body: null, decision: "pass", shares: true },
+  { text: "Tell Ari: “I am running late.” Please send Sam my number if he asks.", body: "“I am running late.”", decision: "pass" },
+  { text: "Tell Sam I am running late. Please send Ari my number if he asks.", body: null, decision: "block" },
+  { text: "Tell Ari I am running late. Please send Ari my number. Don't send my number.", body: null, decision: "none", withdraws: true },
+])("a signed relay envelope separates ordinary words from phone consent: $text", async ({ text, body, decision, shares, withdraws }) => {
+  const id = "relay-envelope-boundary-" + randomUUID();
+  await startNumberSwap(id, withdraws ? "bo" : "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+  const before = await sharesQueued();
+  const after = new Date(clock.now());
+
+  const response = await post(await ask("bo", id + "-envelope", text));
+  expect(response.status).toBe(200);
+  const messages = await sql<{ body: string }[]>`select body from network.messages
+    where app_id='friends' and direction='outbound' and member_id=${ari} and ts>${after} and body like 'Bo says:%'`;
+  expect({ response: await response.json(), bodies: messages.map(row => row.body), shares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) }).toMatchObject({
+    response: { decision, delivered: false }, bodies: body === null ? [] : [`Bo says: "${body}"`],
+    shares: shares ? 2 : 0, pending: shares || withdraws ? undefined : original,
+  });
+}, 60_000);
+
 test("an independent direct sentence can finish a signed number swap", async () => {
   const id = "independent-number-" + randomUUID();
   const before = await sharesQueued();

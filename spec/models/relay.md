@@ -307,13 +307,19 @@ module relay {
   // signals after claiming the receipt. An operative unmet condition can supply uncertainty before
   // the private request. The reader checks authorship, scope and any stated completion.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
-  // supplies none. A later independent directive can supply one, and an ordinary text envelope
-  // still follows the text path. Signed tests cover this reader boundary.
+  // supplies none. Quoted or colon-introduced payload follows the ordinary text path. A later
+  // independent phone directive can use the share path. Its unresolved condition can leave a preceding
+  // ordinary message, but only if the message contains no private instruction or prior assent.
+  // Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 
   action claimPrivateContact(k: str, refused: bool, uncertain: bool, withdraws: bool): bool =
     claim(k, if (privateRelayRequestAllowed(refused, uncertain)) "share" else if (withdraws) "withdraw" else "none")
+
+  action claimUncertainEnvelopeNumber(k: str, refused: bool, privateBody: bool): bool =
+    if (refused or privateBody) claimPrivateContact(k, refused, true, refused)
+    else claim(k, "text")
 
   // The unit commits its effects and the receipt in one transaction (runtime.ts writeUnit, completeAction last).
   pure def committed(e: Endpoint, k: str): Endpoint =
@@ -981,6 +987,15 @@ module relay {
       .then(setQuiet("B", false)).then(tickFlush(Set())).then(queueSend("a1"))
       .expect(safety)
       .expect(not(witness_deferredFlushed))
+
+  // A pending counterpart grant survives a regular text relay when the other grant is uncertain.
+  run uncertainNumberEnvelopeKeepsOrdinaryTextTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claimUncertainEnvelopeNumber("b1", false, false)).then(commitText("b1", "pass", false)).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and desk.log.get("b1").kind == "text"
+        and queue.rows.keys().contains("b1") and not(queue.rows.get("b1").send.number)
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
 
   // The reader found a qualified contact request and separately an explicit text relay. The
   // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.
