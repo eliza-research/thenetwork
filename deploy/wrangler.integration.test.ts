@@ -43,6 +43,13 @@ test("Wrangler OS-session opt-in preserves context and account/deploy guards", (
       expect(approved.stdout.toString()).toContain("arg=pages\narg=deploy\narg=synthetic-dist");
       expect(invoke(choice, ["pages", "project", "list"]).exitCode).toBe(0);
       expect(invoke(choice, ["deploy", "--dry-run", "--no-dry-run"]).exitCode).toBe(3);
+      expect(invoke(choice, ["deploy", "--dry-run", "--dryRun=false"]).exitCode).toBe(3);
+      expect(invoke(choice, ["deploy", "--dry-run", "--no-dryRun"]).exitCode).toBe(3);
+      expect(invoke(choice, ["--help", "--no-help", "deploy"]).exitCode).toBe(3);
+      expect(invoke(choice, ["--help", "false", "deploy"]).exitCode).toBe(3);
+      expect(invoke(choice, ["--help=false", "deploy"]).exitCode).toBe(3);
+      expect(invoke(choice, ["dev", "--remote=1"]).exitCode).toBe(3);
+      expect(invoke(choice, ["--help", "deploy"]).exitCode).toBe(0);
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

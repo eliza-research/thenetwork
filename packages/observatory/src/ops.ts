@@ -6,6 +6,7 @@
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp } from "../../network/service/cost.ts";
 import { appUrlEnv, type AppId } from "./apps.ts";
+import { peopleUrl } from "./people.ts";
 
 export interface CostDay { day: string; total: number; byKind: Record<string, number> }
 export interface CostSummary {
@@ -25,10 +26,12 @@ const r4 = (x: number) => Math.round(x * 10_000) / 10_000;
 
 export class CostView {
   private pools = new Map<string, SQL>();
-  constructor(private urlFor: (app: AppId) => string | undefined = app => process.env[appUrlEnv(app)] ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL) {}
+  constructor(
+    private urlFor: (app: AppId) => string | undefined = app => process.env[appUrlEnv(app)] ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL,
+    private everyAppUrl: () => string | undefined = () => peopleUrl(),
+  ) {}
 
-  private sql(app: AppId): SQL | undefined {
-    const url = this.urlFor(app);
+  private sql(url: string | undefined): SQL | undefined {
     if (!url) return undefined;
     let s = this.pools.get(url);
     if (!s) {
@@ -40,7 +43,7 @@ export class CostView {
 
   /** The app's cost by day and kind for the last `days` days, and today's use of each budget. `everyApp`: the caller may see the total budget. */
   async summary(app: AppId, now: number, o: { days?: number; everyApp?: boolean; env?: Record<string, string | undefined> } = {}): Promise<CostSummary | undefined> {
-    const sql = this.sql(app);
+    const sql = this.sql(this.urlFor(app));
     if (!sql) return undefined;
     const days = Math.min(90, Math.max(1, o.days ?? 14));
     const from = dayOf(now - (days - 1) * 86_400_000), today = dayOf(now);
@@ -62,11 +65,12 @@ export class CostView {
     // Today's totals for the budget lines: this app (and the shared line) only; the total budget needs every app's rows.
     const b = costBudgetsFromEnv(o.env ?? process.env);
     let totals: Partial<Record<CostApp, number>> = { [app]: todayUse.app, shared: todayUse.shared };
-    if (o.everyApp && b.daily !== undefined) {
-      const all = await sql`select app_id, sum(cost_usd)::float8 as usd from network.cost_ledger where day = ${today}::date group by 1` as { app_id: CostApp; usd: number }[];
+    const every = o.everyApp && b.daily !== undefined ? this.sql(this.everyAppUrl()) : undefined;
+    if (every) {
+      const all = await every`select app_id, sum(cost_usd)::float8 as usd from network.cost_ledger where day = ${today}::date group by 1` as { app_id: CostApp; usd: number }[];
       totals = Object.fromEntries(all.map(r => [r.app_id, r.usd]));
     }
-    const budgets = budgetLines(totals, { daily: o.everyApp ? b.daily : undefined, byApp: { ...(b.byApp[app] !== undefined ? { [app]: b.byApp[app] } : {}) } });
+    const budgets = budgetLines(totals, { daily: every ? b.daily : undefined, byApp: { ...(b.byApp[app] !== undefined ? { [app]: b.byApp[app] } : {}) } });
     // Round for display only after aggregation and budget shares use the unrounded totals.
     for (const d of byDay.values()) {
       d.total = r4(d.total);
