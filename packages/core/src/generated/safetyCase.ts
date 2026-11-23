@@ -256,6 +256,12 @@ export function safetyQuestionIsCurrent(askedAt: number, oldestQuestion: number)
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function safetyQuestionAcceptsName(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
+  return !(confirmation || refusal || cancellation);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarget: boolean): boolean {
   return allowedTarget && !excludesTarget;
 }
@@ -265,6 +271,13 @@ export function safetyQuestionAppliesTarget(allowedTarget: boolean, excludesTarg
 export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestion: number): boolean {
   //@ ensures \result === true
   return !(askedAt < oldestQuestion) || !safetyQuestionIsCurrent(askedAt, oldestQuestion);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawSafetyControlCannotNameTarget(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
+  //@ ensures \result === true
+  return !(confirmation || refusal || cancellation) || !safetyQuestionAcceptsName(confirmation, refusal, cancellation);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */

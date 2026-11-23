@@ -729,6 +729,18 @@ module safety_trust {
     }
   }
 
+  action receiveWhoControl(m: Mid, competing: bool, refuses: bool, cancels: bool): bool = {
+    val p = s.pendingWho.get(m)
+    all {
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
+      competing or refuses or cancels,
+      s' = if (cancels or (refuses and not(competing)))
+        { ...s, pendingWho: s.pendingWho.set(m, NO_WHO), lastAction: "whoControlClosed" }
+      else
+        { ...s, lastAction: "whoControlForwarded" },
+    }
+  }
+
   // The reader has identified an explicit exclusion of the sole offered counterpart. A
   // competing prompt can still handle the message, but no report can use the expired choice.
   action excludeWhoTarget(m: Mid): bool = {
@@ -1061,6 +1073,7 @@ module safety_trust {
       report(a, app, b, verb, kind, flag),
       answerWho(m),
       keepWhoAfterUnrelatedReply(m, flag, flag2),
+      receiveWhoControl(m, flag, flag2, risk == 1),
       excludeWhoTarget(m),
       staleSignedWhoReply(m, if (flag) s.pendingWho.get(m).at - 1 else s.now + 1),
       answerWhoShared(m, app, flag),
@@ -1635,6 +1648,19 @@ module safety_trust {
       .expect(s.pendingWho.get(ANA_S).asked and s.pendingWho.get(ANA_S).target == "ben" and s.reports == Set())
       .then(answerWho(ANA_S))
       .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports.exists(r => r.reporter == ANA_S and r.met))
+
+  run bareSafetyControlsDoNotNameTargetTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(receiveWhoControl(ANA_S, true, false, false))
+      .then(receiveWhoControl(ANA_S, true, true, false))
+      .expect(s.pendingWho.get(ANA_S).asked and s.reports == Set() and s.personBlocks == Set())
+      .then(receiveWhoControl(ANA_S, false, true, false))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.personBlocks == Set())
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(receiveWhoControl(ANA_S, true, false, true))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.personBlocks == Set())
 
   run excludedTargetCannotBeConfirmedTest =
     init
