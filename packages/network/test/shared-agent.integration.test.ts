@@ -130,13 +130,16 @@ test("a signed quoted youth cue does not restrict the adult sender", async () =>
     'The copy reads, "After school tomorrow."',
     'I told her "Mara said ‘I’m underage.’"',
     'I said “I’m 17.”',
+    'Yesterday she told me “I’m underage.”',
+    'Yesterday I told her she said “I’m underage.”',
+    'Yesterday I read a draft: “I’m underage.”',
   ].entries()) {
     clock.advance(MINUTE);
     expect((await post(turn(`quoted-youth-${i}`, phone, text, app.id))).status).toBe(200);
     expect(await ageState(), text).toEqual({ floor: 29, minor: false, signal: false });
   }
   clock.advance(MINUTE);
-  expect((await post(turn("own-quoted-youth-cue", phone, 'I told her “I’m underage.”', app.id))).status).toBe(200);
+  expect((await post(turn("own-quoted-youth-cue", phone, 'Yesterday I told her “I’m underage.”', app.id))).status).toBe(200);
   expect(await ageState()).toEqual({ floor: 29, minor: true, signal: true });
   clock.advance(MINUTE);
   expect((await post(turn("own-youth-cue", phone, "I'm underage.", app.id))).status).toBe(200);
@@ -175,11 +178,18 @@ test("fresh Slop onboarding preserves the member's age and matching tags across 
     'One example: "I’m in middle school.',
     'I told her "Mara said ‘I’m underage.’"',
     'I said “I’m 17.”',
+    'Yesterday she told me “I’m underage.”',
+    'Yesterday I told her “I’m 17.”',
+    'Yesterday I read a draft: “I’m underage.”',
   ]) {
     const quoted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
     expect(quoted.state, text).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
     expect(quoted.tags, text).toEqual(fresh.tags);
   }
+
+  const repeated = slopOnboarding.read(fresh.state, 'Yesterday, I told her “I’m underage.”', [], { now, age: 29 });
+  expect(repeated.state).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
+  expect(repeated.tags).toEqual([]);
 
   const own = slopOnboarding.read(fresh.state, "I'm in 7th grade.", [], { now, age: 29 });
   expect(own.state).toMatchObject({ age: { value: 12 }, minor: true, declined: false });

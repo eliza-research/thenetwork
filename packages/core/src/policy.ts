@@ -103,7 +103,7 @@ export function unquotedOwnAgeEvidence(text: string, start: number, end: number)
   return ownAgeEvidenceAllowed(quoteInSpan(text, start, end) !== undefined);
 }
 
-const OWN_QUOTE = /^\s*(?:(?:i|we)\s+(?:(?:just|already)\s+)?(?:said|told|texted|wrote|replied|posted|messaged)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?|i(?:'m| am)\s+quoting myself)\s*[:,]?\s*$/;
+const OWN_QUOTE = /^\s*(?:(?:yesterday|today|earlier|last night|this morning)\s*,?\s+)?(?:(?:i|we)\s+(?:(?:just|already)\s+)?(?:said|told|texted|wrote|replied|posted|messaged)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?|i(?:'m| am)\s+quoting myself)\s*[:,]?\s*$/;
 const SPEECH_FRAME = /(?:\b(?:say|said|says|tell|told|tells|text|texted|texts|message|messaged|write|wrote|writes|quote|quoted|reply|replied|asked|asks|posted|read|reads|whispered|was like|is like)\b[^.!?;\n]*|\b(?:one|an?|the|this|that|your)\s+(?:line|draft|dialogue|script|example|excerpt|lyrics?)\s*[:,]?\s*)$/;
 const LEADING_ELISION = /^(?:cause|cos|coz|cuz|bout|round|kay|nother|em|sup|til|till|tis|twas)\b/;
 const beforeQuote = (text: string, at: number, start = 0): string => text.slice(start, at).split(/[.!?;\n]/).at(-1)!;

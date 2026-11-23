@@ -306,3 +306,12 @@
 {"text":"I’m quoting myself: “I’m underage.”","teen":true}
 {"text":"I told her \"I said ‘I’m underage.’\"","teen":true}
 {"text":"'cuz i'm underage","teen":true}
+{"text":"Yesterday I told her “I’m underage.”","teen":true}
+{"text":"Yesterday, I told her “I’m underage.”","teen":true}
+{"text":"Earlier I told her “I’m underage.”","teen":true}
+{"text":"Yesterday I told her “I’m underage","teen":true}
+{"text":"Yesterday she told me “I’m underage.”","teen":false}
+{"text":"Yesterday I told her she said “I’m underage.”","teen":false}
+{"text":"Yesterday I told her “I’m 17.”","teen":false}
+{"text":"Yesterday I told her “Mara said ‘I’m underage.’”","teen":false}
+{"text":"Yesterday I read a draft: “I’m underage.”","teen":false}
