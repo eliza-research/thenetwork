@@ -328,8 +328,6 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
         const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
         if (yes) accept(r.memberId, opp);
         else if (no) {
-          // The persona chooses an intent before replying. Follow the received reply for probe
-          // declines in new runs. Imported logs without the receipt marker still replay as before.
           if (r.tracksReplyReceipt && (r.intent === "probe_no" || r.messageType === "probe" || r.messageType === "plan_probe")) {
             pendingProbeDeclines.set(r.messageId, { memberId: r.memberId, oppId: opp });
           } else recordDecline(r.memberId, opp);
@@ -449,8 +447,6 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
             pendingProbeDeclines.delete(replyTo);
           }
         }
-        // A plain no answers its known message. Unlinked text and clarifications without an
-        // opportunity still use the last known opportunity for this member.
         const original = replyTo === undefined ? undefined : msgOpp.get(replyTo);
         const oppId = original?.memberId === m.memberId ? original.oppId : l.lastOpp;
         if (oppId && classifyYesNo(m.body) === "no") recordDecline(m.memberId, oppId);

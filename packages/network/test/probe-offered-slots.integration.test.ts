@@ -91,7 +91,6 @@ const scenarios: Scenario[] = [
     followUp: { text: "Sunday works.", picked: [sunday.start] } },
 ];
 
-// spec/probeReply.md, "A model reading cannot replace a definite or qualified answer"
 test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted offered times when $scene", async ({ slots, text, picked, followUp, legacyClarification, generalPrelude }) => {
   const url = await migratedDb("probe_offered_slots");
   const clock = new SimClock(Date.UTC(2026, 9, 12, 16));

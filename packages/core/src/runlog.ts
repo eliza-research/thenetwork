@@ -6,7 +6,6 @@ import type { AppId, City, MemberId, ParticipationState, Proposal } from "./type
 export interface LoggedMessage {
   id: string; ts: number; direction: "outbound" | "inbound"; memberId: MemberId; body: string;
   status: string; keyword?: string; system?: boolean;
-  /** Outbound message whose simulated decision produced this received reply. */
   replyToMessageId?: string;
   /** App the message was sent or received in (absent = "ntwrk"). */
   app?: AppId;
@@ -35,9 +34,7 @@ export type RunRecord =
   | { t: number; type: "persona"; persona: LoggedPersona }
   | { t: number; type: "join"; memberId: MemberId; app?: AppId }
   | { t: number; type: "message"; msg: LoggedMessage }
-  | { t: number; type: "decision"; memberId: MemberId; messageId: string; messageType: string; intent: string; decision: string; proposalId?: string; delayMs: number;
-    /** The World records the actual inbound separately when the simulated reply reaches the channel. */
-    tracksReplyReceipt?: true }
+  | { t: number; type: "decision"; memberId: MemberId; messageId: string; messageType: string; intent: string; decision: string; proposalId?: string; delayMs: number; tracksReplyReceipt?: true }
   | { t: number; type: "judgment"; memberId: MemberId; messageId: string; worthwhile: boolean; source: "policy" | "llm" }
   | { t: number; type: "proposal"; source: "network" | "engine" | "scenario" | "player"; proposal: Proposal; oracle: OracleSummary }
   | { t: number; type: "meeting_scheduled"; meetingId: string; proposalId: string; participants: MemberId[]; at: number; city: City }

@@ -1268,7 +1268,6 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!gatheringRepeatMayAnswer(true, this.memberReply && !msg.reaction, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)) return "open" as const;
       }
       const parsedAnswer = parseProbeReply(body, options);
-      // spec/probeReply.md, "An unresolved offered time needs a time choice"
       const legacyClarified = aw.clarified === true && aw.timeChoice === undefined;
       const timeChoice = probeNeedsExplicitTimeChoice(options.length > 0, aw.timeChoice === true, legacyClarified, false);
       const explicit = timeChoice && parsedAnswer.answer === "yes" && parsedAnswer.keys.length > 0
