@@ -75,7 +75,7 @@ beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218"]).toContain(input.to);
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218","+12125550229","+12125550230"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){
       posts++;sent.push(input);
       if(input.approvedPhotos){
@@ -371,7 +371,11 @@ test("a member with no open match who asks for 'her number' is scored",async()=>
 
 test("selected photos survive queued uncertainty/restart with native JSONB refs, and revocation wins final admission",async()=>{
   const sender="+12125550215",recipient="+12125550216";
-  for(const [phone,name] of [[sender,"Dena"],[recipient,"Elle"]])for(const [i,text]of ["slop.date",`${name}, 29`,"I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()){
+  for(const [phone,name] of [[sender,"Dena"],[recipient,"Elle"]])for(const [i,text]of [
+    "slop.date", `${name}, 29`, "I'm a woman into women. I live in Greenpoint and love climbing and live music",
+    "I'm a woman looking for women, 25 to 35, within 5 miles of 11222", "A long-term relationship, no smokers",
+    "Coffee or a walk for a first date. Weekend evenings work best.", "Yes, that's right.",
+  ].entries()){
     clock.advance(MINUTE);expect((await post(TURN_PATH,{...turn(phone!,`photo-setup:${name}:${i}`,text),app:"slop"})).status).toBe(200);
   }
   const person=(await service.accounts.personFor(sender))!,other=(await service.accounts.personFor(recipient))!;
@@ -411,6 +415,24 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   expect(audited.some(row=>row.actor===staffId&&!row.ok&&row.detail?.phase==="result"&&row.detail?.delivered===false)).toBe(true);
   const reviewed=await service.photoRelay.item(selected.itemId);expect(reviewed).toMatchObject({state:"approved",actionId:null});
   expect((await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).length).toBe(0);expect(posts).toBe(before);
+  for (const [index, text] of [
+    "Tell Ana to send him my photo.",
+    "Could you let Ana show him this photo?",
+    "I have Ana assigned to, show him this photo.",
+  ].entries()) {
+    const messageId = "delegated-selected-photo-" + index;
+    clock.advance(MINUTE);
+    const opened = await post(TURN_PATH, { ...turn(sender, messageId, text), app: "slop" });
+    expect(opened.status).toBe(200);
+    const openResult = await opened.json();
+    expect(openResult, JSON.stringify(openResult)).toMatchObject({ outcome: "open", memberId: from });
+    const response = await post(RELAY_PATH, { channel: "blooio", messageId, app: "slop", memberId: from, itemId: null, text });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ decision: "none", delivered: false });
+    expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: null });
+    expect(await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).toHaveLength(0);
+    expect(posts).toBe(before);
+  }
   reviewerEnabled=false;expect((await release(selected.itemId)).status).toBe(403);expect(posts).toBe(before);
   expect((await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).length).toBe(0);reviewerEnabled=true;
   await restart();expect((await service.photoRelay.item(selected.itemId))!.reviewId).toBe(reviewed!.reviewId);
@@ -498,3 +520,108 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
   expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: 16 }]);
 }, 60_000);
+
+test("a signed photo request respects the intended item and separately preserves approval", async () => {
+  const sender = "+12125550229", recipient = "+12125550230";
+  for (const [phone, name] of [[sender, "Nia"], [recipient, "Pat"]] as const) {
+    for (const [index, text] of [
+      "slop.date", name + ", 29", "I'm a woman into women. I live in Greenpoint and love climbing and live music",
+      "I'm a woman looking for women, 25 to 35, within 5 miles of 11222", "A long-term relationship, no smokers",
+      "Coffee or a walk for a first date. Weekend evenings work best.", "Yes, that's right.",
+    ].entries()) {
+      clock.advance(MINUTE);
+      expect((await post(TURN_PATH, { ...turn(phone, `scoped-photo:${name}:${index}`, text), app: "slop" })).status).toBe(200);
+    }
+  }
+  if (!photoPolicyEnabled) {
+    photoPolicyEnabled = true;
+    await restart();
+  }
+  const person = (await service.accounts.personFor(sender))!;
+  const other = (await service.accounts.personFor(recipient))!;
+  const from = (await service.people.getMembership(person.id, "slop"))!.memberId;
+  const to = (await service.people.getMembership(other.id, "slop"))!.memberId;
+  const match = "slop.scoped-relay-photo-pair";
+  await fixturePair(false, "slop", [from, to], match);
+  const jpeg = Uint8Array.from([255, 216, 255, 218, 0, 2, 1, 255, 217]);
+  const upload = await service.photos.upload(person.id, "slop", jpeg, PHOTO_CONSENT.version);
+  if (!upload.ok) throw new Error("Photo fixture upload failed");
+  const selected = await service.photoRelay.select("slop", person.id, match, upload.value.id, "relay-fixture-v1", true, "fixture-scope-photo-selection");
+  if (!selected) throw new Error("Photo fixture selection failed");
+  expect(await service.photoRelay.review(selected.itemId, staffId, "safe")).toBe(true);
+  expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: null });
+
+  const before = posts;
+  const send = async (messageId: string, text: string) => {
+    clock.advance(MINUTE / 6);
+    const opened = await post(TURN_PATH, { ...turn(sender, messageId, text), app: "slop" });
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toMatchObject({ outcome: "open", memberId: from });
+    const response = await post(RELAY_PATH, { channel: "blooio", messageId, app: "slop", memberId: from, itemId: null, text });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  for (const [index, text] of [
+    "Send him my photo. Don't send my number. Or this photo.",
+    "Send him my photo if he asks.",
+    "Show him my photo when Pat agrees.",
+    "Send Élodie my photo when Élodie asks.",
+    "Send him my photo; When Alex asks.",
+    "Send him my photo. Actually, no.",
+    "Send him my photo, hold on.",
+    "Send him my photo. Hang on.",
+    "Send him my photo. 🚫",
+    "Send him my photo. Don't send my number. 🚫📸",
+    "Send him my photo. On second thought.",
+    "Send him my photo. Scratch that, I'll show him in person.",
+    "Send him my photo. Scratch that, I'll show it to him in person.",
+    "Send him my photo. Hold on, send him my number.",
+    "Send him my photo. Hold on, send my photo to her.",
+    "Send him my photo. Wait, send it, she said.",
+    "Send him my photo. 🚫📸 I'll show him myself.",
+    "Send him my photo, Ana said.",
+    "Don't send it while my number is wrong. Send him my photo.",
+    "Never send anything except my number. Send him my photo.",
+    "Don't send any picture with my number in it. Send him my photo.",
+    "Ana said, don't send it while my number is wrong. Send him my photo.",
+    "Don't send him my photo. Send him my photo.",
+    "Don't send him my number or my photo. Send him my photo.",
+    "Don't send him my number, or this photo. Send him my photo.",
+    "Don't send it. Send him my photo.",
+    "I won't. Send him my photo.",
+    "Don't send him my number. Send him my photo tomorrow.",
+    "Don't send him my number. If you want to, send him my photo.",
+    "Don't send him my number. Envíale mi foto.",
+    "Don't send him my number. I'm not sure about showing the photo. Send him my photo.",
+    "Don't send him my number. I am unsure whether to share my photo. Send him my photo.",
+    "Don't send him my number. I have second thoughts about sharing it. Send him my photo.",
+    "Don't send him my number. I'm not sure. Send him my photo.",
+    "Don't send him my number. I'm not comfortable showing my photo. Send him my photo.",
+    "Don't send him my number. I'm not certain. Send him my photo.",
+  ].entries()) {
+    expect(await send("scoped-photo-control-" + index, text), text).toMatchObject({ decision: "none", delivered: false });
+    expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: null });
+    expect(await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).toHaveLength(0);
+    expect(posts).toBe(before);
+  }
+  const pendingSwap = () => service.runtimeFor("slop")!.readState(net => net.exportState().relay?.swaps
+    .find(swap => swap.matchId === match && swap.from === from));
+  expect(await send("scoped-photo-number-pending", "Send him my number.")).toMatchObject({ decision: "hold", delivered: false });
+  expect(await pendingSwap()).toBeDefined();
+  clock.advance(MINUTE);
+  expect((await post(TURN_PATH, { ...turn(recipient, "scoped-photo-recipient-ack", "I read the note. Thanks."), app: "slop" })).status).toBe(200);
+  const beforeShare = posts;
+  const text = "Don't send him my number. I am unsure what time it is. Please send him my photo when you get a chance. Hold on, send my photo.";
+  const messageId = "scoped-photo-share";
+  clock.advance(MINUTE / 6);
+  const opened = await post(TURN_PATH, { ...turn(sender, messageId, text), app: "slop" });
+  expect(opened.status).toBe(200);
+  expect(await opened.json()).toMatchObject({ outcome: "open", memberId: from });
+  expect(await pendingSwap()).toBeUndefined();
+  const shared = await post(RELAY_PATH, { channel: "blooio", messageId, app: "slop", memberId: from, itemId: null, text });
+  expect(shared.status).toBe(200);
+  expect(await shared.json()).toMatchObject({ decision: "pass", delivered: true });
+  expect(await service.photoRelay.item(selected.itemId)).toMatchObject({ state: "approved", actionId: "photo-selection:" + selected.itemId });
+  expect(await sql`select status from platform.outbound where id=${`relay:${selected.itemId}`}`).toEqual([{ status: "accepted" }]);
+  expect(posts).toBe(beforeShare + 1);
+}, 120_000);

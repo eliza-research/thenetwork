@@ -48,3 +48,210 @@
 {"text": "I couldn't share this pic with her", "want": "none"}
 {"text": "can't wait! send them my number", "want": "contact_share"}
 {"text": "tell them I can't make it at 7", "want": "text"}
+{"text":"I would not give Ari my number","want":"none"}
+{"text":"I could not give Ari my number","want":"none"}
+{"text":"I did not give Ari my number","want":"none"}
+{"text":"I mustn't give Ari my number","want":"none"}
+{"text":"I'll not give Ari my number","want":"none"}
+{"text":"I won't lie, send Ari my number","want":"contact_share"}
+{"text":"I can't believe it, send Ari my number","want":"contact_share"}
+{"text":"I can't find my phone, but send Ari my number","want":"contact_share"}
+{"text":"I can't get my phone, but send Ari my number","want":"contact_share"}
+{"text":"My number is off limits, send Ari my number","want":"none"}
+{"text":"I can't believe it, “send Ari my number”","want":"none"}
+{"text":"Ari said “I would not send them my number.” Send Ari my number.","want":"contact_share"}
+{"text":"Ari said 'I won't send them my number.' Send Ari my number.","want":"contact_share"}
+{"text":"I would not send Ari my number. I can still make Saturday.","want":"none"}
+{"text":"I would not send that calendar invite, but send Ari my number.","want":"contact_share"}
+{"text":"I could not find parking, send Ari this photo","want":"photo"}
+{"text":"I would not send this calendar invite, but send Ari this photo.","want":"photo"}
+{"text":"I will not wait, send them my number","want":"contact_share"}
+{"text":"I would not wait, send them my number","want":"contact_share"}
+{"text": "tell Ana to send him my number", "want": "none"}
+{"text": "ask Ana to give him my number", "want": "none"}
+{"text": "tell Sam to share my number with him", "want": "none"}
+{"text": "let Ana send him my number", "want": "none"}
+{"text": "please tell Ana to send him my number", "want": "none"}
+{"text": "tell my match to send him my number", "want": "none"}
+{"text": "Ask Ana to text him my number.", "want": "none"}
+{"text": "Could you tell Ana to please give him my number?", "want": "none"}
+{"text": "Tell Ana to send him my photo.", "want": "none"}
+{"text": "Could you let Ana show him this photo?", "want": "none"}
+{"text": "Please have Ana send this picture to my date.", "want": "none"}
+{"text": "Ana said to give him my number.", "want": "none"}
+{"text": "Ask Ana to forward this selfie to Sam.", "want": "none"}
+{"text": "I asked Ana about lunch. Can you send them my number?", "want": "contact_share"}
+{"text": "I asked Ana about lunch. Show them this photo.", "want": "photo"}
+{"text": "Tell them Ana said she'd bring coffee.", "want": "text"}
+{"text": "Tell them to send me their number.", "want": "text"}
+{"text": "Tell 'Ana' to send him my number.", "want": "none"}
+{"text": "Could you ask \u201cAna\u201d to show him this photo?", "want": "none"}
+{"text": "Ana told me \u2018Keep this private.\u2019 Send them my number.", "want": "contact_share"}
+{"text": "Ana says to send him my number", "want": "none"}
+{"text": "Ana tells me to send him my number", "want": "none"}
+{"text": "Ask Mary Jane to send him my number", "want": "none"}
+{"text": "Tell them you can send him my number", "want": "none"}
+{"text": "Tell Ana to show him this photo and send him my number", "want": "none"}
+{"text": "Tell Ana to send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Ask Mary Jane to show him this photo. Please show Ari this photo.", "want": "photo"}
+{"text": "I want you to send them my number.", "want": "contact_share"}
+{"text": "Please go ahead and show them this photo.", "want": "photo"}
+{"text": "I want Ana to, send him my number", "want": "none"}
+{"text": "I have Ana assigned to, show him this photo", "want": "none"}
+{"text": "I would not want Ana to, send him my number", "want": "none"}
+{"text": "Tell them I can send them my number", "want": "text"}
+{"text": "Tell them I asked Ana to send him my number.", "want": "text"}
+{"text":"Don't send him my photo. Send him my number.","want":"contact_share"}
+{"text":"Don't send him my number. Send him my photo.","want":"photo"}
+{"text": "I won't send my photo. Send him my number.", "want": "contact_share"}
+{"text": "I don't want you to send my photo. Send him my number.", "want": "contact_share"}
+{"text": "Don't send it while the photo is blurry. Send him my number.", "want": "none"}
+{"text": "Don't send it while my number is wrong. Send him my photo.", "want": "none"}
+{"text": "Don't send anything except my photo. Send him my number.", "want": "none"}
+{"text": "Never send anything except my number. Send him my photo.", "want": "none"}
+{"text": "Don't send the phone number on my photo. Send him my number.", "want": "none"}
+{"text": "Don't send any picture with my number in it. Send him my photo.", "want": "none"}
+{"text": "Don't send him my photo or the number. Send him my number.", "want": "none"}
+{"text": "Don't send him my number or my photo. Send him my photo.", "want": "none"}
+{"text": "Don't send him my photo, or the number. Send him my number.", "want": "none"}
+{"text": "Don't send him my number, or this photo. Send him my photo.", "want": "none"}
+{"text": "I won't. Send him my number.", "want": "none"}
+{"text": "Don't send him my number. I'm not sure about showing the photo. Send him my photo.", "want": "none"}
+{"text": "Don't send him my number. I am unsure whether to share my photo. Send him my photo.", "want": "none"}
+{"text": "Don't send him my number. I have second thoughts about sharing it. Send him my photo.", "want": "none"}
+{"text": "Don't send him my number. I'm not sure. Send him my photo.", "want": "none"}
+{"text": "Don't send him my photo. I'm not sure whether to send it. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I'm not sure about sending it while Dad is here. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I have second thoughts. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I'm not comfortable sharing my number. Send him my number.", "want": "none"}
+{"text": "Don't send my photo. I'm not comfortable. Send him my number.", "want": "none"}
+{"text": "Don't send him my number. I'm not certain. Send him my photo.", "want": "none"}
+{"text": "Don't send my photo. I'm not sure about sending him this calendar invite. Send him my number.", "want": "contact_share"}
+{"text": "Don't send him my number. I'm not comfortable showing my photo. Send him my photo.", "want": "none"}
+{"text": "Don't send him my photo. I'm not sure what time it is. Send him my number.", "want": "contact_share"}
+{"text": "Don't send him my number. I am unsure what time it is. Send him my photo.", "want": "photo"}
+{"text": "Don't send him my photo. Send him my number tomorrow.", "want": "none"}
+{"text": "Don't send him my number. If you want to, send him my photo.", "want": "none"}
+{"text": "Don't send him my number. Envíale mi foto.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Or my number.", "want": "none"}
+{"text": "Send him my photo. Don't send my number. Or this photo.", "want": "none"}
+{"text": "Don't send my photo. My number neither. Send him my number.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Same for my number.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Same goes for my cell.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Nothing else.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Likewise.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Or the other one.", "want": "none"}
+{"text": "Send him my number. Scratch that.", "want": "none"}
+{"text": "Send him my number. Wait.", "want": "none"}
+{"text": "Send him my number. Maybe.", "want": "none"}
+{"text": "Send him my photo. Hmm.", "want": "none"}
+{"text": "Send him my number. Idk.", "want": "none"}
+{"text": "Send him my photo. Not ready.", "want": "none"}
+{"text": "Send him my number. Forget it.", "want": "none"}
+{"text": "Send him my number. Cancel.", "want": "none"}
+{"text": "Send him my photo. On second thought.", "want": "none"}
+{"text": "Send him my number. Let me think.", "want": "none"}
+{"text": "Send him my number. Keep it private.", "want": "none"}
+{"text": "Send him my photo. Reconsidering.", "want": "none"}
+{"text": "Send him my number. Ugh actually.", "want": "none"}
+{"text": "Send him my number. ??", "want": "none"}
+{"text": "Could you send him my number??", "want": "contact_share"}
+{"text": "Send him my photo. Actually, no.", "want": "none"}
+{"text": "Send him my photo — actually, no.", "want": "none"}
+{"text": "Send him my photo, hold on.", "want": "none"}
+{"text": "Send him my photo. Hang on.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. ❌", "want": "none"}
+{"text": "Send him my number. ❌", "want": "none"}
+{"text": "Send him my number. Don't send my photo. 🚫📞", "want": "none"}
+{"text": "Send him my photo. 🚫", "want": "none"}
+{"text": "Send him my photo. Don't send my number. 🚫📸", "want": "none"}
+{"text": "Send him my number. Don't send my photo. Instead, send her my email.", "want": "none"}
+{"text": "Send him my number, instead send her my email.", "want": "none"}
+{"text": "Send him my number, Ana said.", "want": "none"}
+{"text": "Send him my photo, Ana said.", "want": "none"}
+{"text": "Send him my number. Don't send my photo. 👍", "want": "contact_share"}
+{"text": "Don't send my photo. Could you kindly send him my number?", "want": "contact_share"}
+{"text": "Don't send my number. Would you send him my photo?", "want": "photo"}
+{"text": "Don't send my photo. Saturday works. Send him my number.", "want": "contact_share"}
+{"text": "Scratch that. Send him my number.", "want": "contact_share"}
+{"text": "Send him my number. Ana says, scratch that.", "want": "contact_share"}
+{"text": "Send him my photo, Ana said. Please send him my number.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that, I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, let me ask him first.", "want": "none"}
+{"text": "Send him my number. Wait, I changed my mind, I'll text him myself.", "want": "none"}
+{"text": "Send him my number. Cancel that, I need to check with him first.", "want": "none"}
+{"text": "Send him my photo. Scratch that, I'll show him in person.", "want": "none"}
+{"text": "Send him my number, scratch that, I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, send it.", "want": "contact_share"}
+{"text": "Send him my number. Wait, send it now.", "want": "contact_share"}
+{"text": "Send him my number. Hold on, SEND IT!", "want": "contact_share"}
+{"text": "Send him my number. Hold on, send it, no rush.", "want": "contact_share"}
+{"text": "Send him my number. Hold on, please send him my number now.", "want": "contact_share"}
+{"text": "Please send him my photo. Hold on, send my photo.", "want": "photo"}
+{"text": "Send him my photo. Hold on, send him my photo now.", "want": "photo"}
+{"text": "Send him my number. No worries.", "want": "contact_share"}
+{"text": "Send him my number. No rush at all.", "want": "contact_share"}
+{"text": "Send him my number. No problem on my end.", "want": "contact_share"}
+{"text": "Send him my number. Wait in the lobby till I get there.", "want": "contact_share"}
+{"text": "Send him my number. Hold on to the receipt.", "want": "contact_share"}
+{"text": "Send him my number. Cancel my dinner reservation.", "want": "contact_share"}
+{"text": "Send him my number. Maybe he already has the restaurant address.", "want": "contact_share"}
+{"text": "Send him my number. Scratch that because I'll tell him myself.", "want": "none"}
+{"text": "Send him my number. Hold on, I'll send it myself.", "want": "none"}
+{"text": "Send him my number. Hold on, Ana said send it.", "want": "none"}
+{"text": "Send him my number. Hold on, \"send it\".", "want": "none"}
+{"text": "Send him my number. Hold on, maybe send it.", "want": "none"}
+{"text": "Send him my number. Hold on, send it if he asks.", "want": "none"}
+{"text": "Send him my number. Hold on, send it 'to me instead'.", "want": "none"}
+{"text": "Send him my number. Hold on, send him my photo.", "want": "none"}
+{"text": "Send him my number. Hold on, send her my number.", "want": "none"}
+{"text": "Send him my photo. Scratch that, I'll show it to him in person.", "want": "none"}
+{"text": "Send him my photo. Hold on, send him my number.", "want": "none"}
+{"text": "Send him my photo. Hold on, send my photo to her.", "want": "none"}
+{"text": "Send him my photo. Wait, send it, she said.", "want": "none"}
+{"text": "Send him my photo. 🚫📸 I'll show him myself.", "want": "none"}
+{"text": "give him my number if he asks", "want": "none"}
+{"text": "send them my number if they ask for it", "want": "none"}
+{"text": "share my number with him if he wants it", "want": "none"}
+{"text": "give her my number only if she asks", "want": "none"}
+{"text": "give him my number when he asks", "want": "none"}
+{"text": "send them my number when they want it", "want": "none"}
+{"text": "send them my number if he hasn't got it", "want": "none"}
+{"text": "share my number with him if he's interested", "want": "none"}
+{"text": "give him my number if he needs it", "want": "none"}
+{"text": "send them my number if they ask", "want": "none"}
+{"text": "send them my number if you can", "want": "contact_share"}
+{"text": "give him my number if it's okay", "want": "contact_share"}
+{"text": "Give Sam my number if Sam asks.", "want": "none"}
+{"text": "Send Élodie my photo when Élodie asks.", "want": "none"}
+{"text": "Give him my number if we both agree.", "want": "none"}
+{"text": "Give him my number unless he objects.", "want": "none"}
+{"text": "Give him my number once he asks.", "want": "none"}
+{"text": "Give him my number provided he asks.", "want": "none"}
+{"text": "Give him my number as long as he asks.", "want": "none"}
+{"text": "Give him my number if it's okay with him.", "want": "none"}
+{"text": "Send him my number if you can confirm he's interested.", "want": "none"}
+{"text": "Send him my number if you can, after he asks.", "want": "none"}
+{"text": "Send him my number if you could, please. Only if Sam asks.", "want": "none"}
+{"text": "Send him my number. Only if Sam asks.", "want": "none"}
+{"text": "Send him my number. If he asks.", "want": "none"}
+{"text": "Send him my photo; When Alex asks.", "want": "none"}
+{"text": "Send him my number, please — if he asks.", "want": "none"}
+{"text": "Send him my number. If he asks, I can.", "want": "none"}
+{"text": "Send him my number. If he asks, I'll do it.", "want": "none"}
+{"text": "Send him my number. If he asks, I'll send.", "want": "none"}
+{"text": "Send him my number. If he asks, the number can be sent.", "want": "none"}
+{"text": "Send him my number. When is dinner?", "want": "contact_share"}
+{"text": "Send him my number. After dinner, the lights are off.", "want": "contact_share"}
+{"text": "Send him my number\nif he asks.", "want": "none"}
+{"text": "Send him my number if you could, please.", "want": "contact_share"}
+{"text": "Send him my number if it's convenient for you.", "want": "contact_share"}
+{"text": "Give him my number if that's OK with you.", "want": "contact_share"}
+{"text": "Send him my number when you get a chance.", "want": "contact_share"}
+{"text": "Send him my photo if you're able to, thanks.", "want": "photo"}
+{"text": "Send him my number. If he asks where dinner is, the address is on the invite.", "want": "contact_share"}
+{"text": "Send him my number; if she asks about dinner, I'll be there.", "want": "contact_share"}
+{"text": "Send him my photo\nIf he asks where to park, tell him the garage is free.", "want": "photo"}
+{"text": "Send him my photo.\nIf he wants recommendations on coffee, let me know.", "want": "photo"}
+{"text": "Send him my number, and if he asks about parking, tell him it's free.", "want": "contact_share"}
+{"text": "Send him my number, and if he asks about parking, tell him my number.", "want": "none"}

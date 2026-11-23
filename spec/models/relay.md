@@ -301,6 +301,9 @@ module relay {
 
   // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
   // signals after claiming the receipt. Only a private request the reader has identified as explicit gets here.
+  // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
+  // supplies no private request. A later independent directive can supply one. The signed relay
+  // tests cover this reader boundary for both item kinds.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 
@@ -949,6 +952,22 @@ module relay {
       .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
       .then(queueSend("a1")).then(queueSend("b2"))
       .expect(numberSent("A") and numberSent("B") and safety)
+
+  run delegatedShareKeepsSwapPendingTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claim("b1", "none")).then(commitNone("b1")).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .expect(numberPending("A") and numberPending("B") and safety)
+
+  run delegatedPhotoLeavesSelectionUnclaimedTest =
+    init
+      .then(selectPhoto).then(reviewPhoto(true))
+      .then(claim("a1", "none")).then(commitNone("a1")).then(answer("a1"))
+      .expect(photo.state == "approved" and not(photo.claimed) and not(queue.rows.keys().contains(PHOTO_ITEM)))
+      .then(photoRequest(false, false))
+      .expect(photo.claimed and queue.rows.keys().contains(PHOTO_ITEM) and safety)
 
   run pendingSwapPronounWithdrawalTest =
     init

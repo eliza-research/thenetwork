@@ -13,6 +13,7 @@ import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 export const LAB_ARMS: readonly LabArm[] = ["push_baseline", "push_v2", "consent"];
 /** maxQueued: seeds that may wait at once (a full queue answers 429; audit observatory-14). */
 export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2, maxQueued: 20 } as const;
+const LAB_STOPPED = "the server stopped before the run finished";
 
 /**
  * The child's environment: what Node needs to run, nothing else. API keys, database URLs and tokens
@@ -87,6 +88,7 @@ export class Lab {
   private seq = 0;
   private loaded: Promise<void>;
   private children = new Set<ReturnType<typeof spawnProcess>>();
+  private stopped = false;
   readonly dir: string;
   private script: string;
   private concurrency: number;
@@ -104,7 +106,7 @@ export class Lab {
     for (const f of (await readdir(this.dir)).filter(x => x.endsWith(".json"))) {
       try {
         const r = JSON.parse(await readFile(join(this.dir, f), "utf8")) as LabRun;
-        if (r.status === "queued" || r.status === "running") Object.assign(r, { status: "failed", error: "the server stopped before the run finished" });
+        if (r.status === "queued" || r.status === "running") Object.assign(r, { status: "failed", error: LAB_STOPPED });
         this.runs.set(r.id, r);
       } catch { /* a file that is not a run */ }
     }
@@ -130,6 +132,7 @@ export class Lab {
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
+    if (this.stopped) throw new Error(LAB_STOPPED);
     if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
     const now = Date.now();
     const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
@@ -161,6 +164,7 @@ export class Lab {
     if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
     const r = run.request;
     try {
+      if (this.stopped) throw new Error(LAB_STOPPED);
       const child = spawnProcess([process.execPath, "--import", "tsx", this.script, ...labArgs(r, seed)], {
         cwd: REPO, stdout: "pipe", stderr: "pipe", env: labEnv(),
       });
@@ -196,5 +200,10 @@ export class Lab {
   }
 
   /** Stop children (server shutdown). */
-  dispose() { for (const c of this.children) c.kill(); this.children.clear(); this.queue = []; }
+  dispose() {
+    this.stopped = true;
+    this.queue = [];
+    for (const child of this.children) child.kill();
+    this.children.clear();
+  }
 }
