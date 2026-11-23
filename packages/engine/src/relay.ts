@@ -580,7 +580,7 @@ const POLITE_PRIVATE_CONDITION = new RegExp(
 );
 const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
-const PRIVATE_CONDITION_LOCATION = /^(?:the|my)\s+(?!(?:send|share|relay|forward)\b)[^,]+?\s+(?:is|are)\s+(?:in|on|at)\s+(?:the|an?)\s+\S/iu;
+const PRIVATE_CONDITION_FACT = /^(?:(?:the|my)\s+)?(?!(?:send|share|relay|forward)\b)[^,]+?\s+(?:is|are)\s+(?:(?:in|on|at)\s+(?:the|an?)\s+\S|(?:free|available|closed)\s*$)/iu;
 const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
 const PRIVATE_RESPONSE_FOLLOWUP = new RegExp(
   String.raw`^(?:${RECURRING_PRIVATE_CONDITION})\s+${OTHER}\s+(?:repl(?:y|ies)|responds?|reports?\s+(?:an?|the)\s+(?:problem|issue))\s*,\s*(?:please\s+)?tell me(?:\s+how it went)?\s*$`,
@@ -592,7 +592,8 @@ const INCOMPLETE_CONDITION_ACTION = new RegExp(
   String.raw`\b(?:(?:do|handle|take care of)(?:\s+(?:it|that|this))?|(?:${TRANSFER}|show|tell)|tell\s+${OTHER}\s+(?:it|that|this))(?:\s+(?:now|then|myself))?\s*$`,
   "u",
 );
-const LINKED_PRIVATE_OBJECT = String.raw`(?:(?<contact>${CONTACT_RELAY_ITEM})|(?<photo>${PHOTO_RELAY_ITEM})|it|this|that)\b`;
+const LINKED_PRIVATE_REFERENCE = String.raw`(?:it|(?:this|that)(?=$|[.,:;!?]|\s+(?:to|with|now|please|pls|${PRIVATE_CONDITION_MARKER})\b))`;
+const LINKED_PRIVATE_OBJECT = String.raw`(?:(?<contact>${CONTACT_RELAY_ITEM})|(?<photo>${PHOTO_RELAY_ITEM})|${LINKED_PRIVATE_REFERENCE})\b`;
 const LINKED_PRIVATE_SEND = new RegExp(
   String.raw`\b(?:${TRANSFER}|show)\s+(?:(?<recipient>${OTHER})\s+)?${LINKED_PRIVATE_OBJECT}(?:\s+(?:to|with)\s+(?<destination>${OTHER}))?`, "iu",
 );
@@ -670,10 +671,11 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
     if (main) {
       const transfer = linkedPrivateTransfer(main);
-      if (transfer) return linkedTransferMatchesRequest(transfer, request, contact);
+      if (transfer) return linkedTransferMatchesRequest(transfer, request, contact)
+        || !PRIVATE_RELAY_COURTESY.test(main.slice(transfer.index + transfer[0].length));
       const words = main.toLowerCase();
       const independentStatement = detached ? PRIVATE_CONDITION_STATEMENT.test(main)
-        : PRIVATE_CONDITION_LOCATION.test(main) && !PRIVATE_CONDITION_ITEM_NAME.test(words) && !UNRESOLVED_RENEWAL_PAYLOAD.test(words);
+        : PRIVATE_CONDITION_FACT.test(main) && !PRIVATE_CONDITION_ITEM_NAME.test(words) && !UNRESOLVED_RENEWAL_PAYLOAD.test(words);
       if (TEXT_REQ.test(main) || (detached && PRIVATE_CONDITION_FOLLOWUP.test(main)) || independentStatement) {
         return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
           || INCOMPLETE_CONDITION_ACTION.test(words)
