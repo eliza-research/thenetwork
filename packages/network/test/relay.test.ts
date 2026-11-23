@@ -371,3 +371,34 @@ test.each([
     .toMatchObject({ decision: "pass", delivered: false });
   expect(await sharesQueued()).toBe(before + 2);
 }, 60_000);
+
+test.each([
+  { text: "Don't send him my photo. Send him my number.", shares: true },
+  { text: "I won't send my photo. Send him my number.", shares: true },
+  { text: "Don't send him my photo. I'm not sure what time it is. Send him my number.", shares: true },
+  { text: "Don't send him my photo. I'm not sure whether to send it. Send him my number.", shares: false },
+  { text: "Don't send him my number. Send him my number.", shares: false },
+  { text: "Don't send it while the photo is blurry. Send him my number.", shares: false },
+  { text: "Don't send him my photo, or the number. Send him my number.", shares: false },
+  { text: "Don't send anything except my photo. Send him my number.", shares: false },
+  { text: "Don't send the phone number on my photo. Send him my number.", shares: false },
+  { text: "Ana said, don't send it while the photo is blurry. Send him my number.", shares: false },
+  { text: "Don't send him my photo or the number. Send him my number.", shares: false },
+  { text: "Don't send it. Send him my number.", shares: false },
+  { text: "I won't. Send him my number.", shares: false },
+  { text: "Don't send him my photo. Send him my number tomorrow.", shares: false },
+  { text: "Don't send him my photo. If you want to, send him my number.", shares: false },
+  { text: "Don't send him my photo. Envíale mi número.", shares: false },
+])("a signed number request respects the intended item: $text", async ({ text, shares }) => {
+  const id = "scoped-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+
+  const response = await post(await ask("bo", id + "-action", text));
+  expect(response.status).toBe(200);
+  expect({ decision: (await response.json()).decision, newShares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
+    .toEqual({ decision: shares ? "pass" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
+}, 60_000);
