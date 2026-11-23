@@ -580,7 +580,7 @@ const POLITE_PRIVATE_CONDITION = new RegExp(
 );
 const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
-const PRIVATE_CONDITION_FACT = /^(?:(?:the|my)\s+)?(?!(?:send|share|relay|forward)\b)[^,]+?\s+(?:is|are)\s+(?:(?:in|on|at)\s+(?:the|an?)\s+\S|(?:free|available|closed)\s*$)/iu;
+const PRIVATE_CONDITION_FACT = /^(?!(?:(?:the|my)\s+)?(?:send|share|relay|forward)\b)[^,]+?\s+(?:is|are)\s+(?:(?:in|on|at)\s+(?:the|an?)\s+\S|(?:free|available|closed)\s*$)/iu;
 const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
 const PRIVATE_RESPONSE_FOLLOWUP = new RegExp(
   String.raw`^(?:${RECURRING_PRIVATE_CONDITION})\s+${OTHER}\s+(?:repl(?:y|ies)|responds?|reports?\s+(?:an?|the)\s+(?:problem|issue))\s*,\s*(?:please\s+)?tell me(?:\s+how it went)?\s*$`,
