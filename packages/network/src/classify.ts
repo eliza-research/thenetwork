@@ -848,8 +848,11 @@ const ALL_WEAK = /\b(?:either|both)\b(?:\s+of\s+(?:them|(?:those|these)(?:\s+(?:
 const BOTH_TIME_LEAD = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?both\b/;
 const BOTH_TIME_TAIL = /^\s*(?:(?:work(?:s)?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please)?\s*$/;
 const BOTH_TIME_QUALIFIER = /^\s+(?:(?:at|around|by|after|before)\s+\d{1,2}(?::[0-5]\d)?(?:\s*[ap]m)?|\d{1,2}(?::[0-5]\d)?\s*[ap]m|(?:(?:at|in the)\s+)?(?:noon|midnight|mornings?|afternoons?|evenings?|nights?|lunch|after work))\b/;
+const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
+const NAMED_TIME_EXCLUSION = `except|${NAMED_EXCLUSION_PHRASES}`;
+const BOTH_TIME_BOUNDARY = new RegExp(String.raw`[.,;!?\n]|\b(?:but|${NAMED_TIME_EXCLUSION})\b`);
 const TRAILING_BOTH_DAY_PAIR = new RegExp(
-  String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
+  String.raw`(?:^|[.;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
     + String.raw`\b(?:${DAY_TOKEN})\b(?:\s*(?:,|&|\/)\s*|\s+(?:(?:and|or)\s+)?)\b(?<last>${DAY_TOKEN})\b\s+both\b`,
   "dgu",
 );
@@ -897,8 +900,7 @@ const RELATIVE_DAY_GROUP = /\b(?:next|last|following)\s+weekends?\b/;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
 const NAMED_EXCLUSION_RANGE = "(?:any(?: other)? (?:day(?: of the week)?|time)|anytime|(?:any|every)thing(?: else)?|(?:all|every|each) (?:days?|times?)|all|whichever|whatever)";
 const DAYPART_EXCLUSION = /\b(?:any|every|each)\s+(morning|afternoon|evening|night)s?\s+but\s+(?:(?:on|this|that)\s+)*/;
-const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
-const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|except|${NAMED_EXCLUSION_PHRASES})\s+(?:(?:on|this|that)\s+)*$`);
+const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that)\s+)*$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type TimeMention = {
@@ -915,12 +917,17 @@ function partOf(minute: number): TimeMention["part"] {
   return minute >= 5 * 60 && minute < 12 * 60 ? "morning" : minute >= 12 * 60 && minute < 17 * 60 ? "afternoon" : "evening";
 }
 
+function probeChoiceAuthored(prefix: string): boolean {
+  return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]/).at(-1)!);
+}
+
 function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] {
   const days: TimeMention[] = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
   if (recoverTrailingPair) {
     for (const pair of text.matchAll(TRAILING_BOTH_DAY_PAIR)) {
+      if (!probeChoiceAuthored(text.slice(0, pair.index + 1))) continue;
       const tail = text.slice(pair.index + pair[0].length);
-      if (!BOTH_TIME_QUALIFIER.test(tail) && !BOTH_TIME_TAIL.test(tail.split(/[.,;!?\n]|\bbut\b/, 1)[0]!)) continue;
+      if (!BOTH_TIME_QUALIFIER.test(tail) && !BOTH_TIME_TAIL.test(tail.split(BOTH_TIME_BOUNDARY, 1)[0]!)) continue;
       const [at, end] = pair.indices!.groups!.last!;
       const day = DAY_WORDS.find(([rx]) => text.slice(at, end).search(rx) === 0)?.[1];
       if (day && !days.some(mention => mention.at === at)) days.push({ at, end, day });
@@ -1222,12 +1229,15 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (unresolved.length || weakOrdinalMissing || [...pos].some(key => !all.includes(key))
       || [...pickedClauses].some(clause => refusedClauses.has(clause))
       || weakNegated) return { ...unclear, why: "slot" };
-    const bothCues = weakCues.filter(cue => cue.index! < weakLimit && cue[0].startsWith("both"));
+    const bothCues = weakCues.filter(cue => {
+      if (cue.index! >= weakLimit || !cue[0].startsWith("both")) return false;
+      return probeChoiceAuthored(t.slice(0, cue.index!));
+    });
     if (bothCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
     const namesPair = bothCues.some(cue => {
       const clause = clauseAt(t, cue.index!, cue[0].length);
       if (pickedClauses.has(clause) && BOTH_TIME_LEAD.test(clause)) return true;
-      const rest = t.slice(cue.index! + cue[0].length).split(/[.,;!?\n]|\bbut\b/, 1)[0]!;
+      const rest = t.slice(cue.index! + cue[0].length).split(BOTH_TIME_BOUNDARY, 1)[0]!;
       return BOTH_TIME_TAIL.test(rest) && !/\b(?:we|you|they)\s+$/.test(t.slice(0, cue.index!));
     });
     if (namesPair && pos.size < 2) return { ...unclear, why: "slot" };
