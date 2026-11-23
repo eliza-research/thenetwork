@@ -92,6 +92,7 @@ export function copyFor(b: CopyBrand) {
   rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
+  probeTimeClarify: "Which of the offered times work for you? Reply with the letters or the times.",
   /** The member opted in to calendar free/busy (founder decision 4c); free/busy only, never event details. */
   calendarOptIn: "I’ve saved your choice. I’ll use only free/busy if you have an authorized calendar. Reply CALENDAR OFF anytime to stop.",
   calendarOff: "Done, I won't use your calendar.",

@@ -7,7 +7,17 @@ import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 
-test.each([false, true])("a join notice waits when the invitee or their namesake is in the proposal (%s)", async namesake => {
+const climber = (id: string, name: string) => ({
+  id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
+  wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }],
+});
+
+test.each([
+  { scene: "for the current invitee", namesake: false, clarification: undefined },
+  { scene: "for the current namesake", namesake: true, clarification: undefined },
+  { scene: "through a general clarification", namesake: false, clarification: "general" },
+  { scene: "through a time clarification", namesake: false, clarification: "time" },
+] as const)("a join notice waits $scene", async ({ namesake, clarification }) => {
   const w = new Mini([
     { id: "a", name: "Ana Diaz", age: 31, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"] },
     { id: "r", name: "Rae Kim", age: 30, area: "Greenpoint", interests: ["climbing", "hiking", "bouldering"], skills: ["climbing_belay"] },
@@ -35,7 +45,27 @@ test.each([false, true])("a join notice waits when the invitee or their namesake
   const from = w.mark();
   await w.say("a", "Anyone around who'd want to go climbing this week? I'm near Greenpoint.");
   const opp = [...w.net.opps.values()].find(o => o.participants.includes("a"))!;
-  for (let i = 0; i < 4; i++) for (const id of ["a", "r"]) if (w.probed(id)) await w.say(id, "yes");
+  if (clarification) {
+    if (w.probed("a")) await w.say("a", "yes");
+    expect(w.probed("r")).toBe(true);
+    const offered = opp.offered?.r ?? [];
+    expect(offered.length).toBeGreaterThan(0);
+    const unoffered = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+      .find(day => offered.every(slot => !slot.label.startsWith(day)));
+    expect(unoffered).toBeDefined();
+    const question = clarification === "general"
+      ? "Just to check: is that a yes or a no? Either is fine."
+      : "Which of the offered times work for you? Reply with the letters or the times.";
+    const beforeQuestion = w.mark();
+    await w.say("r", clarification === "general" ? "Maybe." : `${unoffered} works.`);
+    const asked = w.to("r", beforeQuestion).find(sent => sent.meta.type === "question");
+    expect(asked).toMatchObject({ body: question, meta: { proposalId: opp.id } });
+    expect(w.meetings).toHaveLength(0);
+    expect(w.net.memberList().find(m => m.id === "r")?.pendingInviteJoins?.map(notice => notice.inviteeId)).toEqual(["theo"]);
+    await w.say("r", clarification === "general" ? "yes" : `${offered[0]!.label} works.`);
+  } else {
+    for (let i = 0; i < 4; i++) for (const id of ["a", "r"]) if (w.probed(id)) await w.say(id, "yes");
+  }
   expect(opp.participants).toEqual(["a", "r"]);
   expect(opp.alternates).toContain(namesake ? "unconfirmed" : "theo");
   if (namesake) expect(opp.alternates).not.toContain("theo");
@@ -50,4 +80,84 @@ test.each([false, true])("a join notice waits when the invitee or their namesake
   expect(notices).toHaveLength(1);
   expect(notices[0]!.meta).toMatchObject({ invitationJoins: ["theo"] });
   expect(notices[0]!.meta.proposalId).toBeUndefined();
+});
+
+test("a declined invitee's join notice waits past the replacement's booking reply", async () => {
+  const w = new Mini([climber("a", "Ana Diaz"), climber("theo", "Theo Jones"), climber("r", "Rae Kim")], { plans: false });
+  const theo = w.members.find(member => member.id === "theo")!;
+  theo.invitedBy = "r";
+  await w.onboard("a", "theo", "r");
+  const oppId = w.propose(["a", "theo"], { alternates: ["r"] });
+  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+  await w.say("a", "Yes.");
+  expect(await w.runUntil(() => w.probed("theo"))).toBe(true);
+  await w.say("theo", "I'll pass for now.");
+  expect(w.log("probe_answer").map(entry => entry.detail)).toContainEqual(expect.objectContaining({ oppId, memberId: "theo", yes: false }));
+  expect(await w.runUntil(() => w.probed("r"))).toBe(true);
+  const opportunity = w.net.opps.get(oppId)!;
+  expect(opportunity.participants).toEqual(["a", "r"]);
+  expect(opportunity.alternates).not.toContain("theo");
+  expect(opportunity.contacted.has("theo")).toBe(true);
+  expect(opportunity.offered?.r?.[0]?.key).toBe("a");
+
+  const rae = w.members.find(member => member.id === "r")!;
+  const quiet = rae.prefs!.quietHours;
+  const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit" }).format(w.clock.now()));
+  rae.prefs!.quietHours = [hour, (hour + 22) % 24];
+  w.net.welcomeJoined("theo", "r");
+  rae.prefs!.quietHours = quiet;
+  const pendingNames = () => w.net.memberList().find(member => member.id === "r")?.pendingInviteJoins?.map(notice => notice.inviteeId);
+  expect(pendingNames()).toEqual(["theo"]);
+  const from = w.mark();
+  await w.say("r", "Option a works.");
+  expect(w.meetings).toEqual([expect.objectContaining({ proposalId: oppId, participants: ["a", "r"], at: opportunity.offered!.r![0]!.start })]);
+  const booking = w.to("r", from).find(message => message.meta.proposalId === oppId && message.meta.booked);
+  expect(booking).toMatchObject({ reply: true, body: expect.stringContaining("Ana") });
+  expect(booking!.body).not.toContain("Theo");
+  expect(booking!.meta.invitationJoins).toBeUndefined();
+  expect(pendingNames()).toEqual(["theo"]);
+
+  await w.say("r", "Anything fun near Greenpoint this weekend?");
+  const notices = w.to("r", from).filter(message => message.meta.invitationJoins?.includes("theo"));
+  expect(notices).toEqual([expect.objectContaining({
+    reply: true, body: expect.stringContaining("Theo just joined."),
+    meta: expect.objectContaining({ invitationJoins: ["theo"] }),
+  })]);
+  expect(notices[0]!.meta.proposalId).toBeUndefined();
+  expect(pendingNames()).toEqual([]);
+});
+
+test("a fresh-time retry keeps a current alternate's join notice pending", async () => {
+  const w = new Mini([climber("a", "Ana Diaz"), climber("theo", "Theo Jones"), climber("r", "Rae Kim")], { plans: false });
+  w.members.find(member => member.id === "theo")!.invitedBy = "r";
+  await w.onboard("a", "theo", "r");
+  const oppId = w.propose(["r", "a"], { alternates: ["theo"] });
+  expect(await w.runUntil(() => w.probed("r"))).toBe(true);
+  const opp = w.net.opps.get(oppId)!;
+  expect(opp.first).toBe("r");
+  expect(opp.alternates).toContain("theo");
+  const oldTimes = opp.offered?.r?.map(option => option.start) ?? [];
+  expect(oldTimes.length).toBeGreaterThan(0);
+
+  const rae = w.members.find(member => member.id === "r")!;
+  const quiet = rae.prefs!.quietHours;
+  const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit" }).format(w.clock.now()));
+  rae.prefs!.quietHours = [hour, (hour + 22) % 24];
+  w.net.welcomeJoined("theo", "r");
+  rae.prefs!.quietHours = quiet;
+  const pending = () => w.net.memberList().find(member => member.id === "r")?.pendingInviteJoins?.map(notice => notice.inviteeId);
+  expect(pending()).toEqual(["theo"]);
+
+  const from = w.mark();
+  await w.say("r", "Yes, but none of those work.");
+  expect(w.log("probe_answer").at(-1)?.detail).toEqual({ oppId, memberId: "r", yes: true, picked: [] });
+  expect(opp.timeRetry).toContain("r");
+  const retry = w.to("r", from).find(message => message.body.startsWith("No problem. Would one of these work instead:"));
+  expect(retry).toMatchObject({ reply: true, meta: { type: "scheduling" } });
+  expect(retry!.meta.proposalId).toBeUndefined();
+  expect(retry!.meta.timeOptions?.length).toBeGreaterThan(0);
+  expect(retry!.meta.timeOptions?.some(option => oldTimes.includes(option.start))).toBe(false);
+  expect(retry!.body).not.toContain("Theo");
+  expect(retry!.meta.invitationJoins).toBeUndefined();
+  expect(pending()).toEqual(["theo"]);
 });

@@ -266,8 +266,14 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const accept = (m: MemberId, opp: string) => { if (!accepted.has(m)) accepted.set(m, new Set()); accepted.get(m)!.add(opp); };
   const hasAccepted = (m: MemberId, opp: string) => !!accepted.get(m)?.has(opp);
   const decliners = new Map<string, Set<MemberId>>();
+  const recordDecline = (memberId: MemberId, oppId: string) => {
+    if (hasAccepted(memberId, oppId)) return;
+    if (!decliners.has(oppId)) decliners.set(oppId, new Set());
+    decliners.get(oppId)!.add(memberId);
+  };
+  const pendingProbeDeclines = new Map<string, { memberId: MemberId; oppId: string }>();
   const probed = new Set<string>();
-  const msgOpp = new Map<string, string>(); // message id -> opportunity id
+  const msgOpp = new Map<string, { oppId: string; memberId: MemberId }>();
   const swapped = new Set<string>();
   // Apps: memberships and where tokens (canaries, contact details) were learned.
   const memberApps = new Map<MemberId, Set<AppId>>();
@@ -316,12 +322,18 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (r.type === "location") line(r.memberId).city = r.city;
     if (r.type === "contact_swap") swapped.add(pairKey(r.members[0], r.members[1]));
     if (r.type === "decision") {
-      const opp = r.proposalId ?? msgOpp.get(r.messageId);
+      const opp = r.proposalId ?? msgOpp.get(r.messageId)?.oppId;
       if (opp) {
         const yes = r.decision === "accept" || r.intent === "accept" || r.intent === "probe_yes" || r.intent === "confirm_schedule" && r.decision !== "decline";
         const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
         if (yes) accept(r.memberId, opp);
-        else if (no && !hasAccepted(r.memberId, opp)) { if (!decliners.has(opp)) decliners.set(opp, new Set()); decliners.get(opp)!.add(r.memberId); }
+        else if (no) {
+          // The persona chooses an intent before replying. Follow the received reply for probe
+          // declines in new runs. Imported logs without the receipt marker still replay as before.
+          if (r.tracksReplyReceipt && (r.intent === "probe_no" || r.messageType === "probe" || r.messageType === "plan_probe")) {
+            pendingProbeDeclines.set(r.messageId, { memberId: r.memberId, oppId: opp });
+          } else recordDecline(r.memberId, opp);
+        }
       }
     }
     if (r.type === "network_log") {
@@ -428,10 +440,20 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       const initiated = l.lastOut === undefined || m.ts - l.lastOut > DAY;
       if (initiated || ASK.test(m.body)) { l.askAt = m.ts; l.askUsed = 0; }
       if (initiated || l.lastOutProactive || !ACK_ONLY.test(m.body.trim())) { l.streak = 0; l.reengageUsed = false; }
-      // A plain "no" to the last opportunity asked about counts as a decline (also without a decision record).
-      if (l.lastOpp && !hasAccepted(m.memberId, l.lastOpp) && classifyYesNo(m.body) === "no") {
-        if (!decliners.has(l.lastOpp)) decliners.set(l.lastOpp, new Set());
-        decliners.get(l.lastOpp)!.add(m.memberId);
+      if (m.status === "delivered") {
+        const replyTo = m.replyToMessageId;
+        if (replyTo !== undefined) {
+          const pending = pendingProbeDeclines.get(replyTo);
+          if (pending?.memberId === m.memberId) {
+            recordDecline(m.memberId, pending.oppId);
+            pendingProbeDeclines.delete(replyTo);
+          }
+        }
+        // A plain no answers its known message. Unlinked text and clarifications without an
+        // opportunity still use the last known opportunity for this member.
+        const original = replyTo === undefined ? undefined : msgOpp.get(replyTo);
+        const oppId = original?.memberId === m.memberId ? original.oppId : l.lastOpp;
+        if (oppId && classifyYesNo(m.body) === "no") recordDecline(m.memberId, oppId);
       }
       l.lastIn = m.ts; l.outSince = 0;
       return;
@@ -445,7 +467,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     const isProbe = meta.type === "probe" || meta.type === "plan_probe" || !!probe;
     const oppId = [meta.proposalId, probe?.key, plan?.planId, plan?.id].find((x): x is string => typeof x === "string" && !!x);
     if (oppId) {
-      msgOpp.set(m.id, oppId);
+      msgOpp.set(m.id, { oppId, memberId: to });
       if (m.status === "delivered") l.lastOpp = oppId;
       addOpp(oppId, meta.participants); addOpp(oppId, probe?.participants);
       addOpp(oppId, plan?.invited); addOpp(oppId, plan?.alternates); addOpp(oppId, plan?.participants); addOpp(oppId, [plan?.hostId]);

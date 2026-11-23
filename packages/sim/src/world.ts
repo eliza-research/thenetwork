@@ -153,7 +153,8 @@ export class World {
     this.opts.onRecord?.(full);
   }
   private logMessage(m: SimMessage, bookingNoticeMeetingId?: string) {
-    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any },
+    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any,
+      ...(m.direction === "inbound" && m.meta?.inReplyTo ? { replyToMessageId: m.meta.inReplyTo } : {}) },
       ...(bookingNoticeMeetingId ? { bookingNoticeMeetingId } : {}) });
   }
 
@@ -443,7 +444,8 @@ export class World {
     if (!p || !mem || mem.optedOut) return;
     const pctx = this.personaCtx(p, msg.id);
     const reply = await this.agent.respond(pctx, msg);
-    this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent, decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs });
+    this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent,
+      decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs, tracksReplyReceipt: true });
     if (reply.worthwhile !== undefined) this.rec({ type: "judgment", memberId: p.id, messageId: msg.id, worthwhile: reply.worthwhile, source: this.agent.mode });
     // Messages the persona sends on its own after this one (plans: "WEEKLY" to the check-in offer).
     for (const f of reply.followUps ?? []) this.scheduler.after(f.delayMs, "persona_send", { personaId: p.id, text: f.text });

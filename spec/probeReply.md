@@ -130,6 +130,47 @@ pure def lawPresentProbeTimeKeepsItsClause(timeReference: bool): bool =
   not(historicalProbeTimeClause(false, timeReference))
 ```
 
+### An unresolved offered time needs a time choice
+
+When a timed reply has an unresolved time, ask which offered times work. If the member already received a general clarification, ask for times once. Keep the time question open until the member makes an explicit choice from the current offer, declines the introduction, or says none of those times work. A bare yes does not choose a time in answer to this question. A bare “both” or “either” needs exactly two offered times. The model cannot supply a choice. For an older timed clarification with no recorded kind, ask for times before accepting an unqualified yes. A first reply and a general clarification keep the usual consent rules.
+
+```quint
+type ClarifiedTimeReading = KeepProbeAnswer | UseExplicitProbeTimes | AwaitExplicitProbeTimes
+
+pure def probeNeedsExplicitTimeChoice(offeredTimes: bool, timeChoice: bool, legacyClarified: bool, unresolvedTime: bool): bool =
+  offeredTimes and (timeChoice or legacyClarified or unresolvedTime)
+
+pure def probeClarificationMayAsk(askForTimes: bool, clarified: bool, timeChoice: bool): bool =
+  if (askForTimes) not(timeChoice) else not(clarified)
+
+pure def clarifiedBroadTimeChoiceAllowed(explicitChoice: bool, pairChoice: bool, offeredCount: int): bool =
+  explicitChoice and (not(pairChoice) or offeredCount == 2)
+
+pure def clarifiedProbeTimeReading(timeChoice: bool, answer: str, offeredChoices: int, explicitChoices: int): ClarifiedTimeReading =
+  if (not(timeChoice) or answer == "no" or (answer == "yes" and offeredChoices == 0)) KeepProbeAnswer
+  else if (answer == "yes" and explicitChoices > 0) UseExplicitProbeTimes
+  else AwaitExplicitProbeTimes
+
+pure def lawAClarifiedProbeCannotUseAnImplicitTime(offeredChoices: int): bool =
+  offeredChoices > 0 implies clarifiedProbeTimeReading(true, "yes", offeredChoices, 0) == AwaitExplicitProbeTimes
+
+pure def lawAClarifiedProbeCanUseExplicitTimes(offeredChoices: int, explicitChoices: int): bool =
+  offeredChoices > 0 and explicitChoices > 0 implies
+    clarifiedProbeTimeReading(true, "yes", offeredChoices, explicitChoices) == UseExplicitProbeTimes
+
+pure def lawAnUntimedProbeDoesNotNeedATimeChoice(legacyClarified: bool, unresolvedTime: bool): bool =
+  not(probeNeedsExplicitTimeChoice(false, true, legacyClarified, unresolvedTime))
+
+pure def lawAProbeTimeQuestionIsAskedOnce(clarified: bool): bool =
+  not(probeClarificationMayAsk(true, clarified, true))
+
+pure def lawASecondQuestionCanClarifyTimes(clarified: bool): bool =
+  clarified implies probeClarificationMayAsk(true, clarified, false) and not(probeClarificationMayAsk(false, clarified, false))
+
+pure def lawAClarifiedPairNeedsTwoOfferedTimes(offeredCount: int): bool =
+  offeredCount != 2 implies not(clarifiedBroadTimeChoiceAllowed(true, true, offeredCount))
+```
+
 ### A suggested alternative needs a separate yes before asking for new times
 
 A counter-offer alone does not accept the opportunity. A clear yes stated before a request for a different time may lead to a new time offer, when the previous offer included times. It does not accept any of the old times.

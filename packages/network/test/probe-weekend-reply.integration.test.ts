@@ -40,6 +40,9 @@ test("a reviewed offer keeps exclusions and the member's time-of-day limit", asy
   await w.say("a", "Any morning but Saturday works.");
   expect(w.meetings).toEqual([]);
   expect(w.log("probe_answer").filter(item => item.detail.memberId === "a")).toEqual([]);
+  await w.say("a", "Every day but Monday works.");
+  await w.say("a", "Every day but Saturday works for Morgan.");
+  expect(w.log("probe_answer").filter(item => item.detail.memberId === "a")).toEqual([]);
   await w.say("a", "Every day but Saturday works.");
   expect(w.log("probe_answer").filter(item => item.detail.memberId === "a").map(item => item.detail.picked)).toEqual([["a", "c"]]);
   expect(await w.runUntil(() => w.probed("b"))).toBe(true);
