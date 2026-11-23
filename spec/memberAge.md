@@ -132,7 +132,15 @@ pure def lawConfirmedUnderageCannotRestart(age: int): bool =
 
 The Network and Slop accept a current age qualified by words such as “still” or “currently,” including ages written with “y.o.” If a direct self-age clause names the age of a near birthday, use one year less in onboarding and conversation. Treat the result as an estimate. It can keep someone out of matching but does not confirm an under-13 refusal. The direct-only relay check does not commit an estimate. Keep a following birthday qualifier with an age written as “y.o.” The qualifier stays with the age for a near or a distant birthday. A distant birthday does not give a current age. Quoted, reported, or hypothetical wording does not supply a direct current age.
 
+When a signed member turn contains an explicit text relay request and a mutual match is open, read direct age evidence at turn intake as well as at relay. A youth estimate can withhold the item while leaving the member’s age and match unchanged.
+
 ```quint
+pure def relayTurnReadsDirectAge(signedMemberText: bool, currentMatch: bool, explicitTextRelay: bool): bool =
+  signedMemberText and currentMatch and explicitTextRelay
+
+pure def lawRelayTurnDirectAgeNeedsSignedTextAndMatch(signedMemberText: bool, currentMatch: bool, explicitTextRelay: bool): bool =
+  relayTurnReadsDirectAge(signedMemberText, currentMatch, explicitTextRelay) implies (signedMemberText and currentMatch and explicitTextRelay)
+
 pure def precedingBirthdayAge(nextAge: int): int =
   nextAge - 1
 

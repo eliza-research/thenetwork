@@ -37,6 +37,7 @@ import {
 } from "@thenetwork/engine";
 import { crewHandoffDue, crewMemberWindowAvailable, crewOfferReplyCurrent, crewSessionVenueAllowed, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import { friendsRepeatAttendanceAllowed, friendsRepeatBookingProofCurrent, friendsRepeatHostIndex, friendsRepeatRosterCurrent, friendsRepeatSourceAllowed } from "../../core/src/generated/friendsWeek.ts";
+import { relayTurnReadsDirectAge } from "../../core/src/generated/memberAge.ts";
 import {
   closeOpportunityForRequestWithdrawal, immediateRequestSearchAllowed, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
@@ -137,7 +138,7 @@ import { currentPairAllowed } from "../../core/src/generated/currentPairRestrict
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, minorSignOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -147,7 +148,7 @@ import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
 import { RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
-import type { RelayRecord } from "../../engine/src/relay.ts";
+import { parseRelayRequest, type RelayRecord } from "../../engine/src/relay.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
@@ -1256,6 +1257,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     // welcome and before the trust-hold return (P2-17).
     const parsed = classify(body);
     let c = this.withUnderstanding(parsed, this.understood);
+    // A signed text relay uses the same direct age reader before the item reaches the relay desk.
+    if (validAge(c.statedAge) && relayTurnReadsDirectAge(
+      msg.signedReceivedAt !== undefined && !msg.reaction && m.stage !== "new",
+      this.relayDesk.matchFor(m.id) !== undefined,
+      parseRelayRequest(body).kind === "text",
+    )) {
+      const { age, explicit } = agesStated(body, { directOnly: true });
+      c = { ...c, statedAge: age, explicitAge: explicit, minorSignal: minorSignOf(body) || (age !== undefined && isMinor(age)) };
+    }
     // The answer to "How old are you?" (asked when the record has no valid age): a bare answer
     // ("34", "fifteen", "I'm 12") is an explicit age.
     if (m.awaiting?.kind === "age") {

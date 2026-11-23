@@ -6,10 +6,10 @@ export type FractionalAgeEvidence = "FractionalAgeUnknown" | "FractionalAgeLoose
 
 /** Story: Join at the eligible age / Joining requires a usable age of at least 13 (spec/memberAge.md) */
 export const minMemberAge: number = 13;
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-export const minLooseHeightAge: number = 8;
 /** Story: Join at the eligible age / Age data outside the human range is unusable (spec/memberAge.md) */
 export const maxAge: number = 120;
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+export const minLooseHeightAge: number = 8;
 /** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
 export const minLooseTeamAge: number = 10;
 /** Story: Take part in adult matching / Matching requires a usable age of at least 18 (spec/memberAge.md) */
@@ -133,6 +133,12 @@ export function lawConfirmedUnderageCannotRestart(age: number): boolean {
 
 /** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
 //@ pure
+export function relayTurnReadsDirectAge(signedMemberText: boolean, currentMatch: boolean, explicitTextRelay: boolean): boolean {
+  return signedMemberText && currentMatch && explicitTextRelay;
+}
+
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
 export function precedingBirthdayAge(nextAge: number): number {
   return exact_memberAge(nextAge - 1);
 }
@@ -141,6 +147,13 @@ export function precedingBirthdayAge(nextAge: number): number {
 //@ pure
 export function ageQualifierFollows(nearBirthday: boolean, distantBirthday: boolean): boolean {
   return nearBirthday || distantBirthday;
+}
+
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
+export function lawRelayTurnDirectAgeNeedsSignedTextAndMatch(signedMemberText: boolean, currentMatch: boolean, explicitTextRelay: boolean): boolean {
+  //@ ensures \result === true
+  return !relayTurnReadsDirectAge(signedMemberText, currentMatch, explicitTextRelay) || (signedMemberText && currentMatch && explicitTextRelay);
 }
 
 /** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */

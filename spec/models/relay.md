@@ -14,7 +14,7 @@ The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the
 
 ### Story: Keep an estimate in the relay item
 
-A member's own estimate can make one message unsafe to relay. The member can still use the match when the item supplies no direct age that changes the member record. A member can report what another person said without that report becoming their own age.
+A member's own estimate can make one message unsafe to relay. The signed turn reads direct age evidence for an explicit text relay request with an open mutual match. The member can still use the match when the item supplies no direct age that changes the member record. A member can report what another person said without that report becoming their own age.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
