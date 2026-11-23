@@ -454,9 +454,13 @@ export const SCENARIOS: NetScenario[] = [
       const teens = Object.values(ctx.ids);
       const off = at(ctx.start, 4, 12);
       const switched = logs(ctx.records, "teen_intros_switch");
-      const queued = logs(ctx.records, "review_queued").filter(l => l.t < off && (l.detail.proposal as { participants: MemberId[] }).participants.filter(id => teens.includes(id)).length >= 2);
+      const teenItem = (l: { detail: Record<string, unknown> }) => {
+        const p = l.detail.proposal as { id: string; participants: MemberId[] };
+        return p.participants.some(id => teens.includes(id)) && ctx.net.opps.get(p.id)?.teenRuleAt !== undefined;
+      };
+      const queued = logs(ctx.records, "review_queued").filter(l => l.t < off && teenItem(l));
       const probedBefore = logs(ctx.records, "probe_sent").filter(l => l.t < off && teens.includes(l.detail.memberId as MemberId)).length;
-      const startedBefore = logs(ctx.records, "probe_started").filter(l => l.t < off && (l.detail.proposal as { participants: MemberId[] }).participants.filter(id => teens.includes(id)).length >= 2);
+      const startedBefore = logs(ctx.records, "probe_started").filter(l => l.t < off && teenItem(l));
       const after = outbound(ctx.records).filter(m => teens.includes(m.msg.memberId) && m.msg.ts >= off && !m.msg.system);
       const contacts = after.filter(m => TEEN_CONTACT_TYPES.has(String(m.msg.meta?.type ?? "")) || typeof m.msg.meta?.relayFrom === "string");
       const probesAfter = logs(ctx.records, "probe_sent").filter(l => l.t >= off && teens.includes(l.detail.memberId as MemberId));

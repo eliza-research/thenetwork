@@ -110,7 +110,7 @@ pure def lawMemberInviteLinkNeedsDirectReply(issuedLink: bool, appOwnedLink: boo
 
 ### A new verified acceptance can be attributed
 
-Attribute a verified first join once when the verified acceptance names the same inviter recorded on the new membership. Start the welcome once. Recover the attribution even if the member writes before projection. Apply [join notice policy](outreachPolicy.md#an-eligible-join-receipt-can-ride-on-a-current-reply) before telling the inviter, including the adult and consent checks.
+Attribute a verified first join once when the verified acceptance names the same inviter recorded on the new membership. Start the welcome once. The welcome names the inviter only when the inviter is a matchable adult on record. Changed (verification 2026-11-23): the welcome now has the same adult check as the notice to the inviter, because it named a stated 17-year-old inviter to a new adult member. Recover the attribution even if the member writes before projection. Apply [join notice policy](outreachPolicy.md#an-eligible-join-receipt-can-ride-on-a-current-reply) before telling the inviter, including the adult and consent checks.
 
 ```quint
 pure def memberInviteCanAttribute(freshJoin: bool, trustedAcceptance: bool, inviterMatches: bool): bool =

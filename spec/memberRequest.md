@@ -124,7 +124,7 @@ pure def routeScheduledRequestRetry(flow: MemberRequestFlow, eligible: bool, bus
 
 ### A candidate proceeds to review with prior interest only when appropriate
 
-Record each permitted attempt. With no candidate the request stays waiting. When a candidate is found, send the proposed opportunity to review. A strong fit, or a match in a non-selective search, can use the member's existing ask as interest only when there is no withdrawn desire. The shell assesses the strong-fit threshold of 0.8 from the existing decimal score. A previously closed desire counts as withdrawn when there is no active statement of it.
+Record each permitted attempt. With no candidate the request stays waiting. When a candidate is found, send the proposed opportunity to review. The proposed opportunity stores the format `one_to_one` and the role `peer` for each participant and alternate, the shape that the [friend introduction age rule](friendIntroAge.md) reads. Changed (verification 2026-11-23): the stored request item now carries this format and these roles, because the teen amendment requires them and the item had neither. A strong fit, or a match in a non-selective search, can use the member's existing ask as interest only when there is no withdrawn desire. The shell assesses the strong-fit threshold of 0.8 from the existing decimal score. A previously closed desire counts as withdrawn when there is no active statement of it.
 
 ```quint
 pure def requestDesireWithdrawn(closedIntent: bool, activeIntent: bool): bool = closedIntent and not(activeIntent)

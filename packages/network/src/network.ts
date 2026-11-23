@@ -1226,10 +1226,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   get store(): NetworkStore | undefined { return this.opts.store; }
 
   init(ctx: NetworkContext) { this.ctx = ctx; }
-  private now() { return this.ctx.clock.now(); }
+  private now() { return Math.floor(this.ctx.clock.now()); }
 
   // ================================================================== inbound
   async onInbound(msg: InboundMessage, queueCofounderIntent?: (intent: Intent) => void, reportChoice?: PendingReportChoice): Promise<"handled" | "open"> {
+    msg = { ...msg, ts: Math.floor(msg.ts), ...(msg.signedReceivedAt !== undefined ? { signedReceivedAt: Math.floor(msg.signedReceivedAt) } : {}) };
     if (this.declinedIds.has(msg.memberId)) return "handled";
     const fromThread = inboundMayCommand(msg.source ?? "thread");
     const currentDanger = immediateDangerReply(fromThread && !msg.keyword && !msg.reaction, statesImmediateDanger(msg.body));
@@ -2157,7 +2158,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     m.stage = "q1";
-    this.send(m, this.copy.welcome(m.first, this.members.get(snapMember?.invitedBy ?? "")?.first), { type: "onboarding", proactive: false, firstContact: true }, "interview",
+    this.send(m, this.copy.welcome(m.first, snapMember?.invitedBy && this.adultMember(snapMember.invitedBy) ? this.members.get(snapMember.invitedBy)?.first : undefined), { type: "onboarding", proactive: false, firstContact: true }, "interview",
       { hook: { t: "interview" } });
     this.inviteeJoined(m);
   }
@@ -2179,7 +2180,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.invitedIds.add(inviteeId);
     if (inv.optedOut) return;
     this.counters.inviteesJoined++;
-    this.queueInviteJoin(inv, { inviteeId, at });
+    this.queueInviteJoin(inv, { inviteeId, at: Math.floor(at) });
   }
 
   /** Ask for a decision on a reviewed plan. Its record and current approval stay in the service. */
@@ -3700,6 +3701,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       score: best.score, generator: "request", tags: req.tags,
     });
     if (!this.teenRosterAdmitted(o)) return undefined;
+    o.format = "one_to_one";
+    o.roles = Object.fromEntries([...o.participants, ...o.alternates].map(id => [id, "peer" as const]));
     req.oppId = o.id; req.outcome = "probing";
     this.ctx.log("request_result", { requestId: req.id, memberId: m.id, outcome: "probing", oppId: o.id, candidates: cands.length });
     return o;
@@ -4003,7 +4006,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   judgePackets(now: number = this.now()): { work: JudgeWork[]; close: { oppId: string; reason: string }[] } {
-    return this.awaitingJudge(now, 20);
+    return this.awaitingJudge(Math.floor(now), 20);
   }
 
   private awaitingJudge(now: number, limit: number): { work: JudgeWork[]; close: { oppId: string; reason: string }[] } {
@@ -7099,6 +7102,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   // ================================================================== tick
   async tick(now: number, engine: EngineStep = inlineEngine) {
+    now = Math.floor(now);
     if (this.lastTick && now > this.lastTick) this.tickGap = now - this.lastTick;
     this.lastTick = now;
     for (const m of [...this.members.values()]) {
@@ -7920,6 +7924,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
   engineInput(now: number): EngineInput {
+    now = Math.floor(now);
     const snap = this.controlledIntentSnapshot(this.ctx.snapshot());
     // The configured markets only (effectiveEngineConfig), never a market taken from member data.
     const markets = new Set(this.effectiveEngineConfig().cities);

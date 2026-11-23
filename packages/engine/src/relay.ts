@@ -665,7 +665,8 @@ const LINKED_PRIVATE_LEAD = /^[\s,:–—]*(?:(?:and|but|then|only)[,\s:–—]+
 const PRIVATE_RECIPIENT_REFERENCE = /^(?:he|she|they|him|her|them|my\s+(?:match|date))$/i;
 const PRIVATE_NOTICE_THEN = /^\s*(?:please\s+)?(?:tell\s+(?:me|us)|let\s+(?:me|us)\s+know)\s+[^,]+,\s*(?=then\b)/iu;
 const LINKED_PRIVATE_TIME = /^[\s,–—]*(?:on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+week|at\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|noon|midnight|(?:[01]?\d|2[0-3])(?::[0-5]\d)?(?:\s*[ap]m)?))\b/iu;
-const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
+const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*(?:[,–—]|-+\s)\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
+const PRIVATE_RELAY_NEXT_ATTRIBUTION = /^\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)(?:\s+(?:so|that|this|it))?\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
 const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;
@@ -713,7 +714,8 @@ function refusesPrivateItem(text: string, otherItemRefusal: RegExp): boolean {
 
 function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean {
   const end = request.index! + request[0].length;
-  return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
+  const [here = "", next = ""] = text.slice(end).split(RELAY_SENTENCE, 2);
+  return PRIVATE_RELAY_POST_ATTRIBUTION.test(here) || PRIVATE_RELAY_NEXT_ATTRIBUTION.test(next);
 }
 
 function reportsPrivateTransfer(tail: string): boolean {

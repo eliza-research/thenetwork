@@ -39,6 +39,26 @@ export function lawPrivateRelayRequiresUnqualifiedConsent(refused: boolean, unce
   return !(refused || uncertain) || !privateRelayRequestAllowed(refused, uncertain);
 }
 
+/** Story: Share only the item I approved / Only the member's own direct request authorizes a private item (spec/relayDecision.md) */
+//@ pure
+export function privateRelayRequestAddressed(directLead: boolean, reported: boolean): boolean {
+  return directLead && !reported;
+}
+
+/** Story: Share only the item I approved / Only the member's own direct request authorizes a private item (spec/relayDecision.md) */
+//@ pure
+export function lawReportedPrivateRequestIsNotConsent(directLead: boolean): boolean {
+  //@ ensures \result === true
+  return !privateRelayRequestAddressed(directLead, true);
+}
+
+/** Story: Share only the item I approved / Only the member's own direct request authorizes a private item (spec/relayDecision.md) */
+//@ pure
+export function lawIndirectPrivateRequestIsNotConsent(reported: boolean): boolean {
+  //@ ensures \result === true
+  return !privateRelayRequestAddressed(false, reported);
+}
+
 /** Story: Share only the item I approved / A member can take back a pending number swap (spec/relayDecision.md) */
 //@ pure
 export function pendingSwapWithdrawn(namesOwnContact: boolean, withholdsContact: boolean, declinesPendingSend: boolean): boolean {

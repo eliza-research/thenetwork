@@ -1419,9 +1419,14 @@ module opportunity {
 
   // core/policy.ts and the owner decision of 2026-11-22: a, b and c become minors only by a minor signal or a
   // record age under 18, which never leaves a member teen ready (spec/friendIntroAge.md teenReady), so under
-  // teenFriendAgeRule such a member is in no open item. The teen part below has the allowed teen items.
+  // teenFriendAgeRule such a member is in no open item and is no alternate of one. The unit that sees the minor
+  // signal or record runs the drop, so the next unit of any kind (tick, inbound, staff decision, judgment) starts
+  // from this state; the model keeps no older copy of a member record. The teen part below has the allowed teen items.
   val minorNever = MEMBERS.forall(m => mm(s, m).minor implies OPPS.forall(o =>
-    OPEN.contains(op(s, o).stage) implies not(Set("queued", "probing", "available", "yes").contains(op(s, o).status.get(m)))))
+    OPEN.contains(op(s, o).stage) implies and {
+      not(Set("queued", "probing", "available", "yes").contains(op(s, o).status.get(m))),
+      not(op(s, o).alts.contains(m)),
+    }))
 
   // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": no booking
   // stays on when a member on its roster or asked about it is a minor, whatever the size of the group.
@@ -1909,8 +1914,9 @@ module opportunity {
       .then(tick(UNANSWERED_AFTER - PROBE_TTL, ALL_OPEN)).then(settled)
       .expect(mm(s, "a").initialInvites == Set() and not(mm(s, "a").onlyWhenAsked) and safety)
 
-  // F28. b receives two initial invitations. The second receipt is resolved after the probe expires.
-  run confirmedInvitationsExpireTest =
+  // F28. b receives two initial invitations. The second receipt is resolved after the probe expires. Each
+  // replacement asks a again before b is probed (replacementAsksAgainTest; network.ts changeRoster).
+  action confirmedInvitationsFirstItem =
     init.then(submit("o1")).then(settled).then(judgeRecord("o1", "approve", true, ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
       .then(answer("a", "yes", ALL_OPEN)).then(settled).then(probeSend("o1", "b", ALL_OPEN)).then(settled)
       .then(queueDecide("probe", "o1", "b", "delivered")).then(settled)
@@ -1920,15 +1926,21 @@ module opportunity {
       .then(probeSend("o1", "a", ALL_OPEN)).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
       .then(probeSend("o1", "c", ALL_OPEN)).then(settled).then(queueDecide("probe", "o1", "c", "delivered")).then(settled)
       .then(answer("c", "no", ALL_OPEN)).then(settled).then(answer("a", "ack", ALL_OPEN)).then(settled)
+  run confirmedInvitationsExpireTest =
+    confirmedInvitationsFirstItem
       .then(submit("o2")).then(settled).then(judgeRecord("o2", "approve", true, ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
       .then(queueDecide("probe", "o2", "a", "delivered")).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
       .then(probeSend("o2", "c", ALL_OPEN)).then(settled).then(queueDecide("probe", "o2", "c", "delivered")).then(settled)
-      .then(answer("c", "no", ALL_OPEN)).then(settled).then(probeSend("o2", "b", ALL_OPEN)).then(settled)
+      .then(answer("c", "no", ALL_OPEN)).then(settled)
+      .expect(stat(s, "o2", "a") == "probing" and stat(s, "o2", "b") == "queued")
+      .then(probeSend("o2", "a", ALL_OPEN)).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "b", ALL_OPEN)).then(settled)
       .then(tick(PROBE_TTL, ALL_OPEN)).then(settled)
       .expect(op(s, "o2").expiredSilent.contains("b") and unansweredInvitations(s, "b") == Set("o1") and not(mm(s, "b").onlyWhenAsked))
       .then(queueDecideAt("probe", "o2", "b", "delivered", s.now - PROBE_TTL)).then(settled)
       .then(tick(1, ALL_OPEN)).then(settled)
-      .expect(s.now < UNANSWERED_AFTER and unansweredInvitations(s, "b") == Set("o1", "o2") and mm(s, "b").onlyWhenAsked and safety)
+      .expect(s.now - op(s, "o2").sentAt.get("b") < UNANSWERED_AFTER and op(s, "o1").expiredSilent.contains("b") and op(s, "o2").expiredSilent.contains("b")
+              and unansweredInvitations(s, "b") == Set("o1", "o2") and mm(s, "b").onlyWhenAsked and safety)
       .then(answer("b", "ack", ALL_OPEN)).then(settled)
       .expect(unansweredInvitations(s, "b") == Set() and not(mm(s, "b").onlyWhenAsked) and safety)
 
