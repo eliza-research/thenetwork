@@ -525,10 +525,10 @@ const PHOTO_ITEM_REFUSAL = explicitPrivateItemRefusal(PHOTO_RELAY_ITEM);
 const PRIVATE_RELAY_ACTION = /\b(?:send(?:ing)?|sent|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\b/;
 const PRIVATE_RELAY_REFERENCE = new RegExp(
   String.raw`\b(?:send(?:ing)?|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\s+` +
-  String.raw`(?:${PENDING_SWAP_RECIPIENT}\s+)?(?:it|that|this)\b(?=\s*(?:$|(?:to|with|yet|please|pls|now)\b))`,
+  String.raw`(?:${PENDING_SWAP_RECIPIENT}\s+)?(?:it\b|(?:that|this)\b(?=\s*(?:$|(?:to|with|yet|please|pls|now)\b)))`,
 );
-const PRIVATE_RELAY_UNCERTAIN = /\b(?:not sure|unsure|uncertain|undecided|second thoughts)\b/;
-const INCOMPLETE_PRIVATE_UNCERTAINTY = /^\s*(?:i(?:'m| am| feel)\s+)?(?:not sure|unsure|uncertain|undecided)\s*$/;
+const PRIVATE_RELAY_UNCERTAIN = /\b(?:not sure|not certain|not comfortable|unsure|uncertain|undecided|second thoughts)\b/;
+const INCOMPLETE_PRIVATE_UNCERTAINTY = /^\s*(?:(?:i(?:'m| am| feel)\s+)?(?:not sure|unsure|uncertain|undecided)|i(?: have|'m having| am having)\s+second thoughts)\s*$/;
 const uncertainPrivateTransfer = (clauses: readonly string[]): boolean => clauses.some(clause =>
   INCOMPLETE_PRIVATE_UNCERTAINTY.test(clause)
   || (PRIVATE_RELAY_UNCERTAIN.test(clause) && (PRIVATE_RELAY_ITEM.test(clause) || PRIVATE_RELAY_REFERENCE.test(clause))));
