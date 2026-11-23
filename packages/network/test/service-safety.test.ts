@@ -396,6 +396,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const competingSlopProbe = async (id: string) => {
       const now = clock.now();
       const deliveryId = `${id}.probe`;
+      const body = "Are you open to a date?";
       await s.runtimeFor("slop")!.unitOfWork(net => {
         const state = net.exportState();
         const meeting = state.opps.find(opp => opp.id === `slop.clarification-meeting.${slopBen}`)!;
@@ -403,11 +404,12 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
         state.opps.push({ ...meeting, id, stage: "probing", meetingAt: undefined, bookedTold: undefined,
           status: [[slopAri, "probing"], [slopBen, "probing"]], createdAt: now,
           deadline: now + HOUR, contacted: [slopAri, slopBen] });
-        reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId };
+        reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId, probeInboundCount: reporter.msgsIn };
+        reporter.lastSent = { body, at: now, consentProbe: id };
         net.importState(state);
       });
       await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, type, status, opportunity_id, proactive, system, ts)
-        values ('slop', ${deliveryId}, ${slopAri}, 'outbound', 'imessage', 'Are you open to a date?', 'probe',
+        values ('slop', ${deliveryId}, ${slopAri}, 'outbound', 'imessage', ${body}, 'probe',
           'dry_run', ${id}, true, false, ${new Date(now)})`;
       clock.advance(MINUTE);
     };
@@ -518,6 +520,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     { name: "No", reply: "no", probeReply: undefined },
     { name: "No", reply: "no", probeReply: "unavailable" },
     { name: "Yes", reply: "yes", probeReply: "available" },
+    { name: "Nah", reply: "nah", probeReply: "unavailable" },
+    { name: "Naw", reply: "naw", probeReply: undefined },
+    { name: "Sure", reply: "sure", probeReply: "available" },
+    { name: "Okay", reply: "okay", probeReply: "available" },
   ];
   for (const { name, reply, probeReply } of safetyControlCases) {
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"

@@ -168,9 +168,9 @@ export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind
 const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
   .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
 
-const CONFIRM_SAFETY_QUESTION = /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i;
+const CONFIRM_SAFETY_QUESTION = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|correct|that's (?:him|her|them))[.!,\s]*$/i;
 const CANCEL_SAFETY_QUESTION = /^[^\p{L}\p{M}\p{N}_]*(?:never ?mind|nvm|forget it|cancel that)[^\p{L}\p{M}\p{N}_]*$/iu;
-const NO_SAFETY_TARGET = /^[^\p{L}\p{M}\p{N}_]*(?:nobody|no one|none|no|nope)[^\p{L}\p{M}\p{N}_]*$/iu;
+const NO_SAFETY_TARGET = /^[^\p{L}\p{M}\p{N}_]*(?:nobody|no one|none|no|nope|nah|naw)[^\p{L}\p{M}\p{N}_]*$/iu;
 
 function safetyQuestionReply(text: string) {
   const normalized = text.normalize("NFKC").replace(/[‘’]/g, "'").replace(/\s+/g, " ");
