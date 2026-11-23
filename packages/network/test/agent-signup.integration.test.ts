@@ -604,16 +604,18 @@ test.skipIf(!pgAvailable)("cross-app signup does not freeze a temporary browser 
 // spec/photoRetention.md, "Consent, adult eligibility, and a valid image precede storage"
 test.skipIf(!pgAvailable)("cross-app minor signup refuses and removes an in-flight adult photo upload", async () => {
   const objects = new Map<string, Uint8Array>();
-  const enteredPut = Promise.withResolvers<string>();
-  const releasePut = Promise.withResolvers<void>();
+  let enterPut!: (key: string) => void;
+  let releasePut!: () => void;
+  const enteredPut = new Promise<string>(resolve => { enterPut = resolve; });
+  const releasedPut = new Promise<void>(resolve => { releasePut = resolve; });
   let puts = 0;
   const storage: PhotoStorage = {
     kind: "local",
     async put(key, bytes) {
       puts++;
       if (puts === 2) {
-        enteredPut.resolve(key);
-        await releasePut.promise;
+        enterPut(key);
+        await releasedPut;
       }
       objects.set(key, bytes);
     },
@@ -668,7 +670,7 @@ test.skipIf(!pgAvailable)("cross-app minor signup refuses and removes an in-flig
     const inFlight = upload();
     try {
       const delayedKey = await Promise.race([
-        enteredPut.promise,
+        enteredPut,
         inFlight.then(result => { throw new Error("Upload returned before storage wait: " + result.status); }),
       ]);
       expect(await rows()).toMatchObject([{ id: existing.id }]);
@@ -681,7 +683,7 @@ test.skipIf(!pgAvailable)("cross-app minor signup refuses and removes an in-flig
       expect(objects.size).toBe(0);
       expect(await list()).toEqual(expect.objectContaining({ eligible: false, photos: [] }));
 
-      releasePut.resolve();
+      releasePut();
       const late = await inFlight;
       expect(late.status).toBe(403);
       expect(await late.json()).toEqual({ ok: false, error: "adults_only" });
@@ -699,7 +701,7 @@ test.skipIf(!pgAvailable)("cross-app minor signup refuses and removes an in-flig
       expect(await w.service.photos.staffLinks(person.id, "slop", "https://slop.date"))
         .toEqual({ ok: true, value: [] });
     } finally {
-      releasePut.resolve();
+      releasePut();
       await inFlight.catch(() => undefined);
     }
   }, { photoStorage: storage });
