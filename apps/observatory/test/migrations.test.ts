@@ -112,7 +112,7 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
   }, T);
 
   test("running the baseline schema again (it grants every table) does not open the view of every app", async () => {
-    await sql.unsafe(await fileAt(join(import.meta.dirname, "..", "db", "schema.sql")).text());
+    await sql.unsafe(await fileAt(join(import.meta.dirname, "../../../packages/db/schema.sql")).text());
     expect(await as("network_observatory", tx => tx`select id from network.network_state_console`)).toEqual(denied);
     expect(await as("network_observatory", tx => tx`select id from network.network_state_console_slop`)).toEqual(denied);
     expect(await as("network_observatory", tx => tx`select id from network.network_state_console_ntwrk`)).toEqual({ v: [{ id: "ntwrk:nyc" }] });
