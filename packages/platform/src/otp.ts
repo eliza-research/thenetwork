@@ -11,7 +11,7 @@ import { BlooioClient, ChannelSendError, resolveSenderLine, type BlooioClientOpt
 import { DAY, HOUR } from "../../core/src/clock.ts";
 import {
   initial, otpBucketAllows, otpChallengeMaxAttempts, otpChecksPerIpHour, otpChecksPerPhoneHour, otpGapLeft, otpLifetimeMs, otpPhoneHourAllows, otpSendDecision, otpSendGapMs, otpStartCounts,
-  otpAddressLimit, otpChecksPerIpHourPhoneCodeOnly, otpSendsGlobalHour, otpSendsPerIpHour, otpSendsPerIpHourPhoneCodeOnly, otpSendsPerPhoneDay, otpSendsPerPhoneHour, step,
+  otpSendsGlobalHour, otpSendsPerIpHour, otpSendsPerPhoneDay, otpSendsPerPhoneHour, step,
 } from "../../core/src/generated/otpLimits.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
@@ -123,15 +123,12 @@ export interface OtpLimits {
   perPhonePerHour: number;
   perPhonePerDay: number;
   perIpPerHour: number;
-  /** The coarse address ceiling of a phone-code-only app (spec/otpLimits.md). */
-  perIpPerHourPhoneCodeOnly: number;
   minGapMs: number;
   /** Every send, every number, every app: a ceiling against SMS pumping. */
   globalPerHour: number;
   /** Code checks (right or wrong) per number and per IP, across every app. */
   verifyPerPhonePerHour: number;
   verifyPerIpPerHour: number;
-  verifyPerIpPerHourPhoneCodeOnly: number;
 }
 export const OTP_LIMITS: OtpLimits = {
   ttlMs: otpLifetimeMs,
@@ -139,12 +136,10 @@ export const OTP_LIMITS: OtpLimits = {
   perPhonePerHour: otpSendsPerPhoneHour,
   perPhonePerDay: otpSendsPerPhoneDay,
   perIpPerHour: otpSendsPerIpHour,
-  perIpPerHourPhoneCodeOnly: otpSendsPerIpHourPhoneCodeOnly,
   minGapMs: otpSendGapMs,
   globalPerHour: otpSendsGlobalHour,
   verifyPerPhonePerHour: otpChecksPerPhoneHour,
   verifyPerIpPerHour: otpChecksPerIpHour,
-  verifyPerIpPerHourPhoneCodeOnly: otpChecksPerIpHourPhoneCodeOnly,
 };
 
 /**
@@ -179,13 +174,13 @@ export class OtpService {
   private now() { return (this.opts.now ?? Date.now)(); }
 
   /** Rate-limit, then send. A provider error is logged and not shown (the response stays the same). */
-  async start(app: AppInfo, e164: string, ip: string, phoneCodeOnly = false, banned = false): Promise<OtpStart> {
+  async start(app: AppInfo, e164: string, ip: string, banned = false): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
     const hourLeft = HOUR - (at % HOUR);
     const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
     const phoneKey = keyedHash(this.opts.hashKey, e164);
     const buckets = [
-      { key: `otp:${phoneCodeOnly ? "ip_code_only" : "ip"}:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR },
+      { key: `otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR },
       { key: `otp:phone:${phoneKey}`, windowMs: HOUR },
       { key: `otp:phone_day:${phoneKey}`, windowMs: DAY },
       { key: "otp:global", windowMs: HOUR },
@@ -193,7 +188,7 @@ export class OtpService {
     const { flow, gapLeft } = await this.store.hitAll(buckets, at, ([address, phoneHour, phoneDay, global]) => {
       const gapLeft = otpGapLeft(phoneHour!.prevAt !== null, phoneHour!.prevAt ?? 0, at, L.minGapMs);
       const flow = otpSendDecision(
-        otpBucketAllows(address!.used, otpAddressLimit(phoneCodeOnly, L.perIpPerHour, L.perIpPerHourPhoneCodeOnly)),
+        otpBucketAllows(address!.used, L.perIpPerHour),
         otpPhoneHourAllows(phoneHour!.used, L.perPhonePerHour, gapLeft), gapLeft,
         otpBucketAllows(phoneDay!.used, L.perPhonePerDay),
         otpBucketAllows(global!.used, L.globalPerHour),
@@ -224,13 +219,12 @@ export class OtpService {
   }
 
   /** True once for the right code on the newest live challenge. Wrong, expired, used-up and unknown all give false. */
-  async verify(app: AppId, e164: string, code: string, ip = "unknown", phoneCodeOnly = false): Promise<boolean> {
+  async verify(app: AppId, e164: string, code: string, ip = "unknown"): Promise<boolean> {
     // spec/otpLimits.md, "Verification needs a claimed attempt, the right code, and a successful consume"
     let challenge = step(initial, { type: "beginVerification", codeWellFormed: /^\d{4,10}$/.test(code) });
     if (challenge.phase !== "CheckAddress") return false;
     const at = this.now(), L = this.limits;
-    const byIp = await this.store.hit(`otp:verify:${phoneCodeOnly ? "ip_code_only" : "ip"}:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at,
-      { limit: otpAddressLimit(phoneCodeOnly, L.verifyPerIpPerHour, L.verifyPerIpPerHourPhoneCodeOnly) });
+    const byIp = await this.store.hit(`otp:verify:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.verifyPerIpPerHour });
     challenge = step(challenge, { type: "readCheckAddress", allowed: byIp.ok });
     if (challenge.phase !== "CheckPhone") return false;
     const byPhone = await this.store.hit(`otp:verify:phone:${keyedHash(this.opts.hashKey, e164)}`, HOUR, at, { limit: L.verifyPerPhonePerHour });

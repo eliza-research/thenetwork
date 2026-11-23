@@ -4,6 +4,108 @@ The runtime commands below use the current project entrypoints. The [pre-migrati
 
 These dated decisions were recorded in the former repository instructions. The [product specification](../README.md) reconciles them with the PRD, MVP plan, and later decisions.
 
+## Founder decision — 2026-11-22: automated review (D15 to D17)
+
+This decision replaces the rule "every proactive proposal and every member request goes through human review" in the 2026-10-09 decisions below, and the named-reviewer step of the 2026-11-22 teen decisions. The owner's words (owner decisions of 2026-11-22, items 15 to 17):
+
+| Id | Question | The owner's words | Meaning |
+|---|---|---|---|
+| D15 | The matching judge | "always on, but we want to remove human review, it should be fully automated" | The engine's candidate judge and the review judge are always on in staging and production. No staff approval is needed before contact. |
+| D16 | The review scope | "Everything automated" | No staff reviewer on any introduction, also one with a member aged 13 to 17. The model judge and the code gates (the age rules included) are the only checks before contact. The orchestrator recommended keeping staff review for introductions with a minor; the owner chose full automation. |
+| D17 | A judge that flags, is unsure or cannot run (model error, timeout, spending limit) | "Hold for staff" | The proposal waits in the staff queue as an exception and expires unsent at its deadline. |
+
+The rules: [automated review](../../automatedReview.md). The accepted risks are in the [pilot plan](../pilot.md).
+
+## Founder decision — 2026-11-22 (answers A1 to A5)
+
+The owner answered four questions about the teen friend introductions decision below. These answers win where the two sections differ.
+
+The owner's answers:
+
+- A1. The 2-year rule is by birth date: birth dates at most 2 calendar years apart.
+- A2. Where: "friends.help and ntwrk".
+- A3. Launch: "On at launch, no extra checks".
+- A4. Meetups: "Also small teen groups".
+- A5. A member aged 13 to 17 is offered "Friends only" at the looking-for question.
+
+**What changes.**
+
+- A1. No change. `birthKeysWithinTwoYears` in [friend introductions with a minor](../../friendIntroAge.md) compares birth dates.
+- A2. Teen friendship introductions also run in the `Friend` lane of The Network on ntwrk.party: pairs (`intent_to_capability`), circles of 3 to 6 (`group_composer`) and member requests in the `social` category. ntwrk weekly plans, monthly gatherings, repeats, second encounters, event anchors, warm paths, help requests and newcomer welcomes stay adults only. A generator that [relationship lanes](../../matchLane.md) does not name in `teenGenerator` is adults only. slop.date and peon.biz never match a minor.
+- A3. Teen introductions are on from the start. There is no default-off state, no two-admin step, no decision reference, no staff "confirm teen age" step and no `safety`-role approval. A member with an exact birth date, aged 13 to 17, with no bar, no open minor signal or report and no age conflict is teen ready without a staff step. The normal reviewer role approves each teen introduction, and the reviewer must be a named person: no automatic review approves an item with a minor. One staff stop stays ([teen introduction stop](../../teenIntroSwitch.md)): one `admin` or `safety` staff member stops teen introductions on every app that offers them, one `admin` turns them on again, and each step writes an audit row. While they are stopped, every minor is single-player as before the feature, and the tick sweep closes every open teen item.
+- A4. A friends.help group plan, table, crew or circle can include a minor when every pair in it that includes a minor passes the pair rule, the group has 2 to 6 people (participants, alternates and host), and the activity and the place are all-ages and public. The activity and venue catalogs carry an explicit `allAges` and `adultPlans` mark. A group with a minor gets only all-ages entries: parks, museums, libraries, recreation centers, cafes and community sports. A bar or a private home is never all-ages. An open teen group whose members stop passing the rule closes as a whole with a notice that names nobody; no replacement and no fallback is offered.
+- A5. The looking-for question offers a member aged 13 to 17 friends only. "Work" or "dating" from a minor enrolls nothing. An existing slop.date or peon.biz member aged 13 to 17 stays a member with solo help and is told once what they get.
+
+**Residual risk accepted by the owner (A3).** The only age evidence is a typed birth date. An adult who types a teen birth date and keeps it consistent can reach minors after the normal human review only. No gate is added for this. Every path that reduces the risk stays: bars, reports, minor signals, contradiction triggers, age conflicts between readings, relay holds, tag-only probe text, daytime public places, the tick sweep and the teen facts on the review card. The simulation reports the poser count `h_teen` with 95% confidence intervals.
+
+**Open questions (the build uses the answer shown).**
+
+| # | Question | Built now |
+|---|---|---|
+| Q15 | Do ntwrk weekly plans and monthly gatherings seat minors? | No. ntwrk teen items are `Friend`-lane pairs and circles only. Teen plans are on friends.help only (`teenGroupPlanApp`). |
+| Q16 | Who stops and who resumes teen introductions? | Stop: one `admin` or `safety` staff member. Resume: one `admin`. One call acts on every app that offers teen introductions, with one audit row for each network. |
+| Q17 | What is the largest roster with a minor? | 6, counting participants, alternates and host (`teenRosterMaximum`). |
+| Q19 | Do climbing gyms and bowling alleys go to production? | Kinds only. Production gets public places. Commercial entries stay simulated until staff confirm that they are all-ages with no daytime alcohol. |
+| Q20 | A teen's own words about age in teen relay text? | Held, not blocked. A minor signal opens only for an age younger than the record (`minorSignalOpens`). |
+| Q21 | A member with a stored minor signal, minor report or age conflict (this includes every member who was a minor before this decision). | Out of every teen pool until a `safety` or `admin` staff member runs the teen doubt clear (`teenDoubtClearResult` in [safety cases](../../safetyCase.md)). A bar and an `older_than_stated` or `lying` report keep the person out of the teen pool for good. The text promises no friendship introductions to a member with a stored doubt. |
+| Q22 | A member of an open teen group turns 19, loses readiness or is reported. | The whole item closes with a notice that names nobody; nobody is dropped. A report or a new bar also opens `adult_after_teen_contact` cases. A later week can offer the rest a new reviewed plan. |
+| Q23 | A teen in both the friends.help and ntwrk pools. | An open report, report hold or trust hold on one app makes the person unready in every teen pool while it lasts (`platform.teen_pool_holds`). A teen pair that was proposed, declined, rejected or reported on one app is not proposed on the other (`platform.teen_pair_avoid`). |
+
+The number Q18 is not used.
+
+**Earlier questions and launch conditions.** Q1, Q5, Q8, Q9, Q11, Q12 and Q14 below are unchanged. The answer of Q3 is updated by A2 (the copy names friends.help and ntwrk.party). Q2, Q6 and Q10 are replaced by A3. Q4 is replaced by A2. Q7 is replaced by A5. Q13 is replaced by A4. L1 is now the residual risk above. L2 is deleted, because no confirm step exists. L3 also covers ntwrk.party. L4 and L5 stay as reports to the owner; they do not hold the launch.
+
+## Founder decision — 2026-11-22: teen friend introductions
+
+This decision replaces, for friendship only, the rule "Minors (13-17) are never matched or connected to anyone" in the 2026-10-08 and 2026-10-09 decisions below. All other rules about minors stay. The PRD source snapshot ([prd.md](prd.md)) keeps its earlier wording: where it says that minors are never matched or connected, that matching is 18+ everywhere, or that the join asks for an age, this decision supersedes it for friendship introductions on friends.help and for the birthday ask.
+
+The owner's words:
+
+1. "If the user is 13-17 we will provide single player experience only, they can only do friendship matches, not romantic."
+2. On slop.date at 13+: "Keep it 13+ but they need to know that it won't match them on dates, it will only connect them for friendships."
+3. "Yes, teen friend intros".
+4. "We should only introduce teens to people over 13 and within 2 years of their age, unless they are 18. So a 15 year old can hang with a 17 year old, a 16 with 18, but thats max."
+5. "We want to ask them their birthday generally, so we dont just have their age but we're trakcing when they turn a new year etc".
+
+**What the first build did.** The answers A1 to A5 above replace the bullets on the switch, the confirm step, the safety-role approval, the friends.help-only scope and the adult-only plans, tables and crews. The pure rule is `teenFriendAgeRule` in [friend introductions with a minor](../../friendIntroAge.md). Birth dates and age readings are in [member age](../../memberAge.md).
+
+- A person aged 13 to 17 can get a friendship introduction only to a person aged 13 to 18 whose birth date is at most 2 calendar years from theirs. A person aged 19 or more is never introduced to, grouped with, shown to or relayed to a minor on any path.
+- Both people are teen ready: an exact birth date, no age conflict, no open minor signal, no minor or older-than-stated report, no teen-pool bar on the phone, and a staff "confirm teen age" step for the current birth date. An 18-year-old partner needs the same.
+- Age comes from the birth date at Clock time, so it rises on the birthday. The youngest reading wins. No later reading makes a person older than an earlier reading allows. A test for "at least 13" or "at least 18" uses the earliest civil date on Earth; a test for "at most 18" uses the latest civil date on Earth.
+- Introductions only: friends.help `friend_circle` (`social`) and `activity_partner` (`hobby`) proposals and member requests. Friends weekly plans, tables, crews, partner sessions, ntwrk plans, gatherings and public events stay adult-only.
+- A group with a minor holds only people who pass the pair rule with every other member, on every day up to the end of its meeting. A via or introducer is never used for a roster with a minor.
+- No number relay and no photo relay from or to a minor. Moderated text relay only, with stricter holds for secrecy, age probes, gifts, pictures, meeting alone, location and contact details.
+- A staff switch per network, `teenIntros`, is off by default. Two different admins turn it on with a decision reference; an admin or a safety staff member can turn it off. Off closes every open item and relay thread with a minor. While it is off, every minor is single-player as before.
+- Every introduction with a minor needs approval by a staff member with the `safety` role who did not turn the switch on. No review mode approves it automatically.
+- Unchanged: under 13 cannot join and nothing is stored but the phone age floor; no romance and no work matching under 18 on either side; no photos and no looks rating under 18; human review of every introduction; minor quiet hours and the minor invite budget; minors feed no learning model and no network capital.
+
+**Open questions (the build uses the answer shown).**
+
+| # | Question | Built now |
+|---|---|---|
+| Q1 | "Within 2 years" read by birth date, not by integer age. | At most 2 calendar years between birth dates. |
+| Q2 | When may staff turn the switch on? | Replaced by A3 above: on from the start, one staff stop. |
+| Q3 | Should slop.date offer a minor the friends.help membership in the same conversation? | No. Updated by A2 above: the slop text (`MINOR_SLOP`) says friendship introductions under 18 happen on friends.help and ntwrk.party. |
+| Q4 | Teen introductions in the ntwrk Friend lane? | Replaced by A2 above: yes. |
+| Q5 | Gatherings, public events and calendar invites for teens? | No. |
+| Q6 | Safety-role approval for every teen introduction and a staff confirm step for each teen? | Replaced by A3 above: no; a named person in the normal reviewer role approves. |
+| Q7 | The looking-for question offers minors "friends, work, or both"; peon matches nobody under 18. | Replaced by A5 above: friends only. |
+| Q8 | Eliza's `open.context.singlePlayer` stays true for minors. | Wire unchanged; upstream change is launch condition L3. |
+| Q9 | A minor-after-contact case also opens for relay-only contact, in every app. | Yes. |
+| Q10 | A teen who erases and returns must be confirmed again; a barred phone stays barred after erasure. | Replaced by A3 above: no confirm step; a barred phone stays barred after erasure. |
+| Q11 | Legal review (COPPA actual knowledge, New York Child Data Protection Act consent for 13-17, assistant app rules). | Not a code gate; launch condition L4. |
+| Q12 | May an 18-year-old with an active slop membership be a teen partner? | Allowed. The review item shows the slop membership. |
+| Q13 | Friends plans, tables and crews for teens need teen activities and venues. | Replaced by A4 above: small teen groups at all-ages public places from an all-ages catalog, 10:00 to 19:00 New York time. |
+| Q14 | A person born on 29 February: in a year with no 29 February, is the birthday 28 February or 1 March? The key arithmetic of `ageOnDay` ([member age](../../memberAge.md), `lawLeapDayBirthdayCountsFromMarchFirst`) gives 1 March; many jurisdictions use 28 February for some purposes. The difference is one day. At the cap of 18 for a teen partner it is the less strict direction: the person stays 18, and so in the teen pool, on 28 February, the day that a 28 February rule makes them 19. At 13 (join) and at 18 (adult lanes) it is the stricter direction: the person reaches the age one day later. | 1 March. If the owner chooses 28 February, `ageOnDay` changes for a `0229` birth key in a year with no 29 February. |
+
+**Launch conditions.** Replaced by the answers above: teen introductions are on from the start (A3). The items below are kept as a record; see "Earlier questions and launch conditions" above for what each one is now.
+
+- L1. The only age evidence is a typed birth date. An adult who types a teen birth date, keeps it consistent and passes the confirm step can reach minors. A second phone number starts clean. The confirm step, the bars, the reports, the relay holds and the review reduce this risk; they do not remove it.
+- L2. No carrier line-type lookup fills `platform.phone_identities.line_type`. The confirm step refuses `voip` and `landline`, so this guard does nothing until a lookup is added.
+- L3. Upstream Eliza must know that a friends.help teen can have friendship items and a relay path.
+- L4. The legal review of Q11.
+- L5. The simulation's truth-based poser counts (`h_teen`) and their confidence intervals are reported to the owner.
+
 ## Founder decision — 2026-11-16: reciprocal matching, lanes and bounded search
 
 1. **Goal.** Match people with people who are close to them in interests and in approximate value to each other, and build circles of people who fit. A match must be a good value exchange in both directions. Do not propose a pair with a large standing gap: for example, do not introduce a well-known investor to a first-time founder as peers. The same rule applies to appearance and to money. Keep the engine clean, concise and verified, with minimal bloat.
@@ -22,7 +124,7 @@ The four public sites do not offer a Sign in link, a settings page, or a member 
 
 These replace any earlier defaults in task prompts or in docs/research/2026-10-08-platform-architecture.md:
 
-1. **Age.** People aged 13+ may join every app (ntwrk, slop, peon, friends). Minors (13-17) are never matched or connected to anyone, in any app. Matching is 18+ everywhere. Age is a person-level fact (the lowest age ever stated or recorded wins).
+1. **Age.** People aged 13+ may join every app (ntwrk, slop, peon, friends). Minors (13-17) are never matched or connected to anyone, in any app (for friendship, replaced by the 2026-11-22 decision above). Matching is 18+ everywhere. Age is a person-level fact (the lowest age ever stated or recorded wins).
 2. **One line.** One Blooio line serves every app. The first message routes by keyword: "slop" or "slop.date" joins slop; "peon" or "peon.biz" joins peon; "friends" or "friends.help" joins friends. With no keyword, the person joins The Network as a whole: the same onboarding, and the agent asks what they are looking for (friends, dating, work) and enrolls them in the matching app memberships. Copy says: "All of these apps are powered by The Network." Per-line routing tables may stay as data, but the default is one line for all apps.
 3. **Compliance is not a launch blocker for now.** Do not build compliance gating (no bias-audit gate, no dating-notice gate). Keep every existing safety guard (minors, leak guard, review gate, consent, blocks, STOP).
 4. **Order.** slop.date first. ntwrk.party is the home page for the whole concept and links to the apps. peon.biz and friends.help: their sites are on Cloudflare Pages like the others (decision 8, docs/deploy.md), but their matching and sends run locally only; their join mode on production is an open founder decision (docs/mvp-plan.md).
@@ -49,7 +151,7 @@ These replace any earlier defaults in task prompts or in docs/research/2026-10-0
 5. Clef ratings are ON (founder default). `packages/platform/src/photos.ts` reads an unset `CLEF_RATINGS` or `on` as on, and `off` as off. The placeholder Clef weights ship until fitted weights pass the P2 decision rule. Adults only, scores never shown.
 6. eliza.app is one entry into The Network, like the four sites. A person who arrives through eliza.app joins The Network and is asked what they are looking for, or is routed by keyword. Eliza is The Network's agent.
 7. Clef is also the scam and harassment classifier for relayed messages (`clefRelayClassifier`, clef-flash by default).
-8. Unchanged and still binding: minors (13-17) are never matched; every proactive proposal and every member request goes through human review; every LLM use is `gpt-6-luna` on Surplus.
+8. Unchanged and still binding: minors (13-17) are never matched (for friendship, replaced by the 2026-11-22 decision above); every proactive proposal and every member request goes through human review (replaced by the 2026-11-22 automated review decision above); every LLM use is `gpt-6-luna` on Surplus.
 
 **Relay (#7, engine main 6d6caed).** The platform owns relay thread storage, the relay log table (`RelayRecord`: no bodies, hashed reasons), the probe photo attach via `probePhotoRefs` (adults with photo consent, opaque ids, max 1) and `slopProbeMessage` for probe copy. Production uses `relayItemAsync` with the Clef classifier hook `clefRelayClassifier` (founder: clef-flash by default, not luna; needs CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID; rules alone ~50-60% on unseen phrasing). Only `rendered` text goes out, through Eliza Cloud `/api/internal/network/deliver`. The service wires it per app through `relayClassifierFromEnv` (packages/network/service/relay-endpoint.ts) when the Workers AI token and account are set, and each Clef call is a cost-ledger row for the app. In production without them it fails closed (every text the rules pass is held for staff); dev and staging run on the rules alone.
 

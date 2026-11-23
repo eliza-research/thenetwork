@@ -47,11 +47,10 @@ The server writes an audit row for each member, timeline or opportunity read and
 
 ### 2.2 Options
 
-Pass options after the script name: `pnpm run observatory --review human --port 4793`.
+Pass options after the script name: `pnpm run observatory --port 4793`.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--review auto\|human` | `auto` | `auto`: the simulated reviewer approves each queued opportunity. `human`: you are the reviewer. Nothing reaches a member until you approve it. |
 | `--level <id>` | none | Start a scenario as a level (list in section 4) |
 | `--seed N` | 1 | World seed |
 | `--days N` | 60 | Length of the world |
@@ -63,10 +62,10 @@ Pass options after the script name: `pnpm run observatory --review human --port 
 | `--mode game\|real` | `game` | Start in real-world mode instead ([runbook-real.md](runbook-real.md)) |
 | `--time-aware` | off | Personas answer offered times and booked plans from a hidden week, and a clashing meeting time stops attendance (section 6.1.2). The banner says "time-aware". Use it to see booked plans cancelled and time picks that differ by member. |
 
-### 2.3 Review mode
+### 2.3 Review (automated, owner decisions D15 to D17 of 2026-11-22)
 
-- With `--review auto`, the Review tab is hidden. Each item shows "Approved by sim_auto_reviewer".
-- Switch the reviewer to **You** in the Review tab or in Game → Your run. The queue then fills.
+- There is no review mode. The game's review judge is the deterministic stand-in (`simulatedReviewJudge` with exceptions; no model call, it does not read text). It approves most items (`sim_review_judge`) and holds the others for staff: a simulated flag, an unsure reply, a failure, or no answer (`judge_overdue`).
+- You are staff for the held items: they wait in the Review tab with the judge's verdict and reason. A held item expires unsent at its deadline.
 - Review keys: `j` and `k` move, `a` approves, `e` edits the text, `s` then `1`-`6` re-rolls (swaps out that participant), `r` then `1`-`8` rejects with a reason code (PRD 32.8), `n` adds a note, `x` shows the score, Enter opens the opportunity, Esc steps back.
 - An edit is leak-checked. A refused edit shows its code (for example `edit_leak`) under the card.
 - A re-roll swaps in the best eligible alternate, and the item waits again with a new deadline. With no alternate, the item closes and the engine composes again.
@@ -80,8 +79,8 @@ Pass options after the script name: `pnpm run observatory --review human --port 
 The Observatory has an app switcher (ntwrk, slop, peon, friends, all). Each app has its own simulated world, started when someone first opens that app. Open an app with the switcher or the URL hash, for example `http://127.0.0.1:4747/#a=slop`. Every `/api` request carries `?app=` (default ntwrk).
 
 - Every app's world uses the NYC synthetic members and The Network's engine, with that app's brand words and join age.
-- In every app, personas whose stated age is under 13 never join (13+ may join every app; matching is 18+). Before 2026-10-08 slop, peon and friends had a join age of 18, and personas whose stated age was under 18 never joined (the app's join age; a persona that lies about its age can still join, and the Network's age rules then apply). In ntwrk, personas under 13 try to join and the Network declines them.
-- Every app may match in its simulated world, peon included (spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope"). In production the service keeps friends and peon matching off until their live decision.
+- In every app, personas whose stated age is under 13 never join (13+ may join every app; matching is 18+, except teen friendship introductions on friends.help and in the ntwrk `Friend` lane while staff have not stopped them, owner decision 2026-11-22). Before 2026-10-08 slop, peon and friends had a join age of 18, and personas whose stated age was under 18 never joined (the app's join age; a persona that lies about its age can still join, and the Network's age rules then apply). In ntwrk, personas under 13 try to join and the Network declines them.
+- Every app may match in its simulated world, peon included. In production too, every app follows its registry row (spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"; owner decision 2026-11-22).
 - "all" shows one line per app (members, review backlog, SLA misses, send failures, matching). It does not start a world.
 - The levels (2.4) are ntwrk scenarios. In other apps, the join-age filter can remove part of a level's cast.
 - To see one app only, start the server with a per-app token: `OBSERVATORY_TOKENS="admin@*:<32+ chars>,reviewer@slop:<32+ chars>" pnpm run observatory`, then open `http://127.0.0.1:4747/#token=<the slop reviewer token>`. The slop reviewer sees slop only.
@@ -155,10 +154,10 @@ It prints the experiment JSON (indented) with a `judge` object per arm. On 2026-
 
 ```bash
 node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1
-node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 2 --review human
+node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 2 --judge hold-every-item
 ```
 
-It plays the game world headless and prints JSON: the review gate counts, the judge counts (invariants, canary leaks, minor contacts), the proposal funnel, engine runs by day, the learned graph and the scoreboard. With `--review human` nobody reviews, so every queued item expires unsent. Use that to check the gate.
+It plays the game world headless and prints JSON: the review gate counts, the judge counts (invariants, canary leaks, minor contacts), the proposal funnel, engine runs by day, the learned graph and the scoreboard. With `--judge hold-every-item` the stand-in judge holds every item and nobody decides the exceptions, so every queued item expires unsent. Use that to check the gate.
 
 ### 3.4 The simulator CLI (StubNetwork)
 
@@ -217,8 +216,12 @@ Output: `PASS <id>` or `FAIL <id>`, then each check.
 | `newcomer_wave` | Bring your friends | 7 |
 | `bad_invitee` | A bad invitee | 7 |
 | `traveler` | Out of town | 8 |
+| `judge_flag_staff_approves` | The judge flags, staff approve | 3 |
+| `judge_flag_expires_unsent` | A held item expires unsent | 3 |
+| `judge_overdue_held` | A silent judge | 3 |
+| `judge_packet_suspect_held` | Text that speaks to the reviewer | 3 |
 
-Every scenario uses the simulated reviewer (`review: "auto"`) and seed 7. The network tests run all of them. The Observatory offers all of them as levels.
+Every scenario uses seed 7 and the simulated review judge (`simulatedReviewJudge` without exceptions: a deterministic stand-in with no model call), unless it names another stand-in (`NetScenario.judge`: the four `judge_*` scenarios). Reports say: review by the simulated judge (deterministic stand-in, no model call) and simulated staff; the stand-in does not read text, so text safety is measured only by the live qualification corpus. The network tests run all of them. The Observatory offers all of them as levels.
 
 ### 4.1 Add a scenario
 
@@ -396,4 +399,4 @@ The simulations are the validation layer (2026-10-08: the unit and golden tests 
 
 Paste the commands and the gate summary line in the PR.
 
-The safety gates are 0 canary leaks, 0 minor contacts and 0 invariant violations. `pnpm run sim` checks them on a 10-day run, and on the 21-day consent runs for seeds 1-3 (with pooled floors: everyone-yes 0.73 or more, 140 meetings or more). Runs of 30 days or more can show a `two_unanswered` violation from the one allowed re-engagement (D6). That is a known judge issue ([network.md](network.md) section 11); any other violation is a real failure. The 42-day seed-1 run on 2026-10-07 sent no re-engagement and had 0 violations.
+The safety gates are 0 canary leaks, 0 minor contacts that break `teenFriendAgeRule` (every minor contact while teen introductions are stopped), 0 `teen_*` gate counts (`teen_adult_contact`, `teen_gap_contact`, `teen_lane_contact`, `teen_unready_contact`, `teen_switch_off_contact`, `teen_relay_contact`, `teen_group_contact`, `teen_place_contact`, `teen_stop_equals_pre_feature`: the stopped teen world equals the reference world with no teen-ready member, metrics and outbound log, on every seed) and 0 invariant violations. `pnpm run sim` checks them on a 10-day run, and on the 21-day consent runs for seeds 1-3 (with pooled floors: everyone-yes 0.73 or more, 140 meetings or more). Runs of 30 days or more can show a `two_unanswered` violation from the one allowed re-engagement (D6). That is a known judge issue ([network.md](network.md) section 11); any other violation is a real failure. The 42-day seed-1 run on 2026-10-07 sent no re-engagement and had 0 violations.

@@ -1,8 +1,8 @@
 // Real signed HTTP on Cloud's wire (RelaySendRequest, x-ntwrk-svc-id "<messageId>:relay") -> POST /internal/relay
-// -> the ConsentNetwork relay desk (engine relay policy, rules only) -> network.messages / network.relay_records;
+// -> the ConsentNetwork relay desk (engine relay policy and the simulated classifier) -> network.messages / network.relay_records;
 // the staff held queue; a restart. Needs the dev Postgres on
-// :54339 (pnpm exec tsx packages/observatory/db/dev-pg.ts up). No live call: the adapter is a dry run and no
-// Cloudflare token is set, so the classifier is rules only.
+// :54339 (pnpm exec tsx packages/observatory/db/dev-pg.ts up). No live call: the adapter is a dry run and the
+// service gets simulatedRelayClassifier, which clears each text it reads.
 import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
@@ -13,6 +13,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {simulatedRelayClassifier} from "../../engine/src/relay.ts";
 import {ServiceClient} from "../../observatory/src/sources/service.ts";
 
 const db=`network_relay_${randomUUID().replaceAll("-","")}`;
@@ -24,7 +25,7 @@ const logs:string[]=[];
 let sql:SQL,service:NetworkService,server:HttpServer,ari:string,bo:string;
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,instance:"relay-integration",tokens:"safety:saf-tok,reviewer:rev-tok",
-    env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
+    env:{PLATFORM_ENV:"dev",SERVICE_TURN_SECRET:secret},relayClassifier:simulatedRelayClassifier,
     networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:line=>{logs.push(line);},adapter:()=>new DryRunAdapter(()=>{})});
   await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
 };
@@ -63,7 +64,7 @@ beforeAll(async()=>{
 afterAll(async()=>{await server?.stop(true);await service?.close();await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
 
 test("a relayed text is signed, size-checked, bound to the open turn, idempotent, and only the engine wording goes out",async()=>{
-  expect(logs).toContain("relay classifier: rules only");
+  expect(logs.filter(l=>l.startsWith("relay classifier:"))).toEqual([]);
   const ok=await ask("ari","relay-1","tell Bo running 10 min late, see you at the trailhead");
   expect((await post({...ok,memberId:bo})).status).toBe(403);
   expect((await signed(RELAY_PATH,"relay-1",JSON.stringify(ok))).status).toBe(400);
@@ -97,37 +98,29 @@ test("a relayed text is signed, size-checked, bound to the open turn, idempotent
   expect((await sql`select id from network.messages where app_id='friends' and id like 'relay:%'`).length).toBe(1);
 },60_000);
 
-test("a scam is held for staff; staff list it (audited, app-scoped), reject it, and the text is gone; it all survives a restart",async()=>{
-  const held=await post(await ask("ari","relay-scam","tell Bo can you venmo me 200 for the tickets? my card got frozen"));
-  expect(await held.json()).toMatchObject({decision:"hold",delivered:false,replayed:false});
+// spec/relayDecision.md, "Any reason from the relay checks blocks the item" (owner decision 2026-11-22, D18)
+test("a scam is blocked at once and the sender is told; no staff queue holds it and staff cannot release it, also after a restart",async()=>{
+  const blocked=await post(await ask("ari","relay-scam","tell Bo can you venmo me 200 for the tickets? my card got frozen"));
+  expect(await blocked.json()).toEqual({decision:"block",senderNotice:"I didn't send that, so it didn't reach them.",delivered:false,replayed:false});
   expect((await staff("/staff/relay/held?app=friends","nobody")).status).toBe(401);
-  const list=await (await staff("/staff/relay/held?app=friends","rev-tok")).json() as any;
-  expect(list.items).toHaveLength(1);expect(list.items[0]).toMatchObject({app:"friends",from:ari,memberId:ari,kind:"text"});
-  // The console's HeldText shape (packages/observatory/src/sources/service.ts): `id` is the item; no recipient id that the console would mask as a phone.
-  expect(list.items[0].id).toBe(list.items[0].itemId);expect(list.items[0]).not.toHaveProperty("to");
-  expect(JSON.stringify(list)).not.toMatch(/score|rating/i);
-  const id=list.items[0].itemId as string;
-  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"rev-tok","POST",{})).status).toBe(403);
+  expect(await (await staff("/staff/relay/held?app=friends","rev-tok")).json()).toMatchObject({ok:true,items:[]});
+  const [record]=await sql`select item_id,decision,reasons,review from network.relay_records where app_id='friends' and from_member=${ari} order by at desc limit 1`;
+  expect(record).toMatchObject({decision:"block",review:null});
+  expect((record.reasons as string[]).some(r=>r.startsWith("scam:"))).toBe(true);
+  const id=record.item_id as string;
+  expect((await sql`select id from network.messages where app_id='friends' and id=${`relay:${id}`}`).length).toBe(0);
+  expect(await (await staff(`/staff/relay/${id}/release?app=friends`,"saf-tok","POST",{note:"release it anyway"})).json()).toMatchObject({ok:false,reason:"not_held"});
+  expect(await (await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"asks for money: a scam"})).json()).toMatchObject({ok:false,reason:"not_held"});
   await server.stop(true);await service.close();await start();
-  expect((await (await staff("/staff/relay/held?app=friends","saf-tok")).json() as any).items.map((x:any)=>x.itemId)).toEqual([id]);
-  // Contract: the console's own client reads this real route (it used to drop every item for want of `id`).
-  const console_=new ServiceClient({url:server.url.href,token:"saf-tok",app:"friends"});
-  const seen=await console_.held("safety@example.org","relay");
-  expect(seen).toMatchObject({ok:true,items:[{id,queue:"relay",kind:"text",memberId:ari}]});
-  expect((seen as any).items[0].text).toContain("venmo");
-  // This network has no outbound queue (dry run): the leak review queue reads as not available, not as an error.
-  expect(await console_.held("safety@example.org","leak")).toMatchObject({ok:false,code:"not_available"});
-  // A decision needs a reason of 5 or more characters (it reaches the audit row); the console sends it as `note`.
-  expect(await (await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{})).json()).toMatchObject({ok:false,reason:"reason_required"});
-  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"scam"})).status).toBe(409);
-  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"asks for money: a scam"})).status).toBe(200);
-  expect((await sql`select reason from network.staff_audit where action='relay_reject' and target_id=${id}`)[0].reason).toBe("asks for money: a scam");
   expect((await (await staff("/staff/relay/held?app=friends","saf-tok")).json() as any).items).toEqual([]);
-  const [state]=await sql`select state from network.network_state where id='friends:nyc'`;
+  const console_=new ServiceClient({url:server.url.href,token:"saf-tok",app:"friends"});
+  expect(await console_.held("safety@example.org","relay")).toEqual({ok:true,items:[]});
+  expect(await console_.held("safety@example.org","leak")).toMatchObject({ok:false,code:"not_available"});
+  expect((await sql`select actor from network.staff_audit where action='read_relay_held' and app_id='friends'`).length).toBeGreaterThanOrEqual(3);
+  const [row]=await sql`select state from network.network_state where id='friends:nyc'`;
+  const state=typeof row.state==="string"?JSON.parse(row.state):row.state;
   expect(JSON.stringify(state)).not.toContain("venmo");
-  expect((await sql`select review from network.relay_records where app_id='friends' and item_id=${id}`)[0].review).toBe("rejected");
-  expect((await sql`select action from network.staff_audit where action in ('read_relay_held','relay_reject')`).length).toBeGreaterThanOrEqual(2);
-  // Only the sender's own inbound message holds those words; nothing with them went out.
+  expect(Object.keys(state.relay).sort()).toEqual(["log","swaps","threads"]);
   expect((await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%venmo%'`).length).toBe(0);
 },60_000);
 

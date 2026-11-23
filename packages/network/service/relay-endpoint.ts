@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Clock, MemberId } from "@thenetwork/core";
-import { RELAY_PATH, RELAY_PHOTO_RESOLVE_PATH, type RelaySendResponse } from "../../core/src/svc/contract.ts";
+import { RELAY_PATH, type RelaySendResponse } from "../../core/src/svc/contract.ts";
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { isAppId, type AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
-import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { readFileSync } from "node:fs";
 import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type RelayClefWeights } from "../../engine/src/relayClef.ts";
@@ -13,19 +12,17 @@ import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/re
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import type { CostLedger } from "./cost.ts";
-import { photoWithdrawRequest, type PhotoChoiceResult, type PhotoWithdrawResult } from "./photoIntakeRelayChoice.ts";
-import { isProduction } from "../../platform/src/env.ts";
+import type { PhotoRequestStatus } from "./photoRelayFlow.ts";
 
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
 
-export { RELAY_PATH, RELAY_PHOTO_RESOLVE_PATH };
+export { RELAY_PATH };
 export const RELAY_MAX_BODY_BYTES = 16 * 1024;
-export const RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES = 16 * 1024;
 const MAX_TEXT = 2000;
+const PHOTO_UNAVAILABLE = "I can't send photos here.";
 const KEYS = ["channel", "messageId", "app", "memberId", "itemId", "text"];
 
 const NOTICE = {
-  photo: "I can't send photos to a match yet.",
   unconfirmed: "I've passed that on, but delivery isn't confirmed yet.",
   sent: "Sent.",
   withdrawn: "Okay, I won't share your number.",
@@ -37,23 +34,17 @@ export interface RelayEndpointDeps {
   secret: string | undefined;
   routePolicy?: NetworkRoutePolicy;
   accounts: Accounts;
-  photos?: PhotoRelayService;
-  choosePhoto?: (input: { app: AppId; personId: string; threadId: string; text: string; requestId: string }) => Promise<PhotoChoiceResult>;
-  withdrawPhoto?: (input: { app: AppId; personId: string; threadId: string | undefined }) => Promise<PhotoWithdrawResult>;
+  photoRequest?: (input: { app: AppId; personId: string; memberId: string; text: string; threadId: string | null; inboundId: string; photoAsked: boolean }) => Promise<{ status: PhotoRequestStatus; text: string } | undefined>;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
   runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
   hookFor?: (app: AppId) => RelayClassifierHook;
 }
 
-export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): ((app: AppId) => RelayClassifierHook) | undefined {
+export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): (app: AppId) => RelayClassifierHook {
   if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) {
-    if (isProduction(env)) {
-      log("relay classifier: not configured in production; every relayed text is held for staff");
-      const closed: RelayClassifierHook = async () => { throw new Error("relay classifier not configured"); };
-      return () => closed;
-    }
-    log("relay classifier: rules only");
-    return undefined;
+    log("relay classifier: Workers AI not configured; every relayed text is blocked");
+    const closed: RelayClassifierHook = async () => { throw new Error("relay classifier not configured"); };
+    return () => closed;
   }
   const weights = env.RELAY_CLEF_WEIGHTS_PATH ? validateRelayClefWeights(JSON.parse(readFileSync(env.RELAY_CLEF_WEIGHTS_PATH, "utf8")) as RelayClefWeights) : undefined;
   log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"}, weights ${(weights ?? DEFAULT_RELAY_CLEF_WEIGHTS).version})`);
@@ -79,7 +70,7 @@ interface StoredRelay { decision: RelaySendResponse["decision"]; notice: string;
 function stored(outcome: RelayOutcome): StoredRelay {
   if (outcome.decision === "unnamed") return { decision: "none", notice: outcome.reason };
   if (outcome.decision === "sent") return { decision: "pass", notice: outcome.reason, outboundId: `relay:${outcome.itemId}` };
-  return { decision: outcome.decision === "held" ? "hold" : "block", notice: outcome.reason };
+  return { decision: outcome.decision === "waiting" ? "hold" : "block", notice: outcome.reason };
 }
 
 async function answer(sql: SQL, app: AppId, s: StoredRelay, replayed: boolean): Promise<RelaySendResponse> {
@@ -161,16 +152,22 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
 
   try {
     const request = parseRelayRequest(text);
+    const threadId = await rt.readState(net => net.relayMatch(memberId as MemberId, itemId ?? undefined)?.id ?? null);
+    const photo = await d.photoRequest?.({ app, personId: who.person.id, memberId, text, threadId, inboundId: `in:${b.channel}:${b.messageId}`, photoAsked: request.kind === "photo" });
     let result: StoredRelay;
-    if (request.kind === "none" && d.withdrawPhoto && photoWithdrawRequest(text)) {
-      result = await rt.unitOfWork(async net => {
-        if (withdrawsSwap(text)) net.relayCancelSwap(memberId as MemberId);
-        const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
-        const withdrawal = await d.withdrawPhoto!({ app, personId: who.person.id, threadId: match?.id });
-        const r: StoredRelay = { decision: "none", notice: withdrawal.notice };
-        rt.unit.completeAction = async tx => { await lock(tx); await withdrawal.commit(tx); await complete(tx, r); };
-        return r;
-      });
+    if (photo) {
+      result = { decision: photo.status === "unavailable" ? "block" : "none", notice: photo.text };
+      if (withdrawsSwap(text)) {
+        await rt.unitOfWork(net => {
+          net.relayCancelSwap(memberId as MemberId);
+          rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, result); };
+        });
+      } else {
+        await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
+      }
+    } else if (request.kind === "photo") {
+      result = { decision: "block", notice: PHOTO_UNAVAILABLE };
+      await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
     } else if (request.kind === "none" && withdrawsSwap(text)) {
       result = await rt.unitOfWork(async net => {
         net.relayCancelSwap(memberId as MemberId);
@@ -182,32 +179,19 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
       result = { decision: "none", notice: "" };
       await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
     } else {
-      let key = `r_${receipt.slice(0, 32)}`;
+      const key = `r_${receipt.slice(0, 32)}`;
+      const kind = request.kind;
+      const body = request.kind === "text" ? request.body : undefined;
       result = await rt.unitOfWork(async net => {
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
-        const photo = request.kind === "photo" && match ? await d.photos?.approvedForParty(app, match.id, memberId) : undefined;
-        if (request.kind === "photo" && match && !photo) {
-          const chosen = d.choosePhoto ? await d.choosePhoto({ app, personId: who.person.id, threadId: match.id, text, requestId: key }) : undefined;
-          const r: StoredRelay = chosen ? { decision: chosen.decision, notice: chosen.notice } : {decision:"block",notice:NOTICE.photo};
-          rt.unit.completeAction = async tx => {await lock(tx);await chosen?.commit?.(tx);await complete(tx,r);};
-          return r;
-        }
-        if (photo) key = photo.itemId;
         const hook = d.hookFor?.(app);
         const outcome = await net.relayRequest(
-          { itemId: key, from: memberId as MemberId, kind: request.kind, ...(photo ? {photoIds:[photo.photoId]} : {}), ...(request.kind === "text" ? { text: request.body } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
-          { ...(photo ? {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]}} : {}), ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
+          { itemId: key, from: memberId as MemberId, kind, ...(body !== undefined ? { text: body } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
+          { ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
         );
         const r = stored(outcome);
-        rt.unit.completeAction = async tx => {
-          await lock(tx);
-          if (photo && r.decision === "pass") {
-            const claimed = await d.photos!.claimForAction(tx,photo.itemId,app,photo.threadId,memberId,`photo-selection:${photo.itemId}`);
-            if (!claimed || JSON.stringify(claimed)!==JSON.stringify(photo)) throw new Error("Photo selection changed before commit");
-          }
-          await complete(tx,r);
-        };
+        rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, r); };
         return r;
       });
     }

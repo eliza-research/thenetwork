@@ -31,10 +31,11 @@ export { calendarAvailability };
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
+import { candidateAgeReason } from "./filters.ts";
 import { validityIncludes } from "./interval.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import type {
-  AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
+  Anchor, AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, Format, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
 } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
 
@@ -440,10 +441,7 @@ export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg
   if (it.urgency.expiresAt <= now) return "expired";
   if (it.reviewState === "rejected") return "review_rejected";
   if (it.involvesMember && it.reviewState !== "approved") return "awaiting_review";
-  if (isMinor(m.age)) {
-    // D9: events, places and solo plans only; never anything that involves another member.
-    if (!MINOR_SAFE(it, cfg)) return "minor_restricted";
-  }
+  if (isMinor(m.age) && !MINOR_SAFE(it, cfg) && !(it.teenFriendAllowed === true && it.others.length > 0)) return "minor_restricted";
   // Pack lane gate (networkPack: romance only for opted-in adults, "romance_not_allowed").
   const laneGate = pack.attention.itemGate?.(m, it);
   if (laneGate) return laneGate;
@@ -871,6 +869,10 @@ export interface ProbeSpec {
   options?: TimeSlot[];
   /** Iteration 4: a consenting mutual's first name (warmMention); replaces the attribute as the one fact. */
   mutual?: string;
+  generator?: string;
+  format?: Format;
+  roles?: Record<MemberId, Role>;
+  anchor?: Anchor;
 }
 export interface Probe { text: string; attribute?: string; area?: string; mutual?: string }
 
@@ -922,17 +924,23 @@ function shareableAttribute(w: World, other: MemberId, recipient: MemberId): str
  * or anything `matchable` / `agent_private`. Every candidate text must pass the existing leak gate
  * (judgeCommon.ts checkMemberFacing with explain.ts privateVocabulary of the other people), plus a
  * name-token check and the others' employer-like values; if the richest text fails, the attribute
- * and then the area are dropped; if nothing passes, null (do not send). Minors: always null.
+ * and then the area are dropped; if nothing passes, null (do not send).
  * Romance probes say plainly that it is a romance intro, and only go between adults.
  */
 export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, others: MemberId[], now: number): Probe | null {
   const ids = [recipient, ...others];
-  if (ids.some(id => !w.get(id) || isMinor(w.get(id)!.m.age))) return null;
+  if (ids.some(id => !w.get(id))) return null;
+  const teenRoster = ids.some(id => isMinor(w.get(id)!.m.age));
+  const meetingEnd = Math.max(now, spec.window?.end ?? now, ...(spec.options ?? []).map(o => o.end));
+  if (teenRoster && (spec.mutual !== undefined || candidateAgeReason(w, {
+    participants: ids, alternates: [], category: spec.category, window: { start: now, end: meetingEnd },
+    roles: spec.roles ?? {}, format: spec.format ?? "event", generator: spec.generator ?? "", anchor: spec.anchor,
+  }) !== null)) return null;
   const AP = w.pack.attention;
   if (AP.probeAllowed && !AP.probeAllowed(spec.category, others.length)) return null;
   const when = spec.options?.length ? timeOptionsPhrase(spec.options, spec.tz) : whenPhrase(spec.window, now, spec.tz);
-  const area = w.get(recipient)!.presence.find(p => p.type === "home")?.areas?.[0] ?? w.get(recipient)!.presence[0]?.areas?.[0];
-  const attr = others.length === 1 && !spec.mutual ? shareableAttribute(w, others[0]!, recipient) : undefined;
+  const area = teenRoster ? undefined : w.get(recipient)!.presence.find(p => p.type === "home")?.areas?.[0] ?? w.get(recipient)!.presence[0]?.areas?.[0];
+  const attr = !teenRoster && others.length === 1 && !spec.mutual ? shareableAttribute(w, others[0]!, recipient) : undefined;
   const contributor = spec.role && w.pack.ontology.contributorRoles.has(spec.role);
   // The probe copy is the pack's (networkPack: packs/network/copy.ts networkProbeText, moved verbatim).
   const frame = (activity: string, a?: string, ar?: string) =>

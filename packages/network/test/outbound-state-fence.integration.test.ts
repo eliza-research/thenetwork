@@ -7,6 +7,7 @@ import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Network state, and network.messages follows the queue", async () => {
   const url = await migratedDb("outbound_state_fence");
@@ -16,7 +17,7 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
   const phones = ["+12125550481", "+12125550482"];
   const calls: SendRequest[] = [];
   const replica = () => {
-    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550480", clock, liveGate: () => true, log: () => {}, provider: {
+    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550480", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         calls.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -24,7 +25,7 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
     } });
     const service = new NetworkService({
       url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
+      env: { PLATFORM_ENV: "dev" }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
     });
     return { adapter, service };
   };
@@ -40,7 +41,7 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
       members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const [first, second] = members.map(m => m.id);
-    const w = new Mini(members, { app: app.id, review: "human", plans: false, growth: false });
+    const w = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
     await w.onboard(first!, second!);
     const oppId = w.propose([first!, second!], { category: "hobby" });
     expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === oppId), 2 * DAY)).toBe(true);

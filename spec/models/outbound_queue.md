@@ -54,7 +54,11 @@ Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.
 //    when its view is current (rt drainQueue, stateCurrent), and the admission transaction leaves a row as it is
 //    when the stored version is newer than the view (lockAdmission, SD-020 fix 6cc9d1b).
 //  - The per-recipient hourly cap, the line caps and invalid time zones are left out (3 rows cannot reach
-//    them). The live flags are fixed for a run (they are process env).
+//    them).
+//  - The model's rows are of the kinds that the leak guard parks for staff. A private payload row (ch lineQueue
+//    privatePayload: an expected-member invitation, and a relayed text "relay:<item>" since owner decision
+//    2026-11-22, D18, so that no relayed text waits for staff) ends dropped_leak_review at the leak gate instead. A queue of a configured channel always delivers, so env.live is true in every run (the owner removed the
+//    live approvals on 2026-11-22; spec/bootPolicy.md, "The configured channel alone decides whether a send is real").
 //
 // COMPARISON WITH BRANCH vibestack-matching (2026-11-18). The `oq:nnn`, `rt:nnn` and `svc:nnn` line numbers
 // are from the source branch and are stale; find the code by function name (OutboundQueue.drain, dispatch,
@@ -304,7 +308,7 @@ module outbound_queue {
   }
 
   // ------------------------------------------------------------------ enqueue (in the unit's save transaction)
-  // oq:226-256 via ch:219-240, rt:638-640. A refused enqueue (live flags off, ch:221-225) writes no row.
+  // oq:226-256 via ch:219-240, rt:638-640.
   // network.messages gets "queued" for a member row (rt:548-556).
   action enqueue(r: str, kind: str, member: bool, net: str, leakBad: bool): bool = all {
     rows.get(r).status == "none",

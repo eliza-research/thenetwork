@@ -15,6 +15,8 @@ export interface SignIn {
     identityAccepted: boolean;
     phoneAllowed: boolean;
 }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+export type CallbackPage = "JoinReturn" | "PhoneReturn" | "HomeHelpReturn" | "ConnectorReturn" | "NoReturn";
 /** One variant per transition in the spec. */
 export type Event = {
     type: "checkHandoff";
@@ -96,6 +98,14 @@ export declare function sometimesRejectsCallback(signIn: SignIn): boolean;
 export declare function sometimesDeniesSignIn(signIn: SignIn): boolean;
 /** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) */
 export declare function sometimesCloudUnavailable(signIn: SignIn): boolean;
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+export declare function callbackFailureCode(failureStatus: number): string;
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+export declare function failedCallbackReturnsToPage(page: CallbackPage): boolean;
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+export declare function lawFailureCodeIsOneOfThree(failureStatus: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+export declare function lawJoinAndConnectorFailuresStayJson(page: CallbackPage): boolean;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: SignIn, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */

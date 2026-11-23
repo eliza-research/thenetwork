@@ -20,7 +20,7 @@ test("planned groups and partner fallbacks fit their public venue capacity", () 
     const evidence = new Map<string, PlanEvidence>(ids.map(memberId => [memberId, { memberId, tz: "America/New_York", quietHours: [22, 8],
       standing: [{ byDay: [0, 1, 2, 3, 4, 5, 6], startHour: 17, endHour: 22, source: "conversation", statedAt: now }] }]));
     const venue: Venue = { id: "small-cafe", city: "nyc", area: "manhattan", name: "Synthetic public venue", activities: [activity.id], priceTier: 1, ageMin: 18,
-      hours: { weekday: [9, 23], weekend: [9, 23] }, public: true, source: "curated", ...(capacity === undefined ? {} : { capacity }) };
+      hours: { weekday: [9, 23], weekend: [9, 23] }, public: true, source: "curated", allAges: false, adultPlans: true, ...(capacity === undefined ? {} : { capacity }) };
     const plans = planProposals(w, { now, city: "nyc", tz: "America/New_York", evidence, venues: [venue] });
     if (capacity !== undefined && capacity < activity.min) {
       expect(plans).toHaveLength(0);
@@ -66,7 +66,7 @@ test("plans find a compatible group among the members available at the slot", ()
     memberId, tz, stated: { at: now, until: now + 8 * DAY, windows: [{ start: now, end: now + 8 * DAY }] },
   }]));
   const venue: Venue = { id: "public-park", name: "Public park", area, city: "nyc", public: true, ageMin: 18, capacity: 6,
-    priceTier: 0, activities: ["group_run"], hours: { weekday: [9, 22], weekend: [9, 22] }, source: "curated" };
+    priceTier: 0, activities: ["group_run"], hours: { weekday: [9, 22], weekend: [9, 22] }, source: "curated", allAges: false, adultPlans: true };
   const run = (snapshot: EngineInput) => planProposals(new World(snapshot, resolveConfig({}), localEmbed),
     { now, city: "nyc", tz, evidence, venues: [venue] });
   expect(run(input)).toMatchObject([{ activityId: "group_run", invited: expect.arrayContaining(available), quorum: 3, partner: false }]);
@@ -117,7 +117,7 @@ test("a larger circle below the plan utility floor does not hide a qualifying gr
     stated: { at: now, until: now + 7 * DAY, windows: [window], ...(memberId === extra ? { confidence: 0.3 } : {}) },
   }]));
   const venue: Venue = { id: "park", name: "Public park", area, city: "nyc", public: true, ageMin: 18, capacity: 5,
-    priceTier: 0, activities: ["group_run"], hours: { weekday: [9, 22], weekend: [9, 22] }, source: "curated" };
+    priceTier: 0, activities: ["group_run"], hours: { weekday: [9, 22], weekend: [9, 22] }, source: "curated", allAges: false, adultPlans: true };
   const world = new World(input, resolveConfig({ seed: 1 }), localEmbed);
   const run = (exclude?: Set<string>) => planProposals(world, { now, city: "nyc", tz, evidence, venues: [venue], exclude });
   // The fifth runner clears the availability gate. Its weaker window and other-area venue lower

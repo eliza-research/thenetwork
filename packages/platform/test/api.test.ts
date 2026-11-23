@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId, type AppInfo } from "../src/apps.ts";
 import { createPublicApi, type PublicApi, type PublicApiOptions } from "../src/api.ts";
-import { detectKeyword, keywordEvent, lastEvents, resolveConsent, stopScope } from "../src/consent.ts";
+import { detectKeyword, keywordEvent, lastEvents, resolveConsent } from "../src/consent.ts";
 import { InvitationUnavailable } from "../src/invite-links.ts";
 import type { OtpProvider } from "../src/otp.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -155,6 +155,17 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect((await join(c, "slop", await login(c, "slop", underage), 29)).body.error).toBe("under_age");
     expect(await c.api.accounts.personFor(underage)).toBeUndefined();
     expect(attributed).toEqual([referral]);
+  });
+
+  test("POST /api/join takes a birthdate in place of an age: a date that is not real is invalid_birthdate, both fields are invalid", async () => {
+    const c = make(store), phone = newPhone();
+    const cookie = await login(c, "friends", phone);
+    const send = (fields: Record<string, unknown>) => call(c, "friends", "POST", "/api/join", { firstName: "Ana", consent: consentOf("friends"), ...fields }, cookie);
+    expect(await send({ birthdate: "2010-02-30" })).toMatchObject({ status: 400, body: { ok: false, error: "invalid_birthdate", message: "Enter your birth date as year, month and day." } });
+    expect(await send({ birthdate: "2010-03-15", age: 16 })).toMatchObject({ status: 400, body: { ok: false, error: "invalid" } });
+    expect(await c.api.accounts.personFor(phone)).toBeUndefined();
+    expect(await send({ birthdate: "2010-03-15" })).toMatchObject({ status: 200, body: { ok: true } });
+    expect(c.ages).toEqual([16]);
   });
 
   test("otp/start: the same status and body for a known and an unknown phone, and at least the minimum time", async () => {
@@ -378,12 +389,12 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
 
   test("a global web STOP from an app the person has no membership on still pauses their other apps", async () => {
     const stopped: string[] = [];
-    const c = make(store, { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "global" }, onStop: ({ personId, memberId, scope }) => { stopped.push(`${personId}:${memberId ?? "-"}:${scope}`); } });
+    const c = make(store, { env: { PLATFORM_ENV: "dev" }, onStop: ({ personId, memberId }) => { stopped.push(`${personId}:${memberId ?? "-"}`); } });
     const phone = newPhone();
     await join(c, "peon", await login(c, "peon", phone), 30);
     const person = await c.api.accounts.personFor(phone);
     expect((await call(c, "slop", "POST", "/api/me/stop", {}, await login(c, "slop", phone))).status).toBe(200);
-    expect(stopped).toEqual([`${person!.id}:-:global`]);
+    expect(stopped).toEqual([`${person!.id}:-`]);
     expect(await c.api.accounts.optedIn("peon", phone)).toBe(false);
   });
 
@@ -439,7 +450,7 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect((await call(c, "slop", "GET", "/api/me", undefined, a.setCookie.split(";")[0])).status).toBe(200);
   });
 
-  test("PLAT-12 STOP on the web stops every app by default (PRD 40.3); only PLATFORM_STOP_SCOPE=app keeps it to one app; leave is one app", async () => {
+  test("PLAT-12 STOP on the web stops every app (PRD 40.3; owner decision 2026-11-22 removed PLATFORM_STOP_SCOPE); leave is one app", async () => {
     for (const env of [{ PLATFORM_ENV: "dev" }, { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" }] as Record<string, string>[]) {
       const c = make(store, { env }), phone = newPhone();
       const b = await login(c, "friends", phone);
@@ -447,9 +458,9 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
       await join(c, "peon", await login(c, "peon", phone), 33);
       expect((await call(c, "friends", "POST", "/api/me/stop", {}, b)).status).toBe(200);
       expect(await c.api.accounts.optedIn("friends", phone)).toBe(false);
-      expect(await c.api.accounts.optedIn("peon", phone)).toBe(env.PLATFORM_STOP_SCOPE === "app");
-      // The default STOP records one event for every app (app null).
-      if (!env.PLATFORM_STOP_SCOPE) expect((await store.lastConsent(phone, "slop")).global).toMatchObject({ app: null, state: "opted_out" });
+      expect(await c.api.accounts.optedIn("peon", phone)).toBe(false);
+      expect((await store.lastConsent(phone, "slop")).global).toMatchObject({ app: null, state: "opted_out" });
+      expect((await store.lastConsent(phone, "friends")).app).toMatchObject({ app: "friends", state: "opted_in" });
     }
     // The leave button: that app only.
     const c = make(store), phone = newPhone();
@@ -492,15 +503,15 @@ describe("consent ledger", () => {
     for (const a of Object.values(APPS)) { expect(a.brand.stop).toContain("any app on this number"); expect(a.brand.stop + a.brand.help).not.toContain("not affected"); }
     expect(app("slop").id).toBe("slop");
   });
-  test("keywords on a line: STOP is this app (or every app with the global switch), STOP ALL is every app, START is this app", () => {
+  test("keywords on any app's line: STOP and STOP ALL are every app with the every-app reply, START is this app", () => {
     const p = "+12125550199";
-    expect(keywordEvent(detectKeyword("Stop!")!, p, APPS.slop, 1, { scope: "app" }).event).toMatchObject({ app: "slop", state: "opted_out" });
-    expect(keywordEvent(detectKeyword("stop")!, p, APPS.slop, 1, { scope: "global" }).event).toMatchObject({ app: null, state: "opted_out" });
-    expect(keywordEvent(detectKeyword("STOP ALL")!, p, APPS.peon, 1, { scope: "app" }).event).toMatchObject({ app: null, state: "opted_out" });
+    for (const app of Object.values(APPS)) {
+      for (const word of ["Stop!", "stop", "STOP ALL"]) {
+        expect(keywordEvent(detectKeyword(word)!, p, app, 1, { line: "+12125550100" })).toEqual({ event: expect.objectContaining({ app: null, state: "opted_out" }), reply: app.brand.stop });
+      }
+    }
     expect(keywordEvent(detectKeyword(" start ")!, p, APPS.peon, 1).event).toMatchObject({ app: "peon", state: "opted_in" });
     expect(keywordEvent("help", p, APPS.friends, 1).event).toBeUndefined();
-    // Without a scope setting, STOP is every app (the shared line).
-    expect(keywordEvent("stop", p, APPS.slop, 1, { scope: stopScope({}) }).event).toMatchObject({ app: null });
     expect(detectKeyword("stop by later")).toBeUndefined();
   });
 });

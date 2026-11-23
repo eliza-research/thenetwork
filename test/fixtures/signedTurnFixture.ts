@@ -8,6 +8,7 @@ import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
 import { applySchema, DEV_PG_PORT } from "../../packages/observatory/db/dev-pg.ts";
+import { holdEveryItem, type ReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
 
 export type FixtureApp = "slop" | "friends";
@@ -23,11 +24,11 @@ export type SignedTurnFixture = {
   replayTurn(request: TurnRequest): Promise<Response>;
   sendReceipt(input: TurnReceiptRequest): Promise<Response>;
   reviewQueue(): Promise<Response>;
-  /** Posts a staff decision with the review revision the reviewer read from the queue (spec/reviewDeadline.md). */
   decideReview(item: { oppId: string; revision: number }, decision: "approve" | "reject", reason?: string): Promise<Response>;
+  openPeer(reviewJudge: ReviewJudge): Promise<NetworkService>;
 };
 
-export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>, options: { friendsReview?: boolean } = {}) {
+export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>, options: { friendsReview?: boolean; reviewJudge?: ReviewJudge; env?: Record<string, string> } = {}) {
   const database = `network_journey_${randomUUID().replaceAll("-", "")}`;
   const address = `postgres://${encodeURIComponent(process.env.USER || "postgres")}@127.0.0.1:${DEV_PG_PORT}`;
   const url = `${address}/${database}`;
@@ -41,16 +42,18 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
   const admin = new SQL({ url: `${address}/postgres`, max: 1 });
   let created = false;
   let service: NetworkService | undefined;
+  const peers: NetworkService[] = [];
   let server: HttpServer | undefined;
   try {
     await admin.unsafe(`create database ${database}`);
     created = true;
     await applySchema(url, { lockTimeout: "5s" });
-    service = new NetworkService({
-      url, clock, instance: "signed-turn-conformance", photoStorage: null,
+    const build = (instance: string, reviewJudge: ReviewJudge) => new NetworkService({
+      url, clock, instance, photoStorage: null, reviewJudge,
       env: {
-        PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app", CLEF_RATINGS: "off",
+        PLATFORM_ENV: "dev",
         PLATFORM_HASH_KEY: "synthetic-signed-turn-conformance-key", SERVICE_TURN_SECRET: secret,
+        ...options.env,
       },
       networks: [
         { id: "ntwrk:nyc", matchingEnabled: false },
@@ -63,6 +66,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       adapter: () => new DryRunAdapter(() => { adapterCalls++; }),
       log: () => {},
     });
+    service = build("signed-turn-conformance", options.reviewJudge ?? holdEveryItem.judge);
     const app = service;
     await app.start();
     const http = await serveHttp({
@@ -142,10 +146,17 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       replayTurn: input => postSigned(TURN_PATH, input.messageId, input),
       sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input),
       reviewQueue: () => review(""), decideReview: ({ oppId, revision }, decision, reason) => review(`/${encodeURIComponent(oppId)}`, { decision, reason, revision }),
+      async openPeer(reviewJudge) {
+        const peer = build(`signed-turn-peer-${peers.length + 1}`, reviewJudge);
+        peers.push(peer);
+        await peer.start();
+        return peer;
+      },
     });
   } finally {
     await server?.stop(true);
     try {
+      for (const peer of peers) await peer.close();
       await service?.close();
       if (created) await admin.unsafe(`drop database ${database}`);
     } finally {

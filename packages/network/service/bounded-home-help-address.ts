@@ -20,18 +20,35 @@ function text(step: HomeHelpAddressStep, link: string): string {
   }
 }
 
+export async function homeHelpAddressStepOf(tx: SQL, consent: Pick<BoundedHomeHelpConsent, "currentConsent">, key: HomeHelpConsentKey,
+  memberId: string, now: number): Promise<HomeHelpAddressStep> {
+  const plan = await consent.currentConsent(tx, key);
+  const [row] = plan ? await tx<{ revision: number; expires_at: Date; sealed: boolean }[]>`select revision, expires_at, ciphertext is not null as sealed
+    from network.bounded_home_help_venue where app_id=${plan.app} and plan_id=${plan.id}` : [];
+  const stored = !!plan && !!row && row.sealed && row.revision === plan.revision && row.expires_at.getTime() === plan.draft.expiresAt;
+  return homeHelpAddressStep(plan?.requesterId === memberId, !!plan?.helperIds.includes(memberId), !!plan, stored, !!row && !stored,
+    now, plan?.draft.expiresAt ?? now);
+}
+
+export type HomeHelpAddressStatus = { role: "requester" | "helper"; addressSaved: boolean };
+
+export function homeHelpAddressStatus(step: HomeHelpAddressStep): HomeHelpAddressStatus | undefined {
+  switch (step) {
+    case "RequesterAddsAddress": return { role: "requester", addressSaved: false };
+    case "RequesterAddressSaved": return { role: "requester", addressSaved: true };
+    case "HelperReadsAddress": return { role: "helper", addressSaved: true };
+    case "AddressStepClosed": return undefined;
+    default: { const _exhaustive: never = step; return _exhaustive; }
+  }
+}
+
 /**
  * spec/privateHomeHelpVenue.md, "The conversation points each participant to the private page".
  * Call inside the signed member's unit after the sender check. The reply carries a link and never the address.
  */
 export async function homeHelpAddressReply(tx: SQL, consent: Pick<BoundedHomeHelpConsent, "currentConsent">, key: HomeHelpConsentKey,
   memberId: string, origin: string, now: number): Promise<{ body: string; link?: string }> {
-  const plan = await consent.currentConsent(tx, key);
-  const [stored] = plan ? await tx`select 1 from network.bounded_home_help_venue
-    where app_id=${plan.app} and plan_id=${plan.id} and revision=${plan.revision} and ciphertext is not null
-      and expires_at=${new Date(plan.draft.expiresAt)}` : [];
-  const step = homeHelpAddressStep(plan?.requesterId === memberId, !!plan?.helperIds.includes(memberId), !!plan, !!stored,
-    now, plan?.draft.expiresAt ?? now);
+  const step = await homeHelpAddressStepOf(tx, consent, key, memberId, now);
   if (step === "AddressStepClosed") return { body: CLOSED };
   const link = homeHelpAddressPage(origin, key);
   return { body: text(step, link), link };

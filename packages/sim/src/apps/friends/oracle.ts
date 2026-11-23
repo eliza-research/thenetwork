@@ -36,9 +36,9 @@ export const ORACLE_PARAMS = {
 };
 export type OracleParams = typeof ORACLE_PARAMS;
 
-export type HarmKind = "romantic_advance" | "sales_pitch" | "harassment" | "bot_contact" | "minor_contact";
+export type HarmKind = "romantic_advance" | "sales_pitch" | "harassment" | "bot_contact" | "minor_contact" | "poser_contact";
 export interface HarmEvent { kind: HarmKind; offender: MemberId; victim: MemberId; reported: boolean }
-export const REPORT_P: Record<HarmKind, number> = { romantic_advance: 0.5, sales_pitch: 0.35, harassment: 0.7, bot_contact: 0.25, minor_contact: 0.2 };
+export const REPORT_P: Record<HarmKind, number> = { romantic_advance: 0.5, sales_pitch: 0.35, harassment: 0.7, bot_contact: 0.25, minor_contact: 0.2, poser_contact: 0.3 };
 
 const sig = (x: number) => 1 / (1 + Math.exp(-x));
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
@@ -173,6 +173,9 @@ export class FriendsOracle {
       else if (kind === "mlm") for (const v of victims) { rep("sales_pitch", v); hit.set(v, (hit.get(v) ?? 1) * 0.8); }
       else if (kind === "age_liar") for (const v of victims) rep("minor_contact", v);
     }
+    for (const a of ids.filter(id => this.p(id).hidden.poser))
+      for (const v of ids.filter(id => this.p(id).hidden.isMinor))
+        harms.push({ kind: "poser_contact", offender: a, victim: v, reported: this.u("report", key, a, v, "poser_contact") < REPORT_P.poser_contact });
     for (const i of ids) {
       const h = this.p(i).hidden;
       const others = ids.filter(j => j !== i);

@@ -1,6 +1,6 @@
 // GENERATED from spec/siteEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { minMemberAge as memberAge_minMemberAge, maxAge as memberAge_maxAge, adultAge as memberAge_adultAge, ageInRange as memberAge_ageInRange, lowerAge as memberAge_lowerAge, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, joinableAge as memberAge_joinableAge, matchableAge as memberAge_matchableAge, confirmedUnderage as memberAge_confirmedUnderage, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
+import { type BirthReadings as memberAge_BirthReadings, minMemberAge as memberAge_minMemberAge, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, maxAge as memberAge_maxAge, adultAge as memberAge_adultAge, ageInRange as memberAge_ageInRange, lowerAge as memberAge_lowerAge, ageOnDay as memberAge_ageOnDay, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, laterBirthKey as memberAge_laterBirthKey, readingsConflict as memberAge_readingsConflict, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, birthKeyUsable as memberAge_birthKeyUsable, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, joinableAge as memberAge_joinableAge, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, legacyReading as memberAge_legacyReading, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, mergeReading as memberAge_mergeReading, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, matchableAge as memberAge_matchableAge, confirmedUnderage as memberAge_confirmedUnderage, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, effectiveAge as memberAge_effectiveAge, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawLegacyMinorKeepsMinorAge as memberAge_lawLegacyMinorKeepsMinorAge, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
 
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
 export type EnrollmentPhase = "AwaitingAccountView" | "AccountChanged" | "AwaitingProfile" | "InvalidProfile" | "AwaitingConsent" | "ConsentMismatch" | "AwaitingEligibility" | "NeedsReview" | "AwaitingMembership" | "NeedsInvite" | "InvalidInvitation" | "AwaitingAge" | "BelowJoinAge" | "ReturnExisting" | "AwaitingRepair" | "AwaitingPersistence" | "Created" | "JoinHookFailed";
@@ -79,6 +79,12 @@ export function joinConsentEvidenceAllowed(evidence: JoinConsentEvidence): boole
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
 //@ pure
+export function joinAgeFieldsValid(hasBirthDate: boolean, hasAge: boolean): boolean {
+  return (hasBirthDate || hasAge) && !(hasBirthDate && hasAge);
+}
+
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+//@ pure
 export function canDecodeProfile(joining: Enrollment): boolean {
   return joining.phase === "AwaitingProfile" && joining.viewChecked;
 }
@@ -97,6 +103,13 @@ export function decodeProfile(joining: Enrollment, decoded: boolean): Enrollment
 export function lawEverySuppliedJoinConsentFieldMustAgree(evidence: JoinConsentEvidence): boolean {
   //@ ensures \result === true
   return !((evidence.wordingSupplied && !evidence.wordingAccepted) || (evidence.versionSupplied && !evidence.versionAccepted)) || !joinConsentEvidenceAllowed(evidence);
+}
+
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+//@ pure
+export function lawBothOrNeitherAgeFieldIsMalformed(hasBirthDate: boolean, hasAge: boolean): boolean {
+  //@ ensures \result === true
+  return !(hasBirthDate === hasAge) || !joinAgeFieldsValid(hasBirthDate, hasAge);
 }
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
@@ -270,6 +283,18 @@ export function lawTypedEntryUsesSameConsentGate(consentMatches: boolean): boole
 
 /** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
 //@ pure
+export function sometimesEnrolled(joining: Enrollment): boolean {
+  return joining.phase === "Created";
+}
+
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
+//@ pure
+export function sometimesExisting(joining: Enrollment): boolean {
+  return joining.phase === "ReturnExisting";
+}
+
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
+//@ pure
 export function sometimesAccountChanged(joining: Enrollment): boolean {
   return joining.phase === "AccountChanged";
 }
@@ -298,16 +323,102 @@ export function sometimesRepairsMember(joining: Enrollment): boolean {
   return joining.phase === "AwaitingRepair";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
+/** Story: Keep the age readings of a person and a phone / Readings of two records merge without a new date (spec/siteEnrollment.md) */
 //@ pure
-export function sometimesEnrolled(joining: Enrollment): boolean {
-  return joining.phase === "Created";
+export function mergeAgeReadings(hasEarlier: boolean, earlier: memberAge_BirthReadings, added: memberAge_BirthReadings): memberAge_BirthReadings {
+  return !hasEarlier ? added : ({ lower: memberAge_laterBirthKey(earlier.lower, added.lower), upper: earlier.upper <= added.upper ? earlier.upper : added.upper, youngest: memberAge_laterBirthKey(earlier.youngest, added.youngest) } as memberAge_BirthReadings);
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
+/** Story: Keep the age readings of a person and a phone / Readings of two records merge without a new date (spec/siteEnrollment.md) */
 //@ pure
-export function sometimesExisting(joining: Enrollment): boolean {
-  return joining.phase === "ReturnExisting";
+export function lawMergeKeepsEveryYoungestReading(earlier: memberAge_BirthReadings, added: memberAge_BirthReadings): boolean {
+  //@ ensures \result === true
+  const local_3: memberAge_BirthReadings = mergeAgeReadings(true, earlier, added);
+  return local_3.youngest >= earlier.youngest && local_3.youngest >= added.youngest;
+}
+
+/** Story: Keep the age readings of a person and a phone / Readings of two records merge without a new date (spec/siteEnrollment.md) */
+//@ pure
+export function lawMergeNarrowsTheRange(earlier: memberAge_BirthReadings, added: memberAge_BirthReadings): boolean {
+  //@ ensures \result === true
+  const local_4: memberAge_BirthReadings = mergeAgeReadings(true, earlier, added);
+  return local_4.lower >= earlier.lower && local_4.lower >= added.lower && local_4.upper <= earlier.upper && local_4.upper <= added.upper;
+}
+
+/** Story: Keep the age readings of a person and a phone / Readings of two records merge without a new date (spec/siteEnrollment.md) */
+//@ pure
+export function lawMergeKeepsAConflict(earlier: memberAge_BirthReadings, added: memberAge_BirthReadings): boolean {
+  //@ ensures \result === true
+  const local_5: memberAge_BirthReadings = mergeAgeReadings(true, earlier, added);
+  return !(earlier.lower >= earlier.upper || added.lower >= added.upper) || local_5.lower >= local_5.upper;
+}
+
+/** Story: Keep the age readings of a person and a phone / Readings of two records merge without a new date (spec/siteEnrollment.md) */
+//@ pure
+export function lawMergeWithNoRecordKeepsTheRecord(earlier: memberAge_BirthReadings, added: memberAge_BirthReadings): boolean {
+  //@ ensures \result === true
+  const local_6: memberAge_BirthReadings = mergeAgeReadings(false, earlier, added);
+  return local_6.lower === added.lower && local_6.upper === added.upper && local_6.youngest === added.youngest;
+}
+
+/** Story: Keep the age readings of a person and a phone / A birth date below the join age is kept only as a typed age (spec/siteEnrollment.md) */
+//@ pure
+export function exactReadingKept(statesBirthDate: boolean, hasPerson: boolean, ageWithBirthDate: number): boolean {
+  return statesBirthDate && hasPerson && memberAge_joinableAge(ageWithBirthDate);
+}
+
+/** Story: Keep the age readings of a person and a phone / A birth date below the join age is kept only as a typed age (spec/siteEnrollment.md) */
+//@ pure
+export function lawUnderageBirthDateIsNeverKept(statesBirthDate: boolean, hasPerson: boolean, ageWithBirthDate: number): boolean {
+  //@ ensures \result === true
+  return !(!memberAge_joinableAge(ageWithBirthDate)) || !exactReadingKept(statesBirthDate, hasPerson, ageWithBirthDate);
+}
+
+/** Story: Keep the age readings of a person and a phone / A birth date below the join age is kept only as a typed age (spec/siteEnrollment.md) */
+//@ pure
+export function lawBirthDateWithoutAPersonIsOnlyTyped(statesBirthDate: boolean, ageWithBirthDate: number): boolean {
+  //@ ensures \result === true
+  return !exactReadingKept(statesBirthDate, false, ageWithBirthDate);
+}
+
+/** Story: Keep the age readings of a person and a phone / The phone floor keeps the lowest age that a statement gives (spec/siteEnrollment.md) */
+//@ pure
+export function floorStatedAge(statedAge: number, mergedAge: number): number {
+  return memberAge_ageInRange(mergedAge) ? memberAge_lowerAge(statedAge, mergedAge) : statedAge;
+}
+
+/** Story: Keep the age readings of a person and a phone / The phone floor keeps the lowest age that a statement gives (spec/siteEnrollment.md) */
+//@ pure
+export function lawFloorNeverRaisesTheStatedAge(statedAge: number, mergedAge: number): boolean {
+  //@ ensures \result === true
+  return floorStatedAge(statedAge, mergedAge) <= statedAge;
+}
+
+/** Story: Keep the age readings of a person and a phone / The phone floor keeps the lowest age that a statement gives (spec/siteEnrollment.md) */
+//@ pure
+export function lawFloorFollowsALowerMergedAge(statedAge: number, mergedAge: number): boolean {
+  //@ ensures \result === true
+  return !(memberAge_ageInRange(mergedAge) && mergedAge < statedAge) || floorStatedAge(statedAge, mergedAge) === mergedAge;
+}
+
+/** Story: Keep the age readings of a person and a phone / Staff learn whether the first age reading was a birth date (spec/siteEnrollment.md) */
+//@ pure
+export function firstReadingExact(hasStored: boolean, storedExact: boolean, hadReading: boolean, statesUsableBirthDate: boolean): boolean {
+  return hasStored ? storedExact : !hadReading && statesUsableBirthDate;
+}
+
+/** Story: Keep the age readings of a person and a phone / Staff learn whether the first age reading was a birth date (spec/siteEnrollment.md) */
+//@ pure
+export function lawAnEarlierReadingIsNeverFirstExact(hadReading: boolean, statesUsableBirthDate: boolean): boolean {
+  //@ ensures \result === true
+  return !hadReading || !firstReadingExact(false, false, hadReading, statesUsableBirthDate);
+}
+
+/** Story: Keep the age readings of a person and a phone / Staff learn whether the first age reading was a birth date (spec/siteEnrollment.md) */
+//@ pure
+export function lawTheStoredAnswerNeverChanges(storedExact: boolean, hadReading: boolean, statesUsableBirthDate: boolean): boolean {
+  //@ ensures \result === true
+  return firstReadingExact(true, storedExact, hadReading, statesUsableBirthDate) === storedExact;
 }
 
 /** Do the rules allow this event in this state? */

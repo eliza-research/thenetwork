@@ -3,6 +3,7 @@ import { DAY, HOUR } from "@thenetwork/core";
 import { friendsPack, FRIENDS_PLANS, type plans } from "@thenetwork/engine";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 async function crewFixture(handOffAfterSessions = 3) {
   const venue = PLAN_VENUES.find(v => v.activities.includes("day_hike"))!;
@@ -11,7 +12,7 @@ async function crewFixture(handOffAfterSessions = 3) {
     id, name: `${id.toUpperCase()}nton Q`, age: 30, area: venue.area, interests: ["climbing", "hiking"],
     skills: ["belaying"], wants: [{ objective: "find a hiking group", category: "hobby" as const }],
   })), {
-    app: "friends", pack: friendsPack, review: "human", plans: true, matchingEnabled: true,
+    app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true,
     plansConfig: { ...FRIENDS_PLANS, runDays: [], crews: { ...FRIENDS_PLANS.crews, handOffAfterSessions } },
   });
   for (const id of ids) w.facets.push({

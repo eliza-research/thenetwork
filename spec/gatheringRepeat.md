@@ -2,7 +2,7 @@
 
 ## Story: Offer a private reviewed follow-up after mutual gathering interest
 
-> As one of two eligible adults who opted into meeting again after a gathering, I want an ordinary private offer with human review and a separate choice about the next meeting.
+> As one of two eligible adults who opted into meeting again after a gathering, I want an ordinary private offer with a recorded review and a separate choice about the next meeting.
 
 ### A current exact mutual choice can enter review once per gathering pair
 
@@ -26,18 +26,18 @@ pure def lawGatheringRepeatStagesOnce(rolloutEnabled: bool, currentSource: bool,
 
 ### Review and each new reply are separate from the earlier mutual choice
 
-The exact source must remain current during ordinary human review, while opening and answering an anonymous probe, and through the first booking reveal. A missing, expired or changed source closes an unbooked offer without naming anyone or disclosing a private choice. A direct reply can count only after the exact probe or follow-up time question was accepted for delivery. Only a fresh explicit answer applies. Require a fresh yes from each person before booking and use ordinary logistics once the separate consent and initial booking are committed.
+The exact source must remain current during the ordinary review by the review judge or staff, while opening and answering an anonymous probe, and through the first booking reveal. A missing, expired or changed source closes an unbooked offer without naming anyone or disclosing a private choice. A direct reply can count only after the exact probe or follow-up time question was accepted for delivery. Only a fresh explicit answer applies. Require a fresh yes from each person before booking and use ordinary logistics once the separate consent and initial booking are committed. The approval is a recorded approval by the review judge or, for an item that the judge holds, by a named staff member. Changed (owner decision 2026-11-22, D15 to D17): a named staff member had to approve each gathering pair, and the simulated reviewer was refused; now the judge approves it like every other introduction.
 
 ```quint
 pure def gatheringRepeatMayAnswer(currentSource: bool, directMember: bool, delivered: bool, answerAt: int, deliveredAt: int): bool =
   currentSource and directMember and delivered and deliveredAt <= answerAt
 
-pure def gatheringRepeatMayBook(currentSource: bool, humanApproved: bool, firstNewYes: bool, secondNewYes: bool): bool =
-  currentSource and humanApproved and firstNewYes and secondNewYes
+pure def gatheringRepeatMayBook(currentSource: bool, approved: bool, firstNewYes: bool, secondNewYes: bool): bool =
+  currentSource and approved and firstNewYes and secondNewYes
 
 pure def lawGatheringRepeatNeedDeliveredProbe(currentSource: bool, directMember: bool, answerAt: int, deliveredAt: int): bool =
   not(gatheringRepeatMayAnswer(currentSource, directMember, false, answerAt, deliveredAt))
 
-pure def lawGatheringRepeatNeedsSeparateConsent(currentSource: bool, humanApproved: bool, firstNewYes: bool): bool =
-  not(gatheringRepeatMayBook(currentSource, humanApproved, firstNewYes, false))
+pure def lawGatheringRepeatNeedsSeparateConsent(currentSource: bool, approved: bool, firstNewYes: bool): bool =
+  not(gatheringRepeatMayBook(currentSource, approved, firstNewYes, false))
 ```

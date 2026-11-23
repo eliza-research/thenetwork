@@ -11,7 +11,10 @@ Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. Th
 The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The VibeLang shell sequences the effects. The store owns the queue, database advisory locks, and transaction commit.
 
 The [backend lifecycle spec](../backendLifecycle.md) drives worker
-reservations and shutdown decisions. The serving shell starts a single
+reservations and shutdown decisions. Changed (owner decision 2026-11-22,
+D15 to D17): the review judge worker runs under its own backend tick key,
+`review_judge`, after the network runtimes, and shutdown aborts its model
+calls in flight; an aborted call writes nothing and its lease expires. The serving shell starts a single
 grace period for both listener drain and tracked work.
 
 The [backend health spec](../backendHealth.md) drives the public health
@@ -55,7 +58,6 @@ Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md)
 //   M-142 backend-process-lifecycle deploy/backend/backend.ts:459-481, server.ts:132-140
 //   M-143 backend-boot           deploy/backend/server.ts:37-63, backend.ts:486-513
 //   M-144 migration-runner       packages/observatory/db/migrate.ts:78-112
-//   M-147 cf-backend-cutover     deploy/cloudflare/worker.ts
 //   M-149 wrangler-deploy-guard  scripts/wrangler.sh:56-129
 //   M-150 alert-dispatcher       deploy/backend/ops.ts collectNetwork, evaluate, AlertDispatcher.dispatch, createOps().tick
 //   M-151 bias-report-cadence    packages/network/service/service.ts:541-583
@@ -68,9 +70,10 @@ Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md)
 //
 // Wave 2: the model follows the code (line numbers compared on claude/formal-main) after the fixes of SD-003, SD-110, SD-111,
 // SD-113, SD-158, SD-161, SD-163, SD-165, SD-168, SD-233, SD-235, SD-360, SD-368, SD-446 and SD-448, and
-// `safety` holds. Three defects stay open (skipped, see the invariants section): SD-050 (founder decision),
-// SD-159 (no Workers runtime to test the fix), SD-169 (founder decision). Their invariants are named values
-// outside `safety`, and a run test replays each counterexample.
+// `safety` holds. One defect stays open (skipped, see the invariants section): SD-050 (founder decision).
+// Its invariant is a named value outside `safety`, and a run test replays its counterexample. The owner
+// decision of 2026-11-22 removed the inactive Cloudflare container backend (M-147, deploy/cloudflare), and with
+// it the open defects SD-159 and SD-169 of that path: the Railway backend is the only backend target.
 module runtime_ops {
 
   // ------------------------------------------------------------------ constants
@@ -186,10 +189,7 @@ module runtime_ops {
   /** M-149. */
   type Wr = { args: List[str], ran: bool, allowed: bool, deploys: bool, unk: bool }
 
-  /** M-147. */
-  type Cf = { target: str, enabled: bool, buildIdOk: bool, configSet: bool, containerRunning: bool, cronSinceInactive: bool }
-
-  type S = { now: int, st: Store, tk: Ticks, al: Alerts, bi: Bias, pr: Proc, bt: Boot, ll: Llm, wr: Wr, cf: Cf }
+  type S = { now: int, st: Store, tk: Ticks, al: Alerts, bi: Bias, pr: Proc, bt: Boot, ll: Llm, wr: Wr }
 
   var s: S
 
@@ -316,9 +316,6 @@ module runtime_ops {
   pure val WR_COMMANDS: Set[List[str]] =
     tuples(WR_TOKENS, WR_TOKENS, WR_TOKENS).map(t => List(t._1, t._2, t._3))
 
-  /** deploy/cloudflare/worker.ts:70: every request goes to the public port. The staff port (backend.ts:14-15) has no route. */
-  pure def staffRouteExists(target: str): bool = target == "railway"
-
   // ------------------------------------------------------------------ init
 
   /** handMade: an operator made the service login by hand, without network_service (the second SD-163 test). */
@@ -341,7 +338,6 @@ module runtime_ops {
     bt: { roleExists: handMade, member: false, connect: handMade, step: "start", checkPassedIncomplete: false, ledger: false, applied: 0 },
     ll: { e: 0, retries: 0, regrows: 0, attempts: 0, done: "" },
     wr: { args: args, ran: false, allowed: false, deploys: false, unk: false },
-    cf: { target: "railway", enabled: false, buildIdOk: false, configSet: false, containerRunning: false, cronSinceInactive: false },
   }
 
   action init = {
@@ -507,6 +503,14 @@ module runtime_ops {
    * purge and notifyTick, each under its own busy key; an error of one worker is logged and does not stop another.
    * "backend": backend.ts createBackend tickAll runs the same workers under lifecycle tick keys, and also opsTick
    * and the catalog refresh. tickOk: rt.tick() did not throw.
+   * Owner decision 2026-11-22 (D15 to D17): both loops also run the review judge worker (Service.reviewJudgeTick,
+   * packages/network/service/review-judge.ts) under its own key, "review_judge" (serve.ts round worker, backend.ts
+   * tickAll serviceTick, spec/backendLifecycle.md), after the runtimes and not inside the network tick. A round
+   * starts at most judgeCallsPerRun model calls per runtime. Service.close() aborts the calls in flight
+   * (judgeAbort); an aborted call writes no judgment, so its lease expires and a later round claims it again
+   * (spec/automatedReview.md judgeClaimDecision). Abstraction: the model keeps no judge state; a judge round that
+   * fails is one more worker error that does not stop another worker, and the review state is in the
+   * opportunity and review_desk models.
    */
   action tickRound(tickOk: bool): bool = all {
     s.tk.lastRoundAt < s.now, s.pr.phase == "running",
@@ -694,32 +698,6 @@ module runtime_ops {
                       deploys: allowed and wranglerDeploys(unkTakesValue, s.wr.args) } },
   }
 
-  // ------------------------------------------------------------------ M-147 Cloudflare cutover
-
-  /** A deploy with BACKEND_ENABLED=true and BUILD_ID: the container runs the backend (worker.ts:61-71). */
-  action cfActivate: bool = all {
-    not(s.cf.enabled),
-    s' = { ...s, cf: { target: "cf", enabled: true, buildIdOk: true, configSet: true, containerRunning: true, cronSinceInactive: false } },
-  }
-  /**
-   * The rollback deploy without BACKEND_ENABLED; the operator may leave out --var BUILD_ID (SD-159), or
-   * the BACKEND_RUNTIME_CONFIG secret (worker.ts:55 then returns before stop()).
-   */
-  action cfDeactivate(withBuildId: bool, withConfig: bool): bool = all {
-    s.cf.enabled,
-    s' = { ...s, cf: { ...s.cf, target: "railway", enabled: false, buildIdOk: withBuildId, configSet: withConfig, cronSinceInactive: false } },
-  }
-  /**
-   * worker.ts:72-76 scheduled() on an inactive deploy, and worker.ts:64-66 fetch() on an inactive deploy (one
-   * action here): stopInactiveBackend (worker.ts:53-59). Without BACKEND_RUNTIME_CONFIG it returns at once
-   * (worker.ts:55). Else getContainer(...).stop(): the Durable Object's constructor runs on the new deploy and
-   * throws when BUILD_ID is not 40 hex (worker.ts:36), so stop() never sends SIGTERM.
-   */
-  action cfCron: bool = all {
-    not(s.cf.enabled),
-    s' = { ...s, cf: { ...s.cf, cronSinceInactive: true, containerRunning: s.cf.containerRunning and not(s.cf.buildIdOk and s.cf.configSet) } },
-  }
-
   // ------------------------------------------------------------------ step
 
   // Weights for the random walk only: in one step of 8 the clock moves on when it can; otherwise every action
@@ -757,11 +735,6 @@ module runtime_ops {
     migrate, ensureLoginStart, bootCreate, loginCheck, bootCrash,
     nondet outcome = oneOf(Set("ok", "empty", "truncated", "retryable", "fatal")) llmAttempt(outcome),
     nondet unk = oneOf(Set(true, false)) runWrangler(unk),
-    cfActivate,
-    nondet b = oneOf(Set(true, false))
-    nondet cfg = oneOf(Set(true, false))
-    cfDeactivate(b, cfg),
-    cfCron,
   }
 
   // ------------------------------------------------------------------ invariants
@@ -856,21 +829,6 @@ module runtime_ops {
    */
   val guardSound = not(s.wr.deploys)
 
-  /**
-   * README rollback: an inactive Worker stops the container (worker.ts:56-58 comment: SIGTERM). SD-159; a
-   * rollback without BACKEND_RUNTIME_CONFIG also leaves it running (worker.ts:55, cfNoConfigTest).
-   * NOT IN `safety`: SD-159 is open, skipped because the fix needs a test in workerd (Durable Objects and
-   * Containers), and no Workers runtime is in the repository; a local runtime stub would give only mock evidence. cfNoBuildIdTest replays it.
-   */
-  val inactiveStops = (not(s.cf.enabled) and s.cf.cronSinceInactive) implies not(s.cf.containerRunning)
-
-  /**
-   * AGENTS.md: every proactive proposal waits for human review; the console must reach the staff API. SD-169.
-   * NOT IN `safety`: SD-169 is open, skipped for a founder decision (how the console reaches the staff API
-   * after the Cloudflare cutover changes the staff API's security boundary). Fails closed: review items expire unsent.
-   */
-  val staffRouted = staffRouteExists(s.cf.target)
-
   /** AGENTS.md STOP: a member whose STOP is committed is never contacted from a tick's engine run (OPS23). */
   val noContactAfterStop = s.st.contactedAfterStop == Set()
 
@@ -881,8 +839,8 @@ module runtime_ops {
     noContactAfterStop,
   }
 
-  /** The invariants of the open defects (SD-050, SD-159, SD-169). Each fails; see its comment. */
-  val openDefects = and { restoreKeepsStops, inactiveStops, staffRouted }
+  /** The invariant of the open defect (SD-050). It fails; see its comment. */
+  val openDefects = restoreKeepsStops
 
   // ------------------------------------------------------------------ witnesses (must be reachable)
 
@@ -897,7 +855,6 @@ module runtime_ops {
   val witness_bootUp = not(s.bt.step == "up")
   val witness_llmRegrowOk = not(s.ll.done == "ok" and s.ll.regrows > 0 and s.ll.e > 0)
   val witness_wranglerDryRun = not(s.wr.ran and s.wr.allowed)
-  val witness_cfStopped = not(s.cf.cronSinceInactive and not(s.cf.containerRunning) and s.cf.buildIdOk and s.cf.configSet)
   val witness_biasLateAlert = not(s.al.st.get("late").open and s.al.st.get("late").sent)
   /** A STOP commits while a tick's engine run computes without the lock (OPS23). */
   val witness_stopDuringEngine = not(REPLICAS.exists(r => s.st.eng.get(r).phase == "computing"
@@ -1057,25 +1014,6 @@ module runtime_ops {
     .expect(WR_COMMANDS.forall(c => Set(true, false).forall(u => not(guardAllows(c) and wranglerDeploys(u, c))))
             and WR_COMMANDS.exists(c => guardAllows(c) and c[0] == "deploy")
             and WR_COMMANDS.exists(c => wranglerDeploys(true, c) and not(guardAllows(c))))
-
-  /** SD-159 (open, no Workers runtime to test the fix): rollback without BUILD_ID: the cron cannot stop the container. */
-  run cfNoBuildIdTest = initProd
-    .then(cfActivate).then(cfDeactivate(false, true)).then(cfCron)
-    .expect(not(inactiveStops) and safety)
-
-  /** The same open invariant (SD-159 family): a rollback without BACKEND_RUNTIME_CONFIG returns before stop(). */
-  run cfNoConfigTest = initProd
-    .then(cfActivate).then(cfDeactivate(true, false)).then(cfCron)
-    .expect(not(inactiveStops) and safety)
-  /** A rollback with BUILD_ID and the runtime config: the inactive deploy stops the container. */
-  run cfRollbackStopsTest = initProd
-    .then(cfActivate).then(cfDeactivate(true, true)).then(cfCron)
-    .expect(inactiveStops and safety)
-
-  /** SD-169 (open, founder decision): after the cutover no route reaches the staff API. */
-  run cfStaffRouteTest = initProd
-    .then(cfActivate)
-    .expect(not(staffRouted) and safety)
 
   /** SD-111 fixed: slop:nyc mints slop.nw-1-1 and slop:la mints slop.slop:la.nw-1-1: two rows. */
   run idCollisionTest = initWith("backend", "blooio", true, List("deploy", "--dry-run", "--dry-run"), false)

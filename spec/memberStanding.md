@@ -12,21 +12,21 @@ Acceptance counts, reply counts, likes, and any other popularity count are never
 
 ### Standing exists only for an adult who consented to the lane
 
-A minor has no standing in any lane, so no parity check can use one. A member who did not consent to the lane has no standing in it. The shell checks this before it reads any evidence or rating.
+A member who is not age-eligible for the lane has no standing in it, so no parity check can use one. A member is age-eligible when they are an adult, or when they are teen ready and the lane is the Friend lane of friends.help or of The Network (`teenFriendLane` of the [relationship lanes](matchLane.md) and `teenReady` of the [friend introduction age rule](friendIntroAge.md)). A member who did not consent to the lane has no standing in it. The shell checks this before it reads any evidence or rating. Changed (owner decision 2026-11-22): the parameter was `adult`; a teen-ready member now has the Friend standing, which is the middle standing with uncertainty 0, so a teen friendship pair can pass the Friend parity check, and no other lane gives a minor any standing. Changed (owner decision 2026-11-22, answers A2 to A5): the owner opened the Friend lane of The Network to teen introductions, so a teen-ready member also has the Friend standing on ntwrk.party.
 
 ```quint
 import matchLane as Lane from "./matchLane"
 
-pure def standingReadable(adult: bool, consented: bool): bool = adult and consented
+pure def standingReadable(ageEligible: bool, consented: bool): bool = ageEligible and consented
 ```
 
 ### Standing history requires current account and lane authority
 
-The shell keeps history only for an adult with an active account and current permission in that app and lane. It removes history when that authority ends. A saved estimate is usable in a match only while every evidence item it was computed from is still a current source that permits matching. A correction, removal, or scope reduction that withdraws that evidence invalidates the old estimate before matching, even within the weekly interval. With current authority and fresh evidence, the shell can start a new observation.
+The shell keeps history only for an age-eligible member with an active account and current permission in that app and lane. It removes history when that authority ends. A saved estimate is usable in a match only while every evidence item it was computed from is still a current source that permits matching. A correction, removal, or scope reduction that withdraws that evidence invalidates the old estimate before matching, even within the weekly interval. With current authority and fresh evidence, the shell can start a new observation. Changed (owner decision 2026-11-22): the parameter `adult` is now `ageEligible`, with the meaning of the rule above, so the history of a teen-ready member in the Friend lane of friends.help or of The Network is kept while it stays age-eligible and is removed when it does not. Changed (owner decision 2026-11-22, answers A2 to A5): the ntwrk Friend lane now gives a teen-ready member the same age eligibility as the friends.help Friend lane.
 
 ```quint
-pure def standingMayRetain(adult: bool, activeAccount: bool, lanePermitted: bool): bool =
-  standingReadable(adult, lanePermitted) and activeAccount
+pure def standingMayRetain(ageEligible: bool, activeAccount: bool, lanePermitted: bool): bool =
+  standingReadable(ageEligible, lanePermitted) and activeAccount
 
 pure def standingHistoryUsable(hasHistory: bool, evidenceStillPermits: bool): bool =
   hasHistory and evidenceStillPermits
@@ -34,9 +34,9 @@ pure def standingHistoryUsable(hasHistory: bool, evidenceStillPermits: bool): bo
 pure def lawWithdrawnEvidenceInvalidatesStanding(hasHistory: bool): bool =
   not(standingHistoryUsable(hasHistory, false))
 
-pure def lawStandingRetentionRequiresAuthority(adult: bool, activeAccount: bool, lanePermitted: bool): bool =
-  (not(adult) or not(activeAccount) or not(lanePermitted)) implies
-    not(standingMayRetain(adult, activeAccount, lanePermitted))
+pure def lawStandingRetentionRequiresAuthority(ageEligible: bool, activeAccount: bool, lanePermitted: bool): bool =
+  (not(ageEligible) or not(activeAccount) or not(lanePermitted)) implies
+    not(standingMayRetain(ageEligible, activeAccount, lanePermitted))
 ```
 
 ### Ordinary standing evidence uses the member's current matching scope

@@ -1,23 +1,17 @@
 // The relay classifier chosen from the environment (relay-endpoint.ts relayClassifierFromEnv). No network:
-// without Workers AI credentials no Clef client is built.
+// without Workers AI credentials no Clef client is built and the classifier cannot run.
 import { expect, test } from "vitest";
 import { relayClassifierFromEnv } from "../service/relay-endpoint.ts";
 
-test("dev and staging without Clef run on the rules alone", () => {
-  const logs: string[] = [];
-  expect(relayClassifierFromEnv({ PLATFORM_ENV: "dev" }, l => logs.push(l))).toBeUndefined();
-  expect(relayClassifierFromEnv({ PLATFORM_ENV: "staging" }, l => logs.push(l))).toBeUndefined();
-  expect(logs).toEqual(["relay classifier: rules only", "relay classifier: rules only"]);
+test("without Workers AI credentials every environment gets a classifier that cannot run, so a text the rules pass is blocked (owner decision 2026-11-22, D18)", async () => {
+  for (const env of [{ PLATFORM_ENV: "dev" }, { PLATFORM_ENV: "staging" }, { PLATFORM_ENV: "production" }, { PLATFORM_ENV: "staging", CLOUDFLARE_ACCOUNT_ID: "a" }, { PLATFORM_ENV: "dev", CLOUDFLARE_AI_TOKEN: "t" }]) {
+    const logs: string[] = [];
+    const hookFor = relayClassifierFromEnv(env, l => logs.push(l));
+    expect(hookFor).toBeTypeOf("function");
+    expect(logs).toEqual(["relay classifier: Workers AI not configured; every relayed text is blocked"]);
+    await expect(hookFor("slop")({ text: "see you at 7", kind: "text", context: [], met: false })).rejects.toThrow("relay classifier not configured");
+  }
 });
-
-test("production without Clef fails closed: the hook errors, so a text the rules pass is held", async () => {
-  const logs: string[] = [];
-  const hookFor = relayClassifierFromEnv({ PLATFORM_ENV: "production" }, l => logs.push(l));
-  expect(hookFor).toBeDefined();
-  expect(logs[0]).toContain("held for staff");
-  await expect(hookFor!("slop")({ text: "see you at 7", kind: "text", context: [], met: false })).rejects.toThrow();
-});
-
 
 test("RELAY_CLEF_WEIGHTS_PATH loads the fitted weights; a bad file stops the start", () => {
   const logs: string[] = [];

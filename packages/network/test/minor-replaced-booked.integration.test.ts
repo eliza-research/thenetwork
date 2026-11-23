@@ -7,6 +7,7 @@ import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext } from "@thenetwork/sim";
 import { computeMetrics } from "../../sim/src/judge/metrics.ts";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
@@ -26,7 +27,7 @@ async function replaceB(w: Mini) {
 }
 
 test("a booked plan closes when a member who was asked about it and replaced is found to be a minor", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   const id = w.propose(["a", "b"], { alternates: ["c"] });
   await replaceB(w);
@@ -60,7 +61,7 @@ test("after a minor signal at night, the adults' cancellation is not about a pla
     }
   }
   const people = [climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")];
-  const w = new Judged(people, { review: "auto" });
+  const w = new Judged(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   const queued = () => (w.net.exportState() as unknown as { deferred: { meta: { proposalId?: string } }[] }).deferred.filter(d => d.meta.proposalId === id);
   await w.onboard("a", "b", "c");
   const id = w.propose(["a", "b"], { alternates: ["c"] });
@@ -113,7 +114,7 @@ test("a booked group of four closes when a member who is going is found to be a 
   }
   const people = [climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park")];
   const ids = people.map(p => p.id);
-  const w = new Judged(people, { review: "auto" });
+  const w = new Judged(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard(...ids);
   const id = w.propose(ids);
   await w.answerProbes(ids);
@@ -149,7 +150,7 @@ const noRecordAge = (id: string, name: string) => ({ ...climber(id, name), age: 
 test("a booked group of four closes when a member who stated 30 writes that they are 12", async () => {
   const people = [climber("a", "Ana Diaz"), noRecordAge("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park")];
   const ids = people.map(p => p.id);
-  const w = new Mini(people, { review: "auto" });
+  const w = new Mini(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "c", "d");
   await joinStatingThirty(w, "b");
   const id = w.propose(ids);
@@ -179,7 +180,7 @@ test("a booked group of four closes when a member who stated 30 writes that they
 // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person". Review
 // 2026-11-17: the booking stayed scheduled and the two adults got 4 reminders about a plan the child was asked about.
 test("a booked pair closes when its asked and replaced member who stated 30 writes that they are 12", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), noRecordAge("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), noRecordAge("b", "Ben Ito"), climber("c", "Cy Moss")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "c");
   await joinStatingThirty(w, "b");
   const id = w.propose(["a", "b"], { alternates: ["c"] });
@@ -203,7 +204,7 @@ test("a booked pair closes when its asked and replaced member who stated 30 writ
 // the adults get nothing more about it. Before, the close sent "That one didn't come together" to two adults
 // who had already met.
 test("a minor signal after the start closes the booking without a message to the adults", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   const id = w.propose(["a", "b"], { alternates: ["c"] });
   await replaceB(w);
@@ -220,7 +221,7 @@ test("a minor signal after the start closes the booking without a message to the
 // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": in probing, a
 // member who said yes hears that it did not come together. Before, Ana said yes and then heard nothing.
 test("an adult who said yes to a probe hears it did not come together when the other member is found to be a minor", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   const id = w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a"))).toBe(true);

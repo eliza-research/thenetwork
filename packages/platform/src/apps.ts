@@ -10,8 +10,6 @@ export interface AppBrand {
   /** How the agent names itself. */
   agentName: string;
   stop: string;
-  /** Reply to STOP on this app's own line when PLATFORM_STOP_SCOPE=app: this app only. */
-  stopApp: string;
   start: string;
   help: string;
   /** The polite answer when a person tries to join an invite-only app on its site. */
@@ -48,7 +46,6 @@ function brand(name: string, domain: string, agentName: string, what: string, mi
   return {
     agentName,
     stop: `You're unsubscribed and won't get more messages from any app on this number. Reply START to resume ${name}.`,
-    stopApp: `You're unsubscribed from ${name} and won't get more messages from it. Reply START to resume.`,
     start: `You're back on ${name}. Reply STOP anytime to stop all messages, HELP for help.`,
     help: `${name}: ${what} Message frequency varies. Reply STOP to stop all messages on this number, or "leave ${domain}" to leave ${name} only. Help: ${SUPPORT_EMAIL}`,
     inviteOnly: `${name} is invite-only right now. If a member invites you, you can join then.`,

@@ -14,11 +14,12 @@ import { join } from "node:path";
 import { SimClock } from "../../packages/core/src/clock.ts";
 import { createBackend, ipOf, loadConfig } from "../../deploy/backend/backend.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
-import { createMcpHandler, platformHooks, type McpHandler } from "../../packages/mcp/src/index.ts";
+import { type McpHandler } from "../../packages/mcp/src/index.ts";
 import { BlooioAdapter, DryRunAdapter } from "../../packages/network/service/channel.ts";
 import type { ChannelAdapter } from "../../packages/blooio/src/types.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../packages/network/service/service.ts";
+import { holdEveryItem, type ReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { type AppId, type AppInfo, DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { LocalDiskPhotoStorage } from "../../packages/platform/src/photos.ts";
@@ -32,6 +33,7 @@ export { pgAvailable };
 export const PROXY_SECRET = "e2e-proxy-secret-0123456789abcdef0123456789abcdef";
 export const WEBHOOK_SECRET = "whsec_e2e_shared";
 export const ADMIN_TOKEN = "e2e-admin-token-0123456789abcdef";
+export const SAFETY_TOKEN = "e2e-slop-safety-token-0123456789abcdef";
 /** The Eliza gateway's signing secret (SERVICE_TURN_SECRET): the tests sign /internal/turn and /internal/set-state as the gateway does. */
 export const TURN_SECRET = "e2e-service-turn-secret-0123456789abcdef";
 /** 9:30 in New York (EDT): inside the daily engine run window. */
@@ -84,7 +86,6 @@ export interface Stack {
   /** A staff call on the service (the staff port is private; the test calls the service directly). */
   staff(path: string, body: unknown): Promise<Response>;
   setPrivateOpenAiApps(apps: readonly AppId[]): Promise<void>;
-  setCustomChatGptSlopPersonIds(ids?: readonly string[]): void;
   close(): Promise<void>;
 }
 
@@ -95,6 +96,7 @@ export async function startStack(o: {
   slopCity?: "sf";
   extraNetwork?: "ntwrk:sf";
   simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
+  reviewJudge?: ReviewJudge;
 } = {}): Promise<Stack> {
   const url = await migratedDb(`e2e_${++stackSequence}`);
   if (o.slopCity || o.extraNetwork) {
@@ -115,12 +117,12 @@ export async function startStack(o: {
   // The platform's host map plus each local site origin (random ports), so a browser Origin of a site counts as that app's own.
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
   const svc = await NetworkService.fromDatabase({
-    url, clock, env, instance: "e2e", tokens: `admin:${ADMIN_TOKEN}`, webhookSecret: WEBHOOK_SECRET,
-    network: { seed: 1 }, log: () => {},
+    url, clock, env, instance: "e2e", tokens: `admin:${ADMIN_TOKEN},safety@slop:${SAFETY_TOKEN}`, webhookSecret: WEBHOOK_SECRET,
+    network: { seed: 1 }, log: () => {}, reviewJudge: o.reviewJudge ?? holdEveryItem.judge,
     // Every test browser is 127.0.0.1: the per-IP OTP limits (unit-tested in packages/platform) would stop the suite.
     publicApi: { otp, minStartMs: 0, minVerifyMs: 0, ipOf, hostMap, otpLimits: { perIpPerHour: 10_000, verifyPerIpPerHour: 10_000 } },
     adapter: (_net, rt) => outbound ? new BlooioAdapter({ clock, provider: outbound.provider, from: outbound.line,
-      app: rt.app.id, city: rt.city, env, log: () => {}, liveGate: () => true }) : new DryRunAdapter(() => {}),
+      app: rt.app.id, city: rt.city, env, log: () => {} }) : new DryRunAdapter(() => {}),
     // Photos on (a local folder): the age gate is tested end to end, with an adult control.
     photoStorage: new LocalDiskPhotoStorage(photoDir),
   });
@@ -155,18 +157,6 @@ export async function startStack(o: {
   let evt = 0;
   return {
     url, clock, svc, get mcp() { return mcp!; }, otp, backendOrigin, sites,
-    // Test-only stage-configured handler on the owned stack. Production provider wiring is unchanged.
-    setCustomChatGptSlopPersonIds(ids) {
-      mcp = createMcpHandler({
-        store: mcp!.store, env: { PLATFORM_ENV: "staging" }, customChatGptSlopPersonIds: ids,
-        proxySecret: PROXY_SECRET, hostMap, issuer: app => devOrigins[app.id]!, now: () => clock.now(), log: () => {},
-        platform: platformHooks({
-          store: svc.people, accounts: svc.publicApi.accounts, otp: svc.publicApi.otp, sessions: svc.publicApi.sessions,
-          app: id => svc.apps[id], cookieName: id => `sid_${id}`, secureCookie: false,
-          submitProfile: (person, app, phone, text) => svc.submitProfile(person, app, phone, text),
-        }),
-      });
-    },
     async setPrivateOpenAiApps(apps) {
       const old = mcp;
       mcp = await createServiceMcp(svc, { env, databaseUrl: url, proxySecret: PROXY_SECRET, devOrigins, privateOpenAiApps: apps, migrate: false, log: () => {} });

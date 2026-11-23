@@ -8,6 +8,8 @@ export type SignInPhase = "AwaitingHandoff" | "AwaitingExchange" | "AwaitingIden
 export interface HandoffFacts { bindingValid: boolean; pendingLive: boolean; codeWellFormed: boolean }
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export interface SignIn { phase: SignInPhase; handoffAccepted: boolean; exchangeAccepted: boolean; identityAccepted: boolean; phoneAllowed: boolean }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+export type CallbackPage = "JoinReturn" | "PhoneReturn" | "HomeHelpReturn" | "ConnectorReturn" | "NoReturn";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -206,6 +208,32 @@ export function sometimesDeniesSignIn(signIn: SignIn): boolean {
 //@ pure
 export function sometimesCloudUnavailable(signIn: SignIn): boolean {
   return signIn.phase === "CloudUnavailable";
+}
+
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function callbackFailureCode(failureStatus: number): string {
+  return failureStatus === 400 ? "sign_in_expired" : (failureStatus === 403 ? "sign_in_refused" : "sign_in_unavailable");
+}
+
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function failedCallbackReturnsToPage(page: CallbackPage): boolean {
+  return page === "PhoneReturn" || page === "HomeHelpReturn";
+}
+
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function lawFailureCodeIsOneOfThree(failureStatus: number): boolean {
+  //@ ensures \result === true
+  return ["sign_in_expired", "sign_in_refused", "sign_in_unavailable"].includes(callbackFailureCode(failureStatus));
+}
+
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function lawJoinAndConnectorFailuresStayJson(page: CallbackPage): boolean {
+  //@ ensures \result === true
+  return !(page === "JoinReturn" || page === "ConnectorReturn" || page === "NoReturn") || !failedCallbackReturnsToPage(page);
 }
 
 /** Do the rules allow this event in this state? */

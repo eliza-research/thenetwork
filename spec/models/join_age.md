@@ -10,6 +10,10 @@ Check membership creation, the age floor, under-13 erasure, and single-player ac
 
 The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and the signed turn journey cover the prepared Peon signup format.
 
+Changed (owner decision 2026-11-22): the person keeps age readings, and the join asks for the birthday ([member age](../memberAge.md), "Track age from a birth date"). The model abstracts a reading to the integer age it gives on the model's one day: `birthAge` is the age from the latest stated birth date (the youngest), and `ageHigh` and `floorHigh` are the highest stated ages of the person and of the phone floor (the lower bound of the readings). The readings agree when the youngest and the highest are the birth-date age. A member of friends.help or The Network aged 13 to 17 is a teen friend candidate only while staff have not stopped teen introductions and the readings agree ([friend introductions with a minor](../friendIntroAge.md) `teenReady`, `teenFriendCandidate`). `teenReadingsAgree` says that a teen candidate never stated an age that disagrees with the birth date (the pair and group rule `teenFriendAgeRule` is not in this model: it has one person; the [candidate pool](candidate_pool.md), [engine rules](engine_rules.md) and [opportunity](opportunity.md) models check it); `minorNeverMatched` stays the adult matching rule (a minor is never matchable in an adult lane, with the switch on or off), and `teenSwitchOffNoMinor` says that no minor is a teen candidate while teen introductions are stopped. Delete everything clears the birth date.
+
+Changed (owner decision 2026-11-22, answers A2 to A5): readiness is derived from the readings with no staff step, so `teenConfirm` and `teenConfirmedAge` are deleted, because the owner chose "On at launch, no extra checks". Teen introductions are on from the start (`teenStopped` is false); `teenStop` and `teenResume` replace `setTeenIntros`. A minor of The Network (ntwrk) is a teen candidate too (answer A2). `minorFriendsOnly` states answer A5 for the looking-for answer: an enroll never makes a minor a member of slop.date (the model's apps have no peon.biz; the code refuses both through the generated `otherAppAllowed`). The one notice to an existing slop.date or peon.biz minor (`minorScopeNoticeDue`) is outside this model; `text-join-birthday.integration.test.ts` covers it.
+
 Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -109,6 +113,9 @@ module join_age {
   type Pend = { has: bool, app: str, age: int, name: bool }
   type Db = {
     personExists: bool, personLowest: int, floor: int,
+    // Owner decision 2026-11-22: the birth-date age (NONE: no birth date), the highest stated ages of the
+    // person and of the phone floor, and the stored teen stop (the key teenStop is present).
+    birthAge: int, ageHigh: int, floorHigh: int, teenStopped: bool,
     pendJoin: Pend, pendLF: bool,
     mstate: str -> str, mid: str -> int, net: str -> Net,
     noticeRow: bool, nextId: int,
@@ -179,7 +186,7 @@ module join_age {
   // removed). Migration 0043 lets the floor keep 0 (SD-383: the check was lowest_age > 0 and an age of 0 raised).
   pure def recordAge(d: Db, age: int): Db = {
     val floorVal = lo(age, if (d.personExists) d.personLowest else NONE)
-    val d1 = d.with("floor", lo(d.floor, floorVal))
+    val d1 = d.with("floor", lo(d.floor, floorVal)).with("floorHigh", hi(d.floorHigh, age))
     if (not(d1.personExists)) d1
     else {
       val after = lo(d1.personLowest, age)
@@ -187,9 +194,24 @@ module join_age {
         val n = d1.net.get(a)
         if (n.exists and d1.mstate.get(a) != "removed" and d1.mstate.get(a) != "none") n.with("age", lo(n.age, after)) else n
       })
-      d1.with("personLowest", after).with("net", net2)
+      d1.with("personLowest", after).with("net", net2).with("ageHigh", hi(d1.ageHigh, age))
     }
   }
+
+  // Owner decision 2026-11-22. AccountService.recordBirthDate: the reading of a stated birth date, abstracted to
+  // the age it gives today. The latest birth date is the youngest (laterBirthKey), so the lower age wins.
+  pure def recordBirth(d: Db, age: int): Db = recordAge(d, age).with("birthAge", lo(d.birthAge, age))
+  // spec/memberAge.md birthDateExact: a birth date, and every reading of the person and the floor agrees with it.
+  pure def exactBirth(d: Db): bool =
+    d.personExists and d.birthAge >= 0 and hi(d.ageHigh, d.floorHigh) == d.birthAge and effLowest(d) == d.birthAge
+  // spec/friendIntroAge.md teenReady (the age inputs) for a person aged 13 to 18: an exact birth date, no staff step.
+  pure def teenReadyAge(d: Db): bool =
+    exactBirth(d) and d.birthAge >= 13 and d.birthAge <= 18
+  // spec/friendIntroAge.md teenFriendCandidate and spec/matchLane.md teenFriendApp: a member of friends.help or of
+  // The Network aged 13 to 17, while teen introductions are not stopped.
+  pure def teenCandidate(d: Db): bool =
+    not(d.teenStopped) and teenReadyAge(d) and d.birthAge < 18
+      and Set("friends", "ntwrk").exists(a => d.net.get(a).exists and d.mstate.get(a) == "active")
 
   // A.declineUnderAge (SD-014, b6a1489): when the phone's lowest age is under 13, the phone's pending text
   // join is deleted (Q-join_age-3, this branch), and every membership of the person that is not removed
@@ -227,6 +249,7 @@ module join_age {
     val rec = keep.fold(NONE, (acc, v) => lo(acc, if (v.declined) v.age else hi(v.age, minJoin(a))))
     if (rec < 0) d
     else d.with("floor", lo(d.floor, rec)).with("personLowest", if (d.personExists) lo(d.personLowest, rec) else d.personLowest)
+      .with("floorHigh", hi(d.floorHigh, rec)).with("ageHigh", if (d.personExists) hi(d.ageHigh, rec) else d.ageHigh)
   }
 
   // One ConsentNetwork unit for a member's text (N:674-842, handleInbound), abstracted to the age policy,
@@ -309,6 +332,7 @@ module join_age {
   action init = all {
     db' = {
       personExists: false, personLowest: NONE, floor: NONE, pendJoin: NO_PEND, pendLF: false,
+      birthAge: NONE, ageHigh: NONE, floorHigh: NONE, teenStopped: false,
       mstate: APPS.mapBy(a => "none"), mid: APPS.mapBy(a => 0), net: APPS.mapBy(a => NO_NET),
       noticeRow: false, nextId: 1,
     },
@@ -611,7 +635,8 @@ module join_age {
           .with("nextId", if (existing == "invited") db.nextId else db.nextId + 1),
         turn' = turn.with("todo", turn.todo.exclude(Set(a))).with("joined", turn.joined.union(Set(a))).with("pc", "e_create").with("cur", a),
       },
-      vol' = vol, g' = g,
+      vol' = vol,
+      g' = if (not(isLive) and ageOk and a == "slop" and turn.lowest < 18) g.with("flags", flag("minorEnrolledSlop")) else g,
     }
   }
   // createMember names the new member in the turn (S:747-750).
@@ -792,8 +817,29 @@ module join_age {
     turn.pc == "idle", db.personExists,
     db' = db.with("floor", lo(db.floor, db.personLowest)).with("personExists", false).with("personLowest", NONE)
       .with("net", APPS.mapBy(a => if (db.mstate.get(a) != "none" and db.mstate.get(a) != "removed") NO_NET else db.net.get(a)))
-      .with("mstate", APPS.mapBy(a => "none")).with("pendJoin", NO_PEND).with("pendLF", false),
+      .with("mstate", APPS.mapBy(a => "none")).with("pendJoin", NO_PEND).with("pendLF", false)
+      .with("floorHigh", hi(db.floorHigh, db.ageHigh)).with("birthAge", NONE).with("ageHigh", NONE),
     vol' = vol, turn' = turn, g' = g.with("askOpen", false),
+  }
+
+  // Owner decision 2026-11-22. A member states a birthday (text or site); a birth date under 13 is never stored
+  // as a birth date (it is the under-13 decline path, which this action leaves out).
+  action statesBirthday(age: int): bool = all {
+    turn.pc == "idle", db.personExists, age >= 13,
+    db' = recordBirth(db, age),
+    vol' = vol, turn' = turn, g' = g.with("everStated", g.everStated.union(Set(age))),
+  }
+  // spec/teenIntroSwitch.md: teen introductions are on from the start; one staff member stops them, one admin
+  // turns them on again (the staff roles are in review_desk and opportunity).
+  action teenStop = all {
+    turn.pc == "idle", not(db.teenStopped),
+    db' = db.with("teenStopped", true),
+    vol' = vol, turn' = turn, g' = g,
+  }
+  action teenResume = all {
+    turn.pc == "idle", db.teenStopped,
+    db' = db.with("teenStopped", false),
+    vol' = vol, turn' = turn, g' = g,
   }
 
   pure val MSGS: Set[Msg] = {
@@ -821,6 +867,8 @@ module join_age {
     { nondet a = oneOf(APPS) nondet age = oneOf(WEB_AGES) webJoin(a, age) },
     { nondet a = oneOf(OTHER_APPS) staffInvite(a) },
     crash, stepThrows, pendingExpire, deleteAll, recoverDecline,
+    { nondet age = oneOf(Set(15, 16, 25)) statesBirthday(age) },
+    teenStop, teenResume,
   }
 
   // ------------------------------------------------------------------ invariants
@@ -834,10 +882,23 @@ module join_age {
   val lowestWins = idle implies ((db.personExists or durableLowest(db) >= 0) implies
     g.everStated.forall(a => durableLowest(db) >= 0 and durableLowest(db) <= hi(a, 13)))
 
-  // AGENTS.md decision 1 and code invariant "minors never matched": a person who ever stated an age under
+  // AGENTS.md decision 1 and code invariant "minors never matched" in the adult pools (`matchable`; the teen
+  // friendship pool under teenFriendAgeRule is `teenCandidate`): a person who ever stated an age under
   // 18 is matchable in no app (N:3746, migration 0038). Failed at ad67275: SD-010, SD-011, SD-038, SD-383.
   // Failed on this branch until 2026-11-21: JA-1, JA-2.
   val minorNeverMatched = idle implies (g.everStated.exists(a => a < 18) implies APPS.forall(a => not(matchable(db, a))))
+
+  // Owner decision 2026-11-22 (spec/friendIntroAge.md teenReady, teenFriendCandidate; spec/memberAge.md
+  // lawLowerStatedAgeWins, lawConflictIsPermanent): a teen friend candidate never stated another minor age, at any
+  // time and on any app (a lower or a higher one is a conflict), and the candidate is a minor of 13 or more. An
+  // adult age is a reading only when the backend records it (an explicit statement); then exactBirth fails too.
+  val teenReadingsAgree = idle implies (teenCandidate(db) implies
+    (g.everStated.forall(a => a < 18 implies hi(a, 13) == db.birthAge) and db.birthAge >= 13 and db.birthAge < 18))
+  // While teen introductions are stopped no minor is a teen friend candidate (single-player, as before the decision).
+  val teenSwitchOffNoMinor = idle implies (db.teenStopped implies not(teenCandidate(db)))
+  // Owner decision 2026-11-22, answer A5 (spec/textEnrollment.md otherAppAllowed, lawMinorEnrollsOnlyInFriendApps):
+  // the looking-for answer of a minor enrolls friends only, never slop.date.
+  val minorFriendsOnly = not(g.flags.contains("minorEnrolledSlop"))
 
   // core/src/policy.ts:2 and A:7 "under 13: cannot join, nothing is stored" (only the age floor):
   // no live membership, no network member and no pending join row for a phone whose lowest age is under 13.
@@ -914,7 +975,7 @@ module join_age {
     and g.last.other and g.last.outcome != "declined" implies g.last.outcome == "open")
 
   val safety = and {
-    lowestWins, minorNeverMatched, under13StoresNothing, noOrphanMember, joinSuccessHasMember,
+    lowestWins, minorNeverMatched, teenReadingsAgree, teenSwitchOffNoMinor, minorFriendsOnly, under13StoresNothing, noOrphanMember, joinSuccessHasMember,
     oneMemberPerApp, minorNoAdultQuestion, noticeSpentImpliesDelivered, enrollAnswered, enrollTurnApp,
     enrollOnlyFromAnswer, lookingForAnswerEnrolls, inviteReplyJoinsInvitedApp, minorIsSinglePlayer,
     minorChatReachesAgent,
@@ -944,6 +1005,7 @@ module join_age {
   pure val M_SAM25: Msg = NO_MSG.with("age", 25).with("name", true).with("explicit", true)
   pure val M_SAM15: Msg = NO_MSG.with("age", 15).with("name", true).with("explicit", true)
   pure val M_HI: Msg = NO_MSG
+  pure val M_AGE25: Msg = NO_MSG.with("age", 25).with("explicit", true).with("long", true)
 
   // The answer with name and age that joins an app other than The Network (helper, not a test).
   run joinByText(m: Msg, a: str): bool =
@@ -1200,5 +1262,42 @@ module join_age {
   run minorJoinTest =
     init.then(joinNtwrkByText(M_SAM15))
       .expect(db.net.get("ntwrk").minor and db.net.get("ntwrk").stage == "active" and APPS.forall(a => not(matchable(db, a))) and safety)
+
+  // Owner decision 2026-11-22, answers A2 to A5. A 15-year-old joins friends and states a birthday that agrees:
+  // a teen friend candidate with no staff step, still matchable in no adult lane.
+  run teenReadyTest =
+    init.then(joinByText(M_SAM15, "friends"))
+      .then(statesBirthday(15))
+      .expect(teenCandidate(db) and APPS.forall(a => not(matchable(db, a))) and safety)
+      // "I'm 25 actually": an older claim is a conflict, and the candidate is single-player again.
+      .then(memberText(M_AGE25, "friends"))
+      .expect(not(teenCandidate(db)) and safety)
+
+  // A 15-year-old member of The Network with an agreeing birthday is a teen candidate too (answer A2).
+  run teenNtwrkReadyTest =
+    init.then(joinNtwrkByText(M_SAM15))
+      .then(statesBirthday(15))
+      .expect(teenCandidate(db) and APPS.forall(a => not(matchable(db, a))) and safety)
+
+  // A birthday that disagrees with the stated age (16 after 15) is a conflict: not a teen candidate.
+  run teenConflictTest =
+    init.then(joinByText(M_SAM15, "friends"))
+      .then(statesBirthday(16))
+      .expect(not(teenCandidate(db)) and safety)
+
+  // A stop makes the teen single-player; a resume makes the teen a candidate again.
+  run teenStopTest =
+    init.then(joinByText(M_SAM15, "friends"))
+      .then(statesBirthday(15)).then(teenStop)
+      .expect(not(teenCandidate(db)) and safety)
+      .then(teenResume)
+      .expect(teenCandidate(db) and safety)
+
+  // Delete everything clears the birth date: a returning teen is not a candidate until a new birthday.
+  run teenEraseTest =
+    init.then(joinByText(M_SAM15, "friends"))
+      .then(statesBirthday(15))
+      .then(deleteAll)
+      .expect(not(teenCandidate(db)) and db.birthAge == NONE and safety)
 }
 ```

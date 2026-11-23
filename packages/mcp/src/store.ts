@@ -8,15 +8,16 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
-import { defaultScopes, scopeName, scopes as connectorScopes } from "../../core/src/generated/authorizationPages.ts";
+import { defaultScopes, scopeName, scopeOfferedOn, scopes as connectorScopes } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import type { PhoneHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
-export type Scope = "apps:read" | "membership:read" | "profile:write" | "profile:read";
+export type Scope = "apps:read" | "membership:read" | "profile:write" | "profile:read" | "photos:use";
 export const DEFAULT_SCOPES = defaultScopes.map(scope => scopeName(scope) as Scope);
 export const SCOPES = connectorScopes.map(scope => scopeName(scope) as Scope);
+export const scopesOn = (app: McpAppId): Scope[] => connectorScopes.filter(scope => scopeOfferedOn(scope, app === "slop")).map(scope => scopeName(scope) as Scope);
 export type ClientAuthMethod = "none" | "client_secret_basic" | "client_secret_post";
 
 export interface OAuthClient {

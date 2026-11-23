@@ -12,7 +12,7 @@ test.skipIf(!pgAvailable)("the inbox repairs accepted messages once and shows on
   const clock = new SimClock(Date.UTC(2026, 10, 16, 19));
   const phone = "+12125550387";
   const service = new NetworkService({
-    url, clock, photoStorage: null, log: () => {}, env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
+    url, clock, photoStorage: null, log: () => {}, env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
   });
   try {

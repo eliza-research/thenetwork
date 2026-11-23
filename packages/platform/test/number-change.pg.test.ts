@@ -148,6 +148,28 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(await store.pendingPhoneChange(owner.personId)).toMatchObject({ newE164: targets[2] });
   }, T);
 
+  // spec/phoneChange.md, "A challenge needs a send slot and a persisted request"
+  test("a refused change start says when to try again: the OTP service's wait, or the end of the day window", async () => {
+    const t = setup();
+    const oldNumber = "+12125550281";
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    const start = async (phone: string) => {
+      const res = (await t.api.fetch(new Request(`http://${host}/api/me/phone/start`, {
+        method: "POST", headers: { host, cookie: browser.cookie, ...jsonH }, body: JSON.stringify({ phone }),
+      })))!;
+      return { status: res.status, retryAfter: res.headers.get("retry-after"), body: await res.json() };
+    };
+    expect(await start("+12125550282")).toEqual({ status: 200, retryAfter: null, body: { ok: true } });
+    // The same new number again at once: the OTP service keeps 30 seconds between codes to one phone.
+    expect(await start("+12125550282")).toEqual({ status: 429, retryAfter: "30", body: { ok: false, error: "rate_limited" } });
+    t.tick(31_000);
+    expect(await start("+12125550283")).toEqual({ status: 200, retryAfter: null, body: { ok: true } });
+    // The fourth start of the day at 15:00:31 UTC: the slot opens at the next UTC midnight, 32369 seconds later.
+    expect(await start("+12125550284")).toEqual({ status: 429, retryAfter: "32369", body: { ok: false, error: "rate_limited" } });
+  }, T);
+
   // spec/phoneChange.md, "A live pending request needs a valid code"
   test("a clock rollback leaves the new code available until its request starts", async () => {
     const t = setup();
@@ -207,7 +229,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     await sql`insert into network.channel_identities (member_id,app_id,channel,address,is_primary)
       values (${member.memberId},'slop','sms',${oldNumber},true),(${legacyMember},'slop','sms',${legacyNumber},true)`;
     const service = new NetworkService({ url, clock: { now: t.now }, networks: [{ id: "slop:nyc", matchingEnabled: false }],
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, photoStorage: null, log: () => {} });
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, photoStorage: null, log: () => {} });
     try {
       await service.start();
       const runtime = service.runtimeFor("slop")!;
@@ -388,7 +410,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     const api = createPublicApi({
       store, now: () => now, ipOf: () => ip, minStartMs: 0, minVerifyMs: 0, log: () => {}, cloudAuthFetch,
       env: {
-        PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
+        PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_MODE: "staging-local", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
         NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:5102",
         NETWORK_CLOUD_AUTH_SERVER_TOKEN: "phone-change-cloud-fixture".repeat(2),
       },

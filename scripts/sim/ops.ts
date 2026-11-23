@@ -276,8 +276,8 @@ export async function opsBlock(b: Block): Promise<void> {
     const thrown = (f: () => unknown) => { try { f(); return ""; } catch (e) { return (e as Error).message; } };
     expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
       TURNSTILE_SECRET_KEY: "f", TURNSTILE_SITE_KEY: "f-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "AC", TWILIO_AUTH_TOKEN: "t", TWILIO_VERIFY_SERVICE_SID: "VA",
-      PLATFORM_SESSION_SECRET: "e".repeat(40), SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://e@db/x",
-      ALERT_WEBHOOK_URL: "http://hooks.example.test/x" }))).toMatch(/must be https/);
+      PLATFORM_SESSION_SECRET: "e".repeat(40), SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://e@db/x", PHOTO_STORAGE: "r2",
+      SURPLUS_API_KEY: "synthetic-surplus-key", ALERT_WEBHOOK_URL: "http://hooks.example.test/x" }))).toMatch(/must be https/);
     // A tick that never finishes: healthy until TICK_LATE_MS (15 min by default), then 503 for the uptime monitor.
     void on.startTicks();
     expect((await on.publicFetch(new Request("http://x/healthz"))).status).toBe(200);

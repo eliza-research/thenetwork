@@ -16,6 +16,7 @@ import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { Mini, START } from "./mini.ts";
 import { interruptionFeedbackCode } from "../src/interruption-feedback.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -121,7 +122,7 @@ test("an assistant yes while a probe waits is not an answer", async () => {
   const x = new Mini([
     { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
     { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true },
-  ], { review: "human", onboardingRequests: false });
+  ], { inlineJudge: holdEveryItem.inline, onboardingRequests: false });
   await x.onboard("a", "b");
   await x.say("a", "Find me a climbing partner.");
   const oppId = x.net.exportState().requests.at(-1)!.oppId!;
@@ -139,7 +140,7 @@ test("a survey answer in assistant profile text records no interruption feedback
   const x = new Mini([
     { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
     { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true },
-  ], { review: "human", onboardingRequests: false });
+  ], { inlineJudge: holdEveryItem.inline, onboardingRequests: false });
   await x.onboard("a", "b");
   await x.say("a", "Find me a climbing partner.");
   const oppId = x.net.exportState().requests.at(-1)!.oppId!;

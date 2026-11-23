@@ -7,7 +7,7 @@ metadata:
   app: slop
   site: https://slop.date
   operator: Eliza Research Corporation
-  version: "1.3.1"
+  version: "1.4.0"
 ---
 
 # slop.date
@@ -24,7 +24,8 @@ Never invent age, profile facts, consent, verification, saved data or introducti
 A draft is not saved until the site confirms it. A saved profile is not a match.
 
 slop.date is dating by text message, with no feed, swiping or profile browsing.
-Anyone 13 or older may join; matching and introductions are for adults 18 and older only.
+Anyone 13 or older may join. slop.date doesn't match anyone under 18 for dates.
+Friendship introductions for people under 18 happen on friends.help and ntwrk.party.
 Introductions require both people to agree. Joining now saves a profile for later;
 it does not mean introductions have started.
 
@@ -40,8 +41,10 @@ it does not mean introductions have started.
    and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
    these facts.
 3. Ask for their stated age first and use the lowest age they state. Explain and <!-- agentSignup: draftProfile -->
-   stop below 13. Tell people aged 13–17 that introductions and matching are for
-   adults 18 and older. Draft their confirmed first name, age and home region.
+   stop below 13. Tell people aged 13–17 that slop.date doesn't match anyone under
+   18 for dates, and that friendship introductions for people under 18 happen on
+   friends.help and ntwrk.party. Draft their confirmed first name and home region. Do not draft
+   an age or a birth date: the person types their birth date on the signup page.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
    or ZIP code or pick an incorrect region.
@@ -61,7 +64,8 @@ it does not mean introductions have started.
    browser cookie. The person handles all credentials in their own browser.
 6. The app's browser confirms their own phone, or uses its current verified <!-- agentSignup: observeBrowser -->
    session. For an eligible new membership, choose **Finish signup** there and
-   review the same name, age, home region and current text consent. Joining is
+   review the same name, home region and current text consent. The person types
+   their own birth date there. Joining is
    open. A forwarded invitation is optional.
    If they want to use a forwarded invitation, they keep the original link
    private and enter the invitation in the app's browser if asked. Do not copy
@@ -89,13 +93,38 @@ it does not mean introductions have started.
    Then report that the approved profile was recorded. Otherwise report an
    unconfirmed save. Do not claim matching, an introduction or a profile update
    in another app.
+10. To show what slop.date is looking for for the person, call `list_looking_for`.
+   Sending a profile only adds; leaving something out never removes it. If the
+   person asks to pause one thing, call `pause_looking_for` with its ref; to
+   close it for good they reply CLOSE to the text they get. Never pause or
+   resume anything the person did not ask about.
+
+## Photos with a match
+
+This is for adult members with a match only. Use the person's own words, and
+never choose a photo for them.
+
+1. To show which photos slop.date has and who has each, call `my_photos`. It
+   gives each photo's number, name and day, and the first name of each match who
+   was offered it. It never gives the photos. If it says that the person must
+   allow access, tell them that they can connect again and allow the photo list,
+   or text MY PHOTOS to +18087881821.
+2. To send a photo to a match, name a photo or take one back, call
+   `photo_request` with the person's own words, such as "send Maya the beach
+   one", "call photo 2 beach" or "take back photo 2". Never pass a photo id, a
+   code or a link. Never choose a photo by looks, and never say what a photo
+   shows or how anyone looks.
+3. You cannot confirm a send. slop.date texts the person the photos to check,
+   with a private link. Only their YES to that text sends. The match is asked
+   first, and an automatic check screens each photo. Tell the person to
+   check their texts. Do not report that a photo was sent.
 
 ## Safety, privacy and account controls
 
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
 send invitations, or change another app. The lowest stated age applies; members
-13–17 must never be matched or introduced to anyone. slop.date does not run criminal background checks. Members aged 13–17
+13–17 are never matched for dates or introduced on slop.date. slop.date does not run criminal background checks. Members aged 13–17
 receive no dating matches or photo requests. Do not upload or rate photos during signup.
 After signup, an adult member who wants to add photos texts ADD PHOTOS to
 +18087881821. slop.date asks for the photo consent, then texts a private link

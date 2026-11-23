@@ -5,6 +5,7 @@ import { appearanceFacet } from "@thenetwork/engine/src/packs/slop/appearance.ts
 import { biasAlerts, biasReport } from "../service/bias.ts";
 import { appWiring } from "../service/packs.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const PAIRS = 30;
 const WOMEN = ["Ana", "Bea", "Cleo", "Dina", "Eva", "Fay", "Gia", "Hana", "Ida", "Jo", "Kim", "Lea", "Mia", "Nia", "Ola", "Pia", "Quinn", "Rae", "Sia", "Tia",
@@ -20,7 +21,7 @@ test("the monitor turns photo standing off on production outcomes whose gap pred
     specs.push({ id: woman(i), name: `${WOMEN[i]} Doe`, age: 30, romance: { is: "woman", seeks: ["man"] } });
     specs.push({ id: man(i), name: `${MEN[i]} Roe`, age: 31, romance: { is: "man", seeks: ["woman"] } });
   }
-  const w = new Mini(specs, { app: "slop", pack: wiring.pack, hooks: wiring.hooks, plans: false, review: "auto", engine: { ...wiring.engine } });
+  const w = new Mini(specs, { app: "slop", pack: wiring.pack, hooks: wiring.hooks, plans: false, inlineJudge: simulatedReviewJudge({ exceptions: false }), engine: { ...wiring.engine } });
   for (let i = 0; i < PAIRS; i++) for (const id of [woman(i), man(i)]) {
     w.facets.push(appearanceFacet(id, { age: 30 }, { face: -1.5 + i / 10, body: -1.5 + i / 10, overall: -1.5 + i / 10, confidence: 0.9, photos: 3, model: "test-rater" }, w.clock.now()));
   }

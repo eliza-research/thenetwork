@@ -8,7 +8,9 @@ import { APPS } from "../../packages/platform/src/apps.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { PgPeopleStore } from "../../packages/platform/src/pg-store.ts";
 import { dropDb, migratedDb } from "../../packages/platform/test/pg.ts";
-import { Browser, connectMcp, newPhone, pgAvailable, rpc, signIn, startStack, toolData, webJoin, type Stack } from "./harness.ts";
+import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
+import { TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
+import { Browser, connectMcp, newPhone, pgAvailable, rpc, signIn, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 const MIN = 60_000;
@@ -79,6 +81,28 @@ describe.skipIf(!pgAvailable)("phone change on an OTP sign-in site", () => {
     expect(await st.svc.publicApi.accounts.personFor(B)).toBeUndefined();
     expect((await st.site("slop", "/api/me", { browser: b })).status).toBe(200);
   }, T);
+
+  // spec/phoneChange.md, "Change the phone on my account": the text line sends the one-purpose link
+  test("a member who texts CHANGE NUMBER gets the app's /phone link in one reply, and a person who is not a member gets no link", async () => {
+    let seq = 0;
+    const turn = async (phone: string, text: string) => {
+      const messageId = `phone-link-${++seq}`;
+      const body: TurnRequest = { messageId, channel: "blooio", from: phone, to: null, text, transport: "imessage", receivedAt: st.clock.now(), app: "slop" };
+      const raw = JSON.stringify(body);
+      const res = await st.svc.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json",
+        ...await svcSign(TURN_SECRET, { method: "POST", path: TURN_PATH, id: messageId, body: raw, nowS: Math.floor(st.clock.now() / 1000) }) }, body: raw }));
+      expect(res.status).toBe(200);
+      st.clock.advance(MIN);
+      return (await res.json()) as { outcome: string; replies?: string[] };
+    };
+    const A = newPhone();
+    expect((await webJoin(st, "slop", A, { age: 31, firstName: "Ana" })).res.status).toBe(200);
+    expect(await turn(A, "CHANGE NUMBER")).toMatchObject({ outcome: "handled", replies: [
+      "To change the number on your account, open https://slop.date/phone and sign in with your current number. Then enter the new number and the code that we text to it.",
+    ] });
+    expect(JSON.stringify(await turn(A, "change my number to +12125550199"))).not.toContain("/phone");
+    expect(JSON.stringify(await turn(newPhone(), "change my number"))).not.toContain("/phone");
+  }, T);
 });
 
 describe.skipIf(!pgAvailable)("phone change on a Cloud sign-in site", () => {
@@ -95,7 +119,7 @@ describe.skipIf(!pgAvailable)("phone change on a Cloud sign-in site", () => {
     platform = createPublicApi({
       store, now: () => now, hostMap: { [`127.0.0.1:${server.port}`]: "slop" }, minStartMs: 0, minVerifyMs: 0, log: () => {},
       env: {
-        PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
+        PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_MODE: "staging-local", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
         NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: origin,
         NETWORK_CLOUD_AUTH_SERVER_TOKEN: "phone-change-e2e-cloud-fixture".repeat(2),
       },

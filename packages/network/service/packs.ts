@@ -13,10 +13,9 @@
 //            its hiring manager (network.ts seatRoute): the candidate says yes first, then the manager
 //            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
-//            Local only: peon matching runs in production only after its live decision (matching-scope.ts).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
 // Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
-// (the stored switch starts off; the launch-scope decision in matching-scope.ts only allows the switch). Minors
+// (the stored switch starts off; the network's registry row only allows the switch). Minors
 // never enter a pack's input (ConsentNetwork.packInput). Nothing here reads hidden truth.
 import { canBeMatched, DAY, HOUR, type MemberId } from "@thenetwork/core";
 import {
@@ -177,7 +176,7 @@ export function slopVenue(cells: { lat: number; lon: number }[], activity: strin
   const dark = hour >= 17 || hour < 9;
   const pool: (HookVenue & { tags: string[] })[] = dark
     ? EVENING_VENUES.map(v => ({ ...v, tags: ["social", "food"] }))
-    : VENUES.map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags }));
+    : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags }));
   let best: { v: (typeof pool)[number]; cost: number } | undefined;
   for (const v of pool) {
     // The longest of the two trips (km), less a bonus for a place that suits the activity.

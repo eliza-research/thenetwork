@@ -314,6 +314,26 @@ export function lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, 
   return !releasesPartialAcceptance(before, unresolved, systemProposal, contacted, accepted) || (contacted && accepted);
 }
 
+/** Story: Book and conclude a proposal that comes together / Closing by the requester releases each contacted person who said yes (spec/opportunityLifecycle.md) */
+//@ pure
+export function releasesOnRequesterClose(before: OpportunityLifecycle, contacted: boolean, accepted: boolean, requester: boolean): boolean {
+  return before.phase === "Probing" && before.approved && contacted && accepted && !requester;
+}
+
+/** Story: Book and conclude a proposal that comes together / Closing by the requester releases each contacted person who said yes (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawRequesterCloseNeverReleasesTheRequester(before: OpportunityLifecycle, contacted: boolean, accepted: boolean): boolean {
+  //@ ensures \result === true
+  return !releasesOnRequesterClose(before, contacted, accepted, true);
+}
+
+/** Story: Book and conclude a proposal that comes together / Closing by the requester releases each contacted person who said yes (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawRequesterCloseReleasesOnlyAContactedAcceptor(before: OpportunityLifecycle, contacted: boolean, accepted: boolean, requester: boolean): boolean {
+  //@ ensures \result === true
+  return !releasesOnRequesterClose(before, contacted, accepted, requester) || (contacted && accepted);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: OpportunityLifecycle, event: Event): boolean {

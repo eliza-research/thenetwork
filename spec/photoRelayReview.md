@@ -1,22 +1,22 @@
 # Selected-photo consent and review
 
-The [standalone relay model](models/photo_relay_item.md) follows the item from selection through delivery. This machine controls selected-item intake, staff review, and owner cancellation. The shell owns policy and party lookups, file and reviewer authority, item locks, audit, and photo bytes. The machine receives only the results of those checks.
+The [whole-flow model](models/photo_relay_item.md) follows the offer from the sender's words to the receiver's view ([photo relay](photoRelayItem.md)). This machine controls the review item of each photo of an offer: intake, the automatic check, the staff review of a flagged photo, and owner cancellation. The shell owns policy and party lookups, file and reviewer authority, the image safety classifier call, item locks, audit, and photo bytes. The machine receives only the results of those checks.
 
-## Story: Choose one photo and allow a designated reviewer to decide
+## Story: Choose one photo and let an automatic check clear it
 
-> As the sender, I want to choose one photo for one recipient with current consent. I want a designated reviewer to approve that specific item before it can be delivered. I can withdraw it while it remains in the system.
+> As the sender, I want to choose one photo for one recipient with current consent. I want an automatic check to clear that specific item before it can be delivered, and a designated reviewer to decide only a photo that the check did not clear. I can withdraw it while it remains in the system.
 
 ### Select one eligible photo using the current notice
 
-A selection requires configured policy and storage, a valid request and selection, and explicit consent to the current version. Resolve the exact sender and a separate recipient. Check that the selected photo is still eligible and that the current thread can supply the recipient label for the notice. Store a pending item bound to this consent. An idempotent retry reads the original stored item and deadline. The item deadline is fifteen minutes after the consent, because the Eliza wire contract refuses an approved photo whose deadline is more than fifteen minutes after its consent (`RELAY_PHOTO_CONSENT_TTL_MS`). A longer review window needs an upstream contract change and a founder decision first. Changed: the review states now include ExpiredReview, so that a pending item that no reviewer decides by its deadline has an end of its own (audit OPP21).
+A selection requires configured policy and storage, a valid request and selection, and explicit consent to the current version. Resolve the exact sender and a separate recipient. Check that the selected photo is still eligible and that the current thread can supply the recipient label for the notice. Store an item bound to this consent that waits for the automatic check. An idempotent retry reads the original stored item and deadline. The service makes the items of an offer when the receiver says yes to it: one item for each photo of the offer, with the sender's consent to the offer as the consent, and with explicit consent only when the offer's notice version is the current `PHOTO_SEND_NOTICE` version. The item deadline is twelve hours after the receiver's yes; the automatic check and any staff review of a flagged photo end before it. Changed: the review states now include ExpiredReview, so that a pending item that no reviewer decides by its deadline has an end of its own (audit OPP21). Changed (owner decision 2026-11-22): the deadline was fifteen minutes after the consent, because the Eliza wire contract refuses an approved photo whose deadline is more than fifteen minutes after its consent; no photo crosses that wire now (the receiver opens it on a private page), so that limit no longer applies. Changed (owner decision D14 of 2026-11-22, "automatic check"): a stored item now starts in ScreeningReview, waiting for the image safety classifier, and not in PendingReview, waiting for a person, because the owner replaced the staff review of every photo with an automatic check.
 
 ```quint
 type SelectionPhase = Selecting | CheckingParties | CheckingPhoto | ResolvingNotice | ReadyToStore | StoredSelection | SelectionRefused
-type ReviewState = PendingReview | ApprovedReview | RejectedReview | RevokedReview | ExpiredReview
+type ReviewState = ScreeningReview | PendingReview | ApprovedReview | RejectedReview | RevokedReview | ExpiredReview
 type PhotoSelection = { phase: SelectionPhase, review: ReviewState }
 
-pure val relayItemTtlMs: int = 900000
-pure val initial: PhotoSelection = { phase: Selecting, review: PendingReview }
+pure val relayItemTtlMs: int = 43200000
+pure val initial: PhotoSelection = { phase: Selecting, review: ScreeningReview }
 
 pure def canCheckSelection(s: PhotoSelection): bool = s.phase == Selecting
 pure def checkSelection(s: PhotoSelection, inputValid: bool, explicitConsent: bool): PhotoSelection =
@@ -37,12 +37,75 @@ pure def resolveNotice(s: PhotoSelection, readyNotice: bool): PhotoSelection =
 pure def canRecordSelection(s: PhotoSelection): bool = s.phase == ReadyToStore
 pure def recordSelection(s: PhotoSelection): PhotoSelection = { ...s, phase: StoredSelection }
 
-pure def alwaysSelectionStartsPending(s: PhotoSelection): bool = s.phase != StoredSelection implies s.review == PendingReview
+pure def alwaysSelectionStartsScreening(s: PhotoSelection): bool = s.phase != StoredSelection implies s.review == ScreeningReview
+```
+
+### An automatic check screens each photo, and only a photo it does not clear goes to staff
+
+After the receiver's yes, an image safety classifier (Workers AI, the provider of the photo rater) screens each item. The shell parses the classifier's answers strictly: each safety question must have an answer from 0 to 1, and the risk is the highest answer in thousandths. A photo that the classifier cannot take (larger than its image limit) is unusable. A photo with a risk below one tenth is clean and is released at once. A photo with a higher risk is flagged, and goes to the staff safety role as an exception, where it waits as a pending item until its deadline. When the classifier cannot run (a model error, a timeout, an answer that does not parse, missing credentials), the item stays in the check and is tried again after one, five, fifteen and sixty minutes; the fifth failure sends it to staff. So no photo is released without a clean answer from the classifier or the approval of a person on the safety team. The check runs only before the item deadline; an item that is still in the check at its deadline expires. New rule (owner decision D14 of 2026-11-22, "automatic check"): before this rule a person on the safety team checked every photo within twelve hours; the owner chose an automatic check, with staff only for the photos that it does not clear. The shell claims each attempt under the item lock before it calls the classifier, and it saves the outcome only for the attempt that it claimed, so each attempt is one classifier call and one cost row. Changed after review (owner decision D14 of 2026-11-22): the shell read the item, let go of the lock and then called the classifier, so two replicas could call it for the same attempt and pay twice for one saved result.
+
+```quint
+type ScreenVerdict = ScreenClean | ScreenFlagged | ScreenUnusable | ScreenCannotRun
+type ScreenOutcome = ReleasePhoto | HoldForStaff | RetryScreen
+
+pure val photoScreenCleanBelow: int = 100
+pure val photoScreenRetryMax: int = 5
+
+pure val usableValues = Set(true, false)
+pure val answeredValues = Set(true, false)
+pure val riskPerMilleValues = Set(-1, 0, 99, 100, 500, 1000, 1001)
+pure val attemptsValues = Set(-1, 0, 1, 2, 3, 4, 5, 6)
+pure val verdictValues = Set(ScreenClean, ScreenFlagged, ScreenUnusable, ScreenCannotRun)
+pure val screenOutcomeValues = Set(ReleasePhoto, HoldForStaff, RetryScreen)
+
+pure def photoScreenVerdictFor(usable: bool, answered: bool, riskPerMille: int): ScreenVerdict =
+  if (not(usable)) ScreenUnusable
+  else if (not(answered) or riskPerMille < 0 or riskPerMille > 1000) ScreenCannotRun
+  else if (riskPerMille < photoScreenCleanBelow) ScreenClean
+  else ScreenFlagged
+
+pure def photoScreenOutcomeFor(verdict: ScreenVerdict, attempts: int): ScreenOutcome =
+  if (verdict == ScreenClean) ReleasePhoto
+  else if (verdict == ScreenFlagged or verdict == ScreenUnusable) HoldForStaff
+  else if (attempts + 1 >= photoScreenRetryMax) HoldForStaff
+  else RetryScreen
+
+pure def photoScreenRetryDelayMs(attempts: int): int =
+  if (attempts <= 0) 60000 else if (attempts == 1) 300000 else if (attempts == 2) 900000 else 3600000
+
+pure def canScreenSelection(s: PhotoSelection, now: int, deadline: int): bool =
+  s.phase == StoredSelection and s.review == ScreeningReview and now < deadline
+pure def screenSelection(s: PhotoSelection, screenOutcome: ScreenOutcome, now: int, deadline: int): PhotoSelection =
+  { ...s, review: if (screenOutcome == ReleasePhoto) ApprovedReview else if (screenOutcome == HoldForStaff) PendingReview else ScreeningReview }
+
+pure def lawOnlyACleanScreenReleases(verdict: ScreenVerdict, attempts: int): bool =
+  photoScreenOutcomeFor(verdict, attempts) == ReleasePhoto implies verdict == ScreenClean
+
+pure def lawAScreenThatCannotRunNeverReleases(attempts: int): bool =
+  photoScreenOutcomeFor(ScreenCannotRun, attempts) != ReleasePhoto
+
+pure def lawFlaggedPhotosGoToStaff(attempts: int): bool =
+  photoScreenOutcomeFor(ScreenFlagged, attempts) == HoldForStaff and photoScreenOutcomeFor(ScreenUnusable, attempts) == HoldForStaff
+
+pure def lawRetriesEndAtStaff(attempts: int): bool =
+  attempts + 1 >= photoScreenRetryMax implies photoScreenOutcomeFor(ScreenCannotRun, attempts) == HoldForStaff
+
+pure def lawCleanNeedsAnAnswer(usable: bool, riskPerMille: int): bool =
+  photoScreenVerdictFor(usable, false, riskPerMille) != ScreenClean
+
+pure def lawRetryWaits(attempts: int): bool = photoScreenRetryDelayMs(attempts) > 0
+
+pure def stepOnlyTheScreenLeavesTheCheck(before: PhotoSelection, via: str, after: PhotoSelection): bool =
+  (before.review == ScreeningReview and after.review != ScreeningReview) implies
+    (via == "screenSelection" or via == "revokeSelection" or via == "expireSelection")
+
+pure def sometimesScreening(s: PhotoSelection): bool = s.phase == StoredSelection and s.review == ScreeningReview
+pure def sometimesHeldForStaff(s: PhotoSelection): bool = s.phase == StoredSelection and s.review == PendingReview
 ```
 
 ### A designated reviewer can approve a current pending item
 
-The review needs the configured policy and its exact stored notice, an eligible item state, an authorized reviewer, and a live deadline. Approval requires a pending item and fresh party and photo authority. A safety rejection rejects a pending item or revokes an approved item. An uncertain decision leaves the stored item alone. Before saving a decision, check the deadline again while holding the item lock.
+The review needs the configured policy and its exact stored notice, an eligible item state, an authorized reviewer, and a live deadline. The authorized reviewer is a staff member with the `safety` role, and the shell writes the audit row before the decision. Changed (owner decision 2026-11-22): the reviewers were a list in an environment variable; they are now the staff `safety` role, so photo relay needs no switch to run in production. Approval requires a pending item and fresh party and photo authority. A safety rejection rejects a pending item or revokes an approved item. An uncertain decision leaves the stored item alone. Before saving a decision, check the deadline again while holding the item lock. Only the automatic check (a clean answer) and this review approve an item. Changed (owner decision D14 of 2026-11-22): a pending item is now a photo that the automatic check flagged or could not check, so the reviewer sees only those exceptions; an item that waits for the check is not reviewable.
 
 ```quint
 type ReviewChoice = ApprovePhoto | RejectPhoto | KeepPending
@@ -62,19 +125,18 @@ pure def recordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAuthorize
   { ...s, review: if (choice == ApprovePhoto) ApprovedReview else if (s.review == ApprovedReview) RevokedReview else RejectedReview }
 
 pure def stepOnlyReviewApproves(before: PhotoSelection, via: str, after: PhotoSelection): bool =
-  (before.review != ApprovedReview and after.review == ApprovedReview) implies via == "recordReview"
+  (before.review != ApprovedReview and after.review == ApprovedReview) implies (via == "recordReview" or via == "screenSelection")
 ```
 
 ### Held visibility is separate from delivery and owner cancellation
 
-Staff can see a current pending item or an unclaimed approved item in the held list. A preview also requires the designated reviewer's authorization and a live item before the byte read. Check the deadline after reading bytes and before showing them. Release authorization can recheck a current pending or approved item, including an approved item already claimed. The sender can revoke an owned item on the same app even when it is no longer eligible for review.
+Staff see a current pending item in the held list: a photo that the automatic check flagged or could not check. A preview also requires the designated reviewer's authorization and a live item before the byte read. Check the deadline after reading bytes and before showing them. Release authorization can recheck a current pending or approved item. The sender can revoke an owned item on the same app even when it is no longer eligible for review, also while it waits for the check. Changed (owner decision D14 of 2026-11-22): the held list showed every pending item and every approved item that no delivery had claimed; it now shows only the pending exceptions, because an approved photo is released to the receiver's page at once and no delivery claims it.
 
 ```quint
-pure def photoHeldForReview(s: PhotoSelection, claimed: bool): bool =
-  photoReviewable(s) and (s.review == PendingReview or not(claimed))
+pure def photoHeldForReview(s: PhotoSelection): bool = s.phase == StoredSelection and s.review == PendingReview
 
-pure def reviewPreviewAllowed(s: PhotoSelection, claimed: bool, reviewerAuthorized: bool, itemLive: bool): bool =
-  photoHeldForReview(s, claimed) and reviewerAuthorized and itemLive
+pure def reviewPreviewAllowed(s: PhotoSelection, reviewerAuthorized: bool, itemLive: bool): bool =
+  photoHeldForReview(s) and reviewerAuthorized and itemLive
 
 pure def reviewAuthorizationCurrent(s: PhotoSelection, configured: bool, reviewerAuthorized: bool, itemLive: bool, samePolicy: bool): bool =
   photoReviewable(s) and configured and reviewerAuthorized and itemLive and samePolicy
@@ -89,13 +151,13 @@ pure def sometimesApproved(s: PhotoSelection): bool = s.review == ApprovedReview
 pure def sometimesRevoked(s: PhotoSelection): bool = s.review == RevokedReview
 ```
 
-### A pending photo that no reviewer decides by its deadline expires, and the sender is told
+### A photo that is not cleared by its deadline expires, and its offer settles
 
-At or after the deadline, a pending item expires. An expired item is never reviewed, shown in the held list, claimed or delivered. The service expires due pending items at each tick of the app's first network, oldest deadline first and at most 100 items for each tick. In the same transaction it sends the sender at most one notice that the photo did not go, and it records a review expiry, which the operations alerts count as a missed review SLA. The notice goes through the normal send rules, so STOP, the daily cap or a member who left can refuse it, or the rules can defer it; the item expires anyway, because an undecided photo must not stay open for delivery. The sender can still revoke an expired item. This rule changed from "tells the sender once" because the send rules can refuse the notice, and it now names the batch limit of the indexed deadline query. New rule: before this change a pending item ended at its deadline in silence, with no notice to the sender and no alert, although the reply had said that a person checks the photo first (audit OPP21).
+At or after the deadline, a pending item expires, and so does an item that still waits for the automatic check. An expired item is never reviewed, shown in the held list, claimed or delivered. The service expires due pending items at each tick of the app's first network, oldest deadline first and at most 100 items for each tick. In the same transaction it records a review expiry, which the operations alerts count as a missed review SLA. The item expires even when no notice can go, because an undecided photo must not stay open. The sender can still revoke an expired item. Changed (owner decision 2026-11-22): the expiry no longer sends its own notice; it settles the offer of the item, and the offer tells the sender once that the safety team could not check the photo in time ([photo relay](photoRelayItem.md)), so the sender gets one notice for each offer, not one for each photo. This rule changed from "tells the sender once" because the send rules can refuse the notice, and it now names the batch limit of the indexed deadline query. New rule: before this change a pending item ended at its deadline in silence, with no notice to the sender and no alert, although the reply had said that a person checks the photo first (audit OPP21). Changed (owner decision D14 of 2026-11-22): an item that still waits for the automatic check at its deadline also expires, so that a check that never ran never leaves a photo open; the retry delays end long before the deadline, so this happens only when the ticks stop.
 
 ```quint
 pure def canExpireSelection(s: PhotoSelection, now: int, deadline: int): bool =
-  s.phase == StoredSelection and s.review == PendingReview and now >= deadline
+  s.phase == StoredSelection and (s.review == PendingReview or s.review == ScreeningReview) and now >= deadline
 pure def expireSelection(s: PhotoSelection, now: int, deadline: int): PhotoSelection = { ...s, review: ExpiredReview }
 
 pure def stepOnlyDeadlineExpires(before: PhotoSelection, via: str, after: PhotoSelection): bool =

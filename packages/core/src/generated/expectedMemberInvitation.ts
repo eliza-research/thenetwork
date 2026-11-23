@@ -45,12 +45,6 @@ export function expectedInviteLive(now: number, expiresAt: number): boolean {
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
 //@ pure
-export function expectedInviteTransportAllows(carrierAcceptsFirstContact: boolean, liveApproved: boolean): boolean {
-  return carrierAcceptsFirstContact && liveApproved;
-}
-
-/** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
-//@ pure
 export function expectedInviteChallengeCurrent(issuedAt: number, now: number): boolean {
   return memberInvitation_memberInviteDraftCurrent(exact_expectedMemberInvitation(now - issuedAt));
 }

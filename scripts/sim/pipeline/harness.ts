@@ -11,6 +11,8 @@ import { signBlooioPayload } from "../../../packages/blooio/src/blooio/webhook.t
 import { ChannelSendError, type ChannelAdapter, type SendReceipt, type SendRequest } from "../../../packages/blooio/src/types.ts";
 import { BlooioAdapter } from "../../../packages/network/service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../../packages/network/service/service.ts";
+import { simulatedRelayClassifier } from "../../../packages/engine/src/relay.ts";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { DEV_PG_PORT, devPgUp } from "../../../packages/observatory/db/dev-pg.ts";
 import { migrate } from "../../../packages/observatory/db/migrate.ts";
 
@@ -120,8 +122,8 @@ export function pipelineService(url: string, clock: SimClock, fake: FakeBlooio, 
     url, clock, instance, tokens: TOKENS, webhookSecret: SECRET, log,
     env: { PLATFORM_ENV: "dev", ...env },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }, { id: "slop:nyc", matchingEnabled: true }, { id: "peon:nyc", matchingEnabled: true }, { id: "friends:nyc", matchingEnabled: true }],
-    network: { seed: 1 }, photoStorage: null, notify: false,
-    adapter: (_net, rt) => new BlooioAdapter({ provider: fake, clock, from: LINE, app: rt.app.id, city: rt.city, liveGate: () => true, log, limits: { baseBackoffMs: 30_000 } }),
+    network: { seed: 1 }, photoStorage: null, notify: false, relayClassifier: simulatedRelayClassifier, reviewJudge: holdEveryItem.judge,
+    adapter: (_net, rt) => new BlooioAdapter({ provider: fake, clock, from: LINE, app: rt.app.id, city: rt.city, log, limits: { baseBackoffMs: 30_000 } }),
   });
 }
 
@@ -138,6 +140,7 @@ export async function run(svc: NetworkService, clock: SimClock, fake: FakeBlooio
     clock.advance(Math.min(step, ms - t));
     await svc.inboxTick();
     for (const rt of svc.runtimes.values()) await rt.tick();
+    await svc.reviewJudgeTick();
     await svc.purge();
     await receipts(svc, clock, fake);
   }

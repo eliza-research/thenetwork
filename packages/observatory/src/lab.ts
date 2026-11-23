@@ -72,7 +72,7 @@ export function resultsOf(out: string): { results?: Record<string, any>[] } | un
 
 /**
  * The child's arguments. A lab run is a local simulation, where every app may match (spec/runtimeUnit.md,
- * "Matching runs for an app only inside its launch scope"). The experiment world is The Network's NYC
+ * "Runtime follow-up depends on the adapter and whether the tick ran"). The experiment world is The Network's NYC
  * world for every app; it has no per-app join age yet.
  */
 export function labArgs(r: LabRequest, seed: number): string[] {

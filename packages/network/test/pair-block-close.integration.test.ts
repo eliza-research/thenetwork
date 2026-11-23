@@ -3,6 +3,7 @@ import { DAY } from "@thenetwork/core";
 import { copy } from "../src/copy.ts";
 import { peonHooks } from "../service/packs.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
@@ -12,7 +13,7 @@ async function book(w: Mini, pair: [string, string]): Promise<string> {
   const meetings = w.meetings.length;
   const id = w.propose(pair);
   expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === id))).toBe(true);
-  expect(w.net.review(id, "approve")).toBe(true);
+  expect(w.net.review(id, "approve", { reviewer: "staff" })).toBe(true);
   await w.answerProbes(pair);
   expect(w.meetings).toHaveLength(meetings + 1);
   return id;
@@ -32,7 +33,7 @@ async function meetAndWaitForFeedback(w: Mini, pair: [string, string]): Promise<
 const opp = (w: Mini, id: string) => w.net.exportState().opps.find(o => o.id === id);
 
 test("a person block made on another app calls off a booked meeting of the pair here, and neither member learns who acted", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
   await w.onboard("a", "b");
   const id = await book(w, ["a", "b"]);
   expect(opp(w, id)?.stage).toBe("scheduled");
@@ -45,7 +46,7 @@ test("a person block made on another app calls off a booked meeting of the pair 
 }, T);
 
 test("a check-in report closes the pair's other open item and counts toward the subject's trust score", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { review: "human", hooks: { postDateReports: true } });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { inlineJudge: holdEveryItem.inline, hooks: { postDateReports: true } });
   await w.onboard("a", "b", "c");
   await meetAndWaitForFeedback(w, ["a", "b"]);
   await w.say("b", "It was great, we really clicked.");
@@ -67,7 +68,7 @@ test("a check-in report closes the pair's other open item and counts toward the 
 }, T);
 
 test("peon: an answer to the check-in after a meeting that reports harm files a report and blocks the pair", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human", hooks: peonHooks() });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline, hooks: peonHooks() });
   await w.onboard("a", "b");
   const id = await meetAndWaitForFeedback(w, ["a", "b"]);
   await w.say("a", "He never showed up.");

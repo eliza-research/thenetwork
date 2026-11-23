@@ -8,12 +8,13 @@ import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
 import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
   wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
 test.each(["yep", "Yes I'm in!", "no thanks"])("a late %s hears once that the invitation ended", async late => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
@@ -42,7 +43,7 @@ test.each(["yep", "Yes I'm in!", "no thanks"])("a late %s hears once that the in
 });
 
 test("a late answer to an expired plan invitation hears once that the invitation ended", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
   await w.onboard("a", "b");
   const now = w.clock.now();
   const plan: plans.Plan = {
@@ -51,6 +52,7 @@ test("a late answer to an expired plan invitation hears once that the invitation
     size: { min: 2, target: 2, max: 2 }, quorum: 2, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
   };
   (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+  await w.net.tick(w.clock.now());
   const item = w.net.reviewQueue()[0]!;
   expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await w.runUntil(() => w.probed("a"), 2 * DAY)).toBe(true);
@@ -66,7 +68,7 @@ test("a late answer to an expired plan invitation hears once that the invitation
 });
 
 test("an answer to a probe whose opportunity closed hears once that the invitation ended", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   const oppId = w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
@@ -93,7 +95,7 @@ test("an answer to a probe whose opportunity closed hears once that the invitati
 });
 
 test("an answer received just before a replacement voided the probe hears that the plan changed", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   w.propose(["a", "b"], { alternates: ["c"] });
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
@@ -114,7 +116,7 @@ test("an answer received just before a replacement voided the probe hears that t
 });
 
 test("a voided probe whose opportunity then closes hears that the invitation ended", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   w.propose(["a", "b"], { alternates: ["c"] });
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);

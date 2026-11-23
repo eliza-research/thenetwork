@@ -15,8 +15,9 @@ import {
   canRecordUploadBytes, canRecordUploadDiscard, canRecordUploadRow, canReserveRow, canScreenFile,
   initial as photoChangeInitial, photoHoldAllowed, ratingHoldAllowed, type PhotoChange, step as stepPhotoChange, unfinishedPhotoDue,
 } from "../../core/src/generated/photoRetention.ts";
-import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
-import { PgPeopleStore } from "./pg-store.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
+import { effectiveAgeAt } from "./age.ts";
+import { ageStandingOf, PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
@@ -25,15 +26,12 @@ import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/pa
 import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "../../engine/src/packs/slop/clefWeights.ts";
 import { isOpaquePhotoId } from "../../engine/src/relay.ts";
 
-export type RaterStatus = "on" | "on_placeholder" | "off_flag" | "off_env" | "refused_weights";
+export type RaterStatus = "on" | "on_placeholder" | "off_env" | "refused_weights";
 
 export async function photoRaterFromEnv(
   env: Record<string, string | undefined>,
   o: { fetch?: ClefRaterOptions["fetch"]; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void; readFile?: (path: string) => Promise<string> } = {},
 ): Promise<{ rater?: AppearanceRater; status: RaterStatus; weights?: string; detail?: string }> {
-  const flag = (env.CLEF_RATINGS ?? "").trim().toLowerCase();
-  if (flag === "off") return { status: "off_flag" };
-  if (flag !== "" && flag !== "on") return { status: "off_flag", detail: `CLEF_RATINGS must be on or off (got ${JSON.stringify(env.CLEF_RATINGS)})` };
   if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return { status: "off_env", detail: "CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are required" };
   let w: ClefWeights = DEFAULT_CLEF_WEIGHTS;
   if (env.CLEF_WEIGHTS_PATH) {
@@ -59,9 +57,13 @@ export const PHOTO_MAX_BYTES = uploadMaxBytes;
 export const PHOTO_MAX_PER_PERSON = uploadMaxPerPerson;
 export const PHOTO_VIEW_TTL_MS = 5 * 60_000;
 export const PHOTO_CONSENT = {
-  version: "2026-11-21",
-  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them and their rating by texting DELETE PHOTOS, except after a ban, when the safety team keeps them.",
+  version: "2026-11-22",
+  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them unless I ask the agent to send one to a match, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them and their rating by texting DELETE PHOTOS, except after a ban, when the safety team keeps them.",
 } as const;
+
+export function newPhotoBatchId(): string { return randomBytes(16).toString("hex"); }
+export const PHOTO_LABEL = /^[a-z0-9]+([ -][a-z0-9]+){0,2}$/;
+export const PHOTO_LABEL_MAX = 24;
 
 export function newPhotoId(): string {
   for (;;) {
@@ -72,8 +74,9 @@ export function newPhotoId(): string {
 
 export interface PhotoRow {
   id: string; personId: string; app: AppId; storageKey: string; contentType: PhotoType; bytes: number; sha256: string;
-  consentVersion: string; createdAt: number;
+  consentVersion: string; createdAt: number; label: string | null; batchId: string | null;
 }
+export type PhotoLabelResult = "ok" | "taken" | "not_found";
 export type PhotoRater = AppearanceRater;
 export const RATER_MAX_PHOTOS = ratingMaxPhotos;
 export const RATER_MAX_BYTES = ratingMaxBytes;
@@ -294,7 +297,8 @@ export interface PhotoStore {
   hide(personId: string, at: number, scope: { app?: AppId; id?: string }): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
   unfinished(limit: number): Promise<UnfinishedPhoto[]>;
-  holders(limit: number): Promise<PhotoHolder[]>;
+  holders(limit: number, at: number): Promise<PhotoHolder[]>;
+  setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult>;
 }
 interface MemoryPhotoRow extends PhotoRow { storedAt: number | null; hiddenAt: number | null }
 export class MemoryPhotoStore implements PhotoStore {
@@ -350,10 +354,19 @@ export class MemoryPhotoStore implements PhotoStore {
     for (const r of this.rows.values()) if (r.hiddenAt === null) seen.set(`${r.personId}:${r.app}`, { personId: r.personId, app: r.app });
     return [...seen.values()].slice(0, limit);
   }
+  async setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult> {
+    return this.locked(personId, async () => {
+      const r = this.rows.get(id);
+      if (!r || !this.live(r) || r.personId !== personId || r.app !== app) return "not_found";
+      if (label !== null && [...this.rows.values()].some(x => x.id !== id && x.hiddenAt === null && x.personId === personId && x.app === app && x.label === label)) return "taken";
+      r.label = label;
+      return "ok";
+    });
+  }
 }
 const photoRow = (r: Record<string, any>): PhotoRow => ({
   id: r.id, personId: r.person_id, app: r.app_id, storageKey: r.storage_key, contentType: r.content_type, bytes: r.bytes, sha256: r.sha256,
-  consentVersion: r.consent_version, createdAt: new Date(r.created_at).getTime(),
+  consentVersion: r.consent_version, createdAt: new Date(r.created_at).getTime(), label: r.label ?? null, batchId: r.batch_id ?? null,
 });
 export class PgPhotoStore implements PhotoStore {
   constructor(private readonly sql: SQL) {}
@@ -366,8 +379,8 @@ export class PgPhotoStore implements PhotoStore {
       if (refused) return refused;
       const [held] = await tx<{ n: number }[]>`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
       if (photoSlotsFull(held?.n ?? 0)) return "too_many" as const;
-      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, stored_at)
-        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)}, null)`;
+      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, stored_at, batch_id)
+        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)}, null, ${r.batchId})`;
       return undefined;
     });
   }
@@ -397,6 +410,16 @@ export class PgPhotoStore implements PhotoStore {
     });
   }
   async delete(id: string) { await this.sql`delete from platform.photos where id = ${id}`; }
+  async setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult> {
+    try {
+      const rows = await this.sql`update platform.photos set label = ${label}
+        where id = ${id} and person_id = ${personId}::uuid and app_id = ${app} and stored_at is not null and deleted_at is null returning id`;
+      return rows.length === 1 ? "ok" : "not_found";
+    } catch (e) {
+      if ((e as { code?: unknown }).code === "23505") return "taken";
+      throw e;
+    }
+  }
   async unfinished(limit: number) {
     const rows = await this.sql`select * from platform.photos where stored_at is null or deleted_at is not null
       order by coalesce(deleted_at, created_at), id limit ${limit}`;
@@ -405,20 +428,37 @@ export class PgPhotoStore implements PhotoStore {
       changedAt: new Date(r.deleted_at ?? r.created_at).getTime(),
     }));
   }
-  async holders(limit: number) {
-    const rows = await this.sql<{ person_id: string; app_id: AppId }[]>`select distinct ph.person_id::text as person_id, ph.app_id from platform.photos ph
-      left join platform.people p on p.id = ph.person_id
-      left join platform.memberships m on m.person_id = ph.person_id and m.app_id = ph.app_id
-      where ph.deleted_at is null and (p.deleted_at is not null or p.lowest_age is null or p.lowest_age < ${ADULT_AGE}
-        or m.state is null or m.state not in ('active', 'paused', 'onboarding'))
-      order by 1, 2 limit ${limit}`;
-    return rows.map(r => ({ personId: r.person_id, app: r.app_id }));
+  async holders(limit: number, at: number) {
+    const out: PhotoHolder[] = [];
+    let after = { personId: "", app: "" };
+    for (;;) {
+      const rows = await this.sql<Record<string, any>[]>`select distinct on (ph.person_id::text, ph.app_id) ph.person_id::text as holder_id, ph.app_id as holder_app,
+          m.state as membership_state, p.*, f.lowest_age as floor_lowest_age, f.at as floor_at, f.birth_lower as floor_birth_lower,
+          f.birth_upper as floor_birth_upper, f.birth_youngest as floor_birth_youngest
+        from platform.photos ph
+        left join platform.people p on p.id = ph.person_id
+        left join platform.age_floor f on f.phone_hash = p.phone_hash
+        left join platform.memberships m on m.person_id = ph.person_id and m.app_id = ph.app_id
+        where ph.deleted_at is null and (ph.person_id::text, ph.app_id) > (${after.personId}, ${after.app})
+        order by ph.person_id::text, ph.app_id limit ${HOLDER_PAGE}`;
+      for (const r of rows) {
+        const standing = ageStandingOf(r);
+        const live = !!standing.person && standing.person.deletedAt === null && canBeMatched(effectiveAgeAt(standing, at))
+          && LIVE_MEMBERSHIP.includes(r.membership_state);
+        if (!live) out.push({ personId: r.holder_id, app: r.holder_app });
+        if (out.length >= limit) return out;
+      }
+      if (rows.length < HOLDER_PAGE) return out;
+      const last = rows[rows.length - 1]!;
+      after = { personId: last.holder_id, app: last.holder_app };
+    }
   }
 }
 
 export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member" | "photo_set_changed";
 const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
 const SWEEP_BATCH = 64;
+const HOLDER_PAGE = 512;
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
 
 function ratingRows(rows: PhotoRow[]): PhotoRow[] {
@@ -448,8 +488,9 @@ export class PhotoService {
   get rating() { return !!this.o.rater; }
 
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
-    const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
-    if (!p || p.deletedAt !== null || !canBeMatched(p.lowestAge)) return "adults_only";
+    const standing = await (tx ? new PgPeopleStore(tx) : this.o.people).ageStanding(personId, null);
+    const p = standing.person;
+    if (!p || p.deletedAt !== null || !canBeMatched(effectiveAgeAt(standing, this.now()))) return "adults_only";
     if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
@@ -461,7 +502,7 @@ export class PhotoService {
     return this.adult(personId, app, tx);
   }
 
-  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, holderRefused?: () => Promise<boolean>): Promise<PhotoResult<{ id: string }>> {
+  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, holderRefused?: () => Promise<boolean>, batchId: string = newPhotoBatchId()): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     let change = stepPhotoChange(photoChangeInitial, {
       type: "beginUpload", appAllowed: PHOTO_APPS.includes(app), consentCurrent: consentVersion === PHOTO_CONSENT.version,
@@ -485,7 +526,8 @@ export class PhotoService {
     if (!bytes || !canReserveRow(change)) return { ok: false, reason: "bad_image" };
     const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
-    const row: PhotoRow = { id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now() };
+    if (!/^[a-f0-9]{32}$/.test(batchId)) throw new Error("bad photo batch id");
+    const row: PhotoRow = { id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now(), label: null, batchId };
     const reserved = await this.o.meta.reserve(row, tx => this.ratingRefusal(personId, app, undefined, tx));
     change = stepPhotoChange(change, { type: "reserveRow", admitted: reserved === undefined });
     if (!canRecordUploadBytes(change)) return { ok: false, reason: reserved ?? "not_member" };
@@ -527,8 +569,8 @@ export class PhotoService {
     const who = await this.ratingRefusal(personId, app);
     let attempt = stepRating(ratingInitial, { type: "screenSubject", eligible: who === undefined });
     if (!canSupplyPhotos(attempt)) return { rated: false, refused: who };
-    const age = (await this.o.people.getPerson(personId))?.lowestAge;
-    if (age == null || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
+    const age = effectiveAgeAt(await this.o.people.ageStanding(personId, null), this.now());
+    if (age === undefined || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
     const subject: RatingSubject = { age, ageVerified: true };
     const rows = ratingRows(await this.o.meta.list(personId, app));
     const selected = rows.map(row => row.id);
@@ -580,6 +622,14 @@ export class PhotoService {
 
   async list(personId: string, app: AppId) { return (await this.o.meta.list(personId, app)).map(r => ({ id: r.id, createdAt: r.createdAt, bytes: r.bytes, contentType: r.contentType })); }
 
+  async rows(personId: string, app: AppId, tx?: SQL): Promise<PhotoRow[]> { return (tx ? new PgPhotoStore(tx) : this.o.meta).list(personId, app); }
+
+  async setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult | "invalid"> {
+    if (label !== null && (label.length > PHOTO_LABEL_MAX || !PHOTO_LABEL.test(label))) return "invalid";
+    if (await this.mayTake(personId, app)) return "not_found";
+    return this.o.meta.setLabel(personId, app, id, label);
+  }
+
   async remove(personId: string, app: AppId, id: string): Promise<boolean> {
     const [row] = await this.o.meta.hide(personId, this.now(), { app, id });
     return row?.id === id ? this.erasePhoto(row, personId, app, true) : false;
@@ -610,10 +660,11 @@ export class PhotoService {
   }
 
   async holdAllowed(personId: string, app: AppId): Promise<boolean> {
-    const p = await this.o.people.getPerson(personId);
+    const standing = await this.o.people.ageStanding(personId, null);
+    const p = standing.person;
     const m = await this.o.people.getMembership(personId, app);
     const appAdultCheckPassed = await (this.o.eligible?.(personId, app) ?? Promise.resolve(false));
-    return photoHoldAllowed(!!p && p.deletedAt === null, !!p && canBeMatched(p.lowestAge), appAdultCheckPassed, !!m && LIVE_MEMBERSHIP.includes(m.state));
+    return photoHoldAllowed(!!p && p.deletedAt === null, !!p && canBeMatched(effectiveAgeAt(standing, this.now())), appAdultCheckPassed, !!m && LIVE_MEMBERSHIP.includes(m.state));
   }
 
   async ratingAllowed(personId: string, app: AppId): Promise<boolean> {
@@ -638,7 +689,7 @@ export class PhotoService {
     }
     for (const h of rerate.values()) await this.rate(h.personId, h.app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
     const holders = new Map<string, PhotoHolder>();
-    for (const h of [...(await this.o.meta.holders(SWEEP_BATCH)), ...candidates]) holders.set(`${h.personId}:${h.app}`, h);
+    for (const h of [...(await this.o.meta.holders(SWEEP_BATCH, at)), ...candidates]) holders.set(`${h.personId}:${h.app}`, h);
     for (const h of holders.values()) {
       await attempt(`holder ${h.personId} on ${h.app}`, async () => {
         if (!(await this.holdAllowed(h.personId, h.app))) erased += await this.deleteFor(h.personId, h.app);

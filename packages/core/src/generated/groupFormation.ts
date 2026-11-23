@@ -33,8 +33,8 @@ export function inv(current: Formation): boolean {
 
 /** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 //@ pure
-export function poolEligible(adult: boolean): boolean {
-  return adult;
+export function poolEligible(ageEligible: boolean): boolean {
+  return ageEligible;
 }
 
 /** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */

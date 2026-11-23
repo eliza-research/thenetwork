@@ -41,7 +41,7 @@ browserTest("Peon keeps the approved name and age through the exact first Cloud 
   platform = createPublicApi({
     store, now: () => now, hostMap: { [server.url.host]: "peon" },
     env: {
-      PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
+      PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_MODE: "staging-local", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
       NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: origin,
       NETWORK_CLOUD_AUTH_SERVER_TOKEN: "local-peon-cloud-fixture".repeat(2),
     },

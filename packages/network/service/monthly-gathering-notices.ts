@@ -67,7 +67,7 @@ async function currentNotice(tx: SQL, accounts: GatheringAccounts, app: AppInfo,
 }
 export async function queueGatheringNotices(rt: NetworkRuntime, accountsFor: (tx: SQL) => GatheringAccounts, now: () => number): Promise<void> {
   const { app, adapter } = rt;
-  if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter) || !adapter.live) return;
+  if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter)) return;
   const at = now();
   const candidates = await rt.scoped(tx => tx<(GatheringRsvpKey & { member_id: string })[]>`select g.id,g.revision,r.member_id
     from network.monthly_gatherings g join network.monthly_gathering_rsvps r
@@ -78,7 +78,7 @@ export async function queueGatheringNotices(rt: NetworkRuntime, accountsFor: (tx
     order by g.starts_at,g.id,r.member_id`);
   if (!candidates.length) return;
   await rt.unitOfWork(async net => {
-    if (!net.matchingEnabled() || !adapter.live) return;
+    if (!net.matchingEnabled()) return;
     for (const candidate of candidates) {
       const address = rt.addressOf(candidate.member_id);
       if (!address) continue;
@@ -108,7 +108,7 @@ export async function gatheringNoticeAdmission(tx: SQL, app: AppInfo, runtimeId:
   const kind = noticeKind(row.id);
   const key = kind && gatheringDeliveryEvent(row, prefixFor(kind));
   if (!kind || !key || !row.memberId || app.id !== "ntwrk" || row.app !== app.id || row.kind !== "transactional"
-    || row.oppId || row.mediaUrls.length || row.approvedPhotos?.length) return refused;
+    || row.oppId || row.mediaUrls.length) return refused;
   const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${runtimeId} and app_id=${app.id}`;
   const event = await reservedEvent(tx, app, key, row.memberId);
   if (!saved || !event) return refused;

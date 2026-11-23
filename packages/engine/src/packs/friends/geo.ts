@@ -148,7 +148,7 @@ const h32 = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i
  * activity family (cafes and parks are everywhere; climbing gyms are not). Deterministic. Venue
  * names are generic descriptions ("a board game cafe in Astoria"), never a home.
  */
-export function nycVenues(activities: readonly { id: string; family: string; label: string; setting: string; ageMin: number; costTier: 0 | 1 | 2 | 3 }[]): Venue[] {
+export function nycVenues(activities: readonly { id: string; family: string; label: string; setting: string; ageMin: number; costTier: 0 | 1 | 2 | 3; allAges: boolean; adultPlans: boolean }[]): Venue[] {
   const out: Venue[] = [];
   for (const a of activities) {
     if (FRIENDS_EXCLUDED_ACTIVITIES.has(a.id)) continue;
@@ -160,7 +160,7 @@ export function nycVenues(activities: readonly { id: string; family: string; lab
       out.push({
         id: `v_${a.id}_${n.id}`, city: "nyc", area: n.name, name: `${a.label.replace(/^(a|an) /, "")} spot in ${n.name}`,
         activities: [a.id], priceTier: a.costTier, ageMin: a.ageMin, hours: HOURS[a.setting === "outdoor" ? "outdoor" : "indoor"]!,
-        public: true, source: "curated",
+        public: true, source: "curated", allAges: a.allAges, adultPlans: a.adultPlans,
       });
     }
   }

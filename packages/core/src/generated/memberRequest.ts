@@ -106,8 +106,28 @@ export function memberRequestWithdrawable(sameMember: boolean, people: boolean, 
 
 /** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
 //@ pure
-export function closeOpportunityForRequestWithdrawal(stage: string): boolean {
+export function withdrawnRequestKeepsOpportunity(stage: string): boolean {
   return stage === "review" || stage === "probing";
+}
+
+/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
+//@ pure
+export function requesterHearsOpportunityClose(withdrawn: boolean, requesterUnavailable: boolean, requesterSaidNo: boolean): boolean {
+  return !withdrawn && !requesterUnavailable && !requesterSaidNo;
+}
+
+/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
+//@ pure
+export function lawWithdrawnRequestHearsNoClose(requesterUnavailable: boolean, requesterSaidNo: boolean): boolean {
+  //@ ensures \result === true
+  return !requesterHearsOpportunityClose(true, requesterUnavailable, requesterSaidNo);
+}
+
+/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
+//@ pure
+export function lawEndedOpportunityIsNotKept(stage: string): boolean {
+  //@ ensures \result === true
+  return !(stage === "scheduled" || stage === "closed") || !withdrawnRequestKeepsOpportunity(stage);
 }
 
 /** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */

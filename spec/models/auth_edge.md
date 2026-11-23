@@ -31,9 +31,8 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 //  - SD-013 (defect AE-2, closed 2026-11-21): the web route and the MCP startOtp hook pass the ban read
 //    to OtpService.start, which counts a banned number in the buckets like any number and then withholds
 //    the send (withholdSend in spec/otpLimits.md): otpStartLimits with bannedAtBegin.
-//  - The phone-code-only address bucket of spec/otpLimits.md (PLATFORM_PHONE_OTP_ONLY_APPS): a start on
-//    the site API for a named app counts in its own address bucket with a ceiling of 200 an hour
-//    (bucketStage with codeOnly). The MCP startOtp hook always uses the standard address bucket.
+//  - Every start, on the site API and through the MCP startOtp hook, uses the standard address bucket:
+//    the owner removed the phone-code-only option on 2026-11-22 (spec/otpLimits.md).
 //  - SD-054 (defect AE-3) is fixed on 2026-11-21: PgPeopleStore.attachPerson, called by admitMembership
 //    (the text join, the web join and enrollment) and by the referred join, gives the person only to the
 //    joining session (who.session, the token hash) and revokes every other person-less session of the
@@ -104,7 +103,6 @@ module auth_edge {
   pure val PER_PHONE_HOUR = 3
   pure val PER_PHONE_DAY = 6
   pure val PER_IP_HOUR = 10
-  pure val PER_IP_HOUR_CODE_ONLY = 200
   pure val MIN_GAP = 30
   pure val GLOBAL_PER_HOUR = 2
   // sessions.ts
@@ -119,8 +117,9 @@ module auth_edge {
   // proxy.ts PROXY_MAX_SKEW_S and svc-auth.ts SVC_MAX_SKEW_S
   pure val PROXY_SKEW = 60
   pure val SVC_SKEW = 60
-  // packages/platform/src/apps.ts: slop minJoinAge 13 (founder 2026-10-09: open to 13+; minors are
-  // never matched, which is not in this model); policy.ts: under 13 cannot join at all.
+  // packages/platform/src/apps.ts: slop minJoinAge 13 (founder 2026-10-09: open to 13+; slop.date never
+  // matches a minor, and a teen friendship item under teenFriendAgeRule exists only on friends.help and ntwrk;
+  // neither is in this model); policy.ts: under 13 cannot join at all.
   pure val APP_MIN_AGE = 13
   pure val JOIN_FLOOR = 13
 
@@ -136,7 +135,7 @@ module auth_edge {
 
   type Bucket = { start: int, n: int, last: int }
   // One OtpService.start in flight. stage: 0 rate buckets (one transaction), 1 provider send, 2 putChallenge.
-  type StartReq = { phone: str, ip: str, codeOnly: bool, stage: int, sentTo: str, bannedAtBegin: bool }
+  type StartReq = { phone: str, ip: str, stage: int, sentTo: str, bannedAtBegin: bool }
   type Challenge = { live: bool, attempts: int, expires: int, sentTo: str }
   // platform.sessions row. person NONE = person_id null. chain = the first session of the login.
   // human is ghost state: the browser that holds the cookie.
@@ -301,21 +300,18 @@ module auth_edge {
   // api.ts POST /api/auth/otp/start. A Cloud sign-in app answers 409. Turnstile is an oracle that
   // passes. The intended SD-013 rule: the route reads the ban first, a banned number counts in the rate
   // buckets like any number, gets { ok: true } and no code (AE-2). `bannedAtBegin` is the ban read;
-  // bannedNoCode reads it. `codeOnly` is a site API start for an app named in PLATFORM_PHONE_OTP_ONLY_APPS.
-  action otpStartBegin(h: str, p: str): bool = otpStartBeginFor(h, p, false)
-
-  action otpStartBeginFor(h: str, p: str, codeOnly: bool): bool = all {
+  // bannedNoCode reads it.
+  action otpStartBegin(h: str, p: str): bool = all {
     mode == "otp",
     otp.inflight.keys().size() < 2,
-    otp' = { ...otp, inflight: otp.inflight.put(otp.nextRid, { phone: p, ip: h, codeOnly: codeOnly, stage: 0, sentTo: "", bannedAtBegin: world.banned.contains(p) }),
+    otp' = { ...otp, inflight: otp.inflight.put(otp.nextRid, { phone: p, ip: h, stage: 0, sentTo: "", bannedAtBegin: world.banned.contains(p) }),
              nextRid: otp.nextRid + 1 },
     now' = now, mode' = mode, world' = world, sess' = sess, edge' = edge, svc' = svc, ghost' = ghost,
   }
 
   // The four rate buckets of one start, in order: ip, phone hour (and the 30 s gap), phone day, global.
-  pure def bucketStage(p: str, ip: str, st: int, codeOnly: bool): { key: (str, str), window: int, limit: int, gap: int } =
-    if (st == 0 and codeOnly) { key: ("ip_code_only", ip), window: HOUR, limit: PER_IP_HOUR_CODE_ONLY, gap: 0 }
-    else if (st == 0) { key: ("ip", ip), window: HOUR, limit: PER_IP_HOUR, gap: 0 }
+  pure def bucketStage(p: str, ip: str, st: int): { key: (str, str), window: int, limit: int, gap: int } =
+    if (st == 0) { key: ("ip", ip), window: HOUR, limit: PER_IP_HOUR, gap: 0 }
     else if (st == 1) { key: ("phone", p), window: HOUR, limit: PER_PHONE_HOUR, gap: MIN_GAP }
     else if (st == 2) { key: ("day", p), window: DAY, limit: PER_PHONE_DAY, gap: 0 }
     else { key: ("global", ""), window: HOUR, limit: GLOBAL_PER_HOUR, gap: 0 }
@@ -323,14 +319,14 @@ module auth_edge {
   // The SD-380 rule (otp.ts OtpService.start through store.hitAll, AE-1): one unit checks the
   // four buckets in order and counts the hit in all of them, or in none when one refuses. `burned` is
   // true when a refused request still changed a bucket (spec/otpLimits.md says it must not).
-  pure def startBuckets(b: (str, str) -> Bucket, h: str, p: str, at: int, codeOnly: bool): { ok: bool, burned: bool, buckets: (str, str) -> Bucket } =
+  pure def startBuckets(b: (str, str) -> Bucket, h: str, p: str, at: int): { ok: bool, burned: bool, buckets: (str, str) -> Bucket } =
     val stages = [0, 1, 2, 3]
     val ok = stages.foldl(true, (acc, st) => {
-      val k = bucketStage(p, h, st, codeOnly)
+      val k = bucketStage(p, h, st)
       acc and hitOk(b, k.key, k.window, at, k.limit, k.gap)
     })
     val applied = stages.foldl(b, (acc, st) => {
-      val k = bucketStage(p, h, st, codeOnly)
+      val k = bucketStage(p, h, st)
       hitApply(acc, k.key, k.window, at)
     })
     val after = if (ok) applied else b
@@ -338,7 +334,7 @@ module auth_edge {
 
   action otpStartLimits(rid: int): bool = {
     val r = otp.inflight.get(rid)
-    val res = startBuckets(otp.buckets, r.ip, r.phone, now, r.codeOnly)
+    val res = startBuckets(otp.buckets, r.ip, r.phone, now)
     all {
       otp.inflight.keys().contains(rid),
       r.stage == 0,
@@ -402,10 +398,8 @@ module auth_edge {
 
   // The four actions above run back to back with no other step in between (a macro-step: it adds no
   // behaviour, it only lets the random simulation reach a login in fewer steps).
-  action otpStartFast(h: str, p: str, delivered: bool): bool = otpStartFastFor(h, p, delivered, false)
-
-  action otpStartFastFor(h: str, p: str, delivered: bool, codeOnly: bool): bool = {
-    val r = startBuckets(otp.buckets, h, p, now, codeOnly)
+  action otpStartFast(h: str, p: str, delivered: bool): bool = {
+    val r = startBuckets(otp.buckets, h, p, now)
     val banned = world.banned.contains(p)
     all {
       mode == "otp",
@@ -858,7 +852,6 @@ module auth_edge {
     nondet p = PHONES.oneOf()
     nondet d = TICKS.oneOf()
     nondet flag = Set(true, false).oneOf()
-    nondet codeOnly = Set(true, false).oneOf()
     nondet op = Set("export", "leave", "join", "deleteAll").oneOf()
     nondet age = Set(10, 15, 25).oneOf()
     nondet cloudSays = Set("valid", "unavailable").oneOf()
@@ -876,9 +869,9 @@ module auth_edge {
         svcSend(id, svcSkew),
         all { svc.inflight.size() > 0, nondet r = svc.inflight.oneOf() any { svcTamper(r), svcDeliver(r, flag) } },
       },
-      otpStartFastFor(h, p, flag, codeOnly),
+      otpStartFast(h, p, flag),
       any {
-        otpStartBeginFor(h, p, codeOnly),
+        otpStartBegin(h, p),
         all { otp.inflight.keys().size() > 0, nondet rid = otp.inflight.keys().oneOf() any {
           otpStartLimits(rid), otpStartSend(rid, flag), otpStartPut(rid), otpStartCrash(rid) } },
       },
@@ -1270,16 +1263,5 @@ module auth_edge {
       .then(tick(1))
       .then(otpStartFast("alice", "X", true))
       .expect(otp.buckets.get(("ip", "alice")).n == 1 and otp.buckets.get(("phone", "X")).n == 1 and safety)
-
-  // spec/otpLimits.md: a phone-code-only start counts in its own address bucket and keeps the
-  // per-number limits, which it shares with the standard start.
-  run codeOnlyAddressBucketTest =
-    initWith("otp")
-      .then(otpStartFastFor("alice", "X", true, true))
-      .expect(otp.buckets.get(("ip_code_only", "alice")).n == 1 and not(otp.buckets.keys().contains(("ip", "alice")))
-              and otp.buckets.get(("phone", "X")).n == 1 and safety)
-      .then(tick(1))
-      .then(otpStartFastFor("alice", "X", true, false))
-      .expect(not(otp.buckets.keys().contains(("ip", "alice"))) and otp.buckets.get(("phone", "X")).n == 1 and not(ghost.burned) and safety)
 }
 ```

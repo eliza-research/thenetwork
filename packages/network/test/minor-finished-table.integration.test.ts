@@ -4,13 +4,14 @@ import { FRIENDS_PLANS, friendsPack } from "@thenetwork/engine";
 import { bookingNoticeReceiptKey, meetingFeedbackKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test.each(["adult", "record"] as const)("a finished Friends table that a child was asked about is not repeated: %s", async arm => {
   const activity = "coffee_crawl";
   const venue = PLAN_VENUES.find(v => v.activities.includes(activity))!;
   const ids = ["a", "b", "c"];
   const w = new Mini([...ids, "d"].map((id, index) => ({ id, name: ["Ari", "Ben", "Cara", "Dov"][index]!, age: id === "d" ? undefined : 30,
-    area: venue.area, interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+    area: venue.area, interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true,
     plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
   for (const id of [...ids, "d"]) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });

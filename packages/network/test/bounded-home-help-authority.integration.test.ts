@@ -13,6 +13,7 @@ import { createBoundedHomeHelpAuthority } from "../service/bounded-home-help-aut
 import { BoundedHomeHelp, type HomeHelpDraft } from "../src/bounded-help.ts";
 import type { TrustState } from "../src/trust.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const db = `network_home_help_authority_test_${process.pid}`;
@@ -60,7 +61,7 @@ describe.skipIf(!pgAvailable)("canonical home-help roster authority (Postgres)",
     try { await admin.unsafe(`create database ${db}`); } finally { await admin.close(); }
     await applySchema(`${base}/${db}`);
     sql = new SQL(`${base}/${db}`);
-    const mini = new Mini(members, { review: "human" });
+    const mini = new Mini(members, { inlineJudge: holdEveryItem.inline });
     const accounts = accountsFor(sql);
     for (const { id, name, age, area, phone } of members) {
       const person = await accounts.createPerson(phone, "otp_sms", age);

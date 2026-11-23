@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("a skill sought during onboarding is not the seeker's own capability", async () => {
   for (const seed of [1, 2, 3]) for (const row of [
@@ -14,13 +15,14 @@ test("a skill sought during onboarding is not the seeker's own capability", asyn
     { body: "Product designer in Brooklyn, plays bass on weekends.", skill: "bass", ask: "Help me start a band.", own: true },
     { body: "I enjoy quiet walks.", skill: "design", ask: "I want to meet other founders.", own: false },
   ]) {
-    const x = new Mini([{ id: "a", name: "Alice Able", age: 30 }, { id: "b", name: "Boris Bell", age: 32 }], { seed, review: "human" });
+    const x = new Mini([{ id: "a", name: "Alice Able", age: 30 }, { id: "b", name: "Boris Bell", age: 32 }], { seed, inlineJudge: holdEveryItem.inline });
     await x.onboard("a");
     for (const text of ["hi!", row.body, "Weekends, mostly.", "One-on-one is good."]) await x.say("b", text);
     x.restart();
     const input = x.net.engineInput(x.clock.now());
     expect(input.facets.some(f => f.memberId === "b" && f.kind === "skill" && f.tags.includes(row.skill))).toBe(row.own);
     await x.say("a", row.ask);
+    await x.net.tick(x.clock.now());
     expect(x.net.reviewQueue().length).toBe(row.own ? 1 : 0);
     expect(x.net.reviewQueue().every(q => q.proposal.participants.includes("b"))).toBe(true);
     expect(x.sent.some(s => s.meta.type === "probe")).toBe(false);

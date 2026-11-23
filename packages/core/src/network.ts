@@ -3,7 +3,7 @@
 // (packages/network/service) and the simulator (packages/sim) both implement NetworkContext; the
 // Network may only reach members through ctx.send and only read the public snapshot.
 import type { Clock } from "./clock.ts";
-import type { Category, City, MemberId, OpportunityKind, Proposal, WorldSnapshot } from "./types.ts";
+import type { Category, City, Intent, MemberId, OpportunityKind, Proposal, WorldSnapshot } from "./types.ts";
 
 export type ChannelKind = "imessage" | "sms";
 export type Direction = "outbound" | "inbound";
@@ -170,6 +170,7 @@ export interface NetworkContext {
   invite?(inviterId: MemberId, friendName: string): MemberId | undefined;
   /** Current verified cross-city join evidence, scoped to this inviter and app. Not a matching input. */
   verifiedJoinedInviteeName?(inviterId: MemberId, inviteeId: MemberId): string | undefined;
+  queueStandingIntentChange?(change: { id: string; memberId: MemberId; previousStatus: Intent["status"]; status: "active" | "paused" | "closed" }): void;
 }
 
 export interface NetworkUnderTest {

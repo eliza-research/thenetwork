@@ -805,7 +805,8 @@ module notify_capital {
   // ------------------------------------------------------------------------------------------------
   // Invariants (Part B)
 
-  // AGENTS.md age policy and decision 1 (minors are never matched); PRD 39.2.6 "under-18s excluded";
+  // AGENTS.md age policy and decision 1 (minors are never matched, except a teen friendship item under
+  // teenFriendAgeRule, which is not in this model; the ledger keeps a minor out); PRD 39.2.6 "under-18s excluded";
   // ledger.ts:6-7 and :151-157 "a member found to be a minor stops accruing now". A member the
   // Network treats as a minor is not eligible in the ledger.
   // NOT IN `safety` in this full form. SD-049 is fixed (f3f09b7, age_updated), and the fixed rule is

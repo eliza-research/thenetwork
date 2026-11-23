@@ -10,6 +10,8 @@ Check required configuration, dev shortcuts, and proxy-secret changes. The model
 
 The [startup configuration spec](../bootPolicy.md) generates the runtime checks for the two entry points, declared environment, dev shortcuts, and database service role. This imported model also covers operator actions, provider setup and proxy rotation. Its historical entry-point comments describe the code at import time.
 
+Changed (owner decision 2026-11-22, D15 to D17): the review mode is removed with human review. The configuration fact `review` (`NETWORK_REVIEW_MODE`) is replaced by `modelProvider` (`JUDGE_PROVIDER` and `RECOMMENDER_PROVIDER` each have an API key, `providerKeyPresent`; spec/bootPolicy.md `modelProviderMissing`): a deployed start without it is refused. The running service's review mode (`svcReview`) is replaced by `svcJudge`: a staging or production service always runs the model review judge (`judgeFor`), a dev service only an injected one, and the entries inject none. The constructor refuses a deployed service that injects a judge (`judge_injection`). `upReviewHuman` is replaced by `upDeployedJudged`.
+
 Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -38,7 +40,8 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //     the service. `snap` is the environment the callers read after these writes (W3-452).
 //   - packages/mcp/src/dev-server.ts:11: devShortcutsAllowed() only, memory stores, no service.
 //   After the gate, the NetworkService constructor, its public API (built at boot by server.ts:93) and
-//   start() can still refuse (W3-454): the review option (service.ts:336), SERVICE_TURN_SECRET
+//   start() can still refuse (W3-454): a deployed service with an injected review or engine judge
+//   (service.ts, "reviewJudge and engineJudge injection is for tests in PLATFORM_ENV=dev"), SERVICE_TURN_SECRET
 //   (service.ts:104-110,343), the hash key (service.ts:348, api.ts:133), the OTP provider
 //   (otp.ts:110-115: the console provider outside dev throws), the Turnstile verifier (turnstile.ts:47:
 //   the bypass outside dev throws), the staff tokens outside dev (service.ts:351-354, W3-457, fixed) and
@@ -77,7 +80,9 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //   - db: NETWORK_DATABASE_URL or DATABASE_URL is a non-empty string. netUrlBlank: NETWORK_DATABASE_URL
 //     is set to "" (main.ts `??` took "" before the W3-458 fix; `||` now takes DATABASE_URL).
 //   - The PLATFORM_DEV_* switches are one boolean: devSwitch (at least one is set to a value).
-//   - NETWORK_REVIEW_MODE: Unset, Human ("human"), Auto (any other value, "" included).
+//   - modelProvider: JUDGE_PROVIDER and RECOMMENDER_PROVIDER (default "surplus") each have an API key
+//     (llm.ts providerKeyPresent "present"). An unknown provider name is a refusal in every environment; the
+//     model leaves it out (backend.test.ts covers it).
 //   - TURNSTILE_SECRET_KEY is one boolean: turnstile (set and not "").
 //   - MIGRATION_DATABASE_URL: "unset", "same" (equal to the service URL) or "distinct".
 //   - The shortest NETWORK_SERVICE_TOKENS token and NETWORK_SERVICE_CONSOLE_TOKEN: a length (0 = unset).
@@ -93,10 +98,10 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //     that is also a staff token. For a configuration in the model, bootOk and loadConfigOk assume
 //     distinct values. Tests: backend.test.ts "every refused boot fact", service-entry.integration.test.ts
 //     "refuses a session secret that is the hash key", blooio-otp.integration.test.ts.
-//   - The photo relay setup (spec/bootPolicy.md photoRelaySetup) is outside the model: the model has no
-//     photo relay variable, so each configuration in it has none of the four parts, and loadConfig then
-//     turns photo relay off. loadConfig refuses a partial setup after backendBoot; backend.test.ts
-//     "photo relay is configured from all four variables together" covers it.
+//   - The photo storage rule (spec/bootPolicy.md photoStorageSetup) is outside the model: the model has no
+//     photo storage variable. loadConfig refuses a deployed backend without PHOTO_STORAGE=r2 after
+//     backendBoot; the model assumes that each deployed configuration in it sets that variable. backend.test.ts
+//     "a deployed backend needs private photo storage" covers it.
 //
 // ASSUMPTIONS (named; no code makes them true)
 //   - W3-452: no code snapshots the environment. Each caller reads `o.env ?? process.env` when it is
@@ -104,11 +109,11 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //     `env` and write no variable, so their callers read the environment the gate read. platform-dev.ts
 //     writes two variables before it builds anything; `snap` has those writes. Tests inject `env`; a
 //     test is not an entry point.
-//   - NETWORK_REVIEW_MODE and PLATFORM_DEV_* have no reader outside env.ts and env-core.ts (W3-450).
-//     The review mode of a running service is the `review` option of its constructor: both entries pass
-//     none, so the ConsentNetwork default "human" holds, and service.ts:336 refuses any other value.
-//     The model keeps the two env-core.ts clauses (they are a tripwire for an operator who sets them).
-//     Human review of each proposal is proved in quint/opportunity.qnt, not here.
+//   - PLATFORM_DEV_* have no reader outside env.ts and env-core.ts (W3-450). The model keeps the env-core.ts
+//     clause (a tripwire for an operator who sets them). The review judge of a running service comes from
+//     judgeFor (owner decision 2026-11-22, D15 to D17): the model judge in staging and production, and in dev
+//     only a judge that ServiceOptions injects; both entries inject none. The recorded approval of each
+//     proposal is proved in the opportunity and review_desk models, not here.
 //   - A Pages deployment keeps the bindings it was made with. A dashboard rollback brings back the
 //     bundle and the bindings of that older deployment; it does not change the stored project bindings
 //     (docs/deploy.md 2.7 "A deployment rollback does not restore this project setting").
@@ -121,8 +126,10 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //
 // OUTSIDE THE MODEL
 //   - REQUIRED_TABLES (service.ts:511-516), BACKEND_EXTRA_HOSTS and STAGING_SITE_ORIGINS, the ports
-//     and binds, the channel and live-send flags (AGENTS.md environment section: every send is dry-run
-//     without them; runtime_ops and outbound_queue model the sends).
+//     and binds, the send channel (spec/bootPolicy.md "The configured channel alone decides whether a send
+//     is real": every send is a dry run without NETWORK_CHANNEL; runtime_ops and outbound_queue model the
+//     sends), and the Workers AI token without its account (spec/bootPolicy.md workersAiSetupMissing). Production
+//     without the Workers AI pair is in the model: both entries refuse it (clefKeys).
 //   - The token grammar of parseTokenGrants (explicitApp only in production, service.ts:353); only the
 //     shortest token length is modelled.
 //   - main.ts:57 trustForwardedHost on the server.ts path: server.ts:82 passes false.
@@ -131,7 +138,6 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 module boot_config {
 
   // ---------------------------------------------------------------- types (own, small)
-  type Review = Unset | Human | Auto
   type Config = {
     platformEnv: str,   // "" when unset
     nodeEnv: str,       // "" when unset
@@ -141,7 +147,7 @@ module boot_config {
     hashLen: int,       // UTF-16 units
     sessionLen: int,    // UTF-16 units
     db: bool,
-    review: Review,
+    modelProvider: bool,  // JUDGE_PROVIDER and RECOMMENDER_PROVIDER have an API key
     devSwitch: bool,
     // wave 4
     netUrlBlank: bool,      // NETWORK_DATABASE_URL="" (W3-458)
@@ -196,7 +202,7 @@ module boot_config {
     c.proxyLen >= MIN_SECRET_LENGTH, c.hashLen >= MIN_SECRET_LENGTH, c.sessionLen >= MIN_SECRET_LENGTH,
     c.leakBytes >= MIN_SECRET_LENGTH,   // env-core.ts:100 (Q-boot_config-W4-3)
     c.db,
-    c.review != Auto,
+    c.modelProvider,
     not(c.devSwitch),
   }
 
@@ -218,7 +224,7 @@ module boot_config {
 
   // backend.ts loadConfig: spec/bootPolicy.md backendBoot and backendBootRefused. For the facts in the model it
   // refuses what the gate refuses (an undeclared environment, dev that says production, the OTP provider, Turnstile,
-  // the proxy, hash, session and leak keys, review mode, dev switches; the value comparisons and the photo relay
+  // the proxy, hash, session and leak keys, the model provider, dev switches; the value comparisons and the photo storage
   // setup are abstractions, see the header), and adds its own checks: the database URL with || in
   // every environment, the migration login and the proxy secret length in every environment.
   pure def loadConfigOk(c: Config): bool =
@@ -240,13 +246,15 @@ module boot_config {
   // decision to serveService (packages/network/test/service-entry.integration.test.ts covers it). The rule that the
   // turn secret is never also a staff token is not modeled (no token values here); the same test covers it.
 
-  // The review option each entry passes to the NetworkService constructor (main.ts:51-55,
-  // server.ts:74-90: `network: { seed }`, no review), so the ConsentNetwork default.
-  pure def entryReview(e: str, c: Config): Review = Human
+  // Whether an entry passes ServiceOptions.reviewJudge or engineJudge to the NetworkService constructor
+  // (main.ts, server.ts: neither does). Only tests inject a judge, in PLATFORM_ENV=dev.
+  pure def entryInjectsJudge(e: str, c: Config): bool = false
+  // judgeFor: the model review judge in staging and production; in dev only an injected one.
+  pure def serviceJudged(e: str, c: Config): bool = not(dev(c)) or entryInjectsJudge(e, c)
 
   // The refusals after the gate, in code order (W3-454). "" when the service comes up.
   pure def serviceRefusal(c: Config, e: str, dbEnv: str): str =
-    if (entryReview(e, c) != Human) "review_mode"                                                // service.ts:336
+    if (entryInjectsJudge(e, c) and not(dev(c))) "judge_injection"                               // service.ts judgeFor
     else if ((c.turnLen > 0 or c.turnRoute) and c.turnLen < MIN_SECRET_LENGTH) "turn_secret"      // service.ts:104-110
     else if (c.hashLen == 0 and not(dev(c))) "hash_key"                                           // service.ts:348, api.ts:133
     else if (not(dev(c)) and c.staffTokenLen > 0 and c.staffTokenLen < MIN_SECRET_LENGTH) "staff_token"     // service.ts:352-353 (W3-457)
@@ -268,9 +276,12 @@ module boot_config {
     if (k == "trustFwdMain") and { e == "main", c.localBind, declared(c) == "dev", dev(c) }
     else dev(c)
 
-  // relay-endpoint.ts:86: production (isProduction) without the Workers AI keys holds every relayed
-  // text for staff; staging and dev run on the rules alone. Recorded for W3-454 (the staging split).
-  pure def relayHoldsAll(c: Config, clef: bool): bool = productionEnv(c.nodeEnv, c.platformEnv) and not(clef)
+  // relay-endpoint.ts relayClassifierFromEnv: without the Workers AI keys the service gets a classifier that cannot
+  // run, in every environment, so it blocks every relayed text (owner decision 2026-11-22, D18, refix: staging and
+  // dev ran on the rules alone before). Both entries refuse that production start first (spec/bootPolicy.md
+  // workersAiSetupMissing). The simulator, platform-dev and the tests inject a simulated classifier (relayClassifier);
+  // the model abstracts that injection as clefKeys.
+  pure def relayBlocksAll(clef: bool): bool = not(clef)
 
   // ---------------------------------------------------------------- the edge (auth_edge proves it; one def here)
   // backend.ts normalizeEdge (253-262): the current secret, else the previous one during a rotation.
@@ -290,8 +301,8 @@ module boot_config {
   var failures: int         // failed starts in this deployment (Railway restart budget)
   var lastRefusal: str      // why the last start failed
   var dbEnv: str            // platform.settings environment row: "missing" | "dev" | "staging" | "production"
-  var svcReview: Review     // the review mode of the running service
-  var relayHold: bool       // the running service holds every relayed text for staff
+  var svcJudge: bool        // the running service decides reviews with a review judge
+  var relayBlock: bool      // the running service blocks every relayed text (no classifier)
   var clefKeys: bool        // CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are set
   var lastShortcut: str
 
@@ -314,7 +325,7 @@ module boot_config {
 
   pure val EMPTY: Config = {
     platformEnv: "", nodeEnv: "", otpOk: false, turnstile: false,
-    proxyLen: 0, hashLen: 0, sessionLen: 0, db: false, review: Unset, devSwitch: false,
+    proxyLen: 0, hashLen: 0, sessionLen: 0, db: false, modelProvider: false, devSwitch: false,
     netUrlBlank: false, leakBytes: 0, mig: "unset", migrateOnBoot: true, svcLoginOk: true, initFlag: false,
     turnRoute: false, turnLen: 0, staffTokenLen: 0, consoleTokenLen: 0, localBind: true,
   }
@@ -332,9 +343,9 @@ module boot_config {
     failures' = 0,
     lastRefusal' = "",
     dbEnv' = "dev",
-    svcReview' = Unset,
-    relayHold' = false,
-    clefKeys' = false,
+    svcJudge' = false,
+    relayBlock' = false,
+    clefKeys' = true,
     lastShortcut' = "",
     stored' = ALL_GOOD,
     running' = ALL_GOOD,
@@ -362,10 +373,10 @@ module boot_config {
   action procKeep = all {
     cfg' = cfg, started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused,
     entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv,
-    svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
+    svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
   }
   // The rest of part A is unchanged (each action names what it changes).
-  action keepRun = all { svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys, lastShortcut' = lastShortcut }
+  action keepRun = all { svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys, lastShortcut' = lastShortcut }
 
   // ---------------------------------------------------------------- actions, part A
   // An operator changes the configuration of a stopped process (a new deployment). Railway's restart
@@ -382,7 +393,7 @@ module boot_config {
     nondet l2 = LENGTHS.oneOf()
     nondet l3 = LENGTHS.oneOf()
     nondet d = Set(true, false).oneOf()
-    nondet r = Set(Unset, Human, Auto).oneOf()
+    nondet r = Set(true, false).oneOf()
     nondet s = Set(true, false).oneOf()
     nondet nb = Set(true, false).oneOf()
     nondet lk = LENGTHS.oneOf()
@@ -399,13 +410,13 @@ module boot_config {
     all {
       not(started),
       cfg' = { platformEnv: p, nodeEnv: n, otpOk: o, turnstile: t, proxyLen: l1, hashLen: l2, sessionLen: l3,
-               db: d, review: r, devSwitch: s, netUrlBlank: nb, leakBytes: lk, mig: mg, migrateOnBoot: mob,
+               db: d, modelProvider: r, devSwitch: s, netUrlBlank: nb, leakBytes: lk, mig: mg, migrateOnBoot: mob,
                svcLoginOk: slo, initFlag: ini, turnRoute: tr, turnLen: tl, staffTokenLen: stl,
                consoleTokenLen: ctl, localBind: lb },
       clefKeys' = ck,
       stage' = "down", failures' = 0,
       started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused, entry' = entry,
-      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcReview' = svcReview, relayHold' = relayHold,
+      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcJudge' = svcJudge, relayBlock' = relayBlock,
       lastShortcut' = lastShortcut,
       sitesKeep,
     }
@@ -433,7 +444,7 @@ module boot_config {
       else if (k == 4) { ...r, initFlag: b }
       else if (k == 5) { ...r, netUrlBlank: b }
       else if (k == 6) { ...r, otpOk: b }
-      else if (k == 7) { ...r, review: if (b) Auto else Unset }
+      else if (k == 7) { ...r, modelProvider: b }
       else if (k == 8) { ...r, turnRoute: b, turnLen: l }
       else { ...r, mig: if (b) "same" else "unset" }
     all {
@@ -441,7 +452,7 @@ module boot_config {
       cfg' = c, clefKeys' = ck,
       stage' = "down", failures' = 0,
       started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused, entry' = entry,
-      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcReview' = svcReview, relayHold' = relayHold,
+      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcJudge' = svcJudge, relayBlock' = relayBlock,
       lastShortcut' = lastShortcut,
       sitesKeep,
     }
@@ -485,6 +496,7 @@ module boot_config {
     stage == "gated", entry == "main",
     if (deployed(snap) and not(snap.turnLen >= MIN_SECRET_LENGTH and snap.staffTokenLen >= MIN_SECRET_LENGTH))
       startFails("main_line_and_staff", false, dbEnv)
+    else if (productionEnv(snap.nodeEnv, snap.platformEnv) and not(clefKeys)) startFails("main_workers_ai", false, dbEnv)
     else if (not(snap.db))
       // The gate checked the database only for a deployed environment (env-core.ts:101,130).
       startFails(if (deployed(snap)) "main_db_url_after_gate" else "main_db_url", false, dbEnv)
@@ -500,7 +512,8 @@ module boot_config {
   // server.ts:31 loadConfig (W3-448).
   action bootBackend = all {
     stage == "down",
-    if (loadConfigOk(cfg)) pass("backend", cfg, "gated") else startFails("gate", true, dbEnv),
+    if (loadConfigOk(cfg) and not(productionEnv(cfg.nodeEnv, cfg.platformEnv) and not(clefKeys))) pass("backend", cfg, "gated")
+    else startFails("gate", true, dbEnv),
     sitesKeep,
   }
 
@@ -541,7 +554,7 @@ module boot_config {
       started' = true, stage' = "up", snap' = cfg, entry' = "mcpDev",
       refused' = refused, failures' = failures, lastRefusal' = lastRefusal,
       shortcutsUsed' = true, lastShortcut' = "otpConsole",
-      cfg' = cfg, dbEnv' = dbEnv, svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys,
+      cfg' = cfg, dbEnv' = dbEnv, svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys,
     } else startFails("mcp_dev", true, dbEnv),
     sitesKeep,
   }
@@ -554,8 +567,8 @@ module boot_config {
       if (why != "") startFails(why, false, dbEnv)
       else all {
         stage' = "up",
-        svcReview' = entryReview(entry, snap),
-        relayHold' = relayHoldsAll(snap, clefKeys),
+        svcJudge' = serviceJudged(entry, snap),
+        relayBlock' = relayBlocksAll(clefKeys),
         shortcutsUsed' = (shortcutsUsed or constructShortcut(snap)),
         lastShortcut' = if (constructShortcut(snap)) "construct" else lastShortcut,
         started' = started, snap' = snap, entry' = entry, refused' = refused, failures' = failures,
@@ -573,8 +586,8 @@ module boot_config {
       callerAllows(k, entry, snap),
       shortcutsUsed' = true, lastShortcut' = k,
       cfg' = cfg, started' = started, snap' = snap, refused' = refused, entry' = entry, stage' = stage,
-      failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcReview' = svcReview,
-      relayHold' = relayHold, clefKeys' = clefKeys,
+      failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcJudge' = svcJudge,
+      relayBlock' = relayBlock, clefKeys' = clefKeys,
       sitesKeep,
     }
   }
@@ -586,7 +599,7 @@ module boot_config {
     shortcutsUsed' = true,
     cfg' = cfg, started' = started, snap' = snap, refused' = refused,
     entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv,
-    svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys, lastShortcut' = "devAllowed",
+    svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys, lastShortcut' = "devAllowed",
     sitesKeep,
   }
 
@@ -595,7 +608,7 @@ module boot_config {
     started,
     started' = false, shortcutsUsed' = false, stage' = "down", entry' = "",
     cfg' = cfg, snap' = snap, refused' = refused, failures' = failures, lastRefusal' = lastRefusal,
-    dbEnv' = dbEnv, svcReview' = Unset, relayHold' = false, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
+    dbEnv' = dbEnv, svcJudge' = false, relayBlock' = false, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
     sitesKeep,
   }
 
@@ -781,12 +794,13 @@ module boot_config {
   val startedOnlyDeclared = not(started) or declaredEnv(snap.platformEnv, snap.nodeEnv) != ""
 
   // Rule: a production or staging process has the OTP provider, Turnstile, the three secrets of at
-  // least 32 characters, LEAK_LABEL_KEY of at least 32 bytes, a database, review mode human, and no dev
-  // switch (env.ts bootConfigProblems comment; env-core.ts bootProblems ensures "... ==> deployedReady(f)").
-  // The review and dev-switch clauses are a tripwire only (W3-450, ASSUMPTIONS).
+  // least 32 characters, LEAK_LABEL_KEY of at least 32 bytes, a database, a key for the judge and recommender
+  // providers (owner decision 2026-11-22, D15 to D17), and no dev switch (env.ts bootConfigProblems comment;
+  // env-core.ts bootProblems ensures "... ==> deployedReady(f)"). The dev-switch clause is a tripwire only
+  // (W3-450, ASSUMPTIONS).
   val startedDeployedIsReady =
     not(started and declaredEnv(snap.platformEnv, snap.nodeEnv) != "dev") or and {
-      snap.otpOk, snap.turnstile, snap.db, snap.review != Auto, not(snap.devSwitch),
+      snap.otpOk, snap.turnstile, snap.db, snap.modelProvider, not(snap.devSwitch),
       snap.proxyLen >= 32, snap.hashLen >= 32, snap.sessionLen >= 32, snap.leakBytes >= 32,
     }
 
@@ -834,13 +848,20 @@ module boot_config {
     snap.consoleTokenLen == 0 or snap.consoleTokenLen >= MIN_SECRET_LENGTH,
   }
 
-  // Rule: every proactive proposal and member request goes through human review (AGENTS.md code
-  // invariants); the service refuses any other mode (service.ts:336).
-  val upReviewHuman = not(stage == "up" and entry != "mcpDev") or svcReview == Human
+  // Rule (owner decision 2026-11-22, D15 to D17; AGENTS.md code invariants): every opportunity gets one recorded
+  // approval before contact, by the review judge or by staff for a held item. A staging or production service
+  // that is up runs the model review judge and has a key for its provider; a dev service without an injected
+  // judge holds every item for staff (no_provider).
+  val upDeployedJudged = not(stage == "up" and entry != "mcpDev" and not(dev(snap))) or (svcJudge and snap.modelProvider)
 
-  // Rule: production without the Workers AI keys holds every relayed text for staff (AGENTS.md Relay).
+  // Rule (owner decision 2026-11-22, D18; spec/bootPolicy.md workersAiSetupMissing): production never runs without the
+  // Workers AI keys, because the relay classifier decides alone; an entry refuses that start.
   val upProductionRelayClosed =
-    not(stage == "up" and entry != "mcpDev" and productionEnv(snap.nodeEnv, snap.platformEnv) and not(clefKeys)) or relayHold
+    not(stage == "up" and entry != "mcpDev" and productionEnv(snap.nodeEnv, snap.platformEnv) and not(clefKeys))
+
+  // Rule (owner decision 2026-11-22, D18, refix; spec/relayDecision.md "A classifier that cannot run blocks the text"):
+  // a running service without the Workers AI keys never relays a text that no classifier read, in any environment.
+  val upRelayNeverUnchecked = not(stage == "up" and entry != "mcpDev" and not(clefKeys) and not(relayBlock))
 
   // Rule: the gate is the start condition: what a process misses before it may start (env.ts
   // bootConfigProblems comment; main.ts:30-32). It failed while main.ts read the URL with `??` (W3-458, fixed).
@@ -873,8 +894,9 @@ module boot_config {
     upLiveServiceLogin,
     upDbAgrees,
     upLiveStaffTokensLong,
-    upReviewHuman,
+    upDeployedJudged,
     upProductionRelayClosed,
+    upRelayNeverUnchecked,
     mainDbMatchesGate,
     deadIsDown,
     startedMatchesStage,
@@ -916,8 +938,8 @@ module boot_config {
   val witness_neverPlatformDevShortcut = not(entry == "platformDev" and cfg.platformEnv == "" and shortcutsUsed)
   // main.ts trusts X-Forwarded-Host on a local dev bind.
   val witness_neverTrustFwd = lastShortcut != "trustFwdMain"
-  // Staging without the Workers AI keys runs on the rules alone (the isProduction split).
-  val witness_neverStagingRulesOnly = not(stage == "up" and declared(snap) == "staging" and not(clefKeys) and not(relayHold))
+  // Staging without the Workers AI keys starts and blocks every relayed text (owner decision 2026-11-22, D18, refix).
+  val witness_neverStagingRelayBlocked = not(stage == "up" and declared(snap) == "staging" and not(clefKeys) and relayBlock)
   // A site runs a secret the backend no longer accepts (the M-148 availability break).
   val witness_neverSiteDownAfterDrop = not(dropped and PROJECT_SET.exists(p => not(accepts(running.get(p).secret, bSecret, bPrev))))
   // A run ends with some projects failed.
@@ -926,7 +948,7 @@ module boot_config {
   // ---------------------------------------------------------------- traces
   pure val READY: Config = {
     platformEnv: "production", nodeEnv: "production", otpOk: true, turnstile: true,
-    proxyLen: 32, hashLen: 32, sessionLen: 32, db: true, review: Human, devSwitch: false,
+    proxyLen: 32, hashLen: 32, sessionLen: 32, db: true, modelProvider: true, devSwitch: false,
     netUrlBlank: false, leakBytes: 32, mig: "distinct", migrateOnBoot: true, svcLoginOk: true, initFlag: false,
     turnRoute: true, turnLen: 32, staffTokenLen: 32, consoleTokenLen: 32, localBind: false,
   }
@@ -941,6 +963,15 @@ module boot_config {
     dbEnv' = v,
     cfg' = cfg, started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused,
     entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, keepRun,
+    sitesKeep,
+  }
+  // Owner decision 2026-11-22, D18: set the Workers AI pair directly (a test step).
+  action setClefKeys(b: bool): bool = all {
+    stage != "up",
+    clefKeys' = b,
+    cfg' = cfg, started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused,
+    entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv,
+    svcJudge' = svcJudge, relayBlock' = relayBlock, lastShortcut' = lastShortcut,
     sitesKeep,
   }
   action check(ok: bool): bool = all { assert(ok), procKeep, sitesKeep }
@@ -958,7 +989,7 @@ module boot_config {
   run bootGateTest = all {
     assert(bootOk(READY)),
     assert(not(bootOk({ ...READY, hashLen: 10 }))),
-    assert(not(bootOk({ ...READY, review: Auto }))),
+    assert(not(bootOk({ ...READY, modelProvider: false }))),
     assert(not(bootOk({ ...READY, devSwitch: true }))),
     assert(not(bootOk({ ...READY, platformEnv: "", nodeEnv: "" }))),
     assert(not(bootOk({ ...EMPTY, platformEnv: "dev", nodeEnv: "production" }))),
@@ -966,12 +997,12 @@ module boot_config {
   }
 
   // W3-448, after the Q-boot_config-W4-1 fix: loadConfig runs the gate, so it refuses all that the gate
-  // refuses (dev that says production, NETWORK_REVIEW_MODE=auto, a dev switch, no LEAK_LABEL_KEY). Its own
+  // refuses (dev that says production, no model provider key, a dev switch, no LEAK_LABEL_KEY). Its own
   // checks stay: a database in dev too, the migration login, and the proxy secret length in dev.
   run loadConfigGateTest = all {
     assert(loadConfigOk(READY)),
     assert(not(loadConfigOk({ ...EMPTY, platformEnv: "dev", nodeEnv: "production", db: true }))),
-    assert(not(loadConfigOk({ ...READY, review: Auto }))),
+    assert(not(loadConfigOk({ ...READY, modelProvider: false }))),
     assert(not(loadConfigOk({ ...READY, devSwitch: true }))),
     assert(not(loadConfigOk({ ...READY, leakBytes: 10 }))),
     assert(not(bootOk({ ...READY, leakBytes: 0 }))),
@@ -1009,7 +1040,19 @@ module boot_config {
       .then(backendInit)
       .then(check(dbEnv == "production" and stage == "service"))
       .then(construct)
-      .then(check(stage == "up" and svcReview == Human and safety))
+      .then(check(stage == "up" and svcJudge and safety))
+
+  // Owner decision 2026-11-22, D18 (spec/bootPolicy.md workersAiSetupMissing): production without the Workers AI pair
+  // starts on neither entry, because the relay classifier decides alone.
+  run productionWithoutWorkersAiTest =
+    init
+      .then(setCfg({ ...READY, initFlag: true }))
+      .then(setClefKeys(false))
+      .then(bootBackend)
+      .then(check(not(started) and refused == 1 and lastRefusal == "gate"))
+      .then(boot)
+      .then(mainDbUrl)
+      .then(check(not(started) and lastRefusal == "main_workers_ai" and upProductionRelayClosed and safety))
 
   // Without PLATFORM_DB_ENVIRONMENT_INIT a fresh database says dev and start() refuses.
   run backendFreshDbRefusedTest =
@@ -1035,11 +1078,11 @@ module boot_config {
       .then(bootMcpDev)
       .then(check(not(started) and refused == 4 and safety))
 
-  // W3-450: server.ts now refuses production with NETWORK_REVIEW_MODE=auto or a PLATFORM_DEV_* switch,
-  // because loadConfig runs the gate (Q-boot_config-W4-1 fix).
-  run backendIgnoresReviewModeTest =
+  // W3-450 and owner decision 2026-11-22 (D15 to D17): server.ts refuses production without a model provider key
+  // or with a PLATFORM_DEV_* switch, because loadConfig runs the gate (Q-boot_config-W4-1 fix).
+  run backendNeedsModelProviderTest =
     init
-      .then(setCfg({ ...READY, review: Auto, initFlag: true }))
+      .then(setCfg({ ...READY, modelProvider: false, initFlag: true }))
       .then(bootBackend)
       .then(check(not(started) and refused == 1))
       .then(setCfg({ ...READY, devSwitch: true, initFlag: true }))

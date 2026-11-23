@@ -15,6 +15,7 @@ import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { friendFactory, nycPersonas } from "../harness/index.ts";
 import { ConsentNetwork, consoleRows, MemoryStore, NETWORK_STATE_VERSION, PgStore, runStored, runTick, type NetworkOptions, type NetworkState, type NetworkStore } from "../src/index.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const T = 600_000;
 const CLIMB_WANT = { objective: "find a regular climbing partner", category: "hobby" as const };
@@ -29,7 +30,7 @@ async function scripted(restartAfter?: number, check?: (w: Mini) => void) {
   const w = new Mini([
     climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park"), climber("r", "Rae Kim", { wants: [] }),
     climber("s", "Sal Spam"), { id: "u", name: "Uma Unknown", area: "Greenpoint", interests: ["climbing"] },
-  ], { review: "auto", maxNewPerDay: 20 });
+  ], { inlineJudge: simulatedReviewJudge({ exceptions: false }), maxNewPerDay: 20 });
   const everyone = ["a", "b", "c", "d", "r", "s"];
   const steps: (() => Promise<void>)[] = [
     () => w.onboard(...everyone),
@@ -82,15 +83,15 @@ describe("exportState / importState", () => {
     const w = await scripted();
     const s = w.net.exportState();
     expect(s.version).toBe(NETWORK_STATE_VERSION);
-    const again = new ConsentNetwork({ seed: 1, review: "auto", engine: { cities: ["nyc"] } });
+    const again = new ConsentNetwork({ seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), engine: { cities: ["nyc"] } });
     again.init(w.ctx());
     again.importState(JSON.parse(JSON.stringify(s)));
     expect(again.exportState()).toEqual(s);
     expect(() => again.importState({ ...s, version: 99 })).toThrow();
-    // The review mode is never stored: a human-review Network stays human after importing a simulator state.
-    const human = new ConsentNetwork({ seed: 1, engine: { cities: ["nyc"] } });
-    human.importState(s);
-    expect(human.reviewMode()).toBe("human");
+    // The judge is never stored: a Network without an inline judge keeps the review judge name after importing a simulator state.
+    const deployed = new ConsentNetwork({ seed: 1, engine: { cities: ["nyc"] } });
+    deployed.importState(s);
+    expect(deployed.judgeReviewer).toBe("review_judge");
   }, T);
 });
 
@@ -102,13 +103,13 @@ test.each([
   ["two explicit requests", "It was great. I would love to meet again.", true, false],
 ] as const)("repeat review follows delivered feedback across restart: %s", async (_label, secondFeedback, expected, separateMeetings) => {
   const pair = ["a", "b"];
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: holdEveryItem.inline });
   await w.onboard(...pair);
   const bookAndWaitForFeedback = async () => {
     const meetings = w.meetings.length;
     const id = w.propose(pair);
     expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === id))).toBe(true);
-    expect(w.net.review(id, "approve")).toBe(true);
+    expect(w.net.review(id, "approve", { reviewer: "staff" })).toBe(true);
     await w.answerProbes(pair);
     expect(w.meetings).toHaveLength(meetings + 1);
     const booked = w.mark();
@@ -134,7 +135,7 @@ test.each([
   if (!expected) return;
   const [item] = repeat();
   expect(w.sent.slice(before).some(s => s.meta.proposalId === item!.oppId)).toBe(false);
-  expect(w.net.review(item!.oppId, "reject")).toBe(true);
+  expect(w.net.review(item!.oppId, "reject", { reviewer: "staff" })).toBe(true);
   w.restart();
   await w.run(DAY);
   expect(repeat()).toHaveLength(0);
@@ -145,7 +146,7 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   const w = new Mini([
     { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint" },
     { id: "helper", name: "Ben Ito", age: 31, area: "Greenpoint", skills: ["moving_help"] },
-  ], { review: "human" });
+  ], { inlineJudge: holdEveryItem.inline });
   await w.onboard("requester", "helper");
   const mark = w.mark();
   const address = "71 Fictional Street";
@@ -174,7 +175,7 @@ test("bounded help rechecks an older home request when it would retry", async ()
   const w = new Mini([
     { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint" },
     { id: "helper", name: "Ben Ito", age: 31, area: "Greenpoint", skills: ["moving_help"] },
-  ], { review: "human" });
+  ], { inlineJudge: holdEveryItem.inline });
   await w.onboard("requester", "helper");
   const before = structuredClone(w.net.exportState());
   before.requests.push({
@@ -244,7 +245,7 @@ class Restartable implements NetworkUnderTest {
 }
 
 async function nycWorld(days: number, restartAtDay?: number) {
-  const seed = 3, opts: NetworkOptions = { seed, review: "auto", engine: { cities: ["nyc"] } };
+  const seed = 3, opts: NetworkOptions = { seed, inlineJudge: simulatedReviewJudge({ exceptions: false }), engine: { cities: ["nyc"] } };
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new Restartable(new ConsentNetwork(opts), opts);
@@ -283,7 +284,7 @@ describe("runTick and the tick lock", () => {
     const w = await scripted();
     const store = new MemoryStore();
     await store.save(w.net.exportState());
-    const fresh = new ConsentNetwork({ seed: 1, review: "auto", store, engine: { cities: ["nyc"] } });
+    const fresh = new ConsentNetwork({ seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), store, engine: { cities: ["nyc"] } });
     fresh.init(w.ctx());
     const now = w.clock.now() + HOUR;
     w.clock.set(now);
@@ -297,11 +298,11 @@ describe("runTick and the tick lock", () => {
   }, T);
 
   test("two Networks on one store: a STOP handled by one survives the other's next tick", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b");
     const store = new MemoryStore();
     await store.save(w.net.exportState());
-    const two = () => { const n = new ConsentNetwork({ seed: 1, review: "auto", store, engine: { cities: ["nyc"] } }); n.init(w.ctx()); return n; };
+    const two = () => { const n = new ConsentNetwork({ seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), store, engine: { cities: ["nyc"] } }); n.init(w.ctx()); return n; };
     const A = two(), B = two();
     const optedOut = async () => (await store.load())!.members.find(m => m.id === "a")!.optedOut;
     const at = (h: number) => { const t = w.clock.now() + h * HOUR; w.clock.set(t); return t; };
@@ -381,7 +382,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     expect(inner).toBeUndefined();
     expect(await b.withTickLock(async () => "b ran")).toBe("b ran");
     // runTick against Postgres: a fresh Network loads, ticks and saves.
-    const net = new ConsentNetwork({ seed: 1, review: "auto", store: b, engine: { cities: ["nyc"] } });
+    const net = new ConsentNetwork({ seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), store: b, engine: { cities: ["nyc"] } });
     net.init(w.ctx());
     const now = w.clock.now() + HOUR;
     w.clock.set(now);
@@ -413,9 +414,10 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     stores.push(store);
     const people = [climber("r", "Rae Kim", { wants: [] }), climber("c1", "Cal One"), climber("c2", "Cleo Two"), climber("c3", "Cass Three")];
     for (const p of people) await store.sql`insert into network.members (id, name, home_city) values (${p.id}, ${p.name}, 'nyc') on conflict (id) do nothing`;
-    const w = new Mini(people, { review: "human" });
+    const w = new Mini(people, { inlineJudge: holdEveryItem.inline });
     await w.onboard("r", "c1", "c2", "c3");
     await w.say("r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
+    await w.net.tick(w.clock.now());
     const oppId = w.net.reviewQueue()[0]!.oppId;
     const want = () => {
       const p = w.net.exportState().opps.find(o => o.id === oppId)!;
@@ -428,7 +430,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     expect(w.net.decide(oppId, "reroll", { reviewer: "staff" })).toEqual({ ok: true });
     await store.save(w.net.exportState());
     expect(await have()).toEqual(want());
-    const alt = w.net.reviewQueue()[0]!.proposal.alternates[0]!;
+    const alt = w.net.exportState().opps.find(o => o.id === oppId)!.alternates[0]!;
     // The record now says 12 (the platform's lowest stated age): an under-13 record declines.
     w.members.find(m => m.id === alt)!.age = 12;
     w.net.importState(w.net.exportState());

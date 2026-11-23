@@ -2,6 +2,7 @@
 // handshake, the OpenAI surface that hides slop, and tool inputs that never take a phone or a code.
 import { describe, expect, test } from "vitest";
 import { defaultApps } from "../src/apps.ts";
+import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
 
 const NTWRK = `${origin("ntwrk.party")}/mcp`;
@@ -97,6 +98,70 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect((await call(env, NTWRK, "app_info", {}, { token: "ntwa_forged" })).res.status).toBe(401);
   });
 
+  for (const [app, domain] of [["friends", "friends.help"], ["ntwrk", "ntwrk.party"]] as const) {
+    test(`check_status takes the ${domain} text for a member under 18 from the network's notice, promises nothing without it, and an adult gets the plain text`, async () => {
+      const single = "You are signed up. Since you're under 18, I won't introduce you to other members, but I can suggest public places and events.";
+      const bare = setup();
+      await addMember(bare, PHONE_A, [{ app, state: "active" }], 16);
+      const bareConnection = await connect(bare, domain, PHONE_A, { scope: "membership:read" });
+      expect((await call(bare, `${origin(domain)}/mcp`, "check_status", {}, { token: bareConnection.token.access_token })).body!.result.structuredContent)
+        .toMatchObject({ status: "active", next_step: single });
+
+      let answer: MinorNotice | undefined = "MinorTeenFriendNotice";
+      const asked: string[] = [];
+      const env = setup({ minorNotice: async (personId, id) => { asked.push(`${personId}:${id}`); return answer; } });
+      const teen = await addMember(env, PHONE_A, [{ app, state: "active" }], 16);
+      await addMember(env, PHONE_B, [{ app, state: "active" }], 30);
+      const status = async (phone: string) => {
+        const connection = await connect(env, domain, phone, { scope: "membership:read" });
+        return (await call(env, `${origin(domain)}/mcp`, "check_status", {}, { token: connection.token.access_token })).body!.result.structuredContent;
+      };
+      expect(await status(PHONE_A)).toMatchObject({ status: "active", next_step: "You are signed up. People under 18 are introduced only for friendship, to people close to their age." });
+      answer = "MinorSinglePlayerNotice";
+      expect(await status(PHONE_A)).toMatchObject({ status: "active", next_step: single });
+      answer = "MinorBirthdayNotice";
+      expect(await status(PHONE_A)).toMatchObject({
+        status: "active",
+        next_step: `${single} If you tell me your birthday (month, day and year), I can look for friends close to your age.`,
+      });
+      answer = undefined;
+      expect(await status(PHONE_A)).toMatchObject({ status: "active", next_step: single });
+      expect(asked).toEqual([`${teen}:${app}`, `${teen}:${app}`, `${teen}:${app}`, `${teen}:${app}`]);
+      expect(await status(PHONE_B)).toMatchObject({ status: "active", next_step: "You are signed up." });
+      expect(asked).toHaveLength(4);
+    });
+  }
+
+  test("check_status tells a peon.biz member under 18 that there is no work matching and where friendship introductions happen", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }], 16);
+    await addMember(env, PHONE_B, [{ app: "peon", state: "active" }], 30);
+    const status = async (phone: string) => {
+      const connection = await connect(env, "peon.biz", phone, { scope: "membership:read" });
+      return (await call(env, `${origin("peon.biz")}/mcp`, "check_status", {}, { token: connection.token.access_token })).body!.result.structuredContent;
+    };
+    expect(await status(PHONE_A)).toMatchObject({
+      status: "active",
+      next_step: "You are signed up. peon.biz doesn't match anyone under 18 for work. I can still help you myself. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.",
+    });
+    expect(await status(PHONE_B)).toMatchObject({ status: "active", next_step: "You are signed up." });
+  });
+
+  test("check_status tells a slop.date member under 18 that there are no dates and that friendship introductions happen on friends.help and ntwrk.party", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }], 16);
+    await addMember(env, PHONE_B, [{ app: "slop", state: "active" }], 30);
+    const status = async (phone: string) => {
+      const connection = await connect(env, "slop.date", phone, { scope: "membership:read" });
+      return (await call(env, `${origin("slop.date")}/mcp`, "check_status", {}, { token: connection.token.access_token })).body!.result.structuredContent;
+    };
+    expect(await status(PHONE_A)).toMatchObject({
+      status: "active",
+      next_step: "You are signed up. slop.date doesn't match anyone under 18 for dates. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.",
+    });
+    expect(await status(PHONE_B)).toMatchObject({ status: "active", next_step: "You are signed up." });
+  });
+
   test("active membership status stays read-only and does not promise matching or delivery", async () => {
     const env = setup();
     await addMember(env, PHONE_A, [{ app: "friends", state: "active" }]);
@@ -151,10 +216,19 @@ describe("surface=openai hides slop", () => {
     expect((await call(env, NTWRK, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
   });
 
-  test("an OpenAI client is put on the OpenAI surface even at /mcp, and cannot register on slop.date", async () => {
+  test("app_info names teen friendship introductions on friends.help and ntwrk.party, and none on slop.date or peon.biz", async () => {
+    const env = setup();
+    const rule = async (app: string) => (await call(env, NTWRK, "app_info", { app })).body!.result.structuredContent.adults_only[0];
+    const teen = "Matching is for adults 18 or older, except friendship introductions between people aged 13 to 18 born at most 2 years apart, after a person reviews each one.";
+    const adult = "Nobody under 18 is matched for dates or work on this app. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.";
+    expect([await rule("ntwrk"), await rule("friends"), await rule("slop"), await rule("peon")]).toEqual([teen, teen, adult, adult]);
+  });
+
+  test("an OpenAI client is put on the OpenAI surface even at /mcp, except the slop.date ChatGPT connector, which registers on the full surface for everyone", async () => {
     const env = setup();
     const chatgpt = { redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"] };
-    expect((await register(env, "slop.date", chatgpt)).res.status).toBe(400);
+    expect((await register(env, "slop.date", chatgpt)).res.status).toBe(201);
+    expect((await register(env, "slop.date", { redirect_uris: ["https://platform.openai.com/callback"] })).res.status).toBe(400);
     const c = await connect(env, "ntwrk.party", PHONE_A, { register: chatgpt, redirectUri: chatgpt.redirect_uris[0] });
     // Its token is for /mcp/openai only.
     expect((await rpc(env, NTWRK, "tools/list", {}, { token: c.token.access_token })).res.status).toBe(401);

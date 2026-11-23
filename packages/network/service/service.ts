@@ -13,7 +13,7 @@ import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolve
 //    stranger joins The Network: first name and age, then "what are you looking for?" (friends,
 //    dating, work), which enrolls them in the matching apps, each age-checked.
 //    /webhooks/blooio/:app is an app's own line, if one ever gets one (<APP>_BLOOIO_WEBHOOK_SECRET).
-//  - Phone -> person -> membership -> member id. Joins are 13+ on every app; minors are never matched.
+//  - Phone -> person -> membership -> member id. Joins are 13+ on every app; minors are matched only as spec/friendIntroAge.md allows.
 //    Nothing is stored until the age check passes (a refused age goes to the phone's age floor only).
 //    Responses never say whether the phone uses another app.
 //  - Text flows that wait for the person's next message (a join, "what are you looking for?", the
@@ -25,14 +25,16 @@ import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolve
 //  - The platform public API (packages/platform createPublicApi) with hooks into the networks:
 //    publicFetch, served on PLATFORM_API_PORT (main.ts).
 //  - Staff API: role tokens per app ("reviewer@slop:<t>"; NETWORK_SERVICE_TOKENS), ?app= or
-//    /apps/:app/..., each action audited. The review mode is never exposed: production is "human" only.
+//    /apps/:app/..., each action audited.
 //  - Sends: each app's adapter (dry-run by default; Blooio needs the per-app live flag too) after a
 //    person-level cap of proactive messages across apps (default 3 a day).
 import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
-import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type Intent, type MemberId } from "@thenetwork/core";
-import { storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
+import { DAY, DEFAULT_MODEL, judgeLLM, LLMBudget, providerKeyPresent, RealClock, recommenderLLM, type Clock, type City, type Intent, type LLM, type MemberId } from "@thenetwork/core";
+import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
+import { engineJudgeLimitsFromEnv, llmSpentMicros, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
+import { storedInviterCurrent, type ActionResult, type AgentStandingResult, type NetworkOptions, type NetworkState, type ReviewDecision, type ReviewOptions, type StandingView, type TeenReviewMember } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import { personMinorSignalEndsEverywhere } from "../../core/src/generated/safetyCase.ts";
@@ -46,14 +48,14 @@ import {
 import { checkStaffHoldProjection, currentStaffHold, liftStaffHold, recordCarriedTrustHold, recordStaffHold, StaffHoldStateChanged } from "./staff-safety-holds.ts";
 import { archivedReportSubject, carryReportRestrictions, dismissReportRestriction, holdFromArchivedReport } from "./report-safety-carryover.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
-import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
-import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
+import { refusedCommandPasses, standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
 import { canSaveCofounderIntent, cofounderIntentBlocksNew } from "../../core/src/generated/cofounderIntent.ts";
 import { standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
 import { homeHelpOfferChangeAllowed } from "../../core/src/generated/boundedHelp.ts";
 import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
 import { forgetEndsAppAccess, profileAgeCounts, publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
-import { ageAnswer, agesStated, classify } from "../src/classify.ts";
+import { ageAnswer, agesStated, birthDateIn, classify, type UnclearBirthDate } from "../src/classify.ts";
+import * as BirthDay from "../../core/src/birth-date.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
 import { contributionHistoryReplayAllowed } from "../../core/src/generated/contributionHistory.ts";
@@ -62,13 +64,17 @@ import { soloReplyReplayAllowed } from "../../core/src/generated/soloConcierge.t
 import { soloConciergeReply, soloConciergeRequest } from "./solo-concierge.ts";
 import { NetworkRuntime, type RuntimeHost, type StagedMemberInvitation } from "./runtime.ts";
 import { isMemberInvitationLink, memberInvitationLink, type InviteRelationship, type MemberInviteEvidence, type MemberInviteRequest } from "../src/invitation.ts";
-import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
+import { birthFieldsOf, effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
+import { storedTeenStatus, type StoredTeenStatus } from "./teen-roster.ts";
+import { teenIntroSwitchAllowed } from "../../core/src/generated/teenIntroSwitch.ts";
+import { teenFriendApp } from "../../core/src/generated/matchLane.ts";
 import { ProfileSuggestions, type SuggestionAuthorization } from "./profile-suggestions.ts";
 import { profileReviewFromEnv } from "./profile-review-factory.ts";
 import { profileReadRequest, savedProfileText } from "./profile-read.ts";
 import { step as stepProfileRead } from "../../core/src/generated/savedProfileRead.ts";
 import { profileFactEditMayRead, profileFactEditMayReplay } from "../../core/src/generated/profileFactEdit.ts";
 import { memberCommandOwner } from "./member-command.ts";
+import { ledgerOptedOut } from "./consent-ledger-read.ts";
 import { participationCommand, saveParticipationControl } from "./participation-controls.ts";
 import { agentSignalsOpenCase, handleAgentSignalReview, parseAgentSignals, recordAgentSignals } from "./agent-signals.ts";
 import { turnWatchMetrics } from "./turn-watch.ts";
@@ -81,14 +87,13 @@ import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js
 import {
   checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
   namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
-  sendAgeDecline, shouldReadPendingAnswer, step as stepTextJoin, textJoinKeepsMemberId, type JoinMembership,
+  sendAgeDecline, shouldReadPendingAnswer, step as stepTextJoin, textJoinKeepsMemberId, birthdayRecorded, joinBirthDateKept, joinTypedAgeKept, type JoinMembership, type MinorNotice,
 } from "../../core/src/generated/textEnrollment.ts";
 import { checkLineAge, checkLineBan, checkLineInviteDecline, checkLineNumberHold, initial as lineGateStart, leaveReply, lineHeldNumberGetsHelp, lineNumberHoldReadNeeded, readLineCommand, safetyAnswerClaims, safetyAppReadNeeded, safetyClaimLeads, safetyCommandClaims, safetyRouteReadNeeded, type LineCommand } from "../../core/src/generated/lineRouting.ts";
 import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
 import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
-import { expectedInviteTransportAllows } from "../../core/src/generated/expectedMemberInvitation.ts";
 import { memberInviteHeldLinkMayRelease } from "../../core/src/generated/memberInvitation.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryPromptCode, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
@@ -111,17 +116,16 @@ import { handlePrivacyStaff, replayPrivacyAtStart } from "./privacy-staff.ts";
 import { BOUNDED_HOME_HELP_CONSENT_CLARIFICATION, boundedHomeHelpConsentCard, boundedHomeHelpConsentCommand,
   boundedHomeHelpConsentReply, homeHelpPlanCode, homeHelpPlanId, type BoundedHomeHelpConsentCommand } from "./bounded-home-help-consent-command.ts";
 import { queueReviewedHomeHelp, reconcileHomeHelpDelivery, stageApprovedHomeHelp } from "./bounded-home-help-delivery.ts";
-import { homeHelpAddressReply } from "./bounded-home-help-address.ts";
+import { homeHelpAddressReply, homeHelpAddressStatus, homeHelpAddressStepOf } from "./bounded-home-help-address.ts";
 import { BoundedHomeHelp } from "../src/bounded-help.ts";
 import { BoundedHomeHelpConsent, type HomeHelpConsentKey } from "../src/bounded-home-help-consent.ts";
 import { BoundedHomeHelpVenue } from "../src/bounded-home-help-venue.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
-import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, type SetStateRequest, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
-import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
-import { networkMatchingAllowed } from "./matching-scope.ts";
+import { CostLedger, costRatesFromEnv, dayOf, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, collectedReplyGuard, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
@@ -135,24 +139,27 @@ import {
 } from "../../platform/src/invite-links.ts";
 import { SeedInvitations } from "../../platform/src/seed-invitations.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
-import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, type Keyword, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
+import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, type Keyword, resolveConsent, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { confirmedUnderage } from "../../core/src/generated/memberAge.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
-import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
+import { createPublicApi, type HomeHelpVenueAnswer, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
 import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoRefusal, type PhotoStorage } from "../../platform/src/photos.ts";
-import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
+import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
+import { PhotoPages } from "../../platform/src/photo-pages.ts";
+import { photoScreenFromEnv, type PhotoScreen } from "../../platform/src/photo-screen.ts";
 import { PhotoUploadLinks } from "../../platform/src/photo-upload-link.ts";
 import { APPEARANCE_PREFIX, appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { memberExportFacetAllowed, memberExportGatheringsAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
+import { phoneChangeLinkReply, phoneChangeLinkRequest } from "./phone-change-link.ts";
 import { sweepPhotos } from "./photoSweep.ts";
-import { choosePhoto, expirePendingPhotos, withdrawPhoto } from "./photoIntakeRelayChoice.ts";
+import { PhotoRelayFlow, type PhotoHoldingsView, type PhotoRequestStatus } from "./photoRelayFlow.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
 import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
@@ -176,10 +183,11 @@ import { threadUpdateBody, threadUpdateReceipt, threadUpdateReplyId, threadUpdat
 import { LEARNING_CONSENT_CONTEXT_PATH } from "../../core/src/svc/learning-consent-context.ts";
 import { learningConsentContextEndpoint } from "./learning-consent-context-endpoint.ts";
 import { SUGGESTION_PATH, profileSuggestionEndpoint, type SuggestionIdentityResolver } from "./profile-suggestion-endpoint.ts";
-import { RELAY_PATH, RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES, relayClassifierFromEnv, relayEndpoint } from "./relay-endpoint.ts";
+import { RELAY_PATH, relayClassifierFromEnv, relayEndpoint } from "./relay-endpoint.ts";
 import { jobPostingRoutes } from "./postings.ts";
 import { applyPeonSearchCommand, namesPeonSearch, peonSearchCommand, peonSearchReplyCurrent, purgePeonSearchDrafts } from "./peon-candidate-search.ts";
 import type { RelayClassifierHook } from "../../engine/src/relay.ts";
+import { qualifiedJudge, readJudgeQualifications, type JudgeQualification } from "./review-qualified.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
 import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../observatory/src/staff.ts";
@@ -193,6 +201,7 @@ const CONVERSATION_CITIES: readonly City[] = ["nyc", "sf", "la"];
 export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
 const MAX_BODY_BYTES = 256 * 1024;
+
 /** The fixed answer when a member's conversation context is unavailable (spec/sharedContext.md). */
 export const CONTEXT_UNAVAILABLE_REPLY = "Sorry, I can't help with that right now. Please try again later.";
 export const WEBHOOK_PATH = "/webhooks/blooio";
@@ -217,7 +226,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 }
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
-  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices"].map(t => `network.${t}`),
+  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices", "review_judgments", "review_judge_requests"].map(t => `network.${t}`),
   ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
@@ -234,8 +243,8 @@ const PENDING_MS = DAY;
 const LOOKING_FOR_DISCLOSURE = "Each app you pick will text you about it. Message frequency varies. Message and data rates may apply. Reply STOP to stop, HELP for help.";
 /** The Network's question after a join with no keyword (founder decision 2). */
 export const LOOKING_FOR_ASK = `What are you looking for: friends, dating, work, or all of these? You can pick more than one. ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
-/** The same question to a member aged 13-17: dating is never offered (slop is never enrolled from it). */
-export const LOOKING_FOR_ASK_MINOR = `What are you looking for: friends, work, or both? ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
+/** The same question to a member aged 13-17: only friends is offered (slop and peon are never enrolled from it). */
+export const LOOKING_FOR_ASK_MINOR = `What are you looking for? Since you're under 18, I can help you find friends. Reply FRIENDS to start. ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
 export const lookingForAsk = (age: number | undefined) => (canBeMatched(age) ? LOOKING_FOR_ASK : LOOKING_FOR_ASK_MINOR);
 const listApps = (apps: AppInfo[]) => apps.map(a => a.domain).join(apps.length === 2 ? " and " : ", ");
 /** The Network's answer after it enrolled the person in the apps they named. */
@@ -272,8 +281,10 @@ export interface ServiceOptions {
   adapter?: ChannelAdapter | ((net: NetworkRuntime["net"], rt: NetworkRuntime) => ChannelAdapter);
   /** Names this instance in pg_stat_activity (the lock holder in /health). */
   instance?: string;
-  /** ConsentNetwork options for every network. `review` must be "human". A new stored state starts with matching off unless `matchingEnabled` is set. */
-  network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
+  /** ConsentNetwork options for every network. A new stored state starts with matching off unless `matchingEnabled` is set. */
+  network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app" | "engineLLM">;
+  reviewJudge?: ReviewJudge | null;
+  engineJudge?: LLM | null;
   /** Staff tokens: "admin:<t>,reviewer@slop:<t>,..." (NETWORK_SERVICE_TOKENS). A role with no app is for every app. Without them every staff route answers 401. */
   tokens?: string;
   /**
@@ -295,18 +306,15 @@ export interface ServiceOptions {
   personDailyCap?: number;
   /** Options for the public API (publicFetch). OTP defaults to OTP_PROVIDER (dev console outside production). */
   publicApi?: Partial<Pick<PublicApiOptions, "otp" | "turnstile" | "hostMap" | "trustForwardedHost" | "minStartMs" | "minVerifyMs" | "otpLimits" | "demo" | "ipOf" | "cloudAuthFetch">>;
-  /** PLATFORM_STOP_SCOPE, PLATFORM_HASH_KEY, NODE_ENV/PLATFORM_ENV. Default process.env. */
+  /** PLATFORM_HASH_KEY, NODE_ENV/PLATFORM_ENV. Default process.env. */
   env?: Env;
   /** Photo storage (platform photos.ts). Default: PHOTO_STORAGE from the environment; null turns photos off. */
   photoStorage?: PhotoStorage | null;
-  /** Explicit approved per-item notice/reviewer authority. Ordinary runtime leaves this absent. */
-  photoRelayPolicy?: PhotoRelayPolicy;
-  /** Fixed public backend origin of selected-item capability fetches, never a model URL. */
-  photoDeliveryOrigin?: string;
-  /** The relay classifier (a trusted test or simulation boundary). Default: relayClassifierFromEnv (Clef when configured, else rules only). */
+  /** The relay classifier (a trusted test or simulation boundary). Default: relayClassifierFromEnv (Clef when configured, else a classifier that cannot run, so every relayed text is blocked). */
   relayClassifier?: RelayClassifierHook;
   /** The appearance rater (server.ts: makeClefRaterFromEnv behind withRetry). Undefined: ratings are off; photos still work. */
   photoRater?: PhotoRater;
+  photoScreen?: PhotoScreen;
   /** Fetch one attachment of a photo sent by text (default: https only, capped; photoIntake.ts). The simulation passes a fake. */
   fetchMedia?: PhotoIntakeDeps["fetchMedia"];
   /** The origin staff photo links use (PHOTO_VIEW_BASE_URL). Default: https://<the app's domain>, which the site router forwards to /api/*. */
@@ -369,8 +377,9 @@ const joinSuffixKind = (segment: string, head: string, appWords: readonly string
  * only in a short answer: one name at most, and filler words ("Sam, 29", "Kim 16"). In a sentence
  * ("Sounds good, 7 works for me") it is not an age.
  */
-export function parseJoinText(text: string, appWords: readonly string[], nameOk: boolean): { age?: number; name?: string; homeCity?: City; invalidHome?: boolean } {
-  const t = text.normalize("NFKC").trim();
+export function parseJoinText(text: string, appWords: readonly string[], nameOk: boolean, dayKey: number): { age?: number; birthDate?: number; unclearDate?: UnclearBirthDate; name?: string; homeCity?: City; invalidHome?: boolean } {
+  const found = birthDateIn(text.normalize("NFKC").trim(), dayKey);
+  const t = found.rest;
   const homes = [...t.matchAll(/(?:\b(?:my home(?: city)?(?: is| in|:)?|i live in|i am based in|i'm based in)|(?:^|[.!?;,]\s*)(?:home(?: city)?(?: is| in|:)?|based in))\s+([^.!?;,\n]+)/gi)];
   let nameText = homes.reduce((text, m) => text.replace(m[0], " "), t);
   // A reply such as "Ari, 29, San Francisco" explicitly names a home too.
@@ -388,10 +397,15 @@ export function parseJoinText(text: string, appWords: readonly string[], nameOk:
   let age = stated.age ?? ageOnly;
   if (age === undefined) age = bareJoinAge(nameText, appWords);
   if (age !== undefined && !(age > 0 && age < 120)) age = undefined;
-  if (!nameOk && age === undefined) return { ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
+  const birthKept = found.birthAge !== undefined && joinBirthDateKept(age !== undefined, age ?? 0, found.birthAge, /\d/.test(t));
+  const typedKept = age !== undefined && joinTypedAgeKept(found.birthAge !== undefined, age, found.birthAge ?? 0);
+  const birthDate = birthKept ? found.birthDate : undefined;
+  age = lowestAge(typedKept ? age : undefined, birthKept ? found.birthAge : undefined);
+  const unclear = found.unclear && age === undefined ? { unclearDate: found.unclear } : {};
+  if (!nameOk && age === undefined) return { ...unclear, ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
   const words = nameText.replace(/[^\p{L}' -]+/gu, " ").split(/[\s-]+/).filter(Boolean);
   const name = ageOnly === undefined ? words.find(w => /^\p{L}[\p{L}']{0,29}$/u.test(w) && !NOT_NAMES.has(lower(w)) && !appWords.includes(lower(w))) : undefined;
-  return { ...(age !== undefined ? { age } : {}), ...(name ? { name: name.charAt(0).toUpperCase() + name.slice(1).toLowerCase() } : {}), ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
+  return { ...(age !== undefined ? { age } : {}), ...(birthDate !== undefined ? { birthDate } : {}), ...unclear, ...(name ? { name: name.charAt(0).toUpperCase() + name.slice(1).toLowerCase() } : {}), ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
 }
 
 class RouteAuthorityExpiredError extends Error {}
@@ -408,7 +422,7 @@ export class NetworkService implements RuntimeHost {
   readonly audit: AuditSink;
   /**
    * The relay classifier per app (relay-endpoint.ts): Clef when the Workers AI token and account are set,
-   * else rules only (undefined). Each Clef call is a cost row for the app (cost.ts). Set at start.
+   * else a classifier that cannot run, so every relayed text is blocked. Each Clef call is a cost row for the app (cost.ts). Set at start.
    */
   private relayHookFor?: (app: AppId) => RelayClassifierHook;
   readonly apps: Record<AppId, AppInfo>;
@@ -423,6 +437,7 @@ export class NetworkService implements RuntimeHost {
   readonly runtimes = new Map<string, NetworkRuntime>();
   readonly log: (line: string) => void;
   private readonly env: Env;
+  private judgeQualifications?: JudgeQualification[];
   private readonly tokens: Map<string, RoleGrant[]>;
   private readonly consoleToken?: string;
   private readonly secret?: string;
@@ -444,7 +459,8 @@ export class NetworkService implements RuntimeHost {
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   readonly photoRelay: PhotoRelayService;
-  private readonly photoDeliveryOrigin?: string;
+  readonly photoRelayFlow: PhotoRelayFlow;
+  private readonly photoPages: PhotoPages;
   /** Photos sent by text (photoIntake.ts). */
   readonly photoIntake: PhotoIntake;
   /** Single-use photo upload links (spec/photoUploadLink.md). */
@@ -456,13 +472,15 @@ export class NetworkService implements RuntimeHost {
   readonly cost: CostLedger;
 
   private readonly relayClassifier?: RelayClassifierHook;
+  private readonly judgeAbort = new AbortController();
+  private readonly reviewJudgeWorker: ReviewJudgeWorker;
+  private readonly engineBudgets = new Map<AppId, { budget: LLMBudget; day: string }>();
 
   private readonly routePolicy: NetworkRoutePolicy | undefined;
   private readonly calendarScheduling?: CalendarSchedulingBridge;
 
   constructor(o: ServiceOptions) {
     this.relayClassifier = o.relayClassifier;
-    if (o.network?.review && o.network.review !== "human") throw new Error(`review mode "${o.network.review}" is refused: production review is "human" only (runbook-real 7.4)`);
     this.clock = o.clock ?? new RealClock();
     this.instance = o.instance ?? `${process.pid}`;
     this.log = o.log ?? console.log;
@@ -505,14 +523,44 @@ export class NetworkService implements RuntimeHost {
     this.profileSuggestions = new ProfileSuggestions(this.sql, this.suggestionAuthorization ?? (async () => false));
     this.people = o.people ?? new PgPeopleStore(this.sql);
     this.cost = new CostLedger({ sink: new PgCostSink(this.sql), clock: this.clock, rates: costRatesFromEnv(this.env), log: this.log });
-    // Opt-in only. One process-wide budget covers all apps and provider retries.
-    const judgeOn = this.env.NETWORK_ENGINE_JUDGE === "1";
-    const judgeUsd = Number(this.env.NETWORK_ENGINE_JUDGE_BUDGET_USD ?? 1);
-    const judgeRequests = Number(this.env.NETWORK_ENGINE_JUDGE_MAX_REQUESTS ?? 100);
-    if (judgeOn && (!Number.isFinite(judgeUsd) || judgeUsd <= 0 || !Number.isSafeInteger(judgeRequests) || judgeRequests <= 0))
-      throw new Error("NETWORK_ENGINE_JUDGE needs a positive dollar budget and a positive integer request limit");
-    const judgeBudget = judgeOn ? new LLMBudget({ maxCostMicro: judgeUsd * 1e6, maxRequests: judgeRequests }) : undefined;
-    this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), env: this.env, apps: id => this.apps[id], hooks: this.hooks() });
+    const dev = devShortcutsAllowed(this.env);
+    if (!dev && (o.reviewJudge !== undefined || o.engineJudge !== undefined)) throw new Error("reviewJudge and engineJudge injection is for tests in PLATFORM_ENV=dev");
+    const reviewLimits = reviewJudgeLimitsFromEnv(this.env);
+    const engineLimits = engineJudgeLimitsFromEnv(this.env);
+    const keyReady = (setting: "JUDGE_PROVIDER" | "RECOMMENDER_PROVIDER") =>
+      providerKeyPresent(this.env, this.env[setting]) === "present" && providerKeyPresent(process.env, process.env[setting]) === "present";
+    const reviewJudges = new Map<AppId, ReviewJudge>();
+    const judgeFor = (app: AppId): ReviewJudge | undefined => {
+      if (dev) return o.reviewJudge ?? undefined;
+      if (!keyReady("JUDGE_PROVIDER")) return undefined;
+      const known = reviewJudges.get(app);
+      if (known) return known;
+      const judge = modelReviewJudge(judgeLLM(this.cost.llmHooks(app, "review_judge")), process.env.JUDGE_MODEL ?? DEFAULT_MODEL);
+      reviewJudges.set(app, judge);
+      return judge;
+    };
+    const engineLLMs = new Map<AppId, LLM>();
+    const engineJudgeFor = (app: AppId): LLM | undefined => {
+      if (dev) return o.engineJudge ?? undefined;
+      if (!keyReady("RECOMMENDER_PROVIDER")) return undefined;
+      const known = engineLLMs.get(app);
+      if (known) return known;
+      const budget = new LLMBudget(engineLimits);
+      budget.spentMicro = engineLimits.maxCostMicro;
+      this.engineBudgets.set(app, { budget, day: "" });
+      const llm = recommenderLLM({ ...this.cost.llmHooks(app, "engine_judge"), budget });
+      engineLLMs.set(app, llm);
+      return llm;
+    };
+    if (dev && !o.engineJudge) this.log("[engine-judge] no engine judge injected: heuristic matching only (dev)");
+    this.reviewJudgeWorker = new ReviewJudgeWorker({
+      clock: this.clock, judgeFor, limits: reviewLimits, log: this.log,
+      teenFacts: async (rt, memberId) => {
+        const facts = await this.teenReviewFacts(rt, { memberId, age: 0, maxAge: 0 });
+        return { accountDays: facts.accountDays, apps: facts.apps, lineType: facts.lineType };
+      },
+    });
+    this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks() });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
     const ids = specs.map(spec => (spec.id.includes(":") ? spec.id : `ntwrk:${spec.id}`));
     for (const [i, spec] of specs.entries()) {
@@ -522,15 +570,17 @@ export class NetworkService implements RuntimeHost {
       // Dev only: the stored switch of these networks starts on (a new state); production always starts off.
       const devOn = (o.devMatching ?? []).includes(id);
       if (devOn && !devShortcutsAllowed(this.env)) throw new Error("devMatching is for PLATFORM_ENV=dev only: production matching is turned on by an admin in the console");
+      const engineLLM = engineJudgeFor(app);
       const network = { ...o.network,
-        ...(judgeBudget && !o.network?.engineLLM ? { engineLLM: recommenderLLM({ ...this.cost.llmHooks(app, "engine_judge"), budget: judgeBudget }) } : {}),
+        ...(engineLLM ? { engineLLM } : {}),
+        judgeReviewer: judgeFor(app)?.reviewer ?? REVIEW_JUDGE_REVIEWER,
         ...(devOn ? { matchingEnabled: true } : {}),
       };
       // The homes this network owns (runtimeForHome): its own city, and for the app's first network
       // every home that no network of the app serves.
       const mine = ids.filter(x => x.split(":")[0] === app);
       const cities = CONVERSATION_CITIES.filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
-      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: networkMatchingAllowed(this.env, app, spec.matchingEnabled ?? true), network, calendarScheduling: this.calendarScheduling, adapter: o.adapter }));
+      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: spec.matchingEnabled ?? true, network, calendarScheduling: this.calendarScheduling, adapter: o.adapter }));
     }
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
     this.photos = new PhotoService({
@@ -541,16 +591,40 @@ export class NetworkService implements RuntimeHost {
       onRating: (personId, app, score, subject, selected) => this.writeRating(personId, app, score, subject, selected),
       onRemoved: (personId, app) => this.dropRatings(personId, app),
     });
-    this.photoDeliveryOrigin = o.photoDeliveryOrigin;
     this.photoRelay = new PhotoRelayService({
-      store: new PgPhotoRelayStore(this.sql), photos: this.photos, signingKey: key, now: () => this.clock.now(),
-      ...(o.photoRelayPolicy && !this.routePolicy ? { policy: o.photoRelayPolicy } : {}),
+      store: new PgPhotoRelayStore(this.sql), photos: this.photos, sql: this.sql, signingKey: key, hashKey: this.hashKey, now: () => this.clock.now(),
+      screen: o.photoScreen ?? photoScreenFromEnv(this.env, { onCall: call => void this.cost.record({
+        app: call.app, kind: "other", provider: "workers_ai", costUsd: this.cost.rates.clefPhotoUsd, unitCostUsd: this.cost.rates.clefPhotoUsd,
+        detail: { purpose: "photo_screen", model: call.model, outcome: call.outcome, ...(call.status ? { status: call.status } : {}), ...(call.inputTokens ? { inputTokens: call.inputTokens } : {}) },
+      }) }),
+      origin: app => `https://${this.apps[app].domain}`,
       authorize: (input, tx) => this.photoRelayParties(input, tx),
       threads: (app, personId) => this.photoRelayThreads(app, personId),
     });
+    this.photoRelayFlow = new PhotoRelayFlow({
+      sql: this.sql, relay: this.photoRelay, photos: this.photos, now: () => this.clock.now(), log: this.log, phoneKey: e164 => this.phoneKey(e164),
+      reply: (rt, e164, text, key) => this.direct(rt, e164, text, key, "reply"),
+      runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId),
+      parties: input => this.photoRelayParties(input),
+      domain: app => this.apps[app].domain,
+    });
+    this.photoPages = new PhotoPages({
+      relay: this.photoRelay, photos: this.photos, sql: this.sql, now: () => this.clock.now(),
+      actions: {
+        consent: async (personId, app, draftId, revision) => {
+          const memberId = await this.photoMemberOf(personId, app);
+          return memberId ? this.photoRelayFlow.consent(personId, app, draftId, revision, memberId) : { state: "refused", text: "I can't send photos here." };
+        },
+        takeBack: async (personId, app, numbers, firstName) => {
+          const memberId = await this.photoMemberOf(personId, app);
+          return memberId ? this.photoRelayFlow.takeBack(personId, app, memberId, numbers, firstName) : { state: "nothing_open" };
+        },
+        report: (recipientPersonId, app, offerId) => this.photoRelayFlow.report(recipientPersonId, app, offerId),
+      },
+    });
     this.photoLinks = new PhotoUploadLinks({
       sql: this.sql, photos: this.photos, hashKey: this.hashKey, now: () => this.clock.now(), log: this.log,
-      origin: app => `https://${this.apps[app].domain}`,
+      origin: app => stagingSiteOrigins(this.env)[app] ?? `https://${this.apps[app].domain}`,
       held: async (personId, app, tx) => { const hold = await currentStaffHold(tx, app, personId); return hold.local !== null || hold.global !== null; },
     });
     this.photoIntake = new PhotoIntake({
@@ -564,7 +638,7 @@ export class NetworkService implements RuntimeHost {
 
   /** Reuse canonical account policy inside the caller's existing PostgreSQL transaction. */
   accountsFor(tx: SQL): Accounts {
-    return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), env: this.env, apps: id => this.apps[id] });
+    return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id] });
   }
 
   private homeHelpAuthority(user?: StaffUser) {
@@ -592,7 +666,7 @@ export class NetworkService implements RuntimeHost {
     return new BoundedHomeHelpVenue((tx, key) => consent.currentConsent(tx, key), this.homeHelpVenueKey, () => this.clock.now());
   }
 
-  private async privateHomeHelpVenue(app: AppInfo, who: Who, input: HomeHelpVenueRequest): Promise<{ address?: string } | undefined> {
+  private async privateHomeHelpVenue(app: AppInfo, who: Who, input: HomeHelpVenueRequest): Promise<HomeHelpVenueAnswer | undefined> {
     const runtime = this.runtimeFor(app.id);
     const id = homeHelpPlanId(input.id);
     if (!runtime?.net.allowedCategories.has("help") || !id || !who.personId) return;
@@ -602,6 +676,11 @@ export class NetworkService implements RuntimeHost {
       if (!participant || !canBeMatched(await accounts.lowestAge(who.e164, participant.person))) return;
       const actor = { app: app.id, memberId: participant.membership.memberId };
       const version = { id, revision: input.revision };
+      if (input.action === "status") {
+        const step = await homeHelpAddressStepOf(tx, this.homeHelpConsent(), { app: app.id, ...version }, actor.memberId, this.clock.now());
+        if ((await accounts.activeMembership(app, who))?.membership.memberId !== actor.memberId) return;
+        return homeHelpAddressStatus(step);
+      }
       const venue = this.homeHelpVenue();
       if (input.action === "reveal") {
         const result = await venue.reveal(tx, actor, version);
@@ -723,8 +802,7 @@ export class NetworkService implements RuntimeHost {
 
   private expectedInvitationCarrier(rt: NetworkRuntime): BlooioAdapter | undefined {
     const adapter = rt.adapter;
-    // Cloud requires an existing active account for this phone. This path only contacts new recipients.
-    return adapter instanceof BlooioAdapter && expectedInviteTransportAllows(adapter.name === "blooio", adapter.live) ? adapter : undefined;
+    return adapter instanceof BlooioAdapter && adapter.name === "blooio" ? adapter : undefined;
   }
 
   async admitExpectedInvitation(tx: SQL, rt: NetworkRuntime, row: {id: string; to: string; text: string}): Promise<boolean> {
@@ -861,8 +939,28 @@ export class NetworkService implements RuntimeHost {
     let any = false;
     await this.inboxTick();
     for (const rt of this.runtimes.values()) any = (await rt.tick()) || any;
+    await this.reviewJudgeTick();
     await this.purge();
     return any;
+  }
+
+  async reviewJudgeTick(): Promise<void> {
+    for (const app of this.engineBudgets.keys()) {
+      await this.refreshEngineBudget(app).catch(e => this.log(`[engine-judge] the budget refresh waits for the next tick (${app}): ${(e as Error).message}`));
+    }
+    await Promise.all([...this.runtimes.values()].map(rt => this.reviewJudgeWorker.run(rt, this.judgeAbort.signal)
+      .catch(e => this.log(`[review-judge] the judge pass waits for the next tick (${rt.id}): ${(e as Error).message}`))));
+  }
+
+  async refreshEngineBudget(app: AppId): Promise<void> {
+    const entry = this.engineBudgets.get(app);
+    if (!entry) return;
+    const day = dayOf(this.clock.now());
+    entry.budget.spentMicro = await llmSpentMicros(this.sql, app, day, "engine_judge");
+    if (entry.day !== day) {
+      entry.budget.requests = 0;
+      entry.day = day;
+    }
   }
 
   /**
@@ -898,12 +996,10 @@ export class NetworkService implements RuntimeHost {
       await queueGatheringNotices(rt, tx => this.accountsFor(tx), () => this.clock.now())
         .catch(() => this.log(`[gathering] RSVP notice projection waits (${rt.id})`));
     }
-    // spec/relayLifecycle.md, "A held item that staff do not decide by its review deadline expires unsent": held relay items share the app's SLA.
-    const relayHeld = rt.net.relayHeld().map(h => ({ oppId: `relay:${h.itemId}`, queuedAt: h.at, deadline: h.deadline }));
-    for (const line of slaAlerts(rt.id, [...rt.net.reviewQueue(), ...relayHeld], this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
+    for (const line of slaAlerts(rt.id, rt.net.reviewQueue(), this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
     if (PHOTO_APPS.includes(rt.app.id) && this.runtimeFor(rt.app.id) === rt) {
-      const expired = await expirePendingPhotos({ sql: this.sql, relay: this.photoRelay, runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), log: line => this.log(line) }, rt.app.id)
-        .catch(e => { this.log(`[photo-relay] the expiry pass waits for the next tick (${rt.id}): ${(e as Error).message}`); return 0; });
+      const { expired } = await this.photoRelayFlow.tick(rt.app.id)
+        .catch(e => { this.log(`[photo-relay] the photo pass waits for the next tick (${rt.id}): ${(e as Error).message}`); return { expired: 0 }; });
       if (expired) this.log(`[alert] review SLA ${rt.id}: ${expired} selected photo(s) expired unsent before a review`);
     }
     if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
@@ -967,7 +1063,7 @@ export class NetworkService implements RuntimeHost {
 
   /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
   async purge() {
-    await sweepPhotos({ photos: this.photos, runtimes: [...this.runtimes.values()], dropRatings: (personId, app) => this.dropRatings(personId, app), log: s => this.log(s) })
+    await sweepPhotos({ photos: this.photos, runtimes: [...this.runtimes.values()], dropRatings: (personId, app) => this.dropRatings(personId, app), log: s => this.log(s), now: () => this.clock.now() })
       .catch(e => this.log(`[purge] photo sweep failed and waits for the next tick: ${(e as Error).message}`));
     for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
       await this.profileSuggestions.applyRetention(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
@@ -1085,22 +1181,32 @@ export class NetworkService implements RuntimeHost {
       return { id: item.id, subject_id: item.subjectId, opportunity_id: opportunityId,
         message_id: messageId === item.subjectId ? messageId : null };
     });
-    const rows = await tx<{ id: string; state: string | null; bound: boolean }[]>`select subject.id, opportunity.state,
+    const rows = await tx<{ id: string; state: string | null; bound: boolean; opportunity_id: string | null }[]>`select subject.id, opportunity.state, opportunity.id as opportunity_id,
       (subject.opportunity_id is not null or message.opportunity_id is not null or opportunity.id is not null) as bound
       from jsonb_to_recordset(${subjects}::jsonb) as subject(id text, subject_id text, opportunity_id text, message_id text)
       left join network.messages message on message.app_id=${app} and message.id=subject.message_id and message.direction='outbound'
         and exists (select 1 from network.members member where member.app_id=${app} and member.id=message.member_id and member.person_id=${personId}::uuid)
       left join network.opportunities opportunity on opportunity.app_id=${app}
         and opportunity.id=coalesce(subject.opportunity_id, message.opportunity_id, subject.subject_id)`;
-    const [reader] = await tx<{ age: number | null }[]>`select ages.age from network.members m
+    const [reader] = await tx`select ages.age as matching_age,
+        ages.birth_date as ab_birth_date, ages.birth_lower as ab_birth_lower, ages.birth_upper as ab_birth_upper, ages.birth_youngest as ab_birth_youngest,
+        ages.floor_birth_lower as ab_floor_birth_lower, ages.floor_birth_upper as ab_floor_birth_upper, ages.floor_birth_youngest as ab_floor_birth_youngest
+      from network.members m
       join platform.matching_ages ages on ages.app_id=m.app_id and ages.member_id=m.id
       where m.app_id=${app} and m.person_id=${personId}::uuid`;
-    const readerMatchable = canBeMatched(reader?.age);
+    const now = this.clock.now();
+    const readerMatchable = !!reader && canBeMatched(birthFieldsOf(reader, now).age ?? reader.matching_age ?? undefined);
+    const teen = new Map<string, StoredTeenStatus>();
+    for (const id of new Set(rows.map(row => row.opportunity_id).filter((x): x is string => !!x))) {
+      teen.set(id, (await storedTeenStatus(tx, app, id, now)).status);
+    }
     const facts = new Map(rows.map(row => [row.id, row]));
     return new Map(items.map(item => {
       const row = facts.get(item.id);
       const stillCurrent = !!row && inboxOpportunityAllowsUpdate(row.bound, row.state !== null, row.state ?? "");
-      return [item.id, connectorUpdateOutcome(stillCurrent, readerMatchable, !!row?.bound, passesLeakGate(item.summary))];
+      const status = row?.opportunity_id ? teen.get(row.opportunity_id) ?? "unmarked" : "unmarked";
+      const readerAgeAllowed = status === "current" || ((status === "unmarked" || status === "adult") && readerMatchable);
+      return [item.id, connectorUpdateOutcome(stillCurrent, readerAgeAllowed, !!row?.bound, passesLeakGate(item.summary))];
     }));
   }
 
@@ -1258,7 +1364,7 @@ export class NetworkService implements RuntimeHost {
 
   /**
    * Sends to a number whose last consent event for this app (or for every app) is an opt-out
-   * (platform.consent_events, PLATFORM_STOP_SCOPE). Compliance texts (the STOP confirmation, a decline)
+   * (platform.consent_events). Compliance texts (the STOP confirmation, a decline)
    * still go. A number with no event at all (a member from before the platform) is not refused here:
    * the member's own opted_out flag covers it.
    */
@@ -1297,7 +1403,7 @@ export class NetworkService implements RuntimeHost {
     const prefs = { ...rt.wiring.prefs(info.age), quietHours: [21, 9], formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
     const referral = invitation?.referral;
     const write = async (tx: SQL) => {
-      if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, m.personId)) return false;
+      if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, m.personId, undefined, undefined, at)) return false;
       if (referral && !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) throw new InvitationUnavailable();
       await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at, invited_by)
         values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
@@ -1334,7 +1440,7 @@ export class NetworkService implements RuntimeHost {
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       memberExists: async ctx => (await this.runtimeFor(ctx.app.id)?.scoped(tx => tx`select 1 from network.members where app_id=${ctx.app.id} and id=${ctx.memberId} and account_status not in ('invited','removed')`) ?? []).length > 0,
       commitReferredJoin: ctx => this.commitReferredJoin(ctx),
-      onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
+      onStop: ctx => this.stopped(ctx.app, ctx.personId, "global"),
       onForget: async (ctx, reason) => {
         const endsAccess = forgetEndsAppAccess(reason === "join_failed");
         // The app's photos go first (leave, delete everything, a new owner of the number).
@@ -1360,6 +1466,7 @@ export class NetworkService implements RuntimeHost {
   }
 
   private async ageLowered(personId: string, age: number) {
+    if (!canBeMatched(age)) await this.photoRelay.endFor(personId);
     if (confirmedUnderage(age)) return this.finishUnderageCleanup(personId);
     if (!canBeMatched(age)) { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
     for (const m of await this.people.memberships(personId)) {
@@ -1422,7 +1529,7 @@ export class NetworkService implements RuntimeHost {
     // A verified person can already exist. The active membership, consent and referral are one outcome.
     await rt.scoped(async tx => {
       const accounts = this.accountsFor(tx);
-      if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, ctx.person.id, ctx.e164, accounts.phoneHash(ctx.e164))) {
+      if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, ctx.person.id, ctx.e164, accounts.phoneHash(ctx.e164), this.clock.now())) {
         throw new JoinReviewRequired();
       }
       const verifiedRecipientHash = memberReferral ? await this.expectedInvitationBinding(tx, ctx.app.id, memberReferral.tokenHash, ctx.e164) : undefined;
@@ -1740,7 +1847,7 @@ export class NetworkService implements RuntimeHost {
     this.api ??= createPublicApi({
       store: this.people, turnstile: this.apiOptions?.turnstile ?? turnstileFromEnv(this.env),
       hashKey: this.hashKey, apps: this.apps, env: this.env,
-      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos, photoLinks: this.photoLinks, photoRelay: this.photoRelay,
+      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos, photoLinks: this.photoLinks, photoPages: this.photoPages,
       participation: ctx => this.memberParticipation(ctx.app, ctx.memberId),
       onResume: ctx => this.resumeMember(ctx.app, ctx.memberId),
       home: ctx => this.memberHome(ctx),
@@ -1789,7 +1896,7 @@ export class NetworkService implements RuntimeHost {
     const alreadyInPendingApp = !!pending && mine.some(x => pendingMatchesApp(pending.app, x.app));
     const hasMembership = mine.length > 0;
     const answerHasAge = shouldReadPendingAnswer(!!pending, alreadyInPendingApp, hasMembership)
-      && parseJoinText(ev.text, this.appWords(), true).age !== undefined;
+      && parseJoinText(ev.text, this.appWords(), true, BirthDay.earliestDayKeyOf(this.clock.now())).age !== undefined;
     const safetyApp = await this.safetyRoute(mine, ev.text, answerHasAge);
     const fallback = checkFallbackRoute(explicit, {
       safetyClaim: !!safetyApp, hasPendingJoin: !!pending, alreadyInPendingApp, hasMembership, answerHasAge,
@@ -1934,8 +2041,7 @@ export class NetworkService implements RuntimeHost {
     let gate = readLineCommand(lineGateStart, LINE_COMMAND[kw ?? "none"], !!leavingId);
     if (gate.phase === "LineStopped") {
       if (legacyEngagement) await this.lineAdapter()?.engaged?.(ev.from);
-      const scope: StopScope = stopCoversEveryApp(kw === "stop_all", route.shared, stopScope(this.env) === "global") ? "global" : "app";
-      return this.stop(kw === "stop_all" ? "stop_all" : "stop", ev.from, app, rt, scope, rowId, line, ev);
+      return this.stop(kw === "stop_all" ? "stop_all" : "stop", ev.from, app, rt, rowId, line, ev);
     }
 
     // spec/lineRouting.md, "A banned number gets only HELP and app leave"
@@ -1994,12 +2100,18 @@ export class NetworkService implements RuntimeHost {
     // spec/photoUploadLink.md, "A link is issued only to an adult live member of a photo app who is not banned or held"
     if (!banned && e164 && !kw && !profileRead && !intentCommand && !ev.mediaUrls?.length && (await this.photoIntake.addRequest(e164, ev.text, rowId, route.app))) return "handled";
     if (!banned && e164 && !kw && !profileRead && !intentCommand && !ev.mediaUrls?.length && (await this.photoIntake.deleteRequest(e164, ev.text, rowId))) return "handled";
+    if (!banned && e164 && memberId && !kw && !ev.mediaUrls?.length && phoneChangeLinkRequest(ev.text)) {
+      await this.direct(rt, ev.from, phoneChangeLinkReply(stagingSiteOrigins(this.env)[app.id] ?? `https://${app.domain}`), `sys:${rowId}`, "reply");
+      return "handled";
+    }
     if (!banned && e164 && ev.mediaUrls?.length && !profileRead && !intentCommand) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
       if (r.outcome !== "not_member" && !ev.text.trim()) return "handled";
     }
+    if (!banned && e164 && memberId && turn && !kw && !profileRead && !intentCommand && !leavingId && route.app === "slop"
+      && await this.photoRelayFlow.turn({ rt, e164, memberId, personId: (await this.accounts.personFor(e164))?.id, text: ev.text, rowId })) return "handled";
 
     // "leave <app>": that app only, on any line.
     const leaving = leavingId ? this.apps[leavingId] : undefined;
@@ -2037,9 +2149,10 @@ export class NetworkService implements RuntimeHost {
       return this.threadUpdatesTurn(rt, memberId, ev, rowId, route);
     }
 
-    // An account command never joins an app or opts the sender in.
     if (!memberId && surveyAnswer) return "handled";
-    if (!memberId && (profileRead || intentCommand || controls || calendar || travel || soloEvents || contributionPage !== undefined)) {
+    const accountIntent = !!intentCommand
+      && !refusedCommandPasses(intentCommand.kind, "target" in intentCommand && intentCommand.target.kind === "pending");
+    if (!memberId && (profileRead || accountIntent || controls || calendar || travel || soloEvents || contributionPage !== undefined)) {
       return controls ? "participation_controls" : calendar ? "calendar_invite" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
@@ -2132,7 +2245,7 @@ export class NetworkService implements RuntimeHost {
     if (!turn || !firstContactMayCheckAge(true, nonMember, banned)) return;
     let pending = await this.pendingOf(e164, "join");
     if (pending && !pendingMatchesApp(pending.app, app.id)) pending = undefined;
-    const age = parseJoinText(ev.text, this.appWords(), !!pending).age ?? pending?.age ?? undefined;
+    const age = parseJoinText(ev.text, this.appWords(), !!pending, BirthDay.earliestDayKeyOf(this.clock.now())).age ?? pending?.age ?? undefined;
     const floor = await this.accounts.lowestAge(e164, person);
     if (!firstContactNoticeAllowed(true, nonMember, banned,
       age === undefined || joinAgeCheck(age, floor, app).ok, floor === undefined || canJoin(floor))) return;
@@ -2164,6 +2277,78 @@ export class NetworkService implements RuntimeHost {
     await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
     await this.projectStatedAge(rt, m.memberId as MemberId);
     return "accepted";
+  }
+
+  private async photoMember(personId: string, appId: AppId, e164: string): Promise<string | undefined> {
+    const person = await this.accounts.personFor(e164);
+    const app = this.apps[appId];
+    if (!person || person.id !== personId || !app || !PHOTO_APPS.includes(appId) || await this.accounts.banned(e164, person)) return undefined;
+    if (resolveConsent(await this.people.lastConsent(e164, appId)) === "opted_out") return undefined;
+    return (await this.accounts.activeMembership(app, { e164, personId }))?.membership.memberId;
+  }
+
+  private async photoMemberOf(personId: string, appId: AppId): Promise<string | undefined> {
+    const m = await this.people.getMembership(personId, appId);
+    return m && ["active", "paused", "onboarding"].includes(m.state) ? m.memberId : undefined;
+  }
+
+  async photoHoldings(personId: string, appId: AppId, e164: string): Promise<PhotoHoldingsView | undefined> {
+    const memberId = await this.photoMember(personId, appId, e164);
+    return memberId ? this.photoRelayFlow.holdings(personId, appId, memberId) : undefined;
+  }
+
+  async photoRequest(personId: string, appId: AppId, e164: string, words: string): Promise<{ status: PhotoRequestStatus; text: string }> {
+    const memberId = await this.photoMember(personId, appId, e164);
+    return memberId ? this.photoRelayFlow.connector({ app: appId, personId, memberId, words }) : { status: "unavailable", text: "I can't send photos here." };
+  }
+
+  async lookingFor(personId: string, appId: AppId, e164: string): Promise<StandingView | undefined> {
+    const app = this.apps[appId];
+    const own = app && await this.accounts.activeMembership(app, { e164, personId });
+    const rt = own && await this.runtimeOfMember(appId, own.membership.memberId);
+    if (!own || !rt) return undefined;
+    const memberId = own.membership.memberId as MemberId;
+    return rt.readState(n => n.standingView(memberId));
+  }
+
+  async minorNotice(personId: string, appId: AppId, e164: string): Promise<MinorNotice | undefined> {
+    const app = this.apps[appId];
+    const own = app && await this.accounts.activeMembership(app, { e164, personId });
+    const rt = own && await this.runtimeOfMember(appId, own.membership.memberId);
+    if (!own || !rt) return undefined;
+    const memberId = own.membership.memberId as MemberId;
+    return rt.readState(n => n.minorNoticeOf(memberId));
+  }
+
+  async changeLookingFor(personId: string, appId: AppId, e164: string, grantId: string, ref: string, change: "pause" | "resume"):
+    Promise<AgentStandingResult | { kind: "refused"; reason: "texts_off" | "not_member" }> {
+    const app = this.apps[appId];
+    if (!app) return { kind: "refused", reason: "not_member" };
+    if (resolveConsent(await this.people.lastConsent(e164, appId)) === "opted_out") return { kind: "refused", reason: "texts_off" };
+    const own = await this.accounts.activeMembership(app, { e164, personId });
+    const rt = own && await this.runtimeOfMember(appId, own.membership.memberId);
+    if (!own || !rt) return { kind: "refused", reason: "not_member" };
+    const memberId = own.membership.memberId as MemberId;
+    const adult = canBeMatched(await this.accounts.lowestAge(e164, own.person));
+    const textsOff = new Error("agent_standing_texts_off"), notMember = new Error("agent_standing_not_member");
+    try {
+      return await rt.unitOfWork(n => {
+        if (n.memberList().find(m => m.id === memberId)?.optedOut) return { kind: "refused", reason: "texts_off" } as const;
+        const result = n.agentStandingChange(memberId, ref, change, adult, `grant:${grantId}`);
+        if (result.kind !== "applied") return result;
+        if (!rt.guardedSystemReply(memberId, `agent-standing:${grantId}:${randomUUID()}`, result.notice, "agent_standing_confirmation"))
+          throw new Error("agent_standing_notice_refused");
+        rt.unit.memberCommand = async tx => {
+          if (await ledgerOptedOut(tx, e164, appId)) throw textsOff;
+          if (!(await memberCommandOwner(tx, this.accountsFor(tx), { app, memberId, e164 }))?.member) throw notMember;
+        };
+        return result;
+      });
+    } catch (e) {
+      if (e === textsOff) return { kind: "refused", reason: "texts_off" };
+      if (e === notMember) return { kind: "refused", reason: "not_member" };
+      throw e;
+    }
   }
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
@@ -2332,21 +2517,20 @@ export class NetworkService implements RuntimeHost {
       let disposition: "handled" | "open";
       const manageIntent = commandText ? standingIntentCommand(ev.text) : undefined;
       if (manageIntent) {
+        let standing: ReturnType<typeof n.manageStandingIntents> = { kind: "silent" };
         try {
           const e164 = normalizePhone(ev.from);
           const own = e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
-          const body = n.manageStandingIntents(memberId, manageIntent, !!own && own.membership.memberId === memberId,
-            change => { rt.unit.standingIntent = change; });
-          if (body) {
-            rt.system(memberId, `sys:${rowId}`, body, "reply", "standing_intent");
-            // The member's own intent references are hex digests that the line's phone pattern can read as a number.
-            const references = body.split(/\s+/).filter(token => /^\W*I-[0-9A-F]{12}\W*$/u.test(token));
+          standing = n.manageStandingIntents(memberId, manageIntent, !!own && own.membership.memberId === memberId, rowId);
+          if (standing.kind === "reply") {
+            rt.system(memberId, `sys:${rowId}`, standing.body, "reply", "standing_intent");
+            const references = standing.body.split(/\s+/).filter(token => /^\W*I-[0-9A-F]{12}\W*$/u.test(token));
             if (references.length) (rt.unit.collectedPublicLinks ??= new Map()).set(`sys:${rowId}`, references);
           }
-          return "standing_intents" as const;
         } finally {
-          rt.replyingTo = undefined;
+          if (standing.kind !== "pass") rt.replyingTo = undefined;
         }
+        if (standing.kind !== "pass") return "standing_intents" as const;
       }
       const read = commandText ? profileReadRequest(ev.text, this.apps) : undefined;
       if (read) {
@@ -2514,7 +2698,7 @@ export class NetworkService implements RuntimeHost {
     } else if (command.kind === "confirm" && adapter) {
       let body: string | undefined;
       await this.expectedInvitations.confirm(tx, {
-        app, inviterMemberId: memberId, code: command.reference, transportAvailable: adapter.live,
+        app, inviterMemberId: memberId, code: command.reference, transportAvailable: !!adapter,
       }, async (draftTx, pending) => {
         if (pending.to === sender || !await this.eligibleExpectedInviteRecipient(draftTx, app, pending.to)) return false;
         body = await this.expectedInvitationText(draftTx, rt.app, memberId, pending.link);
@@ -2629,18 +2813,17 @@ export class NetworkService implements RuntimeHost {
 
   /**
    * STOP or STOP ALL from a number (a signed turn or the legacy webhook): the consent event once per
-   * `ref` at the message's time (consentAt), then every member it covers stops (one app, or every app on
-   * the shared line), and the confirmation. `ev`: the inbound message (the member's own unit stores it).
+   * `ref` at the message's time (consentAt), then every member of every app stops, and the confirmation. `ev`: the inbound message (the member's own unit stores it).
    */
-  private async stop(kw: "stop" | "stop_all", from: string, app: AppInfo, rt: NetworkRuntime, scope: StopScope, ref: string, line: string | undefined,
+  private async stop(kw: "stop" | "stop_all", from: string, app: AppInfo, rt: NetworkRuntime, ref: string, line: string | undefined,
     ev?: Extract<ChannelEvent, { kind: "message" }>): Promise<InboundOutcome> {
     const e164 = normalizePhone(from), t = this.clock.now();
     await rt.identities();
     const memberId = rt.memberOf(from);
-    const { event, reply } = keywordEvent(kw, e164 ?? from, app, this.consentAt(ev), { line, scope, ref });
+    const { event, reply } = keywordEvent(kw, e164 ?? from, app, this.consentAt(ev), { line, ref });
     if (e164 && event) await this.accounts.recordConsent(event);
     const turn = this.inboundTurn();
-    if (turn && event) turn.consent = {state: "opted_out", scope: scope === "global" ? "all" : "app", app: scope === "global" ? null : app.id, at: event.at};
+    if (turn && event) turn.consent = {state: "opted_out", scope: "all", app: null, at: event.at};
     // The STOP is recorded: its confirmation goes out even if a later step of this turn fails (Inbox.rescueCompliance).
     if (turn && event && reply && normalizeAddress(from) === normalizeAddress(turn.from)) turn.confirmation = {id: `sys:${ref}`, body: reply};
     if (e164) await this.people.deletePending(this.phoneKey(e164));
@@ -2648,8 +2831,8 @@ export class NetworkService implements RuntimeHost {
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
     else if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance");
     const person = e164 ? await this.accounts.personFor(e164) : undefined;
-    if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
-    else if (scope === "global") {
+    if (person) await this.stopped(app, person.id, "global", memberId ? { rt, memberId } : undefined);
+    else {
       // A member from before the platform (no person): every app where this address is a member.
       for (const other of this.runtimes.values()) {
         if (other === rt) continue;
@@ -2727,10 +2910,16 @@ export class NetworkService implements RuntimeHost {
     const existing = person ? await this.people.getMembership(person.id, app.id) : undefined;
     const invited = existing?.state === "invited";
     const sharedNetwork = route.shared && app.id === "ntwrk";
-    const statedAge = parseJoinText(ev.text, this.appWords(), false).age;
+    const dayKey = BirthDay.earliestDayKeyOf(t);
+    const recordJoinAge = async (who: Person | undefined, stated: number, birthKey: number | null | undefined) => {
+      if (typeof birthKey === "number" && birthdayRecorded(birthKey, dayKey)) await this.accounts.recordBirthDate(e164, who, birthKey);
+      await this.accounts.recordAge(e164, who, stated);
+    };
+    const first = parseJoinText(ev.text, this.appWords(), false, dayKey);
+    const statedAge = first.age;
     let invitation = stepTextJoin(ban, { type: "checkInvitation", inviteOnly: app.joinMode === "invite", invited, sharedNetwork, hasAge: statedAge !== undefined });
     if (invitation.phase === "AwaitingInviteAgeRecord" && statedAge !== undefined) {
-      await this.accounts.recordAge(e164, person, statedAge);
+      await recordJoinAge(person, statedAge, first.birthDate);
       invitation = stepTextJoin(invitation, { type: "recordStatedAge" });
     }
     if (invitation.phase === "InviteRequired") {
@@ -2742,8 +2931,9 @@ export class NetworkService implements RuntimeHost {
     }
     let p = await this.pendingOf(e164, "join");
     if (p && !pendingMatchesApp(p.app, app.id)) p = undefined;
-    const said = parseJoinText(ev.text, this.appWords(), !!p);
+    const said = parseJoinText(ev.text, this.appWords(), !!p, dayKey);
     const age = lowestAge(said.age, p?.age), name = said.name ?? p?.name ?? undefined;
+    const birthDate = said.birthDate ?? p?.birthDate ?? undefined;
     const homeCity = said.homeCity ?? p?.homeCity;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
     const floor = await this.accounts.lowestAge(e164, person);
@@ -2752,7 +2942,7 @@ export class NetworkService implements RuntimeHost {
         floorRefused: floor !== undefined && !canJoinApp(floor, app) },
     });
     const requestHome = async (): Promise<InboundOutcome> => {
-      await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and age.", `sys:${rowId}`, "reply");
+      await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and birthday (month, day and year).", `sys:${rowId}`, "reply");
       return "join_asked";
     };
     const declineAge = async (stated: boolean): Promise<InboundOutcome> => {
@@ -2768,18 +2958,19 @@ export class NetworkService implements RuntimeHost {
     if (answer.phase === "AskForAge") {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity } : {}), at: t });
       const { count } = await this.people.hit(`join_ask:${app.id}:${key}`, DAY, t);
-      if (count <= 3) await this.direct(rt, ev.from, ask, `sys:${rowId}`, "reply");
+      const again = said.unclearDate ? c.birthdayWhich(said.unclearDate.monthFirst, said.unclearDate.dayFirst) : ask;
+      if (count <= 3) await this.direct(rt, ev.from, again, `sys:${rowId}`, "reply");
       return "join_asked";
     }
     if (answer.phase !== "AwaitingAgeRecord" || age === undefined) return "join_asked";
-    await this.accounts.recordAge(e164, person, age);
+    await recordJoinAge(person, age, birthDate);
     const recorded = stepTextJoin(answer, { type: "recordStatedAge" });
     const check = joinAgeCheck(age, await this.accounts.lowestAge(e164, person), app);
     const ageCheck = stepTextJoin(recorded, { type: "checkTextJoinAge", ageAllowed: check.ok });
     if (ageCheck.phase === "RefuseAge") return declineAge(true);
     if (ageCheck.phase === "AskForHome") return requestHome();
     if (ageCheck.phase === "AskForName") {
-      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, ...(homeCity ? { homeCity } : {}), at: t });
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, birthDate: birthDate ?? null, ...(homeCity ? { homeCity } : {}), at: t });
       await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`, "reply");
       return "join_asked";
     }
@@ -2787,7 +2978,7 @@ export class NetworkService implements RuntimeHost {
     await this.people.deletePending(key, "join");
     // Join: the person (new or known), the membership, the opt-in (with the words they answered), then the member and the welcome.
     const who: Person = person ?? (await this.accounts.createPerson(e164, "inbound_message", check.effective ?? age));
-    await this.accounts.recordAge(e164, who, age);
+    await recordJoinAge(who, age, birthDate);
     const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
     const membership: Membership = {
       app: app.id, personId: who.id, memberId: textJoinKeepsMemberId(joinMembershipOf(existing?.state)) && existing ? existing.memberId : `${app.id}_${randomUUID()}`,
@@ -2904,7 +3095,56 @@ export class NetworkService implements RuntimeHost {
   }
 
   /** The review queue of a network (default The Network), oldest first, from the newest stored state. */
-  reviewQueue(rt = this.main) { return rt.reviewQueue(); }
+  async reviewQueue(rt = this.main) {
+    const items = await rt.reviewQueue();
+    const held = items.filter(item => item.exception).map(item => item.oppId);
+    const rows = held.length ? await rt.scoped(tx => tx`select opportunity_id, revision, reason, verdict, base_packet_hash, explanation
+      from network.review_judgments where app_id = ${rt.app.id} and network_id = ${rt.id} and opportunity_id = any(${tx.array(held, "TEXT")}) and status = 'decided'
+      order by decided_at desc`) as { opportunity_id: string; revision: number; reason: string; verdict: string; base_packet_hash: string; explanation: string | null }[] : [];
+    const explanationOf = (oppId: string, exception: NonNullable<(typeof items)[number]["exception"]>) => {
+      const judged = rt.net.opps.get(oppId)?.review?.judged;
+      const hash = judged?.revision === exception.revision ? judged.basePacketHash : undefined;
+      return rows.find(r => r.opportunity_id === oppId && r.revision === exception.revision && r.reason === exception.reason && r.verdict !== "approve"
+        && (hash === undefined || r.base_packet_hash === hash))?.explanation || null;
+    };
+    return Promise.all(items.map(async item => {
+      const exception = item.exception
+        ? { verdict: item.exception.verdict, reason: item.exception.reason, rubric: item.exception.rubric, at: item.exception.at, revision: item.exception.revision,
+          explanation: explanationOf(item.oppId, item.exception) }
+        : undefined;
+      const teen = item.teen ? { members: await Promise.all(item.teen.members.map(m => this.teenReviewFacts(rt, m))) } : undefined;
+      return { ...item, ...(exception ? { exception } : {}), ...(teen ? { teen } : {}) };
+    }));
+  }
+
+  async reviewJudged(rt: NetworkRuntime, since: number) {
+    const rows = await rt.scoped(tx => tx`select j.opportunity_id, j.revision, j.verdict, j.reason, j.rubric, j.decided_at, j.model, j.prompt_version,
+        r.approver, r.decision, o.state
+      from network.review_judgments j
+      left join network.review_items r on r.app_id = j.app_id and r.opportunity_id = j.opportunity_id
+      left join network.opportunities o on o.app_id = j.app_id and o.id = j.opportunity_id
+      where j.app_id = ${rt.app.id} and j.network_id = ${rt.id} and j.status = 'decided' and j.decided_at >= ${new Date(since)}
+      order by j.decided_at desc, j.opportunity_id, j.revision limit 200`) as Row[];
+    return rows.map(r => ({ oppId: r.opportunity_id as string, revision: Number(r.revision), verdict: r.verdict as string, reason: r.reason as string, rubric: r.rubric as string,
+      decidedAt: new Date(r.decided_at as string).getTime(), model: (r.model as string | null) ?? null, promptVersion: r.prompt_version as string,
+      approver: (r.approver as string | null) ?? null, decision: (r.decision as string | null) ?? null, stage: (r.state as string | null) ?? null }));
+  }
+
+  async reviewJudgment(rt: NetworkRuntime, oppId: string, revision: number) {
+    const rows = await rt.scoped(tx => tx`select verdict, reason, rubric, decided_at, model, prompt_version, explanation, packet, packet_hash
+      from network.review_judgments where app_id = ${rt.app.id} and network_id = ${rt.id} and opportunity_id = ${oppId} and revision = ${revision} and status = 'decided'
+      order by decided_at desc, packet_hash`) as Row[];
+    return rows.map(r => ({ oppId, revision, verdict: r.verdict as string, reason: r.reason as string, rubric: r.rubric as string,
+      decidedAt: new Date(r.decided_at as string).getTime(), model: (r.model as string | null) ?? null, promptVersion: r.prompt_version as string,
+      explanation: (r.explanation as string | null) ?? "", packet: r.packet, packetHash: r.packet_hash as string }));
+  }
+
+  private async teenReviewFacts(rt: NetworkRuntime, m: TeenReviewMember): Promise<TeenReviewMember & { apps: AppId[]; accountDays: number; lineType: string | null }> {
+    const e164 = rt.addressOf(m.memberId);
+    const person = e164 ? await this.accounts.personFor(e164) : undefined;
+    const facts = person ? await this.accounts.teenAgeFacts(person.id) : undefined;
+    return { ...m, apps: facts?.apps ?? [], accountDays: facts?.accountDays ?? 0, lineType: facts?.lineType ?? null };
+  }
 
   review(user: StaffUser, oppId: string, decision: ReviewDecision, o: Omit<ReviewOptions, "reviewer">, rt = this.main) {
     // The reviewer of record is the signed-in person (reviewerOfRecord), never a body field; time on the item is clamped.
@@ -2912,6 +3152,10 @@ export class NetworkService implements RuntimeHost {
     const opts: ReviewOptions = { ...o, secondsSpent, reviewer: user.id };
     const detail = { decision, reason: o.reason ?? null, revision: o.revision ?? null, ...(o.swapOut ? { swapOut: o.swapOut } : {}), ...(o.explanations || o.objective ? { edited: [...Object.keys(o.explanations ?? {}).map(k => `explanation:${k}`), ...(o.objective !== undefined ? ["objective"] : [])] } : {}) };
     return this.staffAction(rt, user, "review", { type: "opportunity", id: oppId }, detail, n => n.decide(oppId, decision, opts));
+  }
+
+  stopReview(user: StaffUser, oppId: string, revision: number, rt = this.main) {
+    return this.staffAction(rt, user, "review_stop", { type: "opportunity", id: oppId }, { revision }, n => n.stopApproved(oppId, user.id, revision));
   }
 
   liftHold(user: StaffUser, memberId: MemberId, note?: string, rt = this.main) {
@@ -3303,7 +3547,6 @@ export class NetworkService implements RuntimeHost {
     return r.ok ? { ok: true, photos: r.value } : { ok: false, reason: r.reason };
   }
 
-  /** The matching switch of one network. A network outside its launch scope refuses "on" (spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope"). */
   setMatching(user: StaffUser, on: boolean, rt = this.main) {
     if (on && !rt.matchingAllowed) {
       // A refused attempt is audited too.
@@ -3313,15 +3556,51 @@ export class NetworkService implements RuntimeHost {
     return this.staffAction(rt, user, "config", { type: "config", id: `matching_${rt.id}` }, { matching: on }, n => { n.setMatchingEnabled(on, user.id); return { ok: true }; });
   }
 
+  async setTeenIntros(user: StaffUser, on: boolean, rt = this.main): Promise<ActionResult | { ok: false; reason: string; changed: string[]; failed: string[] }> {
+    if (!teenIntroSwitchAllowed(on, teenFriendApp(rt.app.id))) {
+      await this.audit.write({ actor: user.id, roles: user.roles, action: "config", targetType: "config", targetId: `teen_intros_${rt.id}`, mode: "real", app: rt.app.id,
+        at: this.clock.now(), ok: false, detail: { teenIntros: on, network: rt.id, reason: "teen_intros_not_offered" } });
+      return { ok: false, reason: "teen_intros_not_offered" };
+    }
+    const roles: StaffRole[] = on ? ["admin"] : ["admin", "safety"];
+    const targets = [...this.runtimes.values()].filter(r => teenFriendApp(r.app.id)).sort((a, b) => a.id.localeCompare(b.id));
+    const missing = targets.filter(r => !allowed(user, roles, r.app.id, "real"));
+    if (!targets.length || missing.length) {
+      const reason = targets.length ? "forbidden" : "teen_intros_not_offered";
+      for (const r of targets.length ? missing : [rt]) {
+        await this.audit.write({ actor: user.id, roles: user.roles, action: "config", targetType: "config", targetId: `teen_intros_${r.id}`, mode: "real", app: r.app.id,
+          at: this.clock.now(), ok: false, detail: { teenIntros: on, network: r.id, reason } });
+      }
+      return { ok: false, reason };
+    }
+    const changed: string[] = [], failed: string[] = [];
+    let refused: string | undefined;
+    for (const r of targets) {
+      const one = await this.staffAction(r, user, "config", { type: "config", id: `teen_intros_${r.id}` }, { teenIntros: on },
+        n => on ? n.resumeTeenIntros(user.id) : n.stopTeenIntros(user.id))
+        .catch((e: Error): ActionResult => { this.log(`[teen-intros] ${r.id} failed: ${e.message}`); return { ok: false, reason: "teen_intros_write_failed" }; });
+      if (one.ok) changed.push(r.id);
+      else { failed.push(r.id); refused ??= one.reason; }
+    }
+    return refused === undefined ? { ok: true } : { ok: false, reason: refused, changed, failed };
+  }
+
+  reportOlderThanStated(user: StaffUser, rt: NetworkRuntime, memberId: MemberId): Promise<ActionResult> {
+    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "older_than_stated" }, () => rt.unitOfWork(n => n.reportOlderThanStated(memberId, user.id)));
+  }
+
   /** Health of one network (default The Network), plus a summary of every network the user holds a role for. */
   async health(rt = this.main, user?: StaffUser) {
-    const h = await rt.health();
+    const base = await rt.health();
+    this.judgeQualifications ??= readJudgeQualifications(line => this.log(line));
+    const qualified = qualifiedJudge(this.judgeQualifications, process.env.JUDGE_MODEL ?? DEFAULT_MODEL);
+    const h = { ...base, reviewJudge: { ...base.reviewJudge, qualified } };
     if (this.runtimes.size < 2) return h;
     const networks = [];
     for (const r of this.runtimes.values()) {
       if (user && r !== rt && !allowed(user, ["admin", "reviewer", "safety", "analyst"], r.app.id, "real")) continue;
-      const x = r === rt ? h : await r.health();
-      networks.push({ network: x.network, app: x.app, matchingAllowed: x.matchingAllowed, matchingEnabled: x.matchingEnabled, lastTick: x.lastTick.thisInstance, lockHolder: x.lockHolder, backlog: x.backlog });
+      const x = r === rt ? base : await r.health();
+      networks.push({ network: x.network, app: x.app, matchingAllowed: x.matchingAllowed, matchingEnabled: x.matchingEnabled, teenIntrosEnabled: x.teenIntrosEnabled, lastTick: x.lastTick.thisInstance, lockHolder: x.lockHolder, backlog: x.backlog });
     }
     return { ...h, networks };
   }
@@ -3437,20 +3716,20 @@ export class NetworkService implements RuntimeHost {
             result.eventId = String(event.id);
           }
         } else {
-          result = await recordAgentSignals(tx,{app,memberId,actionId:id,signals:signals!,now:this.clock.now()});
+          result = await recordAgentSignals(tx,{runtime:rt,memberId:memberId as MemberId,personId:who.person.id,e164:who.e164,actionId:id,signals:signals!,now:this.clock.now()});
         }
         await complete(tx,result);
         return result;
       };
-      if (!signals || !agentSignalsOpenCase(signals)) return json(await this.sql.begin(act));
-      // spec/staffSafetyService.md, "An agent signal goes to the decision that owns it": the case event commits with the signal.
+      if (!signals) return json(await this.sql.begin(act));
+      const concern = agentSignalsOpenCase(signals);
       let recorded: Row | undefined;
       await rt.unitOfWork(n => {
-        n.recordAgentSafetyConcern(memberId as MemberId);
+        if (concern) n.recordAgentSafetyConcern(memberId as MemberId);
         rt.unit.memberCommand = async tx => { recorded = await act(tx); };
       });
       if (!recorded) throw new Error("Agent signal unit saved no receipt");
-      this.log(`[alert] ${app}: an agent safety concern waits for safety staff (GET /signals)`);
+      if (concern) this.log(`[alert] ${app}: an agent safety concern waits for safety staff (GET /signals)`);
       return json(recorded);
     } catch (error) {
       if (error instanceof RouteAuthorityExpiredError) return json({error:"route_authority_invalid",retryable:false},403);
@@ -3651,7 +3930,7 @@ export class NetworkService implements RuntimeHost {
         const rt = await this.runtimeOfMember(handled.app, memberId);
         const replyIds = handled.replyIds;
         const bookingRuntime = rt ?? this.runtimeFor(handled.app);
-        if (bookingRuntime && await bookingRuntime.scoped(tx => peerOpportunityContactRestricted(tx, bookingRuntime.app.id, memberId, replyIds))) {
+        if (bookingRuntime && await bookingRuntime.scoped(tx => peerOpportunityContactRestricted(tx, bookingRuntime.app.id, memberId, replyIds, this.clock.now()))) {
           return json({ error: "turn_opportunity_blocked", retryable: false }, 409);
         }
         if (bookingRuntime && await bookingRuntime.scoped(tx =>
@@ -3840,44 +4119,10 @@ export class NetworkService implements RuntimeHost {
     return Number.isSafeInteger(until) && until>this.clock.now() && until<=item.expiresAt && safeEqual(proof!,this.photoReviewProof(item,reviewer,until));
   }
 
-  /** Resolve only an existing claimed queue item; no caller-chosen origin or attachment URL. */
-  private async resolveRelayPhoto(req: Request): Promise<Response> {
-    const url=new URL(req.url);
-    if (req.method!=="POST" || url.search) return json({error:"invalid_request"},400);
-    const bytes=await readCapped(req,RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES);
-    if (bytes==="too_large") return json({error:"payload_too_large"},413);
-    let raw:string,b:Record<string,unknown>;
-    try {raw=new TextDecoder("utf-8",{fatal:true}).decode(bytes);b=JSON.parse(raw);} catch {return json({error:"invalid_request"},400);}
-    const auth=await svcVerify(this.env.SERVICE_TURN_SECRET,{method:"POST",path:RELAY_PHOTO_RESOLVE_PATH,headers:req.headers,body:raw,nowS:Math.floor(this.clock.now()/1000)});
-    if (!auth.ok) return json({error:auth.reason},auth.reason==="no_secret"?503:401);
-    if (!b || typeof b!=="object" || Array.isArray(b) || Object.keys(b).some(k=>!["networkAuthority","id","deliveryId","to","approvedPhotos"].includes(k))
-      || typeof b.id!=="string" || b.id!==auth.id || typeof b.deliveryId!=="string" || typeof b.to!=="string" || normalizePhone(b.to)!==b.to)
-      return json({error:"invalid_request"},400);
-    // Isolated handled-reply realms cannot originate relays, even with a valid envelope.
-    if (!routeEnvelopeAllowed(this.routePolicy,b.networkAuthority,this.clock.now()) || this.routePolicy) return json({error:"route_authority_invalid"},403);
-    const photos=parseApprovedRelayPhotos(b.approvedPhotos);
-    if (!photos || !this.photoDeliveryOrigin || photos.length!==1 || b.deliveryId!==`relay:${photos[0]!.itemId}`) return json({error:"photo_unavailable"},403);
-    const d=photos[0]!,rt=await this.runtimeOfMember(d.app,d.recipientMemberId);
-    if (!rt) return json({error:"photo_unavailable"},403);
-    const allowed=await rt.scoped(async tx=>{
-      const [row]=await tx`select outbound.*,identity.e164 from platform.outbound outbound
-        join network.members member on member.app_id=outbound.app_id and member.id=outbound.member_id
-        join platform.phone_identities identity on identity.person_id=member.person_id
-        where outbound.id=${b.deliveryId as string} and outbound.app_id=${d.app} and identity.e164=${b.to as string}`;
-      if (!row || row.status!=="sending" || row.member_id!==d.recipientMemberId || row.opportunity_id!==d.threadId || row.to_address!==b.to
-        || !isDeepStrictEqual(row.approved_photos,photos)) return false;
-      return (await rt.relayAdmission(tx,{id:row.id,memberId:row.member_id,oppId:row.opportunity_id,approvedPhotos:photos})).ok;
-    });
-    if (!allowed) return json({error:"photo_unavailable"},403);
-    const resolved=await this.photoRelay.issueDelivery(d,d.recipientMemberId,b.id as string,this.photoDeliveryOrigin);
-    return resolved?json({photos:[resolved]}):json({error:"photo_unavailable"},403);
-  }
-
   // ------------------------------------------------------------------ HTTP
   /** The HTTP handler: the inbound webhooks and the staff API. The public API is publicFetch (its own port). */
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    if (url.pathname === RELAY_PHOTO_RESOLVE_PATH) return this.resolveRelayPhoto(req);
     if (url.pathname === calendarOwnerPath && this.calendarScheduling) return this.calendarScheduling.ownerProof(req, input => this.calendarSchedulingOwner(input));
     if (url.pathname === LEARNING_CONSENT_CONTEXT_PATH) return learningConsentContextEndpoint({ sql: this.sql, now: () => this.clock.now(), secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, reviewEnabled: !!this.suggestionIdentity }, req);
     if (url.pathname === PROFILE_REVIEW_WITHDRAWAL_PATH) {
@@ -3935,7 +4180,7 @@ export class NetworkService implements RuntimeHost {
     }
     if (url.pathname.startsWith(SUGGESTION_PATH)) return profileSuggestionEndpoint({ sql: this.sql, now: () => this.clock.now(), secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, resolveIdentity: this.suggestionIdentity, authorizeSource: this.suggestionAuthorization }, req);
     if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
-    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, photos:this.photoRelay, choosePhoto: input => choosePhoto({ sql: this.sql, photos: this.photos, relay: this.photoRelay, now: () => this.clock.now() }, input), withdrawPhoto: input => withdrawPhoto({ relay: this.photoRelay }, input), runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), ...(this.relayHookFor ? { hookFor: this.relayHookFor } : {}) }, req);
+    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, photoRequest: input => this.photoRelayFlow.relay(input), runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), ...(this.relayHookFor ? { hookFor: this.relayHookFor } : {}) }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
@@ -3945,8 +4190,6 @@ export class NetworkService implements RuntimeHost {
         if (!isAppId(appPart)) return json({ ok: false, error: "not_found" }, 404);
         return this.webhook(req, this.secrets[appPart], appPart);
       }
-      // Production review is "human" only (PRD 32.8). The mode is not exposed here.
-      if (path === "/review-mode" || path.endsWith("/review-mode")) return json({ ok: false, error: "not_exposed" }, 404);
       // The network: /apps/:app/... or ?app= (and ?city=); default The Network.
       let app: AppId = "ntwrk";
       const scoped = path.match(/^\/apps\/([^/]+)(\/.*)?$/);
@@ -4012,6 +4255,27 @@ export class NetworkService implements RuntimeHost {
         const no = need(["reviewer", "safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_review_queue", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, items: await this.reviewQueue(rt) });
+      }
+      if (req.method === "GET" && path === "/review/judged") {
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        const seen = url.searchParams.get("since");
+        if (seen !== null && !/^\d{1,15}$/.test(seen)) return json({ ok: false, error: "invalid_since" }, 400);
+        const now = this.clock.now();
+        const since = Math.max(seen === null ? 0 : Number(seen), now - 7 * DAY);
+        await this.audit.write({ at: now, actor: user.id, roles: user.roles, action: "read_review_judged", mode: "real", ok: true, app: rt.app.id, detail: { since } });
+        return json({ ok: true, network: rt.id, since, items: await this.reviewJudged(rt, since) });
+      }
+      const judgedPath = path.match(/^\/review\/judged\/([^/]+)\/(\d{1,9})$/);
+      if (req.method === "GET" && judgedPath) {
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        let id: string;
+        try { id = decodeURIComponent(judgedPath[1]!); } catch { return json({ ok: false, error: "invalid_review" }, 400); }
+        if (id.length > 200) return json({ ok: false, error: "invalid_review" }, 400);
+        const revision = Number(judgedPath[2]);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_review_judgment", mode: "real", ok: true,
+          app: rt.app.id, targetType: "opportunity", targetId: id, detail: { revision } });
+        const items = await this.reviewJudgment(rt, id, revision);
+        return items.length ? json({ ok: true, network: rt.id, items }) : json({ ok: false, error: "judgment_not_found" }, 404);
       }
       const planPreviewPath = path.match(/^\/review\/([^/]+)\/plan$/);
       if (req.method === "GET" && planPreviewPath) {
@@ -4090,10 +4354,8 @@ export class NetworkService implements RuntimeHost {
       if (req.method === "GET" && (path === "/staff/relay/held" || path === "/relay/held")) {
         const no = need(["reviewer", "safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_relay_held", mode: "real", ok: true, app: rt.app.id });
-        const held = await rt.readState(n => n.relayHeld());
         const selected = (await this.photoRelay.held(rt.app.id)).filter(p=>p.threadId && p.app===rt.app.id);
-        return json({ ok: true, network: rt.id, items: [...held.map(h => ({ id: h.itemId, itemId: h.itemId, app: h.app, kind: h.kind, memberId: h.from, from: h.from, reasons: h.reasons, createdAt: h.at, deadline: h.deadline,
-          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })), ...selected.map(p => ({ id: p.id, itemId: p.id, app: p.app, kind: "photo", memberId: p.senderMemberId, from: p.senderMemberId, reasons: ["photo:review"], createdAt: p.createdAt, deadline: null }))] });
+        return json({ ok: true, network: rt.id, items: [...selected.map(p => ({ id: p.id, itemId: p.id, app: p.app, kind: "photo", memberId: p.senderMemberId, from: p.senderMemberId, reasons: ["photo:review"], createdAt: p.createdAt, deadline: p.deadline }))] });
       }
       const relayPhotoPreview=path.match(/^\/(?:staff\/)?relay\/(pri_[a-zA-Z0-9_-]+)\/photo$/);
       if (req.method==="GET" && relayPhotoPreview) {
@@ -4101,7 +4363,7 @@ export class NetworkService implements RuntimeHost {
         await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"read_relay_photo",targetId:relayPhotoPreview[1]!,mode:"real",ok:true,app:rt.app.id,detail:{phase:"requested"}});
         const selected=await this.photoRelay.item(relayPhotoPreview[1]!);
         let media:Awaited<ReturnType<PhotoRelayService["reviewBytes"]>>;
-        try {media=selected?.app===rt.app.id?await this.photoRelay.reviewBytes(selected.id,user.id):undefined;}
+        try {media=selected?.app===rt.app.id?await this.photoRelay.reviewBytes(selected.id,{id:user.id,roles:user.roles}):undefined;}
         catch(error){
           await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"read_relay_photo",targetId:relayPhotoPreview[1]!,mode:"real",ok:false,app:rt.app.id,detail:{phase:"result"}});
           throw error;
@@ -4190,6 +4452,17 @@ export class NetworkService implements RuntimeHost {
         }
         return result(await this.review(user, oppId, decision, { reason, note, secondsSpent, explanations, objective, swapOut, revision }, rt));
       }
+      const stopPath = path.match(/^\/review\/([^/]+)\/stop$/);
+      if (stopPath) {
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        let oppId: string;
+        try { oppId = decodeURIComponent(stopPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, unknown> | undefined;
+        if (!b) return json({ ok: false, error: "invalid_json" }, 400);
+        const revision = b.revision;
+        if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0 || oppId.length > 200) return json({ ok: false, error: "invalid_review" }, 400);
+        return result(await this.stopReview(user, oppId, revision, rt));
+      }
       if (path === "/safety/lift" || path === "/safety/close") {
         const no = need(["safety"]); if (no) return no;
         const b = await body(req) as Record<string, any> | undefined;
@@ -4238,32 +4511,15 @@ export class NetworkService implements RuntimeHost {
         if(selected)await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:release?"relay_release":"relay_reject",targetId:itemId,mode:"real",ok:true,app:rt.app.id,reason:note,detail:{phase:"requested"}});
         try {
         if (selected) {
-          if (!release) r = await this.photoRelay.review(itemId,user.id,"unsafe") ? {ok:true} : {ok:false,reason:"not_held"};
-          else {
-            if (!this.validPhotoReview(selected,user.id,b.photoReviewToken) || !await this.photoRelay.reviewAuthorized(itemId,user.id)) {
-              await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"relay_release",targetId:itemId,mode:"real",ok:false,app:rt.app.id,reason:note,detail:{phase:"result",delivered:false,refused:"photo_preview_required"}});
-              return json({ok:false,reason:"photo_preview_required"},403);
-            }
-            if (selected.state === "pending") {
-              if (!await this.photoRelay.review(itemId,user.id,"safe")) throw new Error("Photo review refused");
-              await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"relay_release",targetId:itemId,mode:"real",ok:true,app:rt.app.id,reason:note,detail:{phase:"reviewed",delivered:false}});
-            }
-            const photo=await this.photoRelay.approved(itemId);
-            if (!photo) r={ok:false,reason:"photo_unavailable"};
-            else r=await rt.unitOfWork(async net=>{
-              const canonical=await rt.relayParties([photo.senderMemberId,photo.recipientMemberId] as MemberId[]);
-              const outcome=await net.relayRequest({itemId,from:photo.senderMemberId as MemberId,kind:"photo",photoIds:[photo.photoId],matchId:photo.threadId},
-                {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]},canonical});
-              if (outcome.decision !== "sent") return {ok:false as const,reason:outcome.reason};
-              rt.unit.completeAction=async tx=>{
-                if (!this.validPhotoReview(selected,user.id,b.photoReviewToken) || !await this.photoRelay.reviewAuthorized(itemId,user.id,tx)) throw new Error("Photo review expired or authority changed before commit");
-                const claimed=await this.photoRelay.claimForAction(tx,itemId,rt.app.id,photo.threadId,photo.senderMemberId,`photo-selection:${itemId}`);
-                if (!claimed || JSON.stringify(claimed)!==JSON.stringify(photo)) throw new Error("Photo selection changed before commit");
-              };
-              return {ok:true as const,delivered:false}; // Queue handoff is not a provider delivery receipt.
-            });
+          const reviewer = { id: user.id, roles: user.roles };
+          if (release && (!this.validPhotoReview(selected,user.id,b.photoReviewToken) || !await this.photoRelay.reviewAuthorized(itemId,reviewer))) {
+            await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"relay_release",targetId:itemId,mode:"real",ok:false,app:rt.app.id,reason:note,detail:{phase:"result",delivered:false,refused:"photo_preview_required"}});
+            return json({ok:false,reason:"photo_preview_required"},403);
           }
-        } else r = await rt.unitOfWork(n => release ? n.releaseRelay(itemId, user.id) : n.rejectRelay(itemId, user.id));
+          const decided = await this.photoRelay.review(itemId, reviewer, release ? "safe" : "unsafe");
+          r = decided ? {ok:true} : {ok:false,reason:"not_held"};
+          if (decided && selected.offerId) await this.photoRelayFlow.settle(rt.app.id, selected.offerId);
+        } else r = { ok: false, reason: "not_held" };
         } catch(error) {
           if(selected)await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:release?"relay_release":"relay_reject",targetId:itemId,mode:"real",ok:false,app:rt.app.id,reason:note,detail:{phase:"result",delivered:false,refused:"photo_queue_or_review_failed"}});
           throw error;
@@ -4294,6 +4550,18 @@ export class NetworkService implements RuntimeHost {
         const e164 = normalizePhone(b?.phone);
         if (!e164) return json({ ok: false, error: "phone_required" }, 400);
         return result(await this.invite(user, rt, e164));
+      }
+      if (path === "/teen-intros") {
+        const b = await body(req) as Record<string, any> | undefined;
+        if (typeof b?.on !== "boolean") return json({ ok: false, error: "on_required" }, 400);
+        const no = need(b.on ? ["admin"] : ["admin", "safety"]); if (no) return no;
+        return result(await this.setTeenIntros(user, b.on, rt));
+      }
+      if (path === "/safety/older-than-stated") {
+        const no = need(["safety"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        if (typeof b?.memberId !== "string" || !b.memberId || b.memberId.length > 200) return json({ ok: false, error: "memberId_required" }, 400);
+        return result(await this.reportOlderThanStated(user, rt, b.memberId as MemberId));
       }
       if (path === "/matching") {
         const no = need(["admin"]); if (no) return no;
@@ -4332,6 +4600,7 @@ export class NetworkService implements RuntimeHost {
   }
 
   async close(force = false) {
+    this.judgeAbort.abort();
     await Promise.all([
       this.audit.close(force).catch(() => {}),
       this.sql.end(force ? { timeout: 0 } : undefined),

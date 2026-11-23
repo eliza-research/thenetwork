@@ -19,7 +19,7 @@ pure def signupDraftRequestAllowed(appId: str, appProvided: bool, matchesHost: b
 
 ### A live connection prepares one draft under the age guard
 
-The connector must have a grant and storage. The recorded-age check must be available. Changed: the age check used to run inside a phone lock with a cleanup hook that the platform no longer has; it now reads the lowest recorded age of the phone, and the join checks the stated age again. Proceed when the lowest recorded age of the phone allows the app, the grant still belongs to the phone's current owner, and the person is not joined or is invited. After a successful insert, read the lowest recorded age again. The draft is prepared only when the app still allows that age; otherwise delete the phone's drafts of the app and refuse. Changed again (audit MCP-age-guard): the check and the insert were separate steps, so an age that the platform recorded between them left a draft that no check refused; the read after the insert sees every age recorded before it. An age recorded after that read leaves the row until the Finish signup read deletes it or its deadline passes. The ten-minute deadline is capped at the grant's expiry.
+The connector must have a grant and storage. The recorded-age check must be available. Changed: the age check used to run inside a phone lock with a cleanup hook that the platform no longer has; it now reads the lowest recorded age of the phone, and the join checks the stated age again. Proceed when the lowest recorded age of the phone allows the app, the grant still belongs to the phone's current owner, and the person is not joined or is invited. After a successful insert, read the lowest recorded age again. The draft is prepared only when the app still allows that age; otherwise delete the phone's drafts of the app and refuse. Changed again (audit MCP-age-guard): the check and the insert were separate steps, so an age that the platform recorded between them left a draft that no check refused; the read after the insert sees every age recorded before it. An age recorded after that read deletes the draft at once when the app does not allow it (see "A recorded age that the app does not allow deletes the draft at once"). The ten-minute deadline is capped at the grant's expiry.
 
 ```quint
 type DraftPreparationPhase = ReadConnection | CheckAge | CheckOwner | CheckMembership | WriteDraft | RecheckAge |
@@ -129,4 +129,19 @@ pure def signupDraftAfterSignup(signupResult: str): DraftSettlement =
 
 pure def lawUsedOrRefusedForAgeDraftIsDeleted(signupResult: str): bool =
   (signupResult == "joined" or signupResult == "under_age" or signupResult == "review") implies signupDraftAfterSignup(signupResult) == DeleteDraft
+```
+
+### A recorded age that the app does not allow deletes the draft at once
+
+Each time the platform records an age reading for a phone, the connector reads the lowest recorded age of that phone again for each app that has drafts. It deletes the phone's draft of each app that does not allow that age, and it keeps the draft of each app that still allows it. This applies to a stated age, a birth date, the age of a join, the age that a chat states, and a number change, which brings the lowest age of the person and of the old number to the new number. Only the newest connector of the service does this check. A failed check or deletion does not fail the step that recorded the age: the age is already saved, a replayed turn does not record it again, and Finish signup and the ten-minute deadline still refuse the draft, so the connector logs the failure and the step goes on. Changed again 2026-11-22 (owner decision of 2026-11-22, review of the carry-over build): a number change did not run the check, and a failed deletion failed the join or the turn after the age was saved. Changed 2026-11-22 (owner decision of 2026-11-22, carry-over of the connector review): before, an age that the platform recorded after the read that follows the insert left the draft stored until Finish signup read it or its deadline passed, so the stored first name and home city of a person that the app refuses stayed for up to ten minutes.
+
+```quint
+pure def signupDraftAfterAgeRecorded(ageAllowed: bool): DraftSettlement =
+  if (ageAllowed) KeepDraft else DeleteDraft
+
+pure def lawRefusedRecordedAgeDeletesDraft(ageAllowed: bool): bool =
+  not(ageAllowed) implies signupDraftAfterAgeRecorded(ageAllowed) == DeleteDraft
+
+pure def lawAllowedRecordedAgeKeepsDraft(ageAllowed: bool): bool =
+  ageAllowed implies signupDraftAfterAgeRecorded(ageAllowed) == KeepDraft
 ```

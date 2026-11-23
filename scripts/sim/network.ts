@@ -1,12 +1,12 @@
 import { isDeepStrictEqual } from "node:util";
-// The network block: the consent-first ConsentNetwork in the simulated NYC world (data/synthetic/v1),
-// with the simulated reviewer. Pinned: invariants on seed 3 over 10 days; consent vs push on seeds 1-3
+// The network block: the consent-first ConsentNetwork in the simulated NYC world (data/synthetic/v1).
+// Pinned: invariants on seed 3 over 10 days; consent vs push on seeds 1-3
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, earliestDayKeyOf, hash32, HOUR, latestDayKeyOf, Rng as SimRng, SimClock, type AgeSide, type MemberId, type NetworkContext, type NetworkUnderTest, type SimMessage } from "../../packages/core/src/index.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -18,12 +18,19 @@ import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
 import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
-import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
+import { allowedAt, ConsentNetwork, holdEveryItem, NY, OUTREACH, reviewTicket, SIM_REVIEW_JUDGE, simulatedReviewJudge, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
+import { simulatedStaffAction } from "../../packages/core/src/generated/automatedReview.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { vouchPeriodGate } from "./capital.ts";
-import { conformance } from "./conformance.ts";
+import { conformance, teenConformance } from "./conformance.ts";
+import { birthKeyForAgeOn, generatePersonas, giveStatedBirthDates } from "../../packages/sim/src/generator.ts";
+import { DEFAULT_START } from "../../packages/sim/src/world.ts";
+import { ageOnDay } from "../../packages/core/src/generated/memberAge.ts";
+import { groupAgeAllowed, rosterHasMinor, teenFriendCandidate, teenFriendMaxAge, teenFriendRole, teenIntroShape, teenPartnerAge, teenReady, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
+import { teenFriendApp, teenFriendCategory, teenFriendLane, teenGenerator } from "../../packages/core/src/generated/matchLane.ts";
+import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { Block, digest, expect } from "./gate.ts";
 import { overlap, pairedLine } from "../../packages/sim/src/paired.ts";
 
@@ -42,15 +49,147 @@ function meetingKeys(records: RunRecord[]): string[] {
     .filter(ids => ids.length >= 2).map(ids => ids.join(",")).sort();
 }
 
-async function world(days: number, seed = 3, network: NetworkOptions = { review: "auto" }) {
+const SIM_STAFF = "sim-staff";
+
+function simulatedStaffDesk(net: ConsentNetwork): NetworkUnderTest {
+  return {
+    name: net.name,
+    init: ctx => net.init(ctx),
+    onInbound: msg => net.onInbound(msg),
+    submitProposal: p => net.submitProposal(p),
+    tick: async now => {
+      await net.tick(now);
+      for (const item of net.reviewQueue()) {
+        if (!item.exception) continue;
+        const action = simulatedStaffAction(reviewTicket(item.oppId, item.revision, "staff"));
+        if (action === "SimStaffApproves") net.decide(item.oppId, "approve", { reviewer: SIM_STAFF, revision: item.revision });
+        else if (action === "SimStaffRejects") net.decide(item.oppId, "reject", { reviewer: SIM_STAFF, revision: item.revision, reason: "weak_reason" });
+      }
+    },
+  };
+}
+
+const standInJudge = (exceptions: boolean): NetworkOptions => ({ inlineJudge: simulatedReviewJudge({ exceptions }) });
+
+async function world(days: number, seed = 3, network: NetworkOptions = standInJudge(false), staffDesk = true) {
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
+  giveStatedBirthDates(personas, seed, start);
   // The NYC world is one market.
   const net = new ConsentNetwork({ seed, ...network, engine: { cities: ["nyc"], ...network.engine } });
   const records: RunRecord[] = [];
-  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
+  const w = new World({ seed, personas, days, start, writeLog: false, network: staffDesk ? simulatedStaffDesk(net) : net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
   await w.begin();
   return { w, net, records, start, personas: new Map(w.personaList().map(p => [p.id, p])) };
+}
+
+export const NTWRK_TEEN_WORLD = { minorShare: 0.15, minorLiarShare: 0.2, adultPoserShare: 0.02 } as const;
+
+async function ntwrkTeenArm(seed: number, days: number, stopAfterDays?: number) {
+  const personas = generatePersonas({ n: 240, seed: `ntwrk-teen:${seed}`, cityWeights: { nyc: 1, sf: 0 }, ...NTWRK_TEEN_WORLD, idPrefix: "t" });
+  const net = new ConsentNetwork({ seed, ...standInJudge(false), engine: { cities: ["nyc"] } });
+  const records: RunRecord[] = [];
+  const w = new World({ seed, personas, days, start: DEFAULT_START, writeLog: false, network: simulatedStaffDesk(net), agent: new PolicyPersonaAgent(DEFAULT_START), onRecord: r => records.push(r) });
+  await w.begin();
+  if (stopAfterDays !== undefined) {
+    await w.advanceTo(DEFAULT_START + stopAfterDays * DAY);
+    const stopped = net.stopTeenIntros(SIM_ADMIN);
+    if (!stopped.ok) throw new Error(`ntwrk teen world: the stop was refused (${stopped.reason})`);
+  }
+  await w.advanceTo(w.end);
+  await w.complete();
+  return { net, records, personas: new Map(w.personaList().map(p => [p.id, p])) };
+}
+
+function ntwrkTeenWorld(seed: number): EngineInput {
+  const input = randomWorld({ members: 120, seed, minorShare: 0.25 });
+  const minDay = earliestDayKeyOf(input.now), maxDay = latestDayKeyOf(input.now);
+  const members = input.members.map(m => {
+    if (m.age > teenFriendMaxAge + 1) return m;
+    const birthKey = birthKeyForAgeOn(m.age, minDay, new SimRng(hash32("ntwrk-birth", seed, m.id)));
+    const ready = teenReady(true, false, false, false, false, false)
+      && (teenFriendCandidate(canBeMatched(m.age), true, birthKey, minDay, maxDay, true, teenFriendApp("ntwrk")) || teenPartnerAge(birthKey, minDay, maxDay));
+    return { ...m, birthKey, birthExact: true, ageConflict: false, maxAge: ageOnDay(birthKey, maxDay), ...(ready ? { teenReady: true } : {}) };
+  });
+  return { ...input, members, teenIntros: true };
+}
+
+const teenRosterOf = (o: { participants: readonly string[]; alternates: readonly string[]; plan?: { hostId?: string } }) =>
+  [...new Set([...o.participants, ...o.alternates, ...(o.plan?.hostId ? [o.plan.hostId] : [])])];
+
+const SIM_ADMIN = "sim-admin";
+type NetOpp = ConsentNetwork["opps"] extends Map<string, infer O> ? O : never;
+type StatedPersona = { public: { claimedAge: number; birthKey?: number } };
+
+const statedMinorAt = (p: StatedPersona | undefined, t: number): boolean =>
+  !!p && (p.public.birthKey !== undefined ? ageOnDay(p.public.birthKey, earliestDayKeyOf(t)) < 18 : p.public.claimedAge < 18);
+
+const statedSideAt = (p: StatedPersona | undefined, t: number): AgeSide => ({
+  adult: !!p && !statedMinorAt(p, t), ready: teenReady(p?.public.birthKey !== undefined, false, false, false, false, false), birthKey: p?.public.birthKey ?? 0,
+});
+
+const loggedRoster = (l: Log): string[] => {
+  const proposal = l.detail.proposal as { participants?: unknown; alternates?: unknown } | undefined;
+  return [...(Array.isArray(proposal?.participants) ? proposal.participants : []), ...(Array.isArray(proposal?.alternates) ? proposal.alternates : [])]
+    .filter((x): x is string => typeof x === "string");
+};
+
+function teenShapeHolds(app: string, x: NetOpp): boolean {
+  const roster = teenRosterOf(x);
+  const friendshipLane = teenFriendCategory(app, x.category) && (x.lane === undefined || teenFriendLane(app, x.lane));
+  const everyRoleTeen = roster.every(id => { const role = x.roles?.[id]; return role !== undefined && teenFriendRole(role); });
+  return teenGenerator(app, x.generator) && x.format !== undefined
+    && teenIntroShape(friendshipLane, x.format, everyRoleTeen, x.via !== undefined, x.anchor?.type === "event")
+    && teenRosterSizeAllowed(true, roster.length);
+}
+
+const recordedApprover = (approver: unknown, reviewer: unknown) =>
+  (approver === "judge" && reviewer === SIM_REVIEW_JUDGE) || (approver === "staff" && reviewer === SIM_STAFF);
+
+function judgeApprovals(records: RunRecord[]): { decision: Log; judgment: Log | undefined }[] {
+  const last = new Map<string, Log>();
+  const out: { decision: Log; judgment: Log | undefined }[] = [];
+  for (const r of records) {
+    if (r.type !== "network_log") continue;
+    if (r.kind === "review_judgment") last.set(String(r.detail.oppId), r);
+    if (r.kind === "review_decision" && r.detail.decision === "approve" && r.detail.approver === "judge") out.push({ decision: r, judgment: last.get(String(r.detail.oppId)) });
+  }
+  return out;
+}
+
+function reviewerFaults(net: ConsentNetwork, records: RunRecord[], personas: ReadonlyMap<string, StatedPersona>): string[] {
+  const faults: string[] = [];
+  const held = new Set(logs(records, "review_exception").map(l => String(l.detail.oppId)));
+  const check = (id: unknown, t: number, approval: boolean, approver: unknown, reviewer: unknown, logged: readonly string[]) => {
+    const opp = typeof id === "string" ? net.opps.get(id) : undefined;
+    const statedMinor = (opp ? teenRosterOf(opp) : logged).some(x => statedMinorAt(personas.get(x), t));
+    if (statedMinor && opp?.teenRuleAt === undefined) faults.push(`${String(id)}: a stated minor without the teen rule`);
+    if (!approval) {
+      if (reviewer !== SIM_STAFF) faults.push(`${String(id)}: a staff decision by reviewer ${String(reviewer)}`);
+      return;
+    }
+    if (!recordedApprover(approver, reviewer)) faults.push(`${String(id)}: approver ${String(approver)}, reviewer ${String(reviewer)}`);
+    if (approver === "staff" && !held.has(String(id))) faults.push(`${String(id)}: staff approved an item the judge did not hold`);
+  };
+  for (const l of logs(records, "review_decision")) check(l.detail.oppId, l.t, l.detail.decision === "approve", l.detail.approver, l.detail.reviewer, []);
+  for (const l of logs(records, "probe_started")) check((l.detail.proposal as { id?: unknown } | undefined)?.id ?? l.detail.oppId, l.t, true, l.detail.approver, l.detail.reviewer, loggedRoster(l));
+  for (const { decision, judgment } of judgeApprovals(records)) {
+    const id = String(decision.detail.oppId);
+    if (!judgment || judgment.detail.verdict !== "approve" || judgment.detail.stale !== false || judgment.detail.revision !== decision.detail.revision)
+      faults.push(`${id}: a judge approval without its applied judgment`);
+  }
+  return faults;
+}
+
+function judgedApprovalFaults(records: RunRecord[]): { adultRubricMinor: string[]; stalePacket: string[] } {
+  const adultRubricMinor: string[] = [], stalePacket: string[] = [];
+  for (const { decision, judgment } of judgeApprovals(records)) {
+    const id = String(decision.detail.oppId);
+    if (!judgment) continue;
+    if (judgment.detail.rubric === "adult" && judgment.detail.rosterHasMinor !== false) adultRubricMinor.push(id);
+    if (judgment.detail.basePacketHash !== judgment.detail.currentHash) stalePacket.push(id);
+  }
+  return { adultRubricMinor, stalePacket };
 }
 
 /**
@@ -116,9 +255,9 @@ export async function scenarioRepetitionGate(b: Block): Promise<void> {
   });
 }
 
-export async function humanReviewGate(b: Block): Promise<void> {
-  await b.run("human review (PRD 32.8): nothing probed until approved; reject and SLA expiry send nothing", async () => {
-    const { w, net, records, start } = await world(3, 3, { review: "human" });
+export async function heldForStaffGate(b: Block): Promise<void> {
+  await b.run("held for staff (owner decision 2026-11-22, D17): a judge that holds every item contacts nobody until staff approve a held item; reject and expiry send nothing", async () => {
+    const { w, net, records, start } = await world(3, 3, { inlineJudge: holdEveryItem.inline }, false);
     await w.advanceTo(start + 19 * HOUR);
     const free = net.memberList().filter(m => net.eligible(m.id)).map(m => m.id);
     (["player", "scenario"] as const).forEach((source, i) => w.act({ do: "propose", source, proposal: {
@@ -126,10 +265,12 @@ export async function humanReviewGate(b: Block): Promise<void> {
       window: { start: start + 2 * DAY, end: start + 6 * DAY }, score: 0, components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 },
       exploration: false, explanations: {}, generator: source, createdAt: start + 19 * HOUR,
     } }));
-    await w.advanceTo(start + 21 * HOUR);
+    await w.advanceTo(start + 22 * HOUR);
     const queue = net.reviewQueue();
     expect(queue.filter(q => q.origin === "player").map(q => q.oppId).sort()).toEqual(["player-1", "scenario-1"]);
     expect(queue.length).toBeGreaterThan(5);
+    expect(queue.filter(q => q.kind !== "fraud").every(q => q.exception?.verdict === "flag" && q.exception.reason === "other_concern")).toBe(true);
+    expect(logs(records, "review_decision").filter(l => l.detail.decision === "approve")).toEqual([]);
     expect(logs(records, "probe_sent")).toEqual([]);
     expect(outbound(records).filter(m => m.msg.meta?.type === "probe" || m.msg.meta?.type === "proposal")).toEqual([]);
     for (const l of logs(records, "review_queued").filter(l => l.detail.origin === "request")) {
@@ -154,7 +295,46 @@ export async function humanReviewGate(b: Block): Promise<void> {
     for (const id of left) { expect([id, expired.has(id) || net.opps.get(id)?.closedFrom === "review"]).toEqual([id, true]); expect([id, about(id)]).toEqual([id, []]); }
     const approved = new Set(logs(records, "review_decision").filter(l => l.detail.decision === "approve").map(l => String(l.detail.oppId)));
     for (const l of probes) expect(approved.has(String(l.detail.oppId))).toBe(true);
+    expect(logs(records, "review_decision").filter(l => l.detail.decision === "approve").map(l => [l.detail.oppId, l.detail.approver, l.detail.reviewer])).toEqual([[a!.oppId, "staff", "sim"]]);
   });
+}
+
+export async function exceptionArmGates(b: Block, o: { quick: boolean }): Promise<void> {
+  const days = o.quick ? 7 : 21;
+  const { w, net, records, personas } = await world(days, 3, standInJudge(true));
+  await w.advanceTo(w.end);
+  await w.complete();
+  const exceptions = logs(records, "review_exception");
+  const heldIds = new Set(exceptions.map(l => String(l.detail.oppId)));
+  const staffApprovals = logs(records, "review_decision").filter(l => l.detail.decision === "approve" && l.detail.approver === "staff");
+  const rejected = new Set(logs(records, "review_decision").filter(l => l.detail.decision === "reject" && l.detail.approver === "staff" && heldIds.has(String(l.detail.oppId))).map(l => String(l.detail.oppId)));
+  const expired = new Set(logs(records, "review_expired").map(l => String(l.detail.oppId)).filter(id => heldIds.has(id)));
+  const overdue = exceptions.filter(l => l.detail.reason === "judge_overdue");
+  const ended = new Set([...rejected, ...expired]);
+  const contacts = [
+    ...logs(records, "probe_sent").filter(l => ended.has(String(l.detail.oppId))).map(l => `probe_sent ${String(l.detail.oppId)}`),
+    ...outbound(records).filter(m => ended.has(String(m.msg.meta?.proposalId)) || ended.has(String((m.msg.meta?.probe as { key?: string } | undefined)?.key)))
+      .map(m => `${String(m.msg.meta?.type)} ${m.msg.id}`),
+  ];
+  const m = computeMetrics(records, { requireReview: true });
+  const sameDay = (id: string) => net.opps.get(id)?.sameDay === true;
+  const tooClose = logs(records, "review_judgment").filter(l => l.detail.reason === "deadline_too_close");
+  b.track(`exception arm (seed 3, ${days} days; review by the simulated judge, a deterministic stand-in with no model call, and simulated staff; the stand-in does not read text: text safety is measured only by the live qualification corpus)`, true,
+    `${exceptions.length} held, ${staffApprovals.length} staff approvals, ${rejected.size} staff rejects, ${expired.size} expired, ${overdue.length} judge_overdue; same day: ${[...heldIds].filter(sameDay).length} held, ${[...expired].filter(sameDay).length} expired; deadline_too_close ${tooClose.length}`);
+  b.gate("exception arm: the judge holds items (held > 0)", exceptions.length > 0, String(exceptions.length));
+  b.gate("exception arm: staff approve held items (staff approvals > 0)", staffApprovals.length > 0, String(staffApprovals.length));
+  b.gate("exception arm: held items expire unsent (expired exceptions > 0)", expired.size > 0, String(expired.size), !o.quick);
+  b.gate("exception arm: a silent judge holds the item for staff (judge_overdue > 0)", overdue.length > 0, String(overdue.length), !o.quick);
+  b.gate("exception arm: contacts of expired or rejected exceptions = 0", contacts.length === 0, contacts.slice(0, 5).join(", ") || "none");
+  b.gate("exception arm: exception contact without staff = 0 and review approval recorded (unrecorded contacts = 0)",
+    (m.invariants.byRule.exception_contact_without_staff ?? 0) === 0 && (m.invariants.byRule.unreviewed_contact ?? 0) === 0, JSON.stringify(m.invariants.byRule));
+  b.gate("exception arm: judge 0 invariant violations, minor contacts, canary leaks and errors",
+    m.invariants.total === 0 && m.safety.minorContacts === 0 && m.privacy.canaryLeaks === 0 && m.errors === 0, JSON.stringify(m.invariants.byRule));
+  const faults = reviewerFaults(net, records, personas);
+  b.gate("exception arm: every approval is the simulated judge's applied judgment or sim-staff's on a held item", faults.length === 0, faults.slice(0, 5).join(", ") || "none");
+  const rubric = judgedApprovalFaults(records);
+  b.gate("exception arm: minor roster approved with adult rubric = 0 and approval for a stale packet = 0",
+    rubric.adultRubricMinor.length === 0 && rubric.stalePacket.length === 0, `adult rubric ${rubric.adultRubricMinor.length}, stale ${rubric.stalePacket.length}`);
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
@@ -187,14 +367,13 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
         const w = new Mini([
           { id: "a", name: "Alex", age: 30, interests: ["climbing"], shareable: true },
           { id: "b", name: "Blair", age: 29, interests: ["climbing"], shareable: true },
-        ], { seed, review: "human" });
+        ], { seed, inlineJudge: holdEveryItem.inline });
         for (const id of ["a", "b"]) for (const answer of ["hi!", "More time outdoors.", state === "onboarding" ? "Tuesday evenings." : "My schedule varies.", "One-on-one is good."]) await w.say(id, answer);
-        // The first reviewed probe is sent one tick after submission. Both validity endpoints are inclusive.
         if (state !== "none" && state !== "onboarding") for (const id of ["a", "b"]) w.facets.push({
           id: `${id}-availability`, memberId: id, kind: "availability_pattern", value: "Usually free Tuesday evening", tags: ["evening:Tue"],
           scope: "agent_private", provenance: "said", confidence: 1, confirmedByMember: true, observedAt: START,
-          validFrom: state === "future" ? START + 30 * DAY : state === "starts_now" ? START + HOUR : START - DAY,
-          validTo: state === "expired" ? START - 1 : state === "ends_now" ? START + HOUR : START + 60 * DAY,
+          validFrom: state === "future" ? START + 30 * DAY : state === "starts_now" ? START + 2 * HOUR : START - DAY,
+          validTo: state === "expired" ? START - 1 : state === "ends_now" ? START + 2 * HOUR : START + 60 * DAY,
         });
         w.restart();
         const opp = w.propose(["a", "b"]);
@@ -203,7 +382,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
         w.net.review(opp, "approve", { reviewer: "sim" });
         expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
         const probe = w.sent.find(x => x.meta.probe?.key === opp && x.meta.timeOptions?.length);
-        expect(probe?.t).toBe(START + HOUR);
+        expect(probe?.t).toBe(START + 2 * HOUR);
         expect(probe!.meta.timeOptions!.length).toBeGreaterThanOrEqual(2);
         offered.set(state, probe!.meta.timeOptions);
       }
@@ -216,7 +395,6 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(failures).toEqual([]);
   });
 
-  // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
   await run.w.complete();
@@ -233,11 +411,23 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(m.errors).toBe(0);
   });
 
-  await b.run("minors: no minor is ever an alternate (a possible backfill)", () => {
+  await b.run("minors: no minor is an alternate (a possible backfill) outside a teen friendship item; in a teen item every member, alternates and plan host included, keeps the teen group rule and the roster holds at most 6", () => {
     const minors = new Set([...run.personas.values()].filter(p => p.public.claimedAge < 18).map(p => p.id));
     const started = logs(R, "probe_started");
     expect(started.length).toBeGreaterThan(0);
-    for (const r of started) expect(((r.detail as { proposal?: { alternates?: string[] } }).proposal?.alternates ?? []).filter(id => minors.has(id))).toEqual([]);
+    for (const r of started) {
+      const proposal = (r.detail as { proposal?: { id?: string; alternates?: string[] } }).proposal;
+      const opp = proposal?.id !== undefined ? run.net.opps.get(proposal.id) : undefined;
+      if (opp?.teenRuleAt !== undefined) {
+        const roster = [...new Set([...loggedRoster(r), ...(opp.plan?.hostId ? [opp.plan.hostId] : [])])];
+        const sides = roster.map(id => statedSideAt(run.personas.get(id), r.t));
+        const maxDay = latestDayKeyOf(Math.max(r.t, opp.plan?.window.end ?? r.t));
+        expect([opp.id, groupAgeAllowed(true, teenFriendCategory(run.net.app.id, opp.category), earliestDayKeyOf(r.t), maxDay, sides), teenRosterSizeAllowed(rosterHasMinor(sides), roster.length)])
+          .toEqual([opp.id, true, true]);
+        continue;
+      }
+      expect((proposal?.alternates ?? []).filter(id => minors.has(id))).toEqual([]);
+    }
   });
 
   await b.run("review before contact: review_decision precedes every probe and reveal", () => {
@@ -249,8 +439,14 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       const id = String(m.msg.meta?.proposalId);
       expect([id, (approvedAt.get(id) ?? Infinity) <= m.msg.ts]).toEqual([id, true]);
     }
-    expect(logs(R, "review_decision").every(l => l.detail.reviewer === SIM_AUTO_REVIEWER)).toBe(true);
-    expect(logs(R, "probe_started").filter(l => l.detail.reviewer !== SIM_AUTO_REVIEWER)).toEqual([]);
+    expect(reviewerFaults(run.net, R, run.personas)).toEqual([]);
+  });
+
+  await b.run("review approval recorded (seed 3, 10 days, simulated judge): every contact follows an approval by the judge or by staff on a held item; no minor roster approved with the adult rubric; no approval for a stale packet", () => {
+    const byRule = computeMetrics(R, { requireReview: true }).invariants.byRule;
+    expect([byRule.unreviewed_contact ?? 0, byRule.exception_contact_without_staff ?? 0]).toEqual([0, 0]);
+    expect(judgedApprovalFaults(R)).toEqual({ adultRubricMinor: [], stalePacket: [] });
+    expect(judgeApprovals(R).length).toBeGreaterThan(20);
   });
 
   await b.run("consent before reveal: probes never name anyone; every reveal follows a yes from everyone (or their own ask)", () => {
@@ -381,11 +577,11 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(JSON.stringify(again.net.counters)).toBe(JSON.stringify(run.net.counters));
   });
 
-  // ---- human review gate and recipient policy --------------------------------------------------------
-  await humanReviewGate(b);
+  await heldForStaffGate(b);
+  await exceptionArmGates(b, o);
 
   await b.run("send-time recipient policy: minors, declined pairs and replies; stated ages fail closed", async () => {
-    const { w, net, records, start, personas } = await world(1, 3, { review: "human" });
+    const { w, net, records, start, personas } = await world(1, 3, { inlineJudge: holdEveryItem.inline }, false);
     await w.advanceTo(start + 6 * HOUR);
     const members = net.memberList();
     const minor = members.find(m => (personas.get(m.id)?.public.claimedAge ?? 99) < 18)!;
@@ -561,7 +757,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
         send: (memberId, body, options) => ({ id: `availability:${++seq}`, ts: clock.now(), direction: "outbound", channel: "sms", from: "network", to: memberId, memberId, body, status: "delivered", meta: options?.meta } satisfies SimMessage),
         recordProposal: () => {}, recordMeeting: () => "unused", recordBlock: () => {}, log: () => {},
       };
-      const opts = { seed, review: "human" as const, matchingEnabled: false };
+      const opts = { seed, matchingEnabled: false };
       let net = new ConsentNetwork(opts);
       net.init(ctx);
       await net.onInbound({ id: "join", memberId: member.id, body: "Hi", ts: clock.now(), channel: "sms" });
@@ -591,6 +787,72 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     }
   });  // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
+  await teenConformance(b, networkPack, { world: ntwrkTeenWorld, seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
+  await ntwrkTeenGates(b, o);
+}
+
+async function ntwrkTeenGates(b: Block, o: { quick: boolean }): Promise<void> {
+  const seeds = o.quick ? [1] : [1, 2, 3];
+  const days = o.quick ? 7 : 14;
+  const arms = [];
+  for (const seed of seeds) arms.push({ seed, ...(await ntwrkTeenArm(seed, days)) });
+  const per = arms.map(({ seed, net, records, personas }) => {
+    const m = computeMetrics(records, { requireReview: true });
+    const minor = (id: string) => (personas.get(id)?.public.claimedAge ?? 0) < 18;
+    const teenOpps = [...net.opps.values()].filter(x => teenRosterOf(x).some(id => statedMinorAt(personas.get(id), x.createdAt)));
+    const outsideShape = teenOpps.filter(x => x.teenRuleAt === undefined || x.plan !== undefined || x.gatheringRepeat !== undefined || x.category !== "social"
+      || !teenShapeHolds("ntwrk", x)).map(x => x.id);
+    const reviewed = logs(records, "review_decision").filter(l => l.detail.decision === "approve" && net.opps.get(String(l.detail.oppId))?.teenRuleAt !== undefined);
+    const wrongReviewer = reviewerFaults(net, records, personas);
+    const rubric = judgedApprovalFaults(records);
+    const probed = new Set(logs(records, "probe_started").map(l => String((l.detail.proposal as { id?: unknown } | undefined)?.id ?? l.detail.oppId)).filter(id => net.opps.get(id)?.teenRuleAt !== undefined));
+    const meetings = records.filter(r => r.type === "meeting_scheduled" && r.participants.some(minor)).length;
+    return { seed, m, outsideShape, reviewed: reviewed.length, wrongReviewer, rubric, probed: probed.size, meetings };
+  });
+  b.gate("ntwrk teen world: judge 0 invariant violations, minor contacts, canary leaks and errors, every seed",
+    per.every(x => x.m.invariants.total === 0 && x.m.safety.minorContacts === 0 && x.m.privacy.canaryLeaks === 0 && x.m.errors === 0),
+    per.map(x => `seed ${x.seed}: ${JSON.stringify(x.m.invariants.byRule)}, minor ${x.m.safety.minorContacts}, leaks ${x.m.privacy.canaryLeaks}, errors ${x.m.errors}`).join("; "));
+  b.gate("ntwrk teen world: every item with a stated minor is a reviewed Friend-lane pair or circle of 2 to 6 from a teen generator, with a friendship format and a friendship role for everyone (no plan, gathering, via or event), every seed",
+    per.every(x => x.outsideShape.length === 0), per.map(x => `seed ${x.seed}: ${x.outsideShape.slice(0, 5).join(",") || "none"}`).join("; "));
+  b.gate("ntwrk teen world: every item with a stated minor carries the teen rule; every approval is the simulated judge's applied judgment or sim-staff's on a held item, every seed",
+    per.every(x => x.wrongReviewer.length === 0), per.map(x => `seed ${x.seed}: ${x.wrongReviewer.slice(0, 5).join(",") || "none"}`).join("; "));
+  b.gate("ntwrk teen world: minor roster approved with adult rubric = 0 and approval for a stale packet = 0, every seed",
+    per.every(x => x.rubric.adultRubricMinor.length === 0 && x.rubric.stalePacket.length === 0),
+    per.map(x => `seed ${x.seed}: adult rubric ${x.rubric.adultRubricMinor.slice(0, 5).join(",") || "none"}, stale ${x.rubric.stalePacket.slice(0, 5).join(",") || "none"}`).join("; "));
+  b.gate("ntwrk teen world: positive control, a teen friendship item reaches approval and a probe", per.reduce((n, x) => n + x.reviewed, 0) > 0 && per.reduce((n, x) => n + x.probed, 0) > 0,
+    per.map(x => `seed ${x.seed}: ${x.reviewed} approved, ${x.probed} probed, ${x.meetings} meetings with a minor`).join("; "), !o.quick);
+  const ci = (xs: number[]) => {
+    const mean = xs.reduce((a, c) => a + c, 0) / xs.length;
+    const se = xs.length > 1 ? Math.sqrt(xs.reduce((a, c) => a + (c - mean) ** 2, 0) / (xs.length - 1) / xs.length) : 0;
+    return `${mean.toFixed(2)} per seed (95% CI ${(mean - 1.96 * se).toFixed(2)} to ${(mean + 1.96 * se).toFixed(2)}, n ${xs.length} seeds)`;
+  };
+  b.track("ntwrk teen world: tracked teen items approved (simulated judge with the strict rubric, or sim-staff on a held item)", true, ci(per.map(x => x.reviewed)));
+  b.track("ntwrk teen world: tracked meetings with a minor", true, ci(per.map(x => x.meetings)));
+  b.track("ntwrk teen world: tracked meetings, all members", true, ci(per.map(x => x.m.meetings.held)));
+  b.track("ntwrk teen world: fingerprint", true, digest(per.map(x => ({ seed: x.seed, byRule: x.m.invariants.byRule, reviewed: x.reviewed, probed: x.probed, meetings: x.meetings }))));
+
+  const stopAfterDays = o.quick ? 3 : 7;
+  const stopArms = [];
+  for (const seed of seeds) stopArms.push({ seed, ...(await ntwrkTeenArm(seed, days, stopAfterDays)) });
+  const stopPer = stopArms.map(({ seed, records, personas }) => {
+    const m = computeMetrics(records, { requireReview: true });
+    const stopAt = logs(records, "teen_intros_switch").find(l => l.detail.on === false)?.t;
+    const minorAt = (id: unknown, t: number) => typeof id === "string" && statedMinorAt(personas.get(id), t);
+    const teenStarted = (after: boolean) => logs(records, "probe_started")
+      .filter(l => stopAt !== undefined && (l.t >= stopAt) === after && loggedRoster(l).some(id => minorAt(id, l.t)))
+      .map(l => `probe_started ${String((l.detail.proposal as { id?: unknown } | undefined)?.id ?? l.detail.oppId)}`);
+    const after = stopAt === undefined ? ["no stop record"] : [
+      ...teenStarted(true),
+      ...logs(records, "probe_sent").filter(l => l.t >= stopAt && minorAt(l.detail.memberId, l.t)).map(l => `probe_sent ${String(l.detail.oppId)} to ${String(l.detail.memberId)}`),
+      ...records.filter((r): r is Extract<RunRecord, { type: "meeting_scheduled" }> => r.type === "meeting_scheduled" && r.t >= stopAt && r.participants.some(id => minorAt(id, r.t))).map(r => `meeting ${r.meetingId}`),
+    ];
+    return { seed, m, before: teenStarted(false).length, after };
+  });
+  b.gate("ntwrk teen world, stopped on day " + stopAfterDays + " by one admin: judge 0 minor contacts and 0 invariant violations, and no teen probe, probe to a minor or meeting with a minor after the stop, every seed",
+    stopPer.every(x => x.m.safety.minorContacts === 0 && x.m.invariants.total === 0 && x.after.length === 0),
+    stopPer.map(x => `seed ${x.seed}: minor ${x.m.safety.minorContacts}, ${JSON.stringify(x.m.invariants.byRule)}, after the stop ${x.after.slice(0, 5).join(",") || "none"}`).join("; "));
+  b.gate("ntwrk teen world, stopped: positive control, teen items started before the stop", stopPer.reduce((n, x) => n + x.before, 0) > 0,
+    stopPer.map(x => `seed ${x.seed}: ${x.before} teen items started before the stop`).join("; "), !o.quick);
 }
 
 if (import.meta.main) {

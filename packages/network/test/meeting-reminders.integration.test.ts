@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 test.each([false, true])("the day-before reminder and day-of check-in retain their windows after restart (STOP: %s)", async stop => {
   // spec/meetingSettlement.md, "A day-before reminder has its own send window"
@@ -8,7 +9,7 @@ test.each([false, true])("the day-before reminder and day-of check-in retain the
   const w = new Mini(["a", "b"].map((id, i) => ({
     id, name: i ? "Ben Ito" : "Ana Diaz", age: 30, area: "Greenpoint",
     interests: ["climbing", "hiking"], skills: ["belaying"], quietHours: [0, 0],
-  })), { review: "auto", plans: false, growth: false });
+  })), { inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
   await w.onboard("a", "b");
   const id = w.propose(["a", "b"]);
   await w.answerProbes(["a", "b"]);

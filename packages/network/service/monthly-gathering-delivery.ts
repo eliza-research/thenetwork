@@ -75,7 +75,7 @@ async function recipientCurrent(tx: SQL, accounts: GatheringAccounts, app: AppIn
 }
 export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, accountsFor: (tx: SQL) => GatheringAccounts, now: () => number): Promise<void> {
   const { app, adapter } = rt;
-  if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter) || !adapter.live) return;
+  if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter)) return;
   const candidates = await rt.scoped(tx => tx<InviteeRow[]>`select g.id,g.revision,i.member_id
     from network.monthly_gatherings g join network.monthly_gathering_invitees i on i.app_id=g.app_id and i.gathering_id=g.id and i.revision=g.revision
     where g.app_id=${app.id} and g.city='nyc' and g.status='approved' and g.starts_at>${new Date(now())}
@@ -86,7 +86,7 @@ export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, acco
     order by g.starts_at,g.id,i.position`);
   if (!candidates.length) return;
   await rt.unitOfWork(async net => {
-    if (!net.matchingEnabled() || !adapter.live) return;
+    if (!net.matchingEnabled()) return;
     for (const candidate of candidates) {
       const memberId = candidate.member_id;
       const address = rt.addressOf(memberId);
@@ -117,7 +117,7 @@ export async function gatheringInvitationAdmission(tx: SQL, app: AppInfo, runtim
   const key = gatheringDeliveryEvent(row);
   const memberId = row.memberId;
   if (!key || !memberId || app.id !== "ntwrk" || row.app !== app.id || row.kind !== "proactive" || row.oppId ||
-    row.mediaUrls.length || row.approvedPhotos?.length) return refused;
+    row.mediaUrls.length) return refused;
   const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${runtimeId} and app_id=${app.id}`;
   const event = await reviewedInvite(tx, app, key, memberId);
   if (!saved || !event) return refused;

@@ -126,7 +126,7 @@ module profile_learning {
   // ------------------------------------------------------------------ state
   var nowN: int
   var nowC: int
-  var reviewEnabled: bool              // NETWORK_PROFILE_REVIEW_ENABLED=1 with a route policy (PF:100-109)
+  var reviewEnabled: bool              // a route policy with the Cloud origin and turn secret (profileReviewFromEnv)
   // Member and person facts. ledgerStop is the canonical consent ledger (platform.consent_events);
   // projOut is the projection that stopped() writes (n.opted_out, membership paused).
   var ledgerStop: bool

@@ -1,10 +1,11 @@
 import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("an explicitly withdrawn waiting request stays closed after restart and a new ask can reopen the search", async () => {
   for (const seed of [1, 2, 3]) for (const mode of ["withdraw", "keep", "other-want", "reask"] as const) {
-    const x = new Mini([{ id: "a", name: "Alice Able", age: 30, interests: ["climbing"] }], { seed, review: "human", onboardingRequests: true });
+    const x = new Mini([{ id: "a", name: "Alice Able", age: 30, interests: ["climbing"] }], { seed, inlineJudge: holdEveryItem.inline, onboardingRequests: true });
     await x.onboard("a");
     await x.say("a", "Find me a climbing partner.");
     const request = x.net.exportState().requests.at(-1)!;
@@ -28,15 +29,17 @@ test("an explicitly withdrawn waiting request stays closed after restart and a n
     expect(x.sent.some(s => s.meta.type === "probe")).toBe(false);
     if (mode === "reask") {
       await x.say("a", "Find me a climbing partner.");
+      await x.net.tick(x.clock.now());
       expect(x.net.exportState().requests.at(-1)!.id).not.toBe(request.id);
       expect(x.net.reviewQueue()).toHaveLength(1);
     }
   }
   for (const seed of [1, 2, 3]) {
     const x = new Mini([{ id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
-      { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true }], { seed, review: "human", onboardingRequests: false });
+      { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true }], { seed, inlineJudge: holdEveryItem.inline, onboardingRequests: false });
     await x.onboard("a", "b");
     await x.say("a", "Find me a climbing partner.");
+    await x.net.tick(x.clock.now());
     const request = x.net.exportState().requests.at(-1)!;
     expect(request.outcome).toBe("probing");
     expect(x.net.reviewQueue()).toHaveLength(1);
@@ -55,7 +58,7 @@ test("a requester can withdraw an accepted probe while the other reply is pendin
   const x = new Mini([
     { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
     { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true },
-  ], { review: "human", onboardingRequests: false });
+  ], { inlineJudge: holdEveryItem.inline, onboardingRequests: false });
   await x.onboard("a", "b");
   await x.say("a", "Find me a climbing partner.");
   const request = x.net.exportState().requests.at(-1)!;

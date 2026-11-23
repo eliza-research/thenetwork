@@ -1,6 +1,6 @@
 # Relay decision
 
-The [relay flow model](models/relay.md) follows requests from item creation to delivery. The engine owns content checks and classifier calls. This module computes the verdict from their results and checks the time window for item consent.
+The [relay flow model](models/relay.md) follows requests from item creation to delivery. The engine owns content checks and classifier calls. This module computes the verdict from their results, decides when the classifier reads a text, chooses the notice for a blocked sender, and checks the time window for item consent.
 
 ## Story: Share only the item I approved
 
@@ -20,25 +20,84 @@ pure def lawFutureConsentIsStale(consentAt: int, itemAt: int, lifetime: int): bo
 
 ## Story: Keep unsafe items from reaching a match
 
-> As a member, I want Eliza to stop or hold items when the relay checks find a reason.
+> As a member, I want Eliza to stop items when the relay checks find a reason, and to tell me that my item did not go.
 
-### A blocking reason takes precedence over a hold
+### Any reason from the relay checks blocks the item
 
-A blocking reason blocks delivery. Other reasons hold the item. A relay verdict is pass only when the checks record no reason.
+The rules, the leak guard and the relay classifier record reasons. An item with a reason is blocked: nothing reaches the other person, and the sender gets a notice at once. A relay verdict is pass only when the checks record no reason. No relayed text waits for a staff decision. Changed (owner decision 2026-11-22, D18, "Automate relay holds too"): a reason that was not a block reason held the item for a staff decision; now the classifier and the rules decide alone, so every reason blocks.
 
 ```quint
-type RelayVerdict = Pass | Hold | Block
+type RelayVerdict = Pass | Block
 
-pure def relayVerdict(hasBlock: bool, hasReason: bool): RelayVerdict =
-  if (hasBlock) Block else if (hasReason) Hold else Pass
+pure def relayVerdict(hasReason: bool): RelayVerdict =
+  if (hasReason) Block else Pass
 
-pure def lawARelayPassHasNoReason(hasBlock: bool, hasReason: bool): bool =
-  relayVerdict(hasBlock, hasReason) == Pass implies (not(hasBlock) and not(hasReason))
+pure def lawARelayPassHasNoReason(hasReason: bool): bool =
+  (relayVerdict(hasReason) == Pass) iff not(hasReason)
+```
+
+### The classifier reads a text that the rules leave to it
+
+A final reason is one that no classifier answer can change: the parties, the state of the match, consent, a minor party, a canary, a format fault, or a severe reason of the rules. The relay classifier reads a text item that has no final reason and no other reason. In a teen friendship pair it also reads a text that has only reasons that are not final, so that a minor signal in a flagged teen text still reaches the item record. It never reads an item without text. Changed (owner decision 2026-11-22, D18): this rule is new; the engine made the same choice in its own code, and with the hold gone the decision moved into this rule so that the shell does not compute it.
+
+```quint
+pure def relayClassifierReads(hasText: bool, finalReason: bool, anyReason: bool, teenPair: bool): bool =
+  hasText and not(finalReason) and (not(anyReason) or teenPair)
+
+pure def lawAFinalReasonIsNeverSentToTheClassifier(hasText: bool, anyReason: bool, teenPair: bool): bool =
+  not(relayClassifierReads(hasText, true, anyReason, teenPair))
+
+pure def lawACleanTextIsAlwaysRead(teenPair: bool): bool =
+  relayClassifierReads(true, false, false, teenPair)
+
+pure def lawAnAdultFlaggedTextIsNotRead(finalReason: bool): bool =
+  not(relayClassifierReads(true, finalReason, true, false))
+```
+
+### A classifier that cannot run blocks the text
+
+When the classifier cannot give an answer (an error, a timeout, an answer that does not parse, a cache miss offline, or a service without the Workers AI credentials in any environment), the text gets the reason `classifier:unavailable` and is blocked. It is never sent unchecked. A text that the classifier reads and does not clear (a flag, a severe flag, or an unsure answer) is blocked too. Changed (owner decision 2026-11-22, D18): a classifier error held the item for staff, and a Clef failure let a text without a high-risk word pass on the rules alone; now every failure blocks. Changed (owner decision 2026-11-22, D18, refix): staging and dev without the credentials had no classifier and passed a text on the rules alone; now the service gives them a classifier that always cannot run, so the text is blocked, and only the simulator, the local dev start (`platform:dev`) and the tests give the service a classifier that is named as simulated.
+
+```quint
+type ClassifierReading = ReadingClear | ReadingFlagged | ReadingUnavailable
+
+pure def relayClassifierReading(answered: bool, flagged: bool): ClassifierReading =
+  if (not(answered)) ReadingUnavailable else if (flagged) ReadingFlagged else ReadingClear
+
+pure def lawAnUnansweredReadIsUnavailable(flagged: bool): bool =
+  relayClassifierReading(false, flagged) == ReadingUnavailable
+
+pure def lawOnlyAnAnsweredUnflaggedReadIsClear(answered: bool, flagged: bool): bool =
+  (relayClassifierReading(answered, flagged) == ReadingClear) iff (answered and not(flagged))
+```
+
+### A blocked sender learns only what is safe to say
+
+The notice tells the sender that the item was not sent. It names a cause only when the cause is in the sender's own words or actions and says nothing about the other person or about the classifier. The order is: a reason about the other person, the match, a leak, a scam, harassment, a classifier flag or a teen-pair rule gives the plain notice; then a consent fault asks the sender to say again that they want it sent; then a looks or rating question; then contact details or a move to another app; then a classifier that could not run ("try again in a few minutes"); then a rate limit ("you sent a lot in a short time"). The notice is fixed text and goes through the leak guard of the send path. Changed (owner decision 2026-11-22, D18): this rule is new; a held item told the sender only that it waited for a check, and now the sender learns that the item did not go and, where it is safe, what to change.
+
+```quint
+type RelayBlockNotice = NoticePlain | NoticeConsent | NoticeRating | NoticeContact | NoticeRetry | NoticeRate
+
+pure def relayBlockNotice(unsafe: bool, consent: bool, rating: bool, contact: bool, unchecked: bool, rate: bool): RelayBlockNotice =
+  if (unsafe) NoticePlain
+  else if (consent) NoticeConsent
+  else if (rating) NoticeRating
+  else if (contact) NoticeContact
+  else if (unchecked) NoticeRetry
+  else if (rate) NoticeRate
+  else NoticePlain
+
+pure def lawAnUnsafeReasonIsNeverExplained(consent: bool, rating: bool, contact: bool, unchecked: bool, rate: bool): bool =
+  relayBlockNotice(true, consent, rating, contact, unchecked, rate) == NoticePlain
+
+pure def lawRetryOnlyWhenTheClassifierAloneStoppedIt(unsafe: bool, consent: bool, rating: bool, contact: bool, unchecked: bool, rate: bool): bool =
+  relayBlockNotice(unsafe, consent, rating, contact, unchecked, rate) == NoticeRetry implies
+    (unchecked and not(unsafe) and not(consent) and not(rating) and not(contact))
 ```
 
 ### A relay text that says the sender is under 18 starts the minors policy
 
-The engine reads the text of each item for a minor's own words ("I'm 16", "I'm still in high school") and records an age signal on the item. The desk also reads a `minor_signal` flag of the relay classifier as an age signal, because the engine keeps only the age signal of its rules. When the item has an age signal and the Network has not already marked the sender with a minor signal, the desk starts the minors policy before it answers the sender. The Network marks the sender as a minor, writes a 0-point `relay_age_signal` event in the sender's safety case, records the adults whom the sender met, and closes every open opportunity of the sender, including the match of the item. A sender who already has the minor signal gets no second event. The rules above still block the item, or hold it without its text. New rule: the age signal only decided whether the held desk kept the text, so the sender stayed matchable (audit ST-D2). The laws use fixed inputs, because the first law only restated the definition. The Network also gives the minor signal to the person, so the other apps of the person stop matching them, and on an 18+ app it writes an `age_review` event for staff, as the inbound path does.
+The engine reads the text of each item for a minor's own words ("I'm 16", "I'm still in high school") and records an age signal on the item. The rules read only the first person: an age with "years old" counts only after "I'm a" or before "here". Changed (owner decision 2026-11-22): the rules also read "my son is 15 years old" as the sender's own age. A `minor_signal` flag of the relay classifier, as a flag or as a severe flag, is also an age signal, and the engine records it on the item. The classifier reads only a text that the rules pass, and each text of a teen friendship pair that the rules do not block. Its question asks whether the sender or the recipient is under 18, so a text about the recipient's age or about a third person can also give the sender the age signal; a sender-only question needs a new question bank and a refit. Changed (owner decision 2026-11-22): the engine kept only the age signal of its rules and the desk read the classifier flag again from the reason codes, so a caller of the engine other than the desk lost the signal; now the engine record carries it on every path and the desk reads only the record. When the item has an age signal and the Network has not already marked the sender with a minor signal, the desk starts the minors policy before it answers the sender. The Network marks the sender as a minor, writes a 0-point `relay_age_signal` event in the sender's safety case, records the adults whom the sender met, and closes every open opportunity of the sender, including the match of the item. A sender who already has the minor signal gets no second event. The rules above still block the item, and the desk keeps no text of it. Changed (owner decision 2026-11-22, D18): an item with an age signal was held without its text; now it is blocked, and the minors policy starts at the same moment as before. New rule: the age signal only decided whether the held desk kept the text, so the sender stayed matchable (audit ST-D2). The laws use fixed inputs, because the first law only restated the definition. The Network also gives the minor signal to the person, so the other apps of the person stop matching them, and on an 18+ app it writes an `age_review` event for staff, as the inbound path does. Changed (owner decision 2026-11-22): a sender in a teen friendship pair is already a known minor, so `senderMarkedMinor` is the record's known minor; an age signal in teen-pair text still starts the minors policy and closes the pair's teen item, because a stated younger age can make the pair break the age rule of [friend introductions with a minor](friendIntroAge.md). Changed (owner decision 2026-11-22, answers A2 to A5): a known minor's own words about their age in teen-pair text are blocked with the reason `teen:age_talk`, and they open a minor signal only when `minorSignalOpens` holds, that is, when the stated age is younger than the youngest age on record at the Clock day; the Network does not start the minors policy for a known minor of a teen item whose stated age is not younger, because an age that agrees with the record is not a doubt. The desk compares the age that a teen-pair text states with the record also when the engine finds no age words (for example "I'm 12"): such a text gets the reason `teen:age_talk`, so it is blocked, and it counts as an age signal. Changed (owner decision 2026-11-22, A3, refix): the Network gave `minorSignalOpens` fixed inputs, so a stated younger age never opened a minor signal; now it gives the record and the stated age, because A3 keeps every path that reduces the risk of a false birth date.
 
 ```quint
 pure def relayStartsMinorPolicy(ageSignal: bool, senderMarkedMinor: bool): bool =
@@ -56,7 +115,7 @@ pure def lawNoAgeSignalStartsNoMinorsPolicy(senderMarkedMinor: bool): bool =
 
 ### A block for the sender's severe words reaches the sender's safety case
 
-A severe reason is a threat or a slur that the rules find, or a block flag from the classifier. When the verdict is a block and one of its reasons is severe, the desk writes a 0-point `relay_block` event in the sender's safety case. The event keeps no text and no reason code. A hold, or a block without a severe reason, writes no event. New rule: a block for the sender's own severe words left no record, so the item never reached the safety console (audit SD-254). The laws use fixed inputs, because the first law only restated the definition.
+A severe reason is a threat or a slur that the rules find, or a block flag from the classifier. When the verdict is a block and one of its reasons is severe, the desk writes a 0-point `relay_block` event in the sender's safety case. The event keeps no text and no reason code. A block without a severe reason writes no event. New rule: a block for the sender's own severe words left no record, so the item never reached the safety console (audit SD-254). The laws use fixed inputs, because the first law only restated the definition. Changed (owner decision 2026-11-22, D18): the law about a held item is removed, because no item is held now; the event is written at the block, without waiting for anyone.
 
 ```quint
 pure def relaySevereBlockCaseEvent(verdict: RelayVerdict, severeReason: bool): bool =
@@ -71,8 +130,6 @@ pure def lawAPassWritesNoCaseEvent(severeReason: bool): bool =
 pure def lawNoSevereReasonWritesNoCaseEvent(verdict: RelayVerdict): bool =
   not(relaySevereBlockCaseEvent(verdict, false))
 
-pure def lawAHeldItemWritesNoCaseEvent(severeReason: bool): bool =
-  not(relaySevereBlockCaseEvent(Hold, severeReason))
 ```
 
 ## Story: Relay only to the match I named
@@ -124,7 +181,7 @@ pure def lawSeveralMatchesAreNotAbuse(liveMatches: int): bool =
 
 ### Negative feedback after a meeting ends the relay thread
 
-A relay thread is open only while its match is mutual, both members said yes, and neither member gave negative feedback about the other after the meeting. Negative feedback is a check-in answer with negative sentiment that does not say the other person did not come: the same answer that keeps the pair from being matched again. When the thread ends, the match is no longer live in either direction: a turn that opens after the feedback does not offer it, so a relay request of that turn that names it is refused as an item the turn did not offer; only a turn that opened before the feedback and offered the match gets the "match is closed" notice for it; a relay without a name does not count it; a staff release of a held item for it delivers nothing; and a queued relay item for it fails its final dispatch check. A block or a report is not needed. New rule: negative feedback only kept the pair from new matches, and the other member could keep sending relayed texts until the member blocked them (audit OPP58). Changed 2026-11-22: the second law only restated the definition, so it is now two laws. One checks the safety property at fixed inputs: a match that is not mutual, or that has no yes from both members, has no open thread. The other ties the ended thread to `relayTarget`: when negative feedback ends the only match's thread, a relay without a name has no match, and a relay that names it is never sent to it (`RelayNamedNotLive`). Changed: this rule said that every relay request that names the closed match gets the "match is closed" notice, but the endpoint refuses an item that the turn did not offer, and a staff release looked the match up without the thread check and could deliver a held item after the thread ended (audit RELAY-spec-closed-notice, RELAY-release-closed).
+A relay thread is open only while its match is mutual, both members said yes, and neither member gave negative feedback about the other after the meeting. Negative feedback is a check-in answer with negative sentiment that does not say the other person did not come: the same answer that keeps the pair from being matched again. When the thread ends, the match is no longer live in either direction: a turn that opens after the feedback does not offer it, so a relay request of that turn that names it is refused as an item the turn did not offer; only a turn that opened before the feedback and offered the match gets the "match is closed" notice for it; a relay without a name does not count it; and a queued relay item for it fails its final dispatch check. A block or a report is not needed. New rule: negative feedback only kept the pair from new matches, and the other member could keep sending relayed texts until the member blocked them (audit OPP58). Changed 2026-11-22: the second law only restated the definition, so it is now two laws. One checks the safety property at fixed inputs: a match that is not mutual, or that has no yes from both members, has no open thread. The other ties the ended thread to `relayTarget`: when negative feedback ends the only match's thread, a relay without a name has no match, and a relay that names it is never sent to it (`RelayNamedNotLive`). Changed: this rule said that every relay request that names the closed match gets the "match is closed" notice, but the endpoint refuses an item that the turn did not offer, and a staff release looked the match up without the thread check and could deliver a held item after the thread ended (audit RELAY-spec-closed-notice, RELAY-release-closed). Changed (owner decision 2026-11-22, D18): the staff release is removed, because no relayed text waits for staff now.
 
 ```quint
 pure def relayThreadOpen(mutual: bool, bothSaidYes: bool, negativeFeedback: bool): bool =

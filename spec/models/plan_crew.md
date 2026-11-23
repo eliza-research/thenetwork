@@ -12,6 +12,8 @@ Imported from `quint/plan_crew.qnt` at `30d950e`. See [model index](README.md) f
 Production offer transitions and the handoff decision use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch. The model's held outcome represents a booked session that reached the feedback step.
 The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessions and offers before repeats and new plans.
 
+Changed (owner decision 2026-11-22, answers A2 to A5): a friends.help crew can hold members aged 13 to 17 when every pair with a minor passes the teen pair rule and the crew meets at an all-ages place for an all-ages activity ([friend introductions with a minor](../friendIntroAge.md) `groupAgeAllowed`, `teenPlaceAllowed`; engine `crewSessionPlan` returns no session unless `teenGroupReason` passes and the place rule holds). The model chooses at the start whether the crew is a teen crew (`teenCrew`) and whether its place is all-ages now (`placeAllAges`, read from the catalog entry by id, never from the stored plan copy). In a teen crew the set `minors` stands for the members who fail the rule now (19 on the session's end day, a lost readiness, a report or a bar, a stop of teen introductions), so `noSessionAMinorKnows` is the teen plan rule for a teen crew (the first build also had a copy of it named `teenPlanRule` in `safety`; the copy is deleted because it checked nothing more), and while teen introductions are stopped it is the old minors-policy invariant. `teenPlanPlace` states that a teen crew at a place that is not all-ages gets no session. Organizing reach is outside this model (`withReach` gives a crew with a minor no reach; `teen-friend-intro.integration.test.ts`).
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=30 max-samples=10000 verify-steps=12
@@ -70,6 +72,10 @@ module plan_crew {
   var crewWeek: int            // the next free slot (time)
   var crewHandedOff: bool
   var crewEndTold: bool        // members heard that the weekly crew ended
+  // Owner decision 2026-11-22, answer A4: a friends.help teen crew (minors = the members who fail the rule), and
+  // whether its place and activity are all-ages now (teenPlaceAllowed).
+  var teenCrew: bool
+  var placeAllAges: bool
 
   /** planSeatOk (network.ts:2888) with busyOk: an adult, not opted out, trust ok. */
   def seatOk(m: str): bool = not(minors.contains(m)) and not(optedOut.contains(m)) and not(watch.contains(m))
@@ -77,18 +83,25 @@ module plan_crew {
   // ------------------------------------------------------------------------------------------------
   // Init
 
-  action init = all {
+  action initCrew(tc: bool, aa: bool): bool = all {
     now' = 0, optedOut' = Set(), watch' = Set(), minors' = Set(),
     crewStage' = "offered", crewYes' = Set(), crewNo' = Set(), crewMembers' = CREW0, crewTold' = Set(),
     crewSessions' = List(), crewOpps' = Map(), crewOppSlot' = Map(), crewWeek' = 0, crewHandedOff' = false,
-    crewEndTold' = false,
+    crewEndTold' = false, teenCrew' = tc, placeAllAges' = aa,
+  }
+  // An adult crew (the place rule does not apply to it).
+  action initAdult = initCrew(false, true)
+  action init = {
+    nondet tc = Set(true, false).oneOf()
+    nondet aa = Set(true, false).oneOf()
+    initCrew(tc, aa)
   }
 
-  action keepEnv = all { now' = now, optedOut' = optedOut, watch' = watch, minors' = minors }
+  action keepEnv = all { now' = now, optedOut' = optedOut, watch' = watch, minors' = minors, teenCrew' = teenCrew, placeAllAges' = placeAllAges }
   action keepCrew = all {
     crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
     crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
-    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold,
+    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold, teenCrew' = teenCrew, placeAllAges' = placeAllAges,
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -121,7 +134,7 @@ module plan_crew {
     crewOpps' = if (crewMembers.contains(m) or SOURCE_ASKED.contains(m)) crewOpps.keys().mapBy(k => if (crewOpps.get(k) == "review") "failed" else crewOpps.get(k)) else crewOpps,
     crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
     crewSessions' = crewSessions, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
-    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold,
+    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold, teenCrew' = teenCrew, placeAllAges' = placeAllAges,
     now' = now, optedOut' = optedOut, watch' = watch,
   }
 
@@ -188,6 +201,8 @@ module plan_crew {
       crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewHandedOff' = true,
     } else all {
       venueCurrent,
+      // engine crewSessionPlan: a teen crew gets a session only at an all-ages place (teenPlaceAllowed).
+      not(teenCrew) or placeAllAges,
       crewMembers.filter(id => seatOk(id)).size() >= CREW_MIN,
       not(dup),
       crewSessions' = crewSessions.append(planId),
@@ -266,7 +281,14 @@ module plan_crew {
   val noSessionAMinorKnows: bool =
     crewKnownToAMinor implies crewOpps.keys().forall(k => crewOpps.get(k) != "review")
 
-  val safety: bool = and { sessionSlotOnce, handoffCountsSessions, crewOptedIn, noSessionAMinorKnows }
+  /**
+   * Owner decision 2026-11-22, answer A4 (spec/friendIntroAge.md groupAgeAllowed, teenPlaceAllowed): in a teen crew
+   * `noSessionAMinorKnows` is the teen plan rule (no session in review while a member fails the rule), so it has no
+   * second name; a teen crew at a place that is not all-ages gets no session.
+   */
+  val teenPlanPlace: bool = (teenCrew and not(placeAllAges)) implies crewSessions == List()
+
+  val safety: bool = and { sessionSlotOnce, handoffCountsSessions, crewOptedIn, noSessionAMinorKnows, teenPlanPlace }
 
   // The invariant of the skipped defect (SD-444 notice part). It fails today; see its comment.
   val skippedDefects: bool = crewEndHeard
@@ -282,16 +304,16 @@ module plan_crew {
   // Run tests (concrete traces)
 
   run unfinishedCrewOfferCannotAcceptTest =
-    init.then(crewAnswerCurrent("a", true, false)).fail()
+    initAdult.then(crewAnswerCurrent("a", true, false)).fail()
 
   run closedVenueCannotCreateCrewSessionTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTickWithVenue(false)).fail()
 
   /** SD-144 fixed: a session that fails in review is not proposed again for the same slot. */
   run sd144SlotOnceTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick).then(crewSessionEnd(100, false))
       // crewTick is disabled here: slot 0's plan id is already in crew.sessions.
@@ -304,7 +326,7 @@ module plan_crew {
    * notice part is skipped: nobody hears that the crew ended (crewEndHeard fails).
    */
   run crewHandoffTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick).then(crewSessionEnd(100, false))
       .then(crewWeekPass).then(crewTick).then(crewSessionEnd(101, false))
@@ -317,7 +339,7 @@ module plan_crew {
 
   /** A crew member found to be a minor ends the crew: the open session closes and no new session follows. */
   run minorEndsCrewTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick)
       .then(minorSignal("b"))
@@ -327,7 +349,7 @@ module plan_crew {
 
   /** d, who was asked about the plan the crew came from and is not in the crew, is found to be a minor: the crew ends. */
   run minorAskedAboutSourceEndsCrewTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick)
       .then(minorSignal("d"))
@@ -337,10 +359,25 @@ module plan_crew {
 
   /** A member who goes on watch leaves the crew short of seats: no session is proposed. */
   run crewSeatsTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(goWatch("b"))
       .expect(crewStage == "formed" and crewMembers.filter(id => seatOk(id)).size() < CREW_MIN and safety)
+      .then(crewTick)
+      .fail()
+
+  /** Answer A4: a teen crew at an all-ages place gets a session; one member failing the rule ends the crew. */
+  run teenCrewSessionTest =
+    initCrew(true, true)
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTick)
+      .expect(crewOpps.get(100) == "review" and safety)
+      .then(minorSignal("b"))
+      .expect(crewOpps.get(100) == "failed" and noSessionAMinorKnows and safety)
+  /** Answer A4: a teen crew at a place that is not all-ages gets no session. */
+  run teenCrewBarTest =
+    initCrew(true, false)
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick)
       .fail()
 }

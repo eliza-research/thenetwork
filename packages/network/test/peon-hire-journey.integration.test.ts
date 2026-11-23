@@ -10,6 +10,7 @@ import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import { BlooioAdapter, DryRunAdapter, type Delivery, type Outbound } from "../service/channel.ts";
@@ -32,9 +33,9 @@ class HoldingCarrier extends BlooioAdapter {
 
 function start() {
   service = new NetworkService({ url, clock, instance: "peon-hire-journey", log: () => {}, photoStorage: null, notify: false,
-    tokens: "admin:adm-tok,safety:saf-tok", env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
+    tokens: "admin:adm-tok,safety:saf-tok", env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: holdEveryItem.judge,
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "peon:nyc" }],
-    adapter: (_net, rt) => rt.app.id === "peon" ? new HoldingCarrier({ from: "+12125550100", clock, app: "peon", liveGate: () => true,
+    adapter: (_net, rt) => rt.app.id === "peon" ? new HoldingCarrier({ from: "+12125550100", clock, app: "peon",
       log: () => {}, provider: { kind: "sim", send: async request => {
         accepted.add(request.idempotencyKey);
         return { providerMessageId: request.idempotencyKey, status: "sent" };
@@ -112,6 +113,7 @@ async function matchingDay(phones: readonly string[]) {
   const day = Math.floor((clock.now() + 24 * HOUR) / (24 * HOUR)) * 24 * HOUR + 19 * HOUR;
   clock.advance((day >= clock.now() + 24 * HOUR ? day : day + 24 * HOUR) - clock.now());
   await runtime().tick();
+  for (let run = 0; run < 3; run++) await service.reviewJudgeTick();
   return reviewItems();
 }
 const pairOf = (items: ReviewItem[], candidate: string, employer: string) =>

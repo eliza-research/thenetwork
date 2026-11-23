@@ -106,6 +106,106 @@ export function lawEveryAppHasALane(app: string): boolean {
   return !(app === "ntwrk" || app === "slop" || app === "peon" || app === "friends") || (laneOffered(app, "Friend") || laneOffered(app, "Date") || laneOffered(app, "Cofounder") || laneOffered(app, "Intro") || laneOffered(app, "Hire") || laneOffered(app, "Mentor") || laneOffered(app, "Invest"));
 }
 
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenFriendApp(app: string): boolean {
+  return app === "friends" || app === "ntwrk";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenFriendCategory(app: string, category: string): boolean {
+  return (app === "friends" && (category === "social" || category === "hobby")) || (app === "ntwrk" && category === "social");
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenGroupPlanApp(app: string): boolean {
+  return app === "friends";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenFriendLane(app: string, lane: MatchLane): boolean {
+  return teenFriendApp(app) && lane === "Friend";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawNtwrkTeenCategoryIsSocial(category: string): boolean {
+  //@ ensures \result === true
+  return !teenFriendCategory("ntwrk", category) || category === "social";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenPlansOnlyOnFriends(app: string): boolean {
+  //@ ensures \result === true
+  return !teenGroupPlanApp(app) || app === "friends";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenLanesOnlyInFriendApps(app: string, lane: MatchLane, category: string): boolean {
+  //@ ensures \result === true
+  return !(teenFriendLane(app, lane) || teenFriendCategory(app, category) || teenGroupPlanApp(app)) || (app === "friends" || app === "ntwrk");
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawNoTeenOnSlopOrPeon(lane: MatchLane, category: string): boolean {
+  //@ ensures \result === true
+  return !(teenFriendLane("slop", lane) || teenFriendLane("peon", lane) || teenFriendCategory("slop", category) || teenFriendCategory("peon", category) || teenGroupPlanApp("slop") || teenGroupPlanApp("peon"));
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenFriendLaneSameOnBothApps(lane: MatchLane): boolean {
+  //@ ensures \result === true
+  return teenFriendLane("friends", lane) === teenFriendLane("ntwrk", lane);
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenFriendLaneIsOffered(app: string, lane: MatchLane): boolean {
+  //@ ensures \result === true
+  return !teenFriendLane(app, lane) || laneOffered(app, lane);
+}
+
+/** Story: Friendship lanes offer teen introductions / A teen is never in a date or work lane (spec/matchLane.md) */
+//@ pure
+export function lawNoTeenDateOrWork(app: string): boolean {
+  //@ ensures \result === true
+  return !teenFriendLane(app, "Date") && !teenFriendLane(app, "Hire") && !teenFriendLane(app, "Cofounder") && !teenFriendLane(app, "Invest") && !teenFriendLane(app, "Mentor") && !teenFriendLane(app, "Intro") && !teenFriendCategory(app, "romance") && !teenFriendCategory(app, "professional");
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function teenGenerator(app: string, generator: string): boolean {
+  return (app === "ntwrk" && (generator === "intent_to_capability" || generator === "group_composer" || generator === "request")) || (app === "friends" && (generator === "friend_circle" || generator === "activity_partner" || generator === "request" || generator === "plan" || generator === "friends_repeat" || generator === "crew"));
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function lawTeenGeneratorOnlyInFriendApps(app: string, generator: string): boolean {
+  //@ ensures \result === true
+  return !teenGenerator(app, generator) || teenFriendApp(app);
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function lawNtwrkHasNoTeenPlans(generator: string): boolean {
+  //@ ensures \result === true
+  return !(generator === "plan" || generator === "friends_repeat" || generator === "crew") || !teenGenerator("ntwrk", generator);
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function lawRepeatsAndContributorsNeverTeen(app: string): boolean {
+  //@ ensures \result === true
+  return !(teenGenerator(app, "second_encounter") || teenGenerator(app, "same_table_again") || teenGenerator(app, "event_anchor") || teenGenerator(app, "warm_path") || teenGenerator(app, "help_request") || teenGenerator(app, "newcomer_welcome") || teenGenerator(app, "network_growth") || teenGenerator(app, "gathering_second_encounter") || teenGenerator(app, "player"));
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_matchLane(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

@@ -6,7 +6,7 @@
 // (the leak gate must keep it out of every member-facing string).
 //
 // Field mapping (also in the results doc):
-//   Member.age = claimed age; homeCity "nyc"; categoriesOptIn ["social","hobby"] (claimed minors: ["social"], never matched)
+//   Member.age = age on the snapshot day from the stated birth date (birthKey, birthExact, maxAge); homeCity "nyc"; categoriesOptIn ["social","hobby"] (a minor who is not teen ready: ["social"]; minors are introduced only under the teen age rule, spec/friendIntroAge.md)
 //   Presence {home, areas: [home neighborhood, often-around neighborhoods]}
 //   interest        <activity tag>                       60% shareable, else matchable
 //   trait           friends:energy:<low|mid|high>        matchable
@@ -18,7 +18,11 @@
 //   fact            verify:liveness:<r>, verify:age:<r>  agent_private (r: pass, fail or pending; info.ts VERIFY_PASS)
 //   fact            safety:<cue>                         agent_private, inferred
 //   Intent          category "social", "meet people nearby to do things with"
-import { DAY, canBeMatched, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, canBeMatched, earliestDayKeyOf, latestDayKeyOf, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
+import { ageOnDay } from "../../../../core/src/generated/memberAge.ts";
+import { teenFriendCandidate, teenPartnerAge, teenReady } from "../../../../core/src/generated/friendIntroAge.ts";
+import { teenFriendApp } from "../../../../core/src/generated/matchLane.ts";
+import { teenFacetAllowed, teenIntrosStoredOn } from "../../../../core/src/generated/teenIntroSwitch.ts";
 import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import type { Crew, PlanOutcomeRecord } from "@thenetwork/engine/src/plans.ts";
@@ -65,6 +69,30 @@ export interface FriendsNetworkState {
   checkIns: Map<MemberId, FriendsSlot[]>;
   /** When each member was last sent a new-plan invite. */
   lastPlannedAt: Map<MemberId, number>;
+  teenStop: boolean;
+}
+
+export interface TeenView {
+  birthKey: number; birthExact: boolean; age: number; maxAge: number;
+  minorSignal: boolean; minorReported: boolean; olderReported: boolean; barred: boolean;
+  ready: boolean;
+}
+
+const AGE_CUE = "safety:age_signal";
+const heldFor = (state: FriendsNetworkState, id: MemberId, kind: string) => state.safetyHolds.some(h => h.memberId === id && h.reason === `reported: ${kind}`);
+
+export function teenViewOf(p: FriendsPersona, state: FriendsNetworkState): TeenView {
+  const { birthKey, birthExact } = p.stated;
+  const minDay = earliestDayKeyOf(state.now), maxDay = latestDayKeyOf(state.now);
+  const age = ageOnDay(birthKey, minDay), maxAge = ageOnDay(birthKey, maxDay);
+  const minorReported = heldFor(state, p.id, "minor_contact");
+  const olderReported = heldFor(state, p.id, "poser_contact");
+  const barred = olderReported || minorReported;
+  const minorSignal = cuesOf(p).includes(AGE_CUE) && !clearedAt(p, state.week);
+  const adult = canBeMatched(age);
+  const ready = teenIntrosStoredOn(teenFriendApp("friends"), state.teenStop) && teenReady(birthExact, false, minorSignal, minorReported, olderReported, barred)
+    && (teenFriendCandidate(adult, true, birthKey, minDay, maxDay, true, teenFriendApp("friends")) || teenPartnerAge(birthKey, minDay, maxDay));
+  return { birthKey, birthExact, age, maxAge, minorSignal, minorReported, olderReported, barred, ready };
 }
 
 export interface FriendsSnapshot extends WorldSnapshot {
@@ -137,13 +165,13 @@ export function visibleRedFlag(p: FriendsPersona, week: number): boolean {
 }
 
 /** Facets the agent extracted for one persona at the start of `week` (deterministic; no hidden truth). */
-export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week = 0): Facet[] {
+export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week: number, view: TeenView): Facet[] {
   const S = p.stated, tier = p.hidden.richness, K = KNOWS[tier];
-  const minor = !canBeMatched(S.claimedAge);
+  const minor = !canBeMatched(view.age);
   const r = new Rng(hash32("friends-knows", p.id));
   const out: Facet[] = [];
   const f = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], extra: Partial<Facet> = {}) => out.push({
-    id: `${p.id}:fr:${out.length}`, memberId: p.id, kind, value, tags, scope: minor ? "agent_private" : scope,
+    id: `${p.id}:fr:${out.length}`, memberId: p.id, kind, value, tags, scope: minor && !(view.ready && teenFacetAllowed(kind)) ? "agent_private" : scope,
     provenance: "said", confidence: 0.8, validFrom: joinedAt, source: "chat", observedAt: joinedAt, inferred: false, confirmedByMember: true, ...extra,
   });
   for (const a of S.activities) if (r.next() < K.activities) {
@@ -156,7 +184,7 @@ export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week = 0): 
   for (const s of S.usuallyFree) if (r.next() < K.free) f("availability_pattern", `usually free ${s}`, [`friends:free:${s}`], "agent_private");
   if (K.tolerance) f("preference", `travel tolerance ${S.maxTravel}`, [`friends:max_travel:${S.maxTravel}`], "agent_private");
   if (S.newToCity) f("fact", "recently moved", ["friends:new_to_city"], "agent_private");
-  const v = verifyAt(p, week);
+  const v: FriendsPersona["stated"]["verify"] = view.ready && minor ? { liveness: "passed", age: "passed" } : verifyAt(p, week);
   // The tag is the one the staff verify path and slop write: verify:<check>:<pass|fail> (pending until a result).
   f("fact", `liveness ${v.liveness}`, [`verify:liveness:${verifyTag(v.liveness)}`], "agent_private", { provenance: "connected_source" });
   f("fact", `ageassurance ${v.age}`, [`verify:age:${verifyTag(v.age)}`], "agent_private", { provenance: "connected_source" });
@@ -169,29 +197,32 @@ export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week = 0): 
   return out;
 }
 
-export function friendsMemberOf(p: FriendsPersona, joinedAt: number): Member {
-  const S = p.stated, adult = canBeMatched(S.claimedAge);
+export function friendsMemberOf(p: FriendsPersona, joinedAt: number, view: TeenView): Member {
+  const S = p.stated, adult = canBeMatched(view.age);
   return {
     id: p.id, name: p.name, homeCity: "nyc", state: "normal",
     prefs: {
-      categoriesOptIn: adult ? ["social", "hobby"] : ["social"], quietHours: [22, 8], romanceOptIn: false,
+      categoriesOptIn: adult || view.ready ? ["social", "hobby"] : ["social"], quietHours: [22, 8], romanceOptIn: false,
       formats: ["small_group", "one_to_one"], maxTravelMinutes: KNOWS[p.hidden.richness].tolerance ? S.maxTravel : 40, onlyWhenAsked: false,
     },
-    joinedAt, age: S.claimedAge, unansweredProactive: 0,
+    joinedAt, age: view.age, unansweredProactive: 0,
+    birthKey: view.birthKey, birthExact: view.birthExact, ageConflict: false, maxAge: view.maxAge,
+    ...(view.barred ? { teenBarred: true } : {}), ...(view.ready ? { teenReady: true } : {}),
   };
 }
 
-export function emptyFriendsState(): FriendsNetworkState {
-  return { now: FRIENDS_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], edges: [], crews: [], offered: [], outcomes: [], checkIns: new Map(), lastPlannedAt: new Map() };
+export function emptyFriendsState(teenStop = false): FriendsNetworkState {
+  return { now: FRIENDS_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], edges: [], crews: [], offered: [], outcomes: [], checkIns: new Map(), lastPlannedAt: new Map(), teenStop };
 }
 
 export function buildFriendsSnapshot(personas: readonly FriendsPersona[], state: FriendsNetworkState): FriendsSnapshot {
   const members: Member[] = [], facets: Facet[] = [], intents: Intent[] = [], presence: Presence[] = [];
   const joinedAt = FRIENDS_WORLD_START;
   for (const p of personas) {
-    members.push(friendsMemberOf(p, joinedAt));
-    facets.push(...friendsFacetsOf(p, joinedAt, state.week));
-    if (canBeMatched(p.stated.claimedAge)) intents.push({ id: `${p.id}:friends`, memberId: p.id, category: "social", objective: "meet people nearby to do things with", horizonDays: 365, status: "active", createdAt: joinedAt });
+    const view = teenViewOf(p, state);
+    members.push(friendsMemberOf(p, joinedAt, view));
+    facets.push(...friendsFacetsOf(p, joinedAt, state.week, view));
+    if (canBeMatched(view.age) || view.ready) intents.push({ id: `${p.id}:friends`, memberId: p.id, category: "social", objective: "meet people nearby to do things with", horizonDays: 365, status: "active", createdAt: joinedAt });
     presence.push({ memberId: p.id, city: "nyc", type: "home", areas: [hoodOf(p.stated.home).name, ...p.stated.often.map(h => hoodOf(h).name)] });
   }
   return {
@@ -200,6 +231,7 @@ export function buildFriendsSnapshot(personas: readonly FriendsPersona[], state:
     crews: state.crews.map(c => ({ ...c, members: [...c.members], sessions: [...c.sessions] })), offered: state.offered.map(c => ({ ...c })),
     outcomes: state.outcomes.map(o => ({ ...o })), checkIns: Object.fromEntries([...state.checkIns].map(([k, v]) => [k, [...v]])),
     lastPlannedAt: Object.fromEntries(state.lastPlannedAt), week: state.week,
+    ...(teenIntrosStoredOn(teenFriendApp("friends"), state.teenStop) ? { teenIntros: true } : {}),
   };
 }
 

@@ -345,7 +345,7 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     const port = 40000 + (process.pid % 10000);
     const login = (role: string) => Object.assign(new URL(urlOf(BOOTED)), { username: role }).toString();
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => v !== undefined && k !== "DATABASE_URL" && k !== "PORT" &&
-      !/^(PLATFORM_|NETWORK_|BLOOIO_|OTP_|TWILIO_|TURNSTILE_|LEAK_|SERVICE_|MIGRAT|NTWRK_|ALERT_|BACKEND_|STAFF_|[A-Z]+_LIVE_APPROVED$)/.test(k))) as Record<string, string>;
+      !/^(PLATFORM_|NETWORK_|BLOOIO_|OTP_|TWILIO_|TURNSTILE_|LEAK_|SERVICE_|MIGRAT|NTWRK_|ALERT_|BACKEND_|STAFF_|SURPLUS_|OPENAI_|JUDGE_|RECOMMENDER_|DEFAULT_LLM_)/.test(k))) as Record<string, string>;
     const env: Record<string, string> = {
       ...inherited, NODE_ENV: "", PLATFORM_ENV: "staging", PLATFORM_DB_ENVIRONMENT_INIT: "1", MIGRATE_ON_BOOT: "0",
       DATABASE_URL: login(BOOT_ROLE), MIGRATION_DATABASE_URL: urlOf(BOOTED), NETWORK_PUBLIC_EVENTS_DATABASE_URL: login(`${BOOT_ROLE}_events`),
@@ -353,7 +353,8 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "e".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "p".repeat(40),
       TURNSTILE_SECRET_KEY: "fixture", TURNSTILE_SITE_KEY: "fixture-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfixture",
       TWILIO_AUTH_TOKEN: "fixture", TWILIO_VERIFY_SERVICE_SID: "VAfixture", SERVICE_TURN_SECRET: "t".repeat(40),
-      NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
+      NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_CHANNEL: "",
+      SURPLUS_API_KEY: "synthetic-surplus-key", SURPLUS_BASE_URL: "http://127.0.0.1:9/v1", OPENAI_BASE_URL: "http://127.0.0.1:9/v1",
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/../../../deploy/backend/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();

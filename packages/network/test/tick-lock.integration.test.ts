@@ -9,6 +9,7 @@ import type { LLM } from "@thenetwork/core";
 import { PgStore, runStored, runTick } from "../src/index.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const TURN_LIMIT_MS = 8_000;
 /** Three pairs with no shared interest between pairs: a with c, b with d, e with f. */
@@ -42,7 +43,7 @@ describe.skipIf(!pgAvailable)("the tick's engine run holds no lock", () => {
     const judge = heldJudge();
     const ids = PEOPLE.map(p => p.id);
     // Not selective: the failed judge writes no explanations, and the ntwrk want heuristics are not under test here.
-    const w = new Mini(PEOPLE, { review: "auto", maxNewPerDay: 20, plans: false, growth: false, selective: false, engineLLM: judge.llm });
+    const w = new Mini(PEOPLE, { inlineJudge: simulatedReviewJudge({ exceptions: false }), maxNewPerDay: 20, plans: false, growth: false, selective: false, engineLLM: judge.llm });
     await w.onboard(...ids);
     const store = new PgStore(url, "ntwrk:nyc");
     stores.push(store);
@@ -97,7 +98,7 @@ describe.skipIf(!pgAvailable)("the tick's engine run holds no lock", () => {
 
   test("runTick runs the capture unit and the commit unit each in its own scope, and both scopes start before the tick is saved", async () => {
     const ids = PEOPLE.map(p => p.id);
-    const w = new Mini(PEOPLE, { review: "auto", maxNewPerDay: 20, plans: false, growth: false, selective: false });
+    const w = new Mini(PEOPLE, { inlineJudge: simulatedReviewJudge({ exceptions: false }), maxNewPerDay: 20, plans: false, growth: false, selective: false });
     await w.onboard(...ids);
     const store = new PgStore(url, "ntwrk:nyc");
     stores.push(store);

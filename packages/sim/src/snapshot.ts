@@ -99,6 +99,7 @@ export function memberOf(p: Persona, s: Pick<SnapshotState, "joined" | "optedOut
     },
     invitedBy: p.invitedBy, joinedAt: s.joined.get(p.id) ?? 0, age: p.public.claimedAge,
     unansweredProactive: s.unanswered.get(p.id) ?? 0,
+    ...(p.public.birthKey !== undefined ? { birthKey: p.public.birthKey, birthExact: true, ageConflict: false } : {}),
     ...(k ? { connectedSources: k.sources.map(x => ({ ...x })) } : {}),
   };
 }
@@ -148,6 +149,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
   for (const p of joined) {
     const jt = s.joined.get(p.id)!;
     const k = p.knowledge;
+    if (p.public.verified) facets.push({ id: `${p.id}:verified`, memberId: p.id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "connected_source", confidence: 1, validFrom: jt });
     if (k) pushKnownFacets(p, k, jt, s.now, id => (s.unanswered.get(id) ?? 0) >= 2, facets, intents, feat);
     else {
       const f = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>

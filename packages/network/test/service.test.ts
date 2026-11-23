@@ -16,6 +16,7 @@ import { importPublicEvents } from "../service/import-public-events.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { START } from "./mini.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -171,7 +172,9 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await staff(a, "ana-tok", "GET", "/review")).status).toBe(403);
     expect((await staff(a, "rev-tok", "POST", "/matching", { on: true })).status).toBe(403);
     expect((await staff(a, "adm-tok", "POST", "/review-mode", { mode: "auto" })).status).toBe(404);
-    expect(() => service(clock, "auto", { network: { review: "auto" } })).toThrow(/human/);
+    const inline = service(clock, "inline", { network: { inlineJudge: simulatedReviewJudge({ exceptions: false }) } });
+    expect(inline.main.net.judgeReviewer).toBe("review_judge");
+    expect(Reflect.get(inline.main.net, "inlineJudge")).toBeUndefined();
     // A new Network starts with matching off; an admin turns it on.
     expect((await (await staff(a, "ana-tok", "GET", "/health")).json()).matchingEnabled).toBe(false);
     expect((await staff(a, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
@@ -179,13 +182,14 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     // Onboarding and a member request through the webhook; a restart in the middle.
     for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD.slice(0, 2)) await say(a, clock, id, text);
     await a.close();
-    const b = service(clock, "second");
+    const b = service(clock, "second", { reviewJudge: holdEveryItem.judge });
     for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD.slice(2)) await say(b, clock, id, text);
     for (const id of ["a", "b", "c", "r"]) {
       const bodies = (await outbound(id)).map(m => m.body);
       expect(new Set(bodies).size).toBe(bodies.length); // no welcome or question twice across the restart
     }
     expect(await say(b, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    await b.reviewJudgeTick();
 
     const queue = await (await staff(b, "rev-tok", "GET", "/review")).json();
     const item = queue.items.find((i: any) => i.origin === "request");
@@ -220,7 +224,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select count(*)::int as n from network.events where type = 'review_decision' and actor_type = 'reviewer' and actor_id like 'token:reviewer#%'`)[0].n).toBe(1);
     expect((await sql`select count(*)::int as n from network.events where type = 'matching_switch' and actor_id like 'token:admin#%'`)[0].n).toBe(1);
     const h = await (await staff(b, "ana-tok", "GET", "/health")).json();
-    expect(h).toMatchObject({ ok: true, channel: "dry_run", reviewMode: "human", matchingEnabled: true, lockHolder: null });
+    expect(h).toMatchObject({ ok: true, channel: "dry_run", reviewJudge: { awaiting: 0, exceptions: 0, exceptionsOverdue: 0 }, matchingEnabled: true, lockHolder: null });
     expect(h.lastTick.thisInstance).toEqual({ at: clock.now(), ran: true });
   }, T);
 
@@ -387,7 +391,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const delivered: SendRequest[] = [];
     const s = service(clock, "public-events", {
       adapter: (net, runtime) => new BlooioAdapter({
-        net, memberOf: runtime.memberOf, from: "+12125550190", clock, env: {}, liveGate: () => true, log: () => {},
+        net, memberOf: runtime.memberOf, from: "+12125550190", clock, env: {}, log: () => {},
         provider: { kind: "sim", send: async request => {
           delivered.push(request);
           return { providerMessageId: `public-event-${delivered.length}`, status: "queued" };
@@ -676,7 +680,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await y.tick()).toBe(true);
   }, T);
 
-  test("Blooio adapter: no send without both live flags; with both, the provider gets the message through the queue", async () => {
+  test("Blooio adapter: with no live flag set the provider gets the message through the queue (owner decision 2026-11-22)", async () => {
     const run = async (env: Record<string, string | undefined>, more?: (s: NetworkService, clock: SimClock) => Promise<void>) => {
       await reset();
       const clock = new SimClock(START);
@@ -690,19 +694,15 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
       await s.close();
       return result;
     };
-    for (const env of [{}, { BLOOIO_ALLOW_SEND: "1" }, { NTWRK_LIVE_APPROVED: "1" }, { BLOOIO_ALLOW_SEND: "0", NTWRK_LIVE_APPROVED: "1" }]) {
-      const r = await run(env);
-      expect(r.sent).toEqual([]);
-      expect(r.rows.map(m => m.status)).toEqual(["refused_not_approved"]);
-      expect(r.health.refusals.channel).toEqual({ refused_not_approved: 1 });
+    for (const env of [{}, { BLOOIO_ALLOW_SEND: "0", NTWRK_LIVE_APPROVED: "0" }]) {
+      const live = await run(env);
+      expect(live.sent.length).toBe(1);
+      expect(live.sent[0]).toMatchObject({ to: phone("a"), text: live.rows[0].body, idempotencyKey: `tn:${live.rows[0].id}` });
+      expect(live.rows[0].status).toBe("accepted");
+      expect(live.health.refusals.channel).toEqual({});
     }
-    // Both flags (founder approval): the fake provider receives the welcome, to the member's phone, with the stored id as its key.
-    const live = await run({ BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" });
-    expect(live.sent.length).toBe(1);
-    expect(live.sent[0]).toMatchObject({ to: phone("a"), text: live.rows[0].body, idempotencyKey: `tn:${live.rows[0].id}` });
-    expect(live.rows[0].status).toBe("accepted");
     // An under-13 decline: the one kind decline reaches the provider; nothing about the member is stored.
-    const declined = await run({ BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, async (s, clock) => { await say(s, clock, "u", "hi"); await say(s, clock, "u", "I am 12 years old"); });
+    const declined = await run({}, async (s, clock) => { await say(s, clock, "u", "hi"); await say(s, clock, "u", "I am 12 years old"); });
     expect(declined.sent.filter(r => r.to === phone("u")).length).toBe(2);
     expect((await outbound("u")).length).toBe(0);
   }, T);

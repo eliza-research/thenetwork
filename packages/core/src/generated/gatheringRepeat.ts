@@ -33,8 +33,8 @@ export function lawGatheringRepeatStagesOnce(rolloutEnabled: boolean, currentSou
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice (spec/gatheringRepeat.md) */
 //@ pure
-export function gatheringRepeatMayBook(currentSource: boolean, humanApproved: boolean, firstNewYes: boolean, secondNewYes: boolean): boolean {
-  return currentSource && humanApproved && firstNewYes && secondNewYes;
+export function gatheringRepeatMayBook(currentSource: boolean, approved: boolean, firstNewYes: boolean, secondNewYes: boolean): boolean {
+  return currentSource && approved && firstNewYes && secondNewYes;
 }
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice (spec/gatheringRepeat.md) */
@@ -52,7 +52,7 @@ export function lawGatheringRepeatNeedDeliveredProbe(currentSource: boolean, dir
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice (spec/gatheringRepeat.md) */
 //@ pure
-export function lawGatheringRepeatNeedsSeparateConsent(currentSource: boolean, humanApproved: boolean, firstNewYes: boolean): boolean {
+export function lawGatheringRepeatNeedsSeparateConsent(currentSource: boolean, approved: boolean, firstNewYes: boolean): boolean {
   //@ ensures \result === true
-  return !gatheringRepeatMayBook(currentSource, humanApproved, firstNewYes, false);
+  return !gatheringRepeatMayBook(currentSource, approved, firstNewYes, false);
 }

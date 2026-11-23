@@ -412,6 +412,37 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     }, T);
   });
 
+  describe("spec/mcpSignupDraft.md, \"A recorded age that the app does not allow deletes the draft at once\"", () => {
+    test("an under-13 age texted to the line after the draft deletes the draft at once; an adult age keeps it", async () => {
+      const child = newPhone();
+      await saveDraft("friends", child, new Browser());
+      expect(await st.text(child, "Mo, 12. My home is unknown.")).toBe("under_age");
+      expect(await st.svc.people.ageFloor(st.svc.publicApi.accounts.phoneHash(child))).toBe(12);
+      expect(await draftRows(child, "friends")).toBe(0);
+
+      const grown = newPhone();
+      await saveDraft("friends", grown, new Browser());
+      expect(await st.text(grown, "Mo, 30")).toBe("joined");
+      expect(await st.svc.people.ageFloor(st.svc.publicApi.accounts.phoneHash(grown))).toBe(30);
+      expect(await draftRows(grown, "friends")).toBe(1);
+    }, T);
+
+    test("an under-13 age from a web join in another app deletes the draft at once; an adult web join keeps it", async () => {
+      const child = newPhone();
+      await saveDraft("friends", child, new Browser());
+      const refused = await webJoin(st, "peon", child, { age: 12, firstName: "Mo" });
+      expect(refused.res.status).toBe(400);
+      expect(refused.body.error).toBe("under_age");
+      expect(await st.svc.people.ageFloor(st.svc.publicApi.accounts.phoneHash(child))).toBe(12);
+      expect(await draftRows(child, "friends")).toBe(0);
+
+      const grown = newPhone();
+      await saveDraft("friends", grown, new Browser());
+      expect((await webJoin(st, "peon", grown, { age: 30, firstName: "Mo" })).res.status).toBe(200);
+      expect(await draftRows(grown, "friends")).toBe(1);
+    }, T);
+  });
+
   test("every link that any tool returns, on every app and surface, is a served route", async () => {
     const links = new Set<string>();
     const collect = (value: unknown) => {

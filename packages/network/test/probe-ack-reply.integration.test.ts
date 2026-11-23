@@ -4,11 +4,12 @@
 // plan and named the member to the other person; the member's real answer to the probe was a no.
 import { expect, test } from "vitest";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
 test("a thanks for another message is not a yes to the waiting probe", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a"))).toBe(true);
@@ -27,7 +28,7 @@ test("a thanks for another message is not a yes to the waiting probe", async () 
 });
 
 test("a bare thanks right after the probe still answers it", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a"))).toBe(true);

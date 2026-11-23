@@ -5,5 +5,5 @@
     "types": ["node"], "resolveJsonModule": true, "allowImportingTsExtensions": true
   },
   "include": ["design/**/*.ts", "packages/**/*.ts", "packages/ui/src/**/*.tsx", "deploy/**/*.ts", "tests/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts", "scripts/relay-eval.ts", "scripts/relay-clef-lib.ts"],
-  "exclude": ["**/node_modules", "eliza/**", "deploy/cloudflare/**"]
+  "exclude": ["**/node_modules", "eliza/**"]
 }

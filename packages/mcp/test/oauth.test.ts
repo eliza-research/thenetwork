@@ -247,6 +247,131 @@ describe("scopes", () => {
   });
 });
 
+describe("slop.date photo tools (owner decision 2026-11-22)", () => {
+  const PHOTOS = "apps:read membership:read profile:write photos:use";
+  const holdings = (calls: string[]) => async (personId: string) => {
+    calls.push(personId);
+    return {
+      text: "You have 2 photos with me: 1 \"beach\" (Mon 2 Nov), Maya has it; 2 (Sat 14 Nov). See them: https://slop.date/photos/mine#tok",
+      photos: [
+        { number: 1, name: "beach", addedOn: "2026-11-02", sharedWith: [{ firstName: "Maya", state: "ready" as const }], id: "photo-row-1", url: "https://slop.date/photos/view#secret", sha256: "a".repeat(64) },
+        { number: 2, name: null, addedOn: "2026-11-14", sharedWith: [] },
+      ],
+    };
+  };
+
+  test("the photo tools are listed only on the slop.date full surface", async () => {
+    const env = setup();
+    const names = async (url: string) => ((await rpc(env, url, "tools/list")).body!.result.tools as { name: string }[]).map(t => t.name);
+    expect(await names(`${origin(SLOP)}/mcp`)).toEqual(expect.arrayContaining(["my_photos", "photo_request"]));
+    for (const url of [`${origin(NTWRK)}/mcp`, `${origin(NTWRK)}/mcp/openai`, `${origin(PEON)}/mcp`, `${origin("friends.help")}/mcp`]) {
+      const listed = await names(url);
+      expect(listed).toContain("check_status");
+      expect(listed.filter(n => n === "my_photos" || n === "photo_request")).toEqual([]);
+    }
+  });
+
+  test("only slop.date offers photos:use: the other sites leave it out of their metadata and drop it from a request", async () => {
+    const env = setup();
+    const slopAs = await (await env.fetch(new Request(`${origin(SLOP)}/.well-known/oauth-authorization-server`))).json() as Record<string, any>;
+    expect(slopAs.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write", "profile:read", "photos:use"]);
+    const slopPrm = await (await env.fetch(new Request(`${origin(SLOP)}/.well-known/oauth-protected-resource/mcp`))).json() as Record<string, any>;
+    expect(slopPrm.scopes_supported).toContain("photos:use");
+    for (const site of [PEON, NTWRK, "friends.help"]) {
+      const as = await (await env.fetch(new Request(`${origin(site)}/.well-known/oauth-authorization-server`))).json() as Record<string, any>;
+      expect(as.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write", "profile:read"]);
+      const prm = await (await env.fetch(new Request(`${origin(site)}/.well-known/oauth-protected-resource/mcp`))).json() as Record<string, any>;
+      expect(prm.scopes_supported).not.toContain("photos:use");
+    }
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const { token } = await connect(env, PEON, PHONE_A, { scope: PHOTOS });
+    expect(token.scope).toBe("apps:read membership:read profile:write");
+  });
+
+  test("a default grant does not hold photos:use, so my_photos answers 403 with the photos scope and the platform is never asked", async () => {
+    const calls: string[] = [];
+    const env = setup({ photoHoldings: holdings(calls) });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A);
+    expect(token.scope).toBe("apps:read membership:read profile:write");
+    const r = await call(env, `${origin(SLOP)}/mcp`, "my_photos", {}, { token: token.access_token });
+    expect(r.res.status).toBe(403);
+    const h = r.res.headers.get("www-authenticate")!;
+    expect(h).toContain('error="insufficient_scope"');
+    expect(h).toContain('scope="photos:use"');
+    expect(calls).toEqual([]);
+  });
+
+  test("my_photos returns numbers, names, days and first names only, never an id, a link or a hash", async () => {
+    const calls: string[] = [];
+    const env = setup({ photoHoldings: holdings(calls) });
+    const personId = await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    expect(token.scope).toBe(PHOTOS);
+    const r = await call(env, `${origin(SLOP)}/mcp`, "my_photos", {}, { token: token.access_token });
+    expect(r.res.status).toBe(200);
+    expect(r.body!.result.isError).toBe(false);
+    expect(r.body!.result.structuredContent).toEqual({
+      app: "slop",
+      text: expect.not.stringContaining("http"),
+      photos: [
+        { number: 1, name: "beach", addedOn: "2026-11-02", sharedWith: [{ firstName: "Maya", state: "ready" }] },
+        { number: 2, name: null, addedOn: "2026-11-14", sharedWith: [] },
+      ],
+    });
+    expect(JSON.stringify(r.body)).not.toMatch(/photo-row|https?:|#secret|#tok|[0-9a-f]{64}/);
+    expect(calls).toEqual([personId]);
+  });
+
+  test("a slop.date member under 18 gets no photo list, and the platform is never asked", async () => {
+    const calls: string[] = [];
+    const env = setup({ photoHoldings: holdings(calls) });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }], 16);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    const r = await call(env, `${origin(SLOP)}/mcp`, "my_photos", {}, { token: token.access_token });
+    expect(r.body!.result.structuredContent).toEqual({ app: "slop", text: "Photos are not available for this person here.", photos: [] });
+    expect(calls).toEqual([]);
+  });
+
+  test("photo_request passes the person's own words and answers without a link; it takes no photo id", async () => {
+    const asked: string[] = [];
+    const env = setup({
+      photoRequest: async (_personId, _app, _e164, words) => {
+        asked.push(words);
+        return { status: "texted", text: "Send Maya photo 1 \"beach\" (Mon 2 Nov)? See it: https://slop.date/photos/check#t Reply YES to send it." };
+      },
+    });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    const r = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words: "send Maya the beach one" }, { token: token.access_token });
+    expect(r.body!.result.structuredContent).toEqual({ app: "slop", status: "texted", text: "I texted the person the photo to check. They reply YES to that text to send it." });
+    expect(asked).toEqual(["send Maya the beach one"]);
+    const withId = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words: "send Maya photo 1", photo_id: "photo-1" }, { token: token.access_token });
+    expect(withId.body!.result.isError).toBe(true);
+    expect(asked).toEqual(["send Maya the beach one"]);
+  });
+
+  test("photo_request takes a list of photo numbers written with spaces, and still refuses a phone number written the same way", async () => {
+    const asked: string[] = [];
+    const env = setup({
+      photoRequest: async (_personId, _app, _e164, words) => {
+        asked.push(words);
+        return { status: "texted", text: "" };
+      },
+    });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    const listed = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words: "send her photos 1 3 4 5" }, { token: token.access_token });
+    expect(listed.body!.result.isError).toBe(false);
+    expect(listed.body!.result.structuredContent).toMatchObject({ app: "slop", status: "texted" });
+    for (const words of ["send her photo 5 5 5 1 2 3 4", "send her photos 1 2 3 4 5 6 7 8 9", "send her photos 1 2 3 4 then 555 0199"]) {
+      const phone = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words }, { token: token.access_token });
+      expect(phone.body!.result.isError).toBe(true);
+    }
+    expect(asked).toEqual(["send her photos 1 3 4 5"]);
+  });
+});
+
 describe("check_status isolation across apps", () => {
   test("a peon grant sees peon only, never slop; a token from one site is refused on another", async () => {
     const env = setup();

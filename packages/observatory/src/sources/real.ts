@@ -1,9 +1,13 @@
 import { SQL } from "../../../core/src/runtime/postgres.ts";
 import { consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
 import {
-  DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
+  canBeMatched, DAY, earliestDayKeyOf, isMinor, latestDayKeyOf, validAge, type AgeSide, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
-import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
+import { ageOnDay } from "../../../core/src/generated/memberAge.ts";
+import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../core/src/generated/friendIntroAge.ts";
+import { teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
+import { teenMeetingFirstMinute, teenMeetingLastMinute } from "../../../core/src/generated/teenIntroSwitch.ts";
+import { OUTREACH } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
 import { runEngineSummarized, storedRunSummary, type StoredRunSummary } from "../engineCapture.ts";
@@ -63,16 +67,94 @@ interface AgeInfo {
   latest: Map<string, AgeState>;
   changes: Map<string, (AgeState & { at: number })[]>;
   optIns: Map<string, { calendar?: boolean; weekly?: boolean }>;
+  teenHistory: Map<string, TeenEvent[]>;
+  flags: Map<string, TeenFlags>;
+}
+interface TeenFlags { minorSignal: boolean; minorReported: boolean; olderReported: boolean; ageConflict: boolean; ageUnknown: boolean }
+
+interface TeenSwitchRow { at: number; on: boolean }
+interface TeenAgeRow {
+  birthKey?: number; birthExact?: boolean; ageConflict?: boolean; teenBarred?: boolean;
+  minorSignal?: boolean; minorReported?: boolean; olderReported?: boolean;
+}
+interface TeenEvent { at: number; kind: "signal" | "cleared" | "reported" | "older" | "conflict" | "unknown" | "resolved" }
+interface TeenEvidence {
+  app: AppId; readable: boolean; switches: TeenSwitchRow[];
+  members: ReadonlyMap<string, TeenAgeRow>; history: ReadonlyMap<string, readonly TeenEvent[]>;
+}
+interface TeenFlagsAt { signal: boolean; reported: boolean; older: boolean; conflict: boolean; unknown: boolean }
+
+function teenFlagsAt(history: readonly TeenEvent[], t: number): TeenFlagsAt {
+  const f: TeenFlagsAt = { signal: false, reported: false, older: false, conflict: false, unknown: false };
+  for (const e of history) {
+    if (e.at > t) break;
+    if (e.kind === "signal") f.signal = true;
+    else if (e.kind === "cleared") { f.signal = false; f.reported = false; f.conflict = false; }
+    else if (e.kind === "reported") f.reported = true;
+    else if (e.kind === "older") f.older = true;
+    else if (e.kind === "conflict") f.conflict = true;
+    else if (e.kind === "unknown") f.unknown = true;
+    else f.unknown = false;
+  }
+  return f;
+}
+
+const TEEN_MEETING_BOUND = (teenMeetingLastMinute - teenMeetingFirstMinute) * 60_000;
+
+function teenSwitchOnAt(rows: readonly TeenSwitchRow[], t: number): boolean {
+  let on = true;
+  for (const r of rows) { if (r.at > t) break; on = r.on; }
+  return on;
+}
+
+function teenRuleHeldAt(e: TeenEvidence, ids: readonly string[], category: string | undefined, t: number, until = t): boolean {
+  if (!e.readable || !teenRosterSizeAllowed(true, ids.length) || category === undefined) return false;
+  if (!teenSwitchOnAt(e.switches, t)) return false;
+  const lane = teenFriendCategory(e.app, category);
+  const minDay = earliestDayKeyOf(t), maxDay = latestDayKeyOf(Math.max(t, until));
+  const side = (id: string, atT: boolean): AgeSide => {
+    const m = e.members.get(id);
+    if (!m || m.birthKey === undefined) return { adult: false, ready: false, birthKey: 0 };
+    const h = teenFlagsAt(e.history.get(id) ?? [], atT ? t : Infinity);
+    const conflict = h.conflict || h.unknown || (!atT && m.ageConflict === true);
+    const signal = h.signal || (!atT && m.minorSignal === true);
+    const reported = h.reported || (!atT && m.minorReported === true);
+    const older = h.older || (!atT && m.olderReported === true);
+    const ready = teenReady(m.birthExact === true, conflict, signal, reported, older, m.teenBarred === true);
+    const adult = canBeMatched(ageOnDay(m.birthKey, minDay)) && !conflict && !signal && !reported;
+    return { adult, ready, birthKey: m.birthKey };
+  };
+  return groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, true)))
+    && groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, false)));
+}
+
+const TEEN_NOTICE_TYPES = new Set(["info", "cancellation"]);
+
+function teenNoticeNamesNobody(body: string, type: string | null | undefined, others: readonly string[]): boolean {
+  if (!TEEN_NOTICE_TYPES.has(type ?? "") || offersConnection(body)) return false;
+  return !others.some(name => name.length >= 2 && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body));
 }
 const AGE_EVENTS = ["age_unknown", "age_resolved", "minor_signal", "age_conflict"];
+const TEEN_EVENTS = ["safety_action", "minor_reported", "teen_age_contradicted"];
 const recordMinor = (age: number | null | undefined) => validAge(age) && isMinor(age);
+
+function teenEventKind(type: string, action: unknown): TeenEvent["kind"] | undefined {
+  if (type === "minor_signal") return "signal";
+  if (type === "safety_action") return action === "clear_teen_doubt" || action === "clear_minor_signal" ? "cleared" : action === "older_than_stated" ? "older" : undefined;
+  if (type === "minor_reported") return "reported";
+  if (type === "teen_age_contradicted") return "older";
+  if (type === "age_conflict") return "conflict";
+  if (type === "age_unknown") return "unknown";
+  if (type === "age_resolved") return "resolved";
+  return undefined;
+}
 
 export function ageView(recordAge: number | null, net?: AgeState): { minor: boolean; ageUnknown?: true } {
   if (net) return { minor: net.minor || recordMinor(recordAge), ...(net.unknown ? { ageUnknown: true as const } : {}) };
   return recordAge === null ? { minor: true, ageUnknown: true } : { minor: recordMinor(recordAge) };
 }
 
-export function minorAt(info: AgeInfo, id: string, recordAge: number | null | undefined, t: number): boolean {
+export function minorAt(info: Pick<AgeInfo, "latest" | "changes">, id: string, recordAge: number | null | undefined, t: number): boolean {
   if (recordMinor(recordAge)) return true;
   let st: AgeState | undefined;
   for (const c of info.changes.get(id) ?? []) { if (c.at > t) break; st = c; }
@@ -134,8 +216,9 @@ export class RealSource implements DataSource {
   private refused?: string;
   private service?: ServiceClient;
   private shadowing?: Promise<ControlResult>;
-  private ages: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map() };
+  private ages: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map(), teenHistory: new Map(), flags: new Map() };
   private recordAges = new Map<string, number | null>();
+  private firstNames = new Map<string, string>();
 
   readonly app: AppId;
   private isolation: "rls_role" | "app_filter";
@@ -286,7 +369,12 @@ export class RealSource implements DataSource {
             (select count(*) from network.events where app_id = ${app} and type = 'invariant_violation')::int as invariants,
             (select greatest(coalesce(max(ts), 'epoch'), (select coalesce(max(updated_at), 'epoch') from network.opportunities where app_id = ${app})) from network.messages where app_id = ${app}) as last_activity,
             (select min(joined_at) from network.members where app_id = ${app}) as first_join`,
-      sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at, origin, seconds_spent::text::float8 as seconds_spent, edits, rerolls, invalidated from network.review_items where app_id = ${app}`
+      sql`select r.opportunity_id, r.queued_at, r.deadline, r.decision, r.reason, r.note, r.reviewer, r.decided_at, r.origin, r.seconds_spent::text::float8 as seconds_spent,
+        r.edits, r.rerolls, r.invalidated, r.approver, r.exception_reason, r.judge_verdict,
+        (select j.explanation from network.review_judgments j where j.app_id = r.app_id and j.opportunity_id = r.opportunity_id and j.revision = r.rerolls
+          and j.status = 'decided' and j.reason = r.exception_reason and j.verdict = r.judge_verdict and j.verdict <> 'approve'
+          order by j.decided_at desc limit 1) as judge_explanation
+        from network.review_items r where r.app_id = ${app}`
         .catch(() => sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at from network.review_items where app_id = ${app}`).catch(() => []),
       this.ageInfo(sql),
       sql`select opportunity_id, member_id, min(ts) as ts from network.messages where app_id = ${app} and direction = 'outbound' and type = 'proposal' and opportunity_id is not null group by 1, 2`,
@@ -303,6 +391,7 @@ export class RealSource implements DataSource {
     const msgBy = new Map(msgAgg.map((r: any) => [r.member_id, r]));
     const partBy = new Map(partAgg.map((r: any) => [r.member_id, r]));
     this.recordAges = new Map((members as any[]).map(r => [r.id as string, r.age as number | null]));
+    this.firstNames = new Map((members as any[]).filter(r => typeof r.name === "string").map(r => [r.id as string, String(r.name).trim().split(/\s+/)[0]!]));
     for (const r of members as any[]) {
       const mm = msgBy.get(r.id) as any, pp = partBy.get(r.id) as any;
       const state: MemberStatus = r.opted_out ? "opted_out" : r.account_status === "invited" ? "not_joined" : r.participation_state;
@@ -385,10 +474,10 @@ export class RealSource implements DataSource {
   }
 
   private async ageInfo(sql: SQL): Promise<AgeInfo> {
-    const info: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map() };
+    const info: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map(), teenHistory: new Map(), flags: new Map() };
     const [st, ev] = await Promise.all([
       this.stateRow("members"),
-      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`,
+      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, ...TEEN_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`,
     ]);
     for (const e of ev as any[]) {
       const id = e.payload?.memberId as string | undefined;
@@ -397,6 +486,9 @@ export class RealSource implements DataSource {
         info.optIns.set(id, { ...info.optIns.get(id), [e.type === "calendar_consent" ? "calendar" : "weekly"]: e.payload.on !== false });
         continue;
       }
+      const kind = teenEventKind(e.type, e.payload?.action);
+      if (kind) info.teenHistory.set(id, [...(info.teenHistory.get(id) ?? []), { at: ms(e.at) ?? 0, kind }]);
+      if (!AGE_EVENTS.includes(e.type)) continue;
       const list = info.changes.get(id) ?? [];
       const cur = list.at(-1) ?? { minor: false, unknown: false };
       const next = e.type === "age_unknown" ? { minor: true, unknown: true } : e.type === "age_resolved" ? { minor: !!e.payload.minor, unknown: false } : { ...cur, minor: true };
@@ -409,22 +501,65 @@ export class RealSource implements DataSource {
     for (const m of stored ?? []) {
       if (typeof m?.id !== "string") continue;
       info.latest.set(m.id, { minor: m.minor !== false, unknown: !!m.ageUnknown });
+      info.flags.set(m.id, { minorSignal: m.minorSignal === true, minorReported: m.minorReported === true, olderReported: m.olderReported === true, ageConflict: m.ageConflict === true, ageUnknown: m.ageUnknown === true });
       if (m.calendar !== undefined || m.weekly !== undefined) info.optIns.set(m.id, { calendar: !!m.calendar, weekly: !!m.weekly });
     }
     return info;
   }
 
-  private minorContacts(rows: { member_id: string; ts: Date | string; opportunity_id: string | null; type?: string | null; body?: string | null }[]): number {
-    let n = 0;
+  private async minorContacts(sql: SQL, rows: { member_id: string; ts: Date | string; opportunity_id: string | null; type?: string | null; body?: string | null }[]): Promise<number> {
+    const counted: { t: number; memberId: string; body: string; type: string | null; o?: ObsOpportunity }[] = [];
     for (const r of rows) {
       const t = ms(r.ts) ?? 0;
       const minor = (id: string) => minorAt(this.ages, id, this.recordAges.get(id), t);
       const o = r.opportunity_id ? this.store.opps.get(r.opportunity_id) : undefined;
       const who = new Set([r.member_id, ...(o && o.source !== "shadow" ? o.participants : [])]);
-      if ((r.opportunity_id || r.type === "probe") && [...who].some(minor)) { n++; continue; }
-      if (minor(r.member_id) && (CONNECT_TYPES.has(r.type ?? "") || offersConnection(r.body ?? ""))) n++;
+      const row = { t, memberId: r.member_id, body: r.body ?? "", type: r.type ?? null, ...(o && o.source !== "shadow" ? { o } : {}) };
+      if ((r.opportunity_id || r.type === "probe") && [...who].some(minor)) { counted.push(row); continue; }
+      if (minor(r.member_id) && (CONNECT_TYPES.has(r.type ?? "") || offersConnection(r.body ?? ""))) counted.push(row);
+    }
+    const teenItem = (o?: ObsOpportunity): o is ObsOpportunity => !!o && o.category !== undefined && teenFriendCategory(this.app, o.category) && teenGenerator(this.app, o.generator);
+    if (!counted.some(c => teenItem(c.o))) return counted.length;
+    const evidence = await this.teenEvidence(sql);
+    const held = new Set<string>();
+    let n = 0;
+    for (const c of [...counted].sort((a, b) => a.t - b.t)) {
+      if (!teenItem(c.o)) { n++; continue; }
+      const roster = [...new Set([...c.o.participants, ...c.o.alternates, c.memberId])];
+      const until = c.o.meetingAt !== undefined ? c.o.meetingAt + TEEN_MEETING_BOUND : c.t;
+      if (teenRuleHeldAt(evidence, roster, c.o.category, c.t, until)) { held.add(c.o.id); continue; }
+      const others = roster.filter(id => id !== c.memberId).flatMap(id => this.firstNames.get(id) ?? []);
+      if (held.has(c.o.id) && teenNoticeNamesNobody(c.body, c.type, others)) continue;
+      n++;
     }
     return n;
+  }
+
+  private async teenEvidence(sql: SQL): Promise<TeenEvidence> {
+    const app = this.app;
+    const read = <T>(p: Promise<T>) => p.then(v => ({ ok: true as const, v }), () => ({ ok: false as const }));
+    const [audit, events, snap] = await Promise.all([
+      read(sql`select at, ok, detail from network.staff_audit where app_id = ${app} and action = 'config' and target_id like 'teen_intros_%' order by at, id`),
+      read(sql`select at, payload from network.events where app_id = ${app} and type = 'teen_intros_switch' order by at, id`),
+      read(this.snapshot()),
+    ]);
+    if (!audit.ok || !events.ok || !snap.ok) return { app, readable: false, switches: [], members: new Map(), history: new Map() };
+    const detail = (d: unknown) => (typeof d === "string" ? JSON.parse(d) : d ?? {}) as Record<string, unknown>;
+    const auditRows: TeenSwitchRow[] = (audit.v as any[]).filter(r => r.ok === true && detail(r.detail).phase === "result")
+      .map(r => ({ at: ms(r.at) ?? 0, on: detail(r.detail).teenIntros === true }));
+    const eventRows: TeenSwitchRow[] = (events.v as any[]).map(r => ({ at: ms(r.at) ?? 0, on: detail(r.payload).on === true }));
+    const switches = [...auditRows, ...eventRows].sort((a, b) => a.at - b.at || Number(b.on) - Number(a.on));
+    const members = new Map<string, TeenAgeRow>();
+    for (const m of snap.v.members) {
+      const f = this.ages.flags.get(m.id);
+      members.set(m.id, {
+        ...(m.birthKey !== undefined ? { birthKey: m.birthKey } : {}), birthExact: m.birthExact === true,
+        ageConflict: m.ageConflict === true || f?.ageConflict === true || f?.ageUnknown === true,
+        teenBarred: m.teenBarred === true,
+        minorSignal: f?.minorSignal === true, minorReported: f?.minorReported === true, olderReported: f?.olderReported === true,
+      });
+    }
+    return { app, readable: true, switches, members, history: this.ages.teenHistory };
   }
 
   private async loadNetwork(sql: SQL) {
@@ -456,7 +591,7 @@ export class RealSource implements DataSource {
       const reqRows = reqs as any[];
       const info: NetworkInfo = {
         kind: "consent", counters, gateReasons: gate, matchingEnabled: row.matching !== false,
-        review: { mode: "human", queued: open, approved: counters.reviewApproved ?? 0, rejected: counters.reviewRejected ?? 0, expired: counters.reviewExpired ?? 0 },
+        review: { queued: open, approved: counters.reviewApproved ?? 0, rejected: counters.reviewRejected ?? 0, expired: counters.reviewExpired ?? 0 },
         requests: {
           total: reqRows.filter(r => r.kind === "people").length, fulfilled: reqRows.filter(r => r.outcome === "fulfilled").length, probing: reqRows.filter(r => r.outcome === "probing").length,
           waiting: reqRows.filter(r => r.kind === "people" && r.outcome === "none").length, plans: reqRows.filter(r => r.kind === "plans").length,
@@ -486,9 +621,9 @@ export class RealSource implements DataSource {
     const opps = [...s.opps.values()].filter(o => o.source !== "shadow");
     const all = evAll as any[];
     const leaks = all.filter(e => e.type === "invariant_violation" && /leak|canary/i.test(e.rule ?? "")).length;
-    const minorContacts = this.minorContacts(contacts as any[]);
+    const minorContacts = await this.minorContacts(sql, contacts as any[]);
     const alerts = healthAlerts({
-      now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
+      now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
       sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: this.serviceMatchingAllowed !== true,
       reviewExpired: (expired as any[])[0]?.n ?? 0, deferred: this.netState?.deferred ?? null, refusals, guardBlocked,
       lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? false,
@@ -504,7 +639,7 @@ export class RealSource implements DataSource {
     const messages: MsgMeta[] = (msgs as any[]).map(m => ({ memberId: m.member_id, ts: ms(m.ts) ?? 0, direction: m.direction, proactive: m.proactive, status: m.status }));
     const card = scorecard({
       now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
-      reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
+      reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated).length,
       inviters, minorContacts, leaks, worthwhileAnswers: survey[0] ?? { yes: 0, total: 0 },
     });
     const growth = growthStats({ members, opps, requests, invitees, invitesSent: inviteRows.length, growthAsks: all.filter(e => e.type === "growth_ask").length, inviters });
@@ -639,6 +774,10 @@ export class RealSource implements DataSource {
       ...(Array.isArray(edits) && edits.length ? { edits } : {}),
       ...(r.rerolls ? { rerolls: Number(r.rerolls) } : {}),
       ...(r.invalidated ? { invalidated: r.invalidated } : {}),
+      ...(r.approver === "judge" || r.approver === "staff" ? { approver: r.approver } : {}),
+      ...(typeof r.exception_reason === "string" && r.exception_reason ? { exceptionReason: r.exception_reason } : {}),
+      ...(["approve", "flag", "undecided", "cannot_run"].includes(r.judge_verdict) ? { judgeVerdict: r.judge_verdict } : {}),
+      ...(typeof r.judge_explanation === "string" && r.judge_explanation ? { judgeExplanation: scrubText(r.judge_explanation.slice(0, 1200), this.reveal) } : {}),
     };
   }
 
@@ -663,7 +802,7 @@ export class RealSource implements DataSource {
   }
 
   inOpenReview(memberId: string): boolean {
-    for (const o of this.store.opps.values()) if (o.state === "IN_REVIEW" && o.participants.includes(memberId)) return true;
+    for (const o of this.store.opps.values()) if (o.state === "IN_REVIEW" && o.review?.exceptionReason && o.participants.includes(memberId)) return true;
     return false;
   }
 
@@ -761,18 +900,21 @@ export class RealSource implements DataSource {
 
   async config(): Promise<ConfigInfo> {
     const sql = this.sql;
-    const rows = sql ? await sql`select at, actor_id, type, payload from network.events where app_id = ${this.app} and type in ('matching_switch', 'review_mode') order by at, id` : [];
+    const rows = sql ? await sql`select at, actor_id, type, payload from network.events where app_id = ${this.app} and type = 'matching_switch' order by at, id` : [];
     const history: ConfigChange[] = [];
-    const last: Record<string, string | boolean | null> = { matching: true, review_mode: "human" };
+    let last = true;
     for (const r of rows as any[]) {
-      const key = r.type === "matching_switch" ? "matching" : "review_mode";
-      const to = key === "matching" ? !!r.payload?.on : String(r.payload?.mode);
-      if (last[key] === to) continue;
-      history.push({ version: history.length + 1, at: ms(r.at) ?? 0, actor: String(r.payload?.actor ?? r.actor_id ?? "unknown"), key, from: last[key] ?? null, to });
-      last[key] = to;
+      const to = !!r.payload?.on;
+      if (last === to) continue;
+      history.push({ version: history.length + 1, at: ms(r.at) ?? 0, actor: String(r.payload?.actor ?? r.actor_id ?? "unknown"), key: "matching", from: last, to });
+      last = to;
     }
+    const now = this.store.clock.now;
+    const open = [...this.store.opps.values()].filter(o => o.state === "IN_REVIEW" && o.review);
+    const held = open.filter(o => o.review!.exceptionReason);
     return {
-      matchingEnabled: this.netState?.matchingEnabled ?? false, reviewMode: this.netState ? "human" : null, network: {},
+      matchingEnabled: this.netState?.matchingEnabled ?? false, network: {},
+      reviewJudge: this.netState ? { awaiting: open.length - held.length, exceptions: held.length, exceptionsOverdue: held.filter(o => now >= o.review!.deadline).length } : null,
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history, canChange: !!this.service,
     };
   }

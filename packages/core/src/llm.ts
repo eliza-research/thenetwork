@@ -454,6 +454,13 @@ export function endpointsFor(providerName: Provider | string): Endpoint[] {
   return order.filter(e => e.apiKey);
 }
 
+export function providerKeyPresent(env: Record<string, string | undefined>, name: string | undefined): "present" | "missing" | "unknown" {
+  const provider = String(name || DEFAULT_PROVIDER).trim().toLowerCase();
+  if (!(PROVIDERS as readonly string[]).includes(provider)) return "unknown";
+  const keys = provider === "surplus" ? [env.SURPLUS_API_KEY, env.OPENAI_API_KEY] : [env.OPENAI_API_KEY];
+  return keys.some(Boolean) ? "present" : "missing";
+}
+
 /** Any OpenAI-compatible provider by name. `hooks` are optional (extra body params, usage/cost callback, transport). */
 export function llmFor(providerName: Provider | string, model: string, hooks: ClientOptions = {}): LLM {
   const provider = parseProvider(providerName);

@@ -43,7 +43,7 @@ beforeAll(async () => {
   obs = await createServer({
     port: 0, development: false, audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") },
     tokens: `admin:${TOK.admin},analyst@ntwrk:${TOK.analyst},safety@ntwrk:${TOK.safety},reviewer@slop:${TOK.rev},safety@slop:${TOK.saf},analyst@slop:${TOK.ana},admin@slop:${TOK.adm}`,
-    game: { seed: 1, review: "auto", pushMs: 50, tickMs: 3_600_000 },
+    game: { seed: 1, pushMs: 50, tickMs: 3_600_000 },
   });
   expect((await post(TOK.admin, "/api/control", { type: "step", ms: 3 * DAY })).status).toBe(200);
 }, T);

@@ -5,6 +5,7 @@ import { CapitalLedger, ledgerReader } from "../src/capital.ts";
 import { bookingNoticeReceiptKey, meetingFeedbackKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("friends: a crew session is pair-gated on Friend profiles, and a block between two members stops it", () => {
   // spec/groupFormation.md and spec/planDecision.md: a crew's next session needs a pair value for
@@ -27,14 +28,13 @@ test("friends: a crew session is pair-gated on Friend profiles, and a block betw
     id: "crew_abc", activityId: activity, venueId: venue.id, city: "nyc", members: ids, cadenceDays: 7,
     hostRotation: ids, sessions: [], handedOff: false, slot: { start: Date.UTC(2026, 9, 10, 16) },
   };
-  const place = { name: venue.name, area: venue.area };
 
   const fitting = new World(snapshot, cfg, localEmbed, friendsPack);
-  const next = plans.crewSessionPlan(fitting, crew, START, place);
+  const next = plans.crewSessionPlan(fitting, crew, START, venue);
   expect(next?.invited).toEqual(ids);
 
   const blocked = new World({ ...snapshot, edges: [{ from: "b", to: "c", type: "blocked", strength: 1, explicit: true, createdAt: START - DAY }] }, cfg, localEmbed, friendsPack);
-  expect(plans.crewSessionPlan(blocked, crew, START, place)).toBeNull();
+  expect(plans.crewSessionPlan(blocked, crew, START, venue)).toBeNull();
 });
 
 // spec/crewOffer.md, "A new recurring session uses a current public venue"
@@ -45,7 +45,7 @@ test.each(["open", "closes_during_session", "removed"] as const)("a Friends crew
   const ids = ["a", "b", "c"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
     interests: ["coffee", "climbing"],
-  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+  })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS });
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   await w.onboard(...ids);
@@ -77,7 +77,7 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
   const ids = ["a", "b", "c"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
     interests: ["coffee", "climbing"],
-  })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+  })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true,
     plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
@@ -167,7 +167,7 @@ test("friends crew reach fills only compatible seats in exposure order", async (
     // (spec/pairValue.md) gives it no Friend pair value, so only the pair-value condition excludes it.
     id, name: names[index]!, age: 30, area: id === "b-weak" ? "Riverdale" : venue.area,
     interests: id === "crew-c" ? ["climbing"] : id === "b-weak" ? ["coffee"] : ["coffee", "climbing"],
-  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS, capital });
+  })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS, capital });
   for (const { id } of w.members) w.facets.push({
     id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
     scope: "agent_private", provenance: "said", confidence: 1,

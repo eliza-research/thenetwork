@@ -19,26 +19,27 @@ const TAG_ACTIVITIES: Record<string, string[]> = {
   running: ["group_run"], tennis: ["tennis"], basketball: ["pickup_basketball"], sports: ["pickleball", "pickup_basketball"],
   chess: ["chess_park"], books: ["book_club"], writing: ["writing_session"], study: ["writing_session"],
   photography: ["photo_walk"], walk: ["walking_tour", "photo_walk"], hiking: ["day_hike"], cycling: ["group_ride"],
-  arts: ["sketch_session"], museums: ["sketch_session"], film: ["film_screening"], dogs: ["dog_park"],
+  arts: ["sketch_session"], museums: ["sketch_session", "museum_visit"], film: ["film_screening"], dogs: ["dog_park"],
   market: ["coffee_crawl", "night_market"], food: ["coffee_crawl"], professional: ["tech_meetup"],
   outdoors: ["park_yoga", "park_cleanup"], gardens: ["community_garden"],
+  games: ["library_games", "rec_center_games"], coffee: ["coffee_crawl"], picnic: ["park_picnic"],
+};
+const ACTIVITY_KIND: Record<string, GeoVenue["kind"]> = {
+  museum_visit: "museum", library_games: "library", rec_center_games: "rec_center", park_picnic: "park", bowling: "bowling",
 };
 /** Local opening hours by kind of place: [open, close) on weekdays and at weekends. */
 const HOURS: Record<GeoVenue["kind"], { weekday: [number, number]; weekend: [number, number] }> = {
   park: { weekday: [7, 21], weekend: [7, 21] }, waterfront: { weekday: [7, 21], weekend: [7, 21] }, courts: { weekday: [7, 21], weekend: [7, 21] },
   library: { weekday: [10, 20], weekend: [10, 17] }, plaza: { weekday: [8, 21], weekend: [8, 21] }, market: { weekday: [8, 20], weekend: [8, 22] },
   museum: { weekday: [11, 21], weekend: [11, 18] }, cafe_district: { weekday: [8, 22], weekend: [8, 22] },
+  rec_center: { weekday: [9, 21], weekend: [9, 17] }, climbing_gym: { weekday: [10, 22], weekend: [9, 21] }, bowling: { weekday: [11, 23], weekend: [10, 23] },
 };
 
-/**
- * The curated public venue table for New York (plans iteration 1, ask 9), built from geo.ts VENUES:
- * every place is public, free to enter (price tier 0), adults only for plans (age 18; the engine
- * adds an activity's own minimum, e.g. 21 for a wine bar, which has no venue here).
- */
 export const PLAN_VENUES: PlanVenue[] = VENUES.map(v => ({
   id: v.id, city: "nyc" as const, area: v.neighborhood, name: v.name,
-  activities: [...new Set(v.tags.flatMap(t => TAG_ACTIVITIES[t] ?? []))].filter(a => plans.activityById.has(a)),
-  priceTier: 0 as const, ageMin: 18, hours: HOURS[v.kind], public: true as const, source: "curated" as const,
+  activities: [...new Set(v.tags.flatMap(t => TAG_ACTIVITIES[t] ?? []))].filter(a => plans.activityById.has(a) && (ACTIVITY_KIND[a] ?? v.kind) === v.kind),
+  priceTier: 0 as const, ageMin: v.allAges ? 13 : 18, hours: HOURS[v.kind], public: true as const, source: "curated" as const,
+  allAges: v.allAges, adultPlans: v.adultPlans,
 })).filter(v => v.activities.length > 0);
 
 /** Local hours of each part of the day in a stated window ("Saturday evening" = 17:00-22:00). */

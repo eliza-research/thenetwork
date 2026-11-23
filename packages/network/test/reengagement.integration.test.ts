@@ -44,14 +44,14 @@ test.skipIf(!pgAvailable)("the persisted queue keeps re-engagement current after
   const app = APPS.friends;
   const secret = "synthetic-reengagement-signing-key";
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550580", clock, log: () => {}, liveGate: () => true,
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550580", clock, log: () => {},
     provider: { kind: "sim", async send(request) {
       calls.push(request);
       return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };
     } },
   });
   const service = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {}, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret, CLEF_RATINGS: "off" },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     networks: [{ id: "friends:nyc", matchingEnabled: false }], network: { plans: false, growth: false, runHour: 16 },
   });
   try {

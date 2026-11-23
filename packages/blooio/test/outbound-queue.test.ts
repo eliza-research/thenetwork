@@ -421,7 +421,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls).toEqual([]);
   });
 
-  // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
+  // spec/outboundAdmission.md, "A current row needs a delivering line and the recipient's eligibility"
   test("Q-outbound_queue-1: a STOP that commits during the checks stops a direct text to a non-member", async () => {
     const now = new SimClock(Date.UTC(2026, 9, 13, 16));
     const { calls, provider } = recorder();

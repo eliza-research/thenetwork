@@ -37,7 +37,7 @@ beforeAll(async () => {
   sql = new SQL({ url, max: 2 });
   service = new NetworkService({
     url, clock, photoStorage: null, instance: "ops-turn-watch",
-    env: { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: "synthetic-ops-turn-watch-hash-key", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: "synthetic-ops-turn-watch-hash-key", SERVICE_TURN_SECRET: secret },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }], network: { seed: 1 },
     adapter: () => new DryRunAdapter(() => {}), log: () => {},
   });

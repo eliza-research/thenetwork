@@ -2,9 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 // The slop-live arm (run inside the slop block): slop.date as it will run live. The production
 // ConsentNetwork with the slop wiring (packages/network/service/packs.ts appWiring("slop"): makeSlopPack
 // with no ID check, the slop engine config, the slop hooks: the engine's onboarding loop, the probe
-// text, timeOptions, the venue, the booked copy, the check-in and post-date reports; plans off), review
-// mode "human" with a reviewer who approves everything (the worst case: the core rules must hold
-// whatever a reviewer does), and matching on. The world: the sim World in New York, 30 days, daters who
+// text, timeOptions, the venue, the booked copy, the check-in and post-date reports; plans off) and
+// matching on. The world: the sim World in New York, 30 days, daters who
 // answer slop's questions in their own words (scripted from their stated truth: who they are and seek,
 // an age range, a distance, a zip, the basics), two declared minors and one age liar who says "I'm 16"
 // on day 8. Nothing reads hidden truth except the scripted replies and the judge.
@@ -28,7 +27,8 @@ import { PolicyPersonaAgent, World, generatePersonas, type Persona } from "../..
 import type { AgentReply, Initiative, PersonaAgent, PersonaContext } from "../../packages/sim/src/agent/types.ts";
 import type { SimMessage } from "../../packages/sim/src/channel.ts";
 import type { InboundMessage, NetworkContext, NetworkUnderTest, Proposal } from "../../packages/core/src/index.ts";
-import { ConsentNetwork } from "../../packages/network/src/network.ts";
+import { ConsentNetwork, SIM_REVIEW_JUDGE } from "../../packages/network/src/network.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { appWiring, SLOP_READBACK, zipForArea } from "../../packages/network/service/packs.ts";
 import { PERSON_DAILY_CAP } from "../../packages/network/service/service.ts";
@@ -68,8 +68,6 @@ export function secondBookings(records: readonly RunRecord[]): string[] {
 }
 
 /**
- * The live slop network behind a human review queue with a reviewer who approves every item at the
- * next tick (after the Network's own tick, so an approval always comes before any probe it allows).
  * The snapshot loses the romance tags the sim generator would hand over: production learns them from texts.
  */
 export class ReviewedSlopNetwork implements NetworkUnderTest {
@@ -78,8 +76,7 @@ export class ReviewedSlopNetwork implements NetworkUnderTest {
   approved = 0;
   constructor(seed: number) {
     const w = appWiring("slop");
-    // The same options the production runtime passes (service/runtime.ts): the pack, hooks, engine config, plans off, review "human".
-    this.net = new ConsentNetwork({ seed, app: "slop", review: "human", matchingEnabled: true, pack: w.pack, hooks: w.hooks, plans: w.plans ?? true, engine: w.engine });
+    this.net = new ConsentNetwork({ seed, app: "slop", inlineJudge: simulatedReviewJudge({ exceptions: false }), matchingEnabled: true, pack: w.pack, hooks: w.hooks, plans: w.plans ?? true, engine: w.engine });
   }
   init(ctx: NetworkContext) {
     this.net.init({ ...ctx, snapshot: () => { const s = ctx.snapshot(); return { ...s, facets: s.facets.filter(f => !f.tags.some(t => t.startsWith("romance:"))) }; } });
@@ -87,7 +84,7 @@ export class ReviewedSlopNetwork implements NetworkUnderTest {
   onInbound(m: InboundMessage) { return this.net.onInbound(m); }
   async tick(now: number) {
     await this.net.tick(now);
-    for (const item of this.net.reviewQueue()) if (item.kind !== "fraud" && this.net.review(item.oppId, "approve", { reviewer: SLOP_LIVE_REVIEWER })) this.approved++;
+    for (const item of this.net.reviewQueue()) if (item.exception && this.net.review(item.oppId, "approve", { reviewer: SLOP_LIVE_REVIEWER, revision: item.revision })) this.approved++;
   }
   submitProposal(p: Proposal) { this.net.submitProposal(p); }
 }
@@ -199,7 +196,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
     const w = new Mini([
       { id: "a", name: "Alex", age: 30, interests: ["hiking"], romance: { is: "man", seeks: ["woman"] } },
       { id: "b", name: "Blair", age: 30, interests: ["hiking"], romance: { is: "woman", seeks: ["man"] } },
-    ], { app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+    ], { app: "slop", inlineJudge: holdEveryItem.inline, pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
     for (const id of ["a", "b"]) {
       await w.say(id, "Hi");
       await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I love cooking and reading, and no smokers. For a first date I want a hike. Usually free Saturday afternoons.`);
@@ -239,7 +236,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       const w = new Mini([
         { id: "a", name: "Alex", age: 30, interests: ["hiking"], shareable: true, romance: { is: "man", seeks: ["woman"] } },
         { id: "b", name: "Blair", age: 30, interests: ["hiking"], shareable: true, romance: { is: "woman", seeks: ["man"] } },
-      ], { seed, app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+      ], { seed, app: "slop", inlineJudge: holdEveryItem.inline, pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
       w.clock.set(start);
       for (const id of ids) {
         await w.say(id, "Hi");
@@ -312,7 +309,12 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       const id = String(m.msg.meta?.proposalId ?? (m.msg.meta?.probe as { key?: string } | undefined)?.key);
       expect([id, (approvedAt.get(id) ?? Infinity) <= m.msg.ts]).toEqual([id, true]);
     }
-    expect(logs(r.records, "review_decision").every(l => l.detail.reviewer === SLOP_LIVE_REVIEWER)).toBe(true);
+    const held = new Set(logs(r.records, "review_exception").map(l => String(l.detail.oppId)));
+    expect(logs(r.records, "review_decision").filter(l => l.detail.decision === "approve")
+      .filter(l => !((l.detail.approver === "judge" && l.detail.reviewer === SIM_REVIEW_JUDGE) || (l.detail.approver === "staff" && l.detail.reviewer === SLOP_LIVE_REVIEWER && held.has(String(l.detail.oppId)))))
+      .map(l => [l.detail.oppId, l.detail.approver, l.detail.reviewer])).toEqual([]);
+    const rules = computeMetrics(r.records, { requireReview: true }).invariants.byRule;
+    expect([rules.unreviewed_contact ?? 0, rules.exception_contact_without_staff ?? 0]).toEqual([0, 0]);
   });
 
   await each("minors: no declared minor (and no age liar after they say 16) in a probe, an alternate, a reveal or a booked date", r => {
@@ -409,7 +411,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
   const rules = [...new Set(styleBad.flatMap(t => styleViolations(t)))].join(", ");
   b.track("slop-live style: probe texts that break the Network's style rules (target 0)", styleBad.length === 0, `${styleBad.length} of ${probeTexts.length}${rules ? ` (${rules})` : ""}`);
   b.track("slop-live quality: yes per probe answer", answered > 0 && yes / answered >= 0.25, answered ? (yes / answered).toFixed(3) : "n/a");
-  b.track("slop-live quality: dates booked per opportunity approved", opps > 0, `${dates} dates, ${opps} opportunities, ${sum(r => r.approved)} approvals`);
+  b.track("slop-live quality: dates booked per opportunity approved", opps > 0, `${dates} dates, ${opps} opportunities, ${sum(r => logs(r.records, "review_decision").filter(l => l.detail.decision === "approve").length)} approvals (${sum(r => r.approved)} by staff on held items)`);
   b.track("slop-live quality: dates held (both showed)", held > 0, String(held));
   b.track("slop-live quality: share of adult daters booked at least once in 30 days", daters > 0 && dated / daters >= 0.3, daters ? (dated / daters).toFixed(3) : "n/a");
 }

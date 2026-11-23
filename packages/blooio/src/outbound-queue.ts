@@ -12,7 +12,7 @@
 //    with a lease. recover() hands rows whose lease ran out (the worker stopped) back to the queue; they go
 //    through every check again and are sent with the same key.
 //  - Checks at dispatch, in this order (each reads the database, so a STOP that arrives while a message
-//    waits wins): too old or about a closed item (expired); the live flags (refused_not_approved); the
+//    waits wins): too old or about a closed item (expired); the dry-run line (refused_not_approved); the
 //    consent ledger and the member's opt-out (refused_opted_out); the recipient at send time
 //    (suppressed_ineligible); a "reply" must answer an inbound message from the last hour; quiet hours in the
 //    recipient's zone for agent-initiated kinds (deferred); Apple line safety: at most 3 unanswered messages
@@ -41,7 +41,6 @@ import {
 } from "../../core/src/generated/outboundReceipt.ts";
 import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
 import { settleClaimedSend, type SendDisposition } from "../../core/src/vibe/outboundReceiptShell.js";
-import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
@@ -86,8 +85,6 @@ export interface EnqueueInput {
   text: string;
   /** HTTPS links to attachments (photos). Blooio fetches them. */
   mediaUrls?: string[];
-  /** Immutable approved selections, never temporary provider URLs. */
-  approvedPhotos?: ApprovedRelayPhoto[];
   oppId?: string;
   timeZone?: string;
   /** The member's city: its zone is the fallback for quiet hours. */
@@ -104,7 +101,6 @@ export interface QueueRow {
   kind: MessageKind;
   text: string;
   mediaUrls: string[];
-  approvedPhotos?: ApprovedRelayPhoto[];
   oppId?: string;
   timeZone: string;
   status: string;
@@ -133,7 +129,6 @@ interface MemberDeliverySettings {
 
 /** What the app (the Network runtime) checks for its own rows. Every hook fails closed when it throws. */
 export interface AppChecks {
-  /** The live flags for this app (BLOOIO_ALLOW_SEND, NTWRK_LIVE_APPROVED, <APP>_LIVE_APPROVED). */
   live(): boolean;
   /** True when the message is about something that closed (it is stored as expired). A throw: the row waits (drain's error path). */
   stale?(row: QueueRow): boolean | Promise<boolean>;
@@ -252,9 +247,8 @@ const ACCEPTED_STATUS = {
 // spec/outboundReceipt.md, "A send that may have reached the person keeps its person-cap slot"
 export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed(?!_unknown)|expired|dropped)/;
 
-const fingerprint = (to: string, text: string, media: string[], kind: string, photos?: ApprovedRelayPhoto[]) =>
-  // Retain legacy text/media fingerprints; approved selections additionally bind their full immutable payload.
-  createHash("sha256").update(JSON.stringify(photos?.length ? [to, text, media, kind, photos] : [to, text, media, kind])).digest("hex");
+const fingerprint = (to: string, text: string, media: string[], kind: string) =>
+  createHash("sha256").update(JSON.stringify([to, text, media, kind])).digest("hex");
 const ms = (v: unknown) => (v == null ? undefined : new Date(v as string).getTime());
 
 /** One drain at a time per line and connection pool (the advisory lock covers other pools and processes). */
@@ -284,13 +278,9 @@ export class OutboundQueue {
       const to = normalizeAddress(i.to);
       const media = i.mediaUrls ?? [];
       if (media.length > 10 || media.some(u => !/^https:\/\/[^\s]+$/.test(u))) throw new Error(`outbound ${i.id}: attachments must be at most 10 https links`);
-      const photos = i.approvedPhotos?.length ? parseApprovedRelayPhotos(i.approvedPhotos) : undefined;
-      if (i.approvedPhotos !== undefined && (!photos || media.length || !i.id.startsWith("relay:") || !i.memberId || !i.oppId
-        || photos.some(p => p.app !== this.app || p.itemId !== i.id.slice(6) || p.threadId !== i.oppId || p.recipientMemberId !== i.memberId)))
-        throw new Error(`outbound ${i.id}: invalid approved photo scope`);
       const agent = isAgentInitiated(i.kind);
       const zone = resolveTimeZone(i.timeZone, i.city);
-      const fp = fingerprint(to, i.text, media, i.kind, photos);
+      const fp = fingerprint(to, i.text, media, i.kind);
       // An agent-initiated message whose local time cannot be computed is parked, never sent at night.
       const status = agent && !zone ? "parked_invalid_timezone" : "pending";
       const row = {
@@ -300,7 +290,6 @@ export class OutboundQueue {
       };
       const wrote = await tx`insert into platform.outbound ${tx(row)} on conflict (id) do nothing returning id`;
       if (wrote.length) {
-        if (photos) await tx`update platform.outbound set approved_photos=${{photos}}::jsonb->'photos' where id=${i.id} and app_id=${this.app}`;
         if (status !== "pending") this.o.onAlert?.(i.id, "invalid_timezone");
         continue;
       }
@@ -377,12 +366,9 @@ export class OutboundQueue {
   }
 
   private rowOf(r: any): QueueRow {
-    const photos = Array.isArray(r.approved_photos) && r.approved_photos.length ? parseApprovedRelayPhotos(r.approved_photos) : undefined;
-    if (r.approved_photos != null && (!Array.isArray(r.approved_photos) || r.approved_photos.length && !photos))
-      throw new Error("Invalid persisted approved photos");
     return {
       id: r.id, app: r.app_id, memberId: r.member_id ?? undefined, line: r.line, to: r.to_address, kind: r.kind, text: r.body ?? "",
-      mediaUrls: r.media_urls ?? [], ...(photos ? {approvedPhotos:photos} : {}), oppId: r.opportunity_id ?? undefined, timeZone: r.time_zone, status: r.status, attempts: r.attempts,
+      mediaUrls: r.media_urls ?? [], oppId: r.opportunity_id ?? undefined, timeZone: r.time_zone, status: r.status, attempts: r.attempts,
       createdAt: ms(r.created_at)!, inDoubt: r.in_doubt, personCap: r.person_cap, newConversation: r.new_conversation, reengagement: r.reengagement,
       ...(r.leak_released_by ? { leakReleased: true } : {}),
     };
@@ -496,11 +482,11 @@ export class OutboundQueue {
     const agent = isAgentInitiated(row.kind);
     const compliance = row.kind === "compliance";
 
-    // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
+    // spec/outboundAdmission.md, "A current row needs a delivering line and the recipient's eligibility"
     // A stale check that throws is not "current": the error goes to drain(), and the row waits (never sent on it).
     const stale = this.tooOld(row) || await (c.stale?.(row) ?? false);
     if (duePolicy(stale) === "Expired") return this.end(row, "expired");
-    if (livePolicy(await this.guarded(() => c.live(), false)) === "ApprovalMissing") return this.end(row, "refused_not_approved");
+    if (livePolicy(await this.guarded(() => c.live(), false)) === "DryRunLine") return this.end(row, "refused_not_approved");
     if (!compliance) {
       if (consentPolicy(compliance, await this.guarded(() => c.optedOut?.(row) ?? false, true)) === "OptedOut") return this.end(row, "refused_opted_out");
       const check = await this.guarded<RecipientCheck>(() => c.recipient?.(row, agent) ?? { ok: true }, { ok: false, reason: "recipient_check_error" });
@@ -618,7 +604,7 @@ export class OutboundQueue {
       const decision = await this.o.checks.admit?.(row, tx);
       const start = this.now;
       const pending = tx`id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
-        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)}`;
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)}`;
       if (decision?.ok === false) {
         if (!("retryAt" in decision)) return { ended: "suppressed_ineligible", note: decision.reason } as const;
         const deferred = await tx`update platform.outbound set status='retry_scheduled',next_attempt_at=${new Date(decision.retryAt)},
@@ -728,7 +714,7 @@ export class OutboundQueue {
 
   private request(row: QueueRow): SendRequest {
     return {from:this.line,to:row.to,text:row.text,...(row.mediaUrls.length?{mediaUrls:row.mediaUrls}:{}),idempotencyKey:`tn:${row.id}`,
-      context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind,createdAt:row.createdAt,...(row.approvedPhotos?.length?{approvedPhotos:row.approvedPhotos}:{})}};
+      context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind,createdAt:row.createdAt}};
   }
 
   /** Commit only an extant immutable row. The person lock is shared with canonical erasure. */
@@ -755,7 +741,7 @@ export class OutboundQueue {
         to_address=case when ${terminal} and member_id is null then null else to_address end,
         body=case when ${terminal} and member_id is null then null else body end
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
-        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning id`;
       if (!wrote.length) return false;
       if (wentOut) await this.countSend(tx,this.line,row.to,row.kind,row.reengagement,at);
       return true;

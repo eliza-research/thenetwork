@@ -24,13 +24,13 @@ import {
   hasScopedMembership, initial as accountPrivacyInitial, step as stepPrivacy, verifiedPrivacyOwnerMatches,
 } from "../../core/src/generated/accountPrivacy.ts";
 import {
-  initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
+  initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, phoneChangeWindowMs, step as stepPhoneChange, type PhoneChangeFailure,
 } from "../../core/src/generated/phoneChange.ts";
-import { declineEndsUnboundAccess, joinConsentEvidenceAllowed, joinFailureForgetsMembership, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { declineEndsUnboundAccess, joinAgeFieldsValid, joinConsentEvidenceAllowed, joinFailureForgetsMembership, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { validAge } from "../../core/src/policy.ts";
-import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
+import { type AgeReading, type AgeRecord, ageRecordOf, canJoinApp, effectiveAgeAt, joinAgeCheck, joinBirthDateUsable, readingAge, type TeenBarReason } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
-import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
+import { type ConsentEvent, resolveConsent } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
@@ -81,9 +81,10 @@ export function parseHome(body: Record<string, unknown>): HomeInput | undefined 
   return coarse && coarse !== homeCity ? undefined : { homeCity, neighborhood };
 }
 
-export interface JoinInput {
+export type JoinInput = JoinProfile & ({ age: number; birthDate?: undefined } | { birthDate: number; age?: undefined });
+
+export interface JoinProfile {
   firstName: string;
-  age: number;
   homeCity?: Extract<City, "nyc" | "sf">;
   neighborhood?: string;
   zip?: string;
@@ -93,8 +94,15 @@ export interface JoinInput {
   consent: { sms: true; wording?: string; version?: string };
 }
 
-export type JoinError = "under_age" | "invite_only" | "invalid_invitation" | "invalid" | "review" | "consent_wording" | "account_changed";
+export type JoinError = "under_age" | "invite_only" | "invalid_invitation" | "invalid" | "invalid_birthdate" | "review" | "consent_wording" | "account_changed";
 export class JoinReviewRequired extends Error {}
+
+export interface TeenAgeFacts { firstReadingExact: boolean; lineType: string | null; accountDays: number; apps: AppId[] }
+
+const ISO_BIRTH_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export const joinReading = (input: JoinInput): AgeReading =>
+  input.birthDate !== undefined ? { kind: "birthDate", birthDate: input.birthDate } : { kind: "age", age: input.age };
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 /** Every supplied consent field must match this app's current opt-in. */
@@ -112,7 +120,10 @@ export function parseJoin(body: unknown): JoinInput | undefined {
   const b = body as Record<string, unknown>;
   const str = (v: unknown, max: number) => (typeof v === "string" && v.trim().length > 0 && v.trim().length <= max ? v.trim() : undefined);
   const firstName = str(b.firstName, 50);
-  if (!firstName || !validAge(b.age) || !Number.isInteger(b.age)) return undefined;
+  if (!firstName || !joinAgeFieldsValid(b.birthdate !== undefined, b.age !== undefined)) return undefined;
+  if (b.birthdate !== undefined && (typeof b.birthdate !== "string" || !ISO_BIRTH_DATE.test(b.birthdate))) return undefined;
+  if (b.age !== undefined && (!validAge(b.age) || !Number.isInteger(b.age))) return undefined;
+  const reading = typeof b.birthdate === "string" ? { birthDate: Number(b.birthdate.replace(/-/g, "")) } : { age: b.age as number };
   if (!b.consent || typeof b.consent !== "object" || Array.isArray(b.consent)) return undefined;
   const c = b.consent as Record<string, unknown>;
   const wording = str(c.wording, 2000), version = str(c.version, 40);
@@ -123,7 +134,7 @@ export function parseJoin(body: unknown): JoinInput | undefined {
     versionSupplied: c.version !== undefined,
     versionAccepted: version !== undefined,
   })) return undefined;
-  const out: JoinInput = { firstName, age: b.age as number, consent: { sms: true, ...(wording ? { wording } : {}), ...(version ? { version } : {}) } };
+  const out: JoinInput = { firstName, ...reading, consent: { sms: true, ...(wording ? { wording } : {}), ...(version ? { version } : {}) } };
   if (b.neighborhood !== undefined) { const v = str(b.neighborhood, 80); if (!v) return undefined; out.neighborhood = v; }
   const coarseHome = homeCityOf(out.neighborhood);
   const explicitHome = homeCityOf(b.homeCity);
@@ -166,7 +177,7 @@ export interface AccountHooks {
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   memberExists?(ctx: MemberHookContext): Promise<boolean>;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
-  onStop?(ctx: Omit<MemberHookContext, "memberId"> & { memberId?: string; scope: StopScope }): Promise<void> | void;
+  onStop?(ctx: Omit<MemberHookContext, "memberId"> & { memberId?: string }): Promise<void> | void;
   /** Delete the member's network rows for this app (the generalized forget path). */
   onForget?(ctx: MemberHookContext, reason: MemberForgetReason): Promise<void> | void;
   /** Erase person-bound records that can exist without an app membership. */
@@ -188,9 +199,10 @@ export const publicMembership = (m: Membership | undefined) =>
 
 export class Accounts {
   private readonly phoneListeners: ((ctx: { personId: string }) => Promise<unknown> | unknown)[] = [];
+  private ageListener: ((phoneHash: string) => Promise<unknown> | unknown) | undefined;
   constructor(
     readonly store: PeopleStore,
-    private readonly opts: { hashKey: string; now?: () => number; hooks?: AccountHooks; env?: Record<string, string | undefined>; apps: (id: AppId) => AppInfo },
+    private readonly opts: { hashKey: string; now?: () => number; hooks?: AccountHooks; apps: (id: AppId) => AppInfo },
   ) {}
   private now() { return (this.opts.now ?? Date.now)(); }
   private get hooks() { return this.opts.hooks ?? {}; }
@@ -276,6 +288,13 @@ export class Accounts {
    */
   onPhoneChanged(fn: (ctx: { personId: string }) => Promise<unknown> | unknown) { this.phoneListeners.push(fn); }
 
+  setAgeRecordedListener(fn: (phoneHash: string) => Promise<unknown> | unknown) { this.ageListener = fn; }
+
+  private async ageRecorded(phoneHash: string): Promise<void> {
+    const fn = this.ageListener;
+    if (fn) await Promise.resolve().then(() => fn(phoneHash)).catch(() => {});
+  }
+
   private async currentPhoneForChange(who: Who, at?: number) {
     const own = await this.store.findPhone(who.e164);
     if (!own || own.hold !== null || this.stale(own, at ?? this.now())) return { ownership: "UnavailablePhone" as const };
@@ -301,7 +320,7 @@ export class Accounts {
     // A banned person or number never moves: a new number would escape a ban by phone.
     const policy = stepPhoneChange(current, { type: "checkStartPolicy", oldNumberAllowed: !await this.banned(who.e164, person) });
     if (policy.phase !== "AwaitingRateLimit") return numberChangeRefused(policy.failure);
-    const slot = await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, DAY, at, { limit: NUMBER_CHANGES_PER_DAY });
+    const slot = await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, phoneChangeWindowMs, at, { limit: NUMBER_CHANGES_PER_DAY });
     const rated = stepPhoneChange(policy, { type: "checkStartRate", slotGranted: slot.ok, startsBefore: slot.count - 1 });
     if (rated.phase !== "AwaitingCodeSend") return numberChangeRefused(rated.failure);
     const sent = stepPhoneChange(rated, { type: "recordCodeSend", sendAccepted: await sendCode() });
@@ -347,41 +366,69 @@ export class Accounts {
       return { ok: true };
     });
     if (!r.ok) return r;
-    // The new number's age floor (any age ever stated from it) joins the person's: the lowest wins.
-    const floor = await this.store.ageFloor(this.phoneHash(newE164));
-    if (floor !== undefined) await this.recordAge(newE164, await this.store.getPerson(person.id), floor);
+    if (await this.store.ageFloorRecord(this.phoneHash(newE164))) {
+      const age = await this.lowestAge(newE164, await this.store.getPerson(person.id));
+      if (age !== undefined) await this.hooks.onAgeLowered?.({ personId: person.id, age });
+    }
+    await this.ageRecorded(this.phoneHash(newE164));
     for (const fn of this.phoneListeners) await Promise.resolve().then(() => fn({ personId: person.id })).catch(() => {});
     return { ok: true, e164: newE164, personId: person.id };
   }
 
   /** The age a join states: the typed age, or a lower one that the profile text states about the person. */
-  private statedJoinAge(input: JoinInput): number {
+  private statedJoinAge(input: JoinInput, at: number): number {
     const text = joinProfileText(input);
     const ages = text ? (this.hooks.profileAges?.(text) ?? []).filter(validAge) : [];
     // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
-    return ages.reduce((age, stated) => profileJoinAge(age, stated, true), input.age);
+    return ages.reduce((age, stated) => profileJoinAge(age, stated, true), readingAge(joinReading(input), at));
+  }
+
+  private async recordJoinReadings(e164: string, person: Person | undefined, input: JoinInput, statedAge: number, at: number): Promise<void> {
+    const reading = joinReading(input);
+    await this.recordReading(e164, person, reading);
+    if (statedAge < readingAge(reading, at)) await this.recordReading(e164, person, { kind: "age", age: statedAge });
   }
 
   /** The lowest age known for this phone: the person's (any app) and the phone's age floor. */
   async lowestAge(e164: string, person?: Person): Promise<number | undefined> {
-    return lowestAge(person?.lowestAge ?? undefined, await this.store.ageFloor(this.phoneHash(e164)));
+    return effectiveAgeAt(await this.store.ageStanding(person?.id ?? null, this.phoneHash(e164)), this.now());
+  }
+
+  async ageRecord(e164: string, person: Person | undefined): Promise<AgeRecord> {
+    const hash = this.phoneHash(e164);
+    const standing = await this.store.ageStanding(person?.id ?? null, hash);
+    return ageRecordOf(standing, this.now(), await this.store.teenBarred(hash));
   }
 
   /** Record a stated age: the phone's age floor and the person (if any) keep the lowest. Every app's member follows a lower age. */
   async recordAge(e164: string, person: Person | undefined, age: number): Promise<void> {
     if (!validAge(age)) return;
-    const current = person && await this.store.getPerson(person.id);
-    try {
-      await this.store.noteAgeFloor(this.phoneHash(e164), lowestAge(age, current?.lowestAge)!, this.now());
-    } finally {
-      // A failed floor write must not prevent the person-level safety update.
-      if (person) {
-        const after = await this.store.noteAge(person.id, age);
-        // A prior hook may have failed after noteAge committed. Reconcile on retry, even if the
-        // statement is unchanged or older than the stored minimum. The hook only lowers app ages.
-        await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
-      }
-    }
+    await this.recordReading(e164, person, { kind: "age", age });
+  }
+
+  async recordBirthDate(e164: string, person: Person | undefined, birthKey: number): Promise<void> {
+    await this.recordReading(e164, person, { kind: "birthDate", birthDate: birthKey });
+  }
+
+  private async recordReading(e164: string, person: Person | undefined, reading: AgeReading): Promise<void> {
+    const phoneHash = this.phoneHash(e164);
+    const after = await this.store.recordAgeReading(person?.id ?? null, phoneHash, reading, this.now());
+    if (person && after !== undefined) await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+    await this.ageRecorded(phoneHash);
+  }
+
+  async barTeenPool(e164: string, reason: TeenBarReason, at: number): Promise<void> {
+    await this.store.barTeenPool(this.phoneHash(e164), reason, at);
+  }
+
+  async teenAgeFacts(personId: string): Promise<TeenAgeFacts> {
+    const row = await this.store.teenAgeFacts(personId);
+    return {
+      firstReadingExact: row?.firstExact === true,
+      lineType: row?.lineType ?? null,
+      accountDays: row ? Math.max(0, Math.floor((this.now() - row.createdAt) / DAY)) : 0,
+      apps: row?.apps ?? [],
+    };
   }
 
   /** Project a durable chat observation. The write's owner survives a change of phone number. */
@@ -390,6 +437,7 @@ export class Accounts {
     if (person?.deletedAt === null && validAge(person.lowestAge)) {
       await this.hooks.onAgeLowered?.({ personId: person.id, age: person.lowestAge });
     }
+    await this.ageRecorded(recorded.phoneHash);
   }
 
   /** A new person for a verified phone (or the tombstone of this phone's earlier person, revived). */
@@ -441,6 +489,7 @@ export class Accounts {
 
   async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
     if (enrollment.phase !== "AwaitingConsent") return { ok: false, error: "invalid" };
+    if (input.birthDate !== undefined && !joinBirthDateUsable(input.birthDate, this.now())) return { ok: false, error: "invalid_birthdate" };
     const consent = stepEnrollment(enrollment, { type: "confirmConsent", consentMatches: consentMatches(app, input.consent) });
     if (consent.phase !== "AwaitingEligibility") return { ok: false, error: "consent_wording" };
     // One join per phone at a time: parallel requests see the first one's person and membership.
@@ -470,16 +519,14 @@ export class Accounts {
       },
     });
     if (membershipCheck.phase === "NeedsInvite") return { ok: false, error: "invite_only" };
-    const statedAge = this.statedJoinAge(input);
-    // A repeated join propagates a lower age and keeps the membership and consent.
-    if (membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
+    const statedAge = this.statedJoinAge(input, at);
+    await this.recordJoinReadings(who.e164, person, input, statedAge, at);
     const age = joinAgeCheck(statedAge, await this.lowestAge(who.e164, person), app);
     const memberMissing = membershipCheck.rejoin && age.ok && !!person && existing?.state === "active" && !!this.hooks.memberExists
       && !await this.hooks.memberExists({ app, personId: person.id, memberId: existing.memberId, e164: who.e164 });
     const ageCheck = stepEnrollment(membershipCheck, { type: "checkJoinAge", ageEligible: age.ok, memberMissing });
     if (ageCheck.phase === "BelowJoinAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
-      if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
       if (age.effective !== undefined && declineEndsUnboundAccess(age.effective)) await this.store.endUnboundAccess(who.e164, this.phoneHash(who.e164), at);
       return { ok: false, error: "under_age" };
     }
@@ -494,8 +541,10 @@ export class Accounts {
     }
     if (ageCheck.phase === "InvalidInvitation") return { ok: false, error: "invalid_invitation" };
     if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
-    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge, who.session ?? null);
-    await this.recordAge(who.e164, person, statedAge);
+    if (!person) {
+      person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge, who.session ?? null);
+      await this.recordJoinReadings(who.e164, person, input, statedAge, at);
+    }
     const membership: Membership = {
       // An invited membership keeps its member id (the invite may already name it).
       app: app.id, personId: person.id, memberId: membershipCheck.invited && existing ? existing.memberId : `${app.id}_${randomUUID()}`,
@@ -538,12 +587,11 @@ export class Accounts {
   }
 
   async stop(app: AppInfo, who: Who, source = "web_form"): Promise<void> {
-    const scope = stopScope(this.opts.env);
-    await this.store.addConsent({ e164: who.e164, app: scope === "global" ? null : app.id, state: "opted_out", source, at: this.now() });
+    await this.store.addConsent({ e164: who.e164, app: null, state: "opted_out", source, at: this.now() });
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
     const live = m && m.state !== "removed" ? m : undefined;
-    if (person && (live || scope === "global")) await this.hooks.onStop?.({ app, personId: person.id, memberId: live?.memberId, e164: who.e164, scope });
+    if (person) await this.hooks.onStop?.({ app, personId: person.id, memberId: live?.memberId, e164: who.e164 });
   }
 
   /** Record any consent event (keywords on a line, staff). */

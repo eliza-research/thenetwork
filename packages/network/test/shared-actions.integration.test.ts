@@ -18,7 +18,7 @@ const phone="+12125550181";
 let sql:SQL,service:NetworkService,server:HttpServer,memberId:string,personId:string;
 let escaped=0;
 const start=async()=>{
-  service=new NetworkService({url,clock,photoStorage:null,instance:"signed-actions-integration",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
+  service=new NetworkService({url,clock,photoStorage:null,instance:"signed-actions-integration",env:{PLATFORM_ENV:"dev",SERVICE_TURN_SECRET:secret},
     networks:[{id:"friends:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
     adapter:()=>{const a=new DryRunAdapter(()=>{});a.deliver=async rows=>{escaped+=rows.length;return rows.map(row=>({id:row.id,status:"dry_run"}));};a.direct=async()=>{escaped++;return "dry_run";};return a;}});
   await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});

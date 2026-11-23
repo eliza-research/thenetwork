@@ -1,8 +1,6 @@
-// docs/deploy.md section 6, the live-send table (audit PER34, SHA41: founder decisions; this file pins the current behavior).
-// The global flags are on and FRIENDS_LIVE_APPROVED and PEON_LIVE_APPROVED are unset: those apps' queued sends stay
-// dry-run, but a signed /internal/turn still returns the onboarding replies for the Eliza gateway to send.
-// A change that gates turn replies per app makes this file fail; then update the table in docs/deploy.md and
-// docs/go-live-handoff.md and liveSendTable in deploy/backend/backend.ts.
+// spec/bootPolicy.md, "The configured channel alone decides whether a send is real" (owner decision 2026-11-22):
+// no app has its own approval, a dry-run service queues nothing, and a signed /internal/turn returns the
+// onboarding replies of every app for the Eliza gateway to send.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
@@ -11,7 +9,7 @@ import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { applySchema, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
-import { DryRunAdapter, liveSendAllowed } from "../service/channel.ts";
+import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 
 const db = `network_live_send_table_${randomUUID().replaceAll("-", "")}`;
@@ -19,7 +17,7 @@ const admin = new SQL({ url: `postgres://${process.env.USER ?? "postgres"}@127.0
 const url = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/${db}`;
 const secret = "synthetic-live-send-table-turn-secret-20261118";
 const clock = new SimClock(Date.UTC(2026, 10, 18, 16));
-const env = { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: "synthetic-live-send-table-hash-key", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" };
+const env = { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: "synthetic-live-send-table-hash-key", SERVICE_TURN_SECRET: secret };
 let service: NetworkService, server: HttpServer;
 let queued = 0;
 
@@ -55,10 +53,8 @@ const post = async (input: TurnRequest) => {
   });
 };
 
-test("without its own approval flag, friends and peon queued sends are dry-run, and signed-turn replies still go back to the gateway", async () => {
-  expect(liveSendAllowed(env, "ntwrk")).toBe(true);
+test("with no channel configured, friends and peon queue nothing, and signed-turn replies of every app go back to the gateway", async () => {
   for (const [app, from] of [["friends", "+12125550171"], ["peon", "+12125550172"]] as const) {
-    expect(liveSendAllowed(env, app)).toBe(false);
     const r = await post({ messageId: `live-table-${app}`, from, text: app, channel: "blooio", to: null, transport: "imessage", receivedAt: clock.now() });
     expect(r.status).toBe(200);
     const answer = await r.json() as { outcome: string; app: string; delivery: string; replies: string[] };

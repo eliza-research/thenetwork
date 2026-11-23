@@ -14,11 +14,6 @@ export class BlooioAdapter implements ChannelAdapter {
   markRead(chatId: string) { return this.client.markRead(chatId); }
 }
 
-/**
- * Wraps an adapter so nothing leaves the machine: logs and returns a fake receipt.
- * The local receiver uses this unless BLOOIO_ALLOW_SEND=1, so STOP/HELP auto-replies cannot text a real person
- * by accident while prototyping.
- */
 export class DryRunAdapter implements ChannelAdapter {
   readonly kind;
   readonly sent: SendRequest[] = [];

@@ -16,10 +16,9 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
-import { signInAfterMove } from "../../core/src/generated/phoneChange.ts";
-import { otpOnlyAppAllowed, otpOnlyPolicyAccepted, otpStartNeedsBrowserCheck } from "../../core/src/generated/otpLimits.ts";
+import { phoneChangeRetryAfterSeconds, signInAfterMove } from "../../core/src/generated/phoneChange.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
-import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { callbackFailureCode, cloudIdentityTimesValid, cloudSessionStartedAt, failedCallbackReturnsToPage, liveBeforeDeadline, type CallbackPage } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
   type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck, cloudCachePublication,
@@ -38,7 +37,7 @@ import { SessionService, SESSION_TTL_MS, tokenHash, signupAccountView } from "./
 import type { PeopleStore } from "./store.ts";
 import type { TurnstileVerifier } from "./turnstile.ts";
 import type { PhotoService } from "./photos.ts";
-import type { PhotoRelayService } from "./photo-relay.ts";
+import { PHOTO_PAGE_API, type PhotoPages } from "./photo-pages.ts";
 import { PHOTO_UPLOAD_PATH, type PhotoUploadLinks } from "./photo-upload-link.ts";
 
 type CloudStatus = "valid" | "invalid" | "unavailable";
@@ -47,6 +46,8 @@ function authorityStatus(check: AuthorityCheck): CloudStatus {
   if (check.phase === "AuthorityValid") return "valid";
   return check.phase === "AuthorityUnavailable" ? "unavailable" : "invalid";
 }
+
+export const INVALID_BIRTHDATE_MESSAGE = "Enter your birth date as year, month and day.";
 
 function readJoinPrefill(input: unknown) {
   if (typeof input !== "object" || input === null) return;
@@ -58,8 +59,9 @@ function readJoinPrefill(input: unknown) {
 }
 
 export type HomeHelpVenueRequest = { id: string; revision: number } & (
-  { action: "submit"; address: string } | { action: "reveal" | "revoke" }
+  { action: "submit"; address: string } | { action: "reveal" | "revoke" | "status" }
 );
+export type HomeHelpVenueAnswer = { address?: string } | { role: "requester" | "helper"; addressSaved: boolean };
 
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
@@ -94,10 +96,9 @@ export interface PublicApiOptions extends AccountHooks {
   photos?: PhotoService;
   /** Single-use photo upload links (photo-upload-link.ts): POST /api/photos/upload, bound by the link, never by a session. */
   photoLinks?: PhotoUploadLinks;
-  /** Voluntary item sharing. Absent until an approved item-review policy is configured. */
-  photoRelay?: PhotoRelayService;
+  photoPages?: PhotoPages;
   /** Private home-help address for the current approved revision. Use the verified app session only. */
-  homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<{ address?: string } | undefined>;
+  homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<HomeHelpVenueAnswer | undefined>;
   calendarInvite?: (app: AppInfo, code: string) => Promise<Response>;
   /**
    * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
@@ -172,12 +173,6 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   if (!dev && sessionSecret === hashKey) throw new Error("PLATFORM_SESSION_SECRET must differ from PLATFORM_HASH_KEY outside PLATFORM_ENV=dev");
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
   if (!o.turnstile && !dev) throw new Error("a Turnstile verifier is required outside PLATFORM_ENV=dev (TURNSTILE_SECRET_KEY)");
-  // spec/otpLimits.md, "A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling"
-  const phoneOtpApps = env.PLATFORM_PHONE_OTP_ONLY_APPS ? env.PLATFORM_PHONE_OTP_ONLY_APPS.split(",").map(app => app.trim()) : [];
-  const phoneOtpOnlyApps = new Set(phoneOtpApps);
-  const everyNamedAppAllowed = phoneOtpApps.every(otpOnlyAppAllowed), namesDistinct = phoneOtpOnlyApps.size === phoneOtpApps.length;
-  if (!otpOnlyPolicyAccepted(everyNamedAppAllowed, namesDistinct, phoneOtpApps.length > 0, o.otp.name === "blooio"))
-    throw new Error(everyNamedAppAllowed && namesDistinct ? "phone-code-only OTP requires Blooio" : "PLATFORM_PHONE_OTP_ONLY_APPS must list distinct ntwrk, slop or friends app IDs");
   const proxySecret = o.proxySecret ?? env.PLATFORM_PROXY_SECRET ?? undefined;
   const now = o.now ?? Date.now;
   const localOrigin = (raw: string | undefined) => {
@@ -186,12 +181,15 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     if (value.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(value.hostname) || value.href !== `${value.origin}/`) throw new Error("Cloud auth review requires an exact loopback site origin");
     return value.origin;
   };
-  const canonicalCloud = env.NETWORK_CLOUD_AUTH_ENABLED === "true" && env.NETWORK_CLOUD_AUTH_MODE === "production-v1";
-  const ownPagesCloud = env.NETWORK_CLOUD_AUTH_ENABLED === "true" && env.NETWORK_CLOUD_AUTH_MODE === "own-pages-fresh-person-v1";
+  const cloudMode = env.NETWORK_CLOUD_AUTH_MODE || undefined;
+  if (!cloudMode && [env.NETWORK_CLOUD_AUTH_LOGIN_ORIGIN, env.NETWORK_CLOUD_AUTH_API_ORIGIN, env.NETWORK_CLOUD_AUTH_SITE_ORIGIN, env.NETWORK_CLOUD_AUTH_SERVER_TOKEN].some(Boolean))
+    throw new Error("Cloud auth settings need NETWORK_CLOUD_AUTH_MODE");
+  const canonicalCloud = cloudMode === "production-v1";
+  const ownPagesCloud = cloudMode === "own-pages-fresh-person-v1";
   const productionCloud = canonicalCloud || ownPagesCloud;
   const cloudRealm = ownPagesCloud ? "fresh-person-20261015" as const : "canonical" as const;
   const cloudSites = ownPagesCloud ? NETWORK_FRESH_PERSON_SITES : NETWORK_SITES;
-  const cloudAuth = env.NETWORK_CLOUD_AUTH_ENABLED === "true" ? (() => {
+  const cloudAuth = cloudMode ? (() => {
     if (ownPagesCloud) {
       const origins=stagingSiteOrigins(env);
       if (env.PLATFORM_ENV !== "staging" || env.NETWORK_CLOUD_AUTH_LOGIN_ORIGIN !== "https://cloud.eliza.app"
@@ -206,7 +204,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         || env.NETWORK_CLOUD_AUTH_SITE_ORIGIN || Object.keys(stagingSiteOrigins(env)).length) throw new Error("Production Cloud auth needs the exact four-app production tuple and current service authority");
       return { loginOrigin: "https://cloud.eliza.app", apiOrigin: "https://api.eliza.app", siteOrigin: "https://ntwrk.party", serverToken: "" };
     }
-    if (env.NETWORK_CLOUD_AUTH_MODE && env.NETWORK_CLOUD_AUTH_MODE !== "staging-local") throw new Error("Unknown Cloud auth mode");
+    if (cloudMode !== "staging-local") throw new Error("Unknown Cloud auth mode");
     if (!dev || env.NETWORK_CLOUD_AUTH_LOGIN_ORIGIN !== "https://cloud-staging.eliza.app"
       || env.NETWORK_CLOUD_AUTH_API_ORIGIN !== "https://api-staging.eliza.app"
       || (env.NETWORK_CLOUD_AUTH_SERVER_TOKEN?.length ?? 0) < 32) throw new Error("Cloud site auth requires the approved staging/local tuple and server authority");
@@ -230,7 +228,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const productionDelegation = productionCloud ? productionCloudDelegation({ realm: cloudRealm, secret: env.SERVICE_TURN_SECRET!, now, fetch: o.cloudAuthFetch }) : undefined;
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
-    hashKey, now, env, apps: id => apps[id],
+    hashKey, now, apps: id => apps[id],
     hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
@@ -376,9 +374,6 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   }
 
   async function handle(req: Request, url: URL, peer?: string): Promise<Response> {
-    // This exact purpose-scoped capability verifies its own immutable recipient/item authority.
-    const selectedPhoto = await o.photoRelay?.serveDelivery(req);
-    if (selectedPhoto) return selectedPhoto;
     // A request signed by a site router: its host and client IP. Otherwise our own Host and the socket.
     const signed = await verifyProxyHeaders(req, proxySecret, Math.floor(now() / 1000));
     const host = signed?.host ?? (o.trustForwardedHost ? req.headers.get("x-forwarded-host") : null) ?? req.headers.get("host") ?? url.host;
@@ -407,7 +402,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       return o.calendarInvite(app, url.searchParams.get("code") ?? "");
     }
     const photoPath = url.pathname.replace(/\/+$/, "");
-    if (o.photoRelay && photoPath.startsWith("/api/relay-photos/")) {
+    if (photoPath.startsWith(PHOTO_PAGE_API)) {
+      if (!o.photoPages) return json(404, { ok: false, error: "not_found" });
       if (post) {
         if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return json(415, { ok: false, error: "json_required" });
         if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
@@ -415,14 +411,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try { if (origin && appForHost(new URL(origin).host, hostMap) !== appId) return json(403, { ok: false, error: "origin" }); }
         catch { return json(403, { ok: false, error: "origin" }); }
       }
-      let authenticated: Awaited<ReturnType<typeof auth>>;
-      const response = await o.photoRelay.route(req, photoPath, appId, async () => {
-        authenticated = await auth();
-        return authenticated?.session.personId ? { personId: authenticated.session.personId,
-          accountView: signupAccountView(appId, accounts.phoneHash(authenticated.session.e164), authenticated.session.personId) } : undefined;
-      });
-      if (response) { if (authenticated) rotatedCookies(response, authenticated); return response; }
+      return (await o.photoPages.route(req, photoPath, appId))!;
     }
+    if (o.photoLinks && photoPath === PHOTO_UPLOAD_PATH && !post) return o.photoLinks.status(req, appId);
     if (o.photoLinks && photoPath === PHOTO_UPLOAD_PATH && post) {
       // The link page on the app's own site posts a multipart batch: a cross-site request is refused.
       if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
@@ -493,8 +484,14 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       }
       case "GET /api/auth/cloud/callback": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
-        const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
         const pending = unseal("cloud-pending", cookies.get(pendingName));
+        const pendingPath = pending?.app === appId ? pending.returnPath : undefined;
+        const failurePage: CallbackPage = pendingPath === "/phone" ? "PhoneReturn" : pendingPath === "/home-help" ? "HomeHelpReturn"
+          : pendingPath === "/join" ? "JoinReturn" : oauthReturnPath(pendingPath) ? "ConnectorReturn" : "NoReturn";
+        const reject = (status: number) => failedCallbackReturnsToPage(failurePage)
+          ? new Response(null, {status: 303, headers: {location: `${pendingPath}?error=${callbackFailureCode(status)}`,
+            "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": pendingCookie("", 0)}})
+          : json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
         const verifier = pending?.verifier;
         const returnPath = pending?.returnPath;
         const code = url.searchParams.get("code");
@@ -566,10 +563,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try {
           const e164 = normalizePhone(b.phone);
           if (!e164) return json(400, { ok: false, error: "invalid_phone" });
-          if (otpStartNeedsBrowserCheck(phoneOtpOnlyApps.has(appId), !!o.turnstile) && !(await o.turnstile!.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
+          if (o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
-          const r = await otp.start(app, e164, ip, phoneOtpOnlyApps.has(appId), await accounts.banned(e164));
+          const r = await otp.start(app, e164, ip, await accounts.banned(e164));
           if (!r.ok) return json(429, { ok: false, error: "rate_limited" }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
           return json(200, { ok: true });
         } finally {
@@ -583,7 +580,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try {
           const e164 = normalizePhone(b.phone);
           const code = typeof b.code === "string" ? b.code.trim() : "";
-          if (!e164 || !(await otp.verify(appId, e164, code, ip, phoneOtpOnlyApps.has(appId)))) return json(400, { ok: false, error: "invalid_code" });
+          if (!e164 || !(await otp.verify(appId, e164, code, ip))) return json(400, { ok: false, error: "invalid_code" });
           // A code sent before the ban gives no session after it.
           if (await accounts.banned(e164)) return json(400, { ok: false, error: "invalid_code" });
           // A new session at every login (the old cookie on this request is revoked: no fixation).
@@ -610,7 +607,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         if (!venue) return json(404, { ok: false, error: "not_found" });
         return withSession(async who => {
           const { action, id, revision, address } = b;
-          if ((action !== "submit" && action !== "reveal" && action !== "revoke")
+          if ((action !== "submit" && action !== "reveal" && action !== "revoke" && action !== "status")
             || typeof id !== "string" || id.length === 0 || id.length > 36
             || typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 || revision > 2_147_483_647
             || ("app" in b && b.app !== appId)
@@ -708,7 +705,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           try {
             const r = await accounts.join(app, who, input, enrollment, b.inviteToken, typeof b.signupView === "string" ? b.signupView : undefined);
             if (!r.ok && r.error === "account_changed") return json(409, { ok: false, error: r.error });
-            if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
+            if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : r.error === "invalid_birthdate" ? { message: INVALID_BIRTHDATE_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {
             log(`[platform] join failed on ${appId}: ${(e as Error).message}`);
@@ -735,11 +732,18 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           return await withSession(async (who, a) => {
             const e164 = normalizePhone(b.phone);
             if (!e164) return json(400, { ok: false, error: "invalid_phone" });
-            const r = await accounts.startNumberChange(app, who, e164, sessions.fresh(a.session), async () => (await otp.start(app, e164, ip, false, await accounts.banned(e164))).ok);
+            const otpRefusal: { waitMs?: number } = {};
+            const r = await accounts.startNumberChange(app, who, e164, sessions.fresh(a.session), async () => {
+              const sent = await otp.start(app, e164, ip, await accounts.banned(e164));
+              if (!sent.ok) otpRefusal.waitMs = sent.retryAfterMs;
+              return sent.ok;
+            });
             if (!r.ok) {
               const status = r.error === "rate_limited" ? 429 : r.error === "review" || r.error === "reauth" ? 403 : 400;
               const message = r.error === "review" ? REVIEW_MESSAGE : r.error === "reauth" ? REAUTH_CHANGE_MESSAGE : undefined;
-              return json(status, { ok: false, error: r.error, ...(message ? { message } : {}) });
+              const retry = r.error === "rate_limited"
+                ? { "retry-after": String(phoneChangeRetryAfterSeconds(otpRefusal.waitMs === undefined, now(), otpRefusal.waitMs ?? 0)) } : undefined;
+              return json(status, { ok: false, error: r.error, ...(message ? { message } : {}) }, retry);
             }
             return json(200, { ok: true });
           });

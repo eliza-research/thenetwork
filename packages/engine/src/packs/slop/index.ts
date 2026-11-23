@@ -51,7 +51,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     version: SLOP_PACK_VERSION,
     options: o,
     ontology: {
-      lanes: [{ id: SLOP_LANE, adultOnly: true, neverInPlans: true }],
+      lanes: [{ id: SLOP_LANE, minors: "never", neverInPlans: true }],
       contributorRoles: new Set(),
       warmEdges: new Set(),
       funnelProbe: { lane: SLOP_LANE, role: "peer" },

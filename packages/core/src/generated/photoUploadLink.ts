@@ -127,6 +127,22 @@ export function lawExpiredLinkNeverUploads(holder: UploadLinkHolder, sameApp: bo
   return redeemUploadLink(local_0, holder, sameApp, exact_photoUploadLink(at + photoUploadLinkTtlMs)).phase !== "UploadLinkSpent";
 }
 
+/** Story: Add my photos with a private one-time link / A status check says whether a link can still upload, and does not use it (spec/photoUploadLink.md) */
+//@ pure
+export function lawOpenStatusMeansTheUseUploads(holder: UploadLinkHolder, sameApp: boolean, at: number): boolean {
+  //@ ensures \result === true
+  const local_1: PhotoUploadLink = issueUploadLink(initial, holder, at);
+  return !uploadLinkUsable(local_1, holder, sameApp, at) || redeemUploadLink(local_1, holder, sameApp, at).phase === "UploadLinkSpent";
+}
+
+/** Story: Add my photos with a private one-time link / A status check says whether a link can still upload, and does not use it (spec/photoUploadLink.md) */
+//@ pure
+export function lawClosedStatusMeansTheUseStoresNothing(holder: UploadLinkHolder, sameApp: boolean, at: number): boolean {
+  //@ ensures \result === true
+  const local_2: PhotoUploadLink = issueUploadLink(initial, holder, at);
+  return !(!uploadLinkUsable(local_2, holder, sameApp, at)) || redeemUploadLink(local_2, holder, sameApp, at).phase !== "UploadLinkSpent";
+}
+
 /** Story: Add my photos with a private one-time link / One link use carries one to four photos of at most four MiB each and eight MiB in all (spec/photoUploadLink.md) */
 //@ pure
 export function uploadLinkBatchAllowed(count: number, largestBytes: number, totalBytes: number): boolean {

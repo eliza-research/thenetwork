@@ -6,6 +6,8 @@ import { ledgerOptedOut } from "./consent-ledger-read.ts";
 import { svcSign, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { LEARNING_CONSENT_CONTEXT_PATH, parseLearningConsentContextRequest, type LearningConsentContextProof, NETWORK_LEARNING_ENTRY_SELECTION_SHA256, learningSelectionMatchesStoredCommand } from "../../core/src/svc/learning-consent-context.ts";
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
+import { effectiveAgesOf } from "./snapshot.ts";
 
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 
@@ -43,13 +45,13 @@ export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => n
       const [member] = await tx`select n.id from network.members n join platform.people p on p.id=n.person_id
         join platform.memberships m on m.person_id=p.id and m.app_id=n.app_id and m.member_id=n.id
         where p.id=${candidate.id} and p.deleted_at is null and n.app_id=${review.app} and n.id=${review.memberId}
-        and n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18
+        and n.account_status='active' and not n.opted_out
         and m.state in ('active','onboarding') and m.review is null
         and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
         and not exists(select 1 from platform.suppression s where s.phone_hash=p.phone_hash)
         and not exists(select 1 from platform.phone_identities ph where ph.person_id=p.id and ph.hold is not null)
         for share of n,m`;
-      if (!member) return json({ error: "turn_scope_invalid" }, 403);
+      if (!member || !canBeMatched((await effectiveAgesOf(tx, review.app, [review.memberId], now)).get(review.memberId))) return json({ error: "turn_scope_invalid" }, 403);
       const [turn] = await tx`select i.request_hash,i.arrived_at,i.network_authority,i.response,m.body
         from platform.inbound i join platform.people p on p.phone_hash=i.sender_hash and p.id=${candidate.id}
         join network.messages m on m.app_id=${review.app} and m.member_id=${review.memberId} and m.id=${`in:${review.channel}:${review.messageId}`} and m.direction='inbound'

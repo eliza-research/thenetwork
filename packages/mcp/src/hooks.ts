@@ -1,7 +1,9 @@
 import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
+import { canJoinApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 import { connectorMembershipStatus, type MemberStatus } from "../../core/src/generated/connectorTools.ts";
+import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { Grant } from "./store.ts";
 
@@ -34,6 +36,44 @@ export interface SavedProfileFields {
   homeCity: unknown;
 }
 
+export interface LookingForEntry {
+  ref: string;
+  number: number;
+  kind: "want" | "intent" | "request" | "posting";
+  summary: string;
+  status: "active" | "paused" | "waiting_on_you" | "open";
+  inProgress: boolean;
+  endsAt: number | null;
+}
+
+export interface LookingForView {
+  entries: LookingForEntry[];
+  closedRecently: { ref: string; summary: string; closedAt: number }[];
+  checkWithPerson: { ref: string; summary: string; reason: "said_not_wanted" | "ended_recently" }[];
+}
+
+export type LookingForChange = "pause" | "resume";
+
+export type LookingForResult =
+  | { kind: "applied"; entry: LookingForEntry; notice: string }
+  | { kind: "unchanged"; entry: LookingForEntry }
+  | { kind: "refused"; reason: "unknown_ref" | "daily_limit" | "closed" | "posting" | "adults_only" | "texts_off" | "not_member" };
+
+export type PhotoShareState = "asked" | "checking" | "ready" | "taken_back";
+
+export interface PhotoHolding {
+  number: number;
+  name: string | null;
+  addedOn: string;
+  sharedWith: { firstName: string; state: PhotoShareState }[];
+}
+
+export interface PhotoHoldingsView { text: string; photos: PhotoHolding[] }
+
+export type PhotoRequestStatus = "texted" | "done" | "refused" | "unavailable";
+
+export interface PhotoRequestResult { status: PhotoRequestStatus; text: string }
+
 export interface PlatformHooks {
   cloudAuthorityRequired?(app: McpAppId): boolean;
   beginCloudOAuth?(app: McpAppId, requestId: string): Promise<{url:string;setCookie:string}|undefined>;
@@ -50,9 +90,14 @@ export interface PlatformHooks {
   grantIsBanned(phoneKey: string, personId: string | null): Promise<boolean>;
   signupAgeAllowed?(phoneKey: string, app: McpAppId): Promise<boolean>;
   status(personId: string, app: McpAppId, phoneKey: string): Promise<PublicStatus>;
+  minorMember?(personId: string, app: McpAppId, phoneKey: string): Promise<boolean>;
+  minorNotice?(personId: string, app: McpAppId, phoneKey: string): Promise<MinorNotice | undefined>;
   readProfile?(personId: string, app: McpAppId, phoneKey: string): Promise<SavedProfileFields | undefined>;
-  customChatGptSlopEligible?(personId: string, phoneKey: string): Promise<boolean>;
   submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped">;
+  lookingFor?(personId: string, app: McpAppId, phoneKey: string): Promise<LookingForView | undefined>;
+  changeLookingFor?(personId: string, app: McpAppId, phoneKey: string, grantId: string, ref: string, change: LookingForChange): Promise<LookingForResult>;
+  photoHoldings?(personId: string, app: McpAppId, phoneKey: string): Promise<PhotoHoldingsView | undefined>;
+  photoRequest?(personId: string, app: McpAppId, phoneKey: string, words: string): Promise<PhotoRequestResult>;
   profileSubmissionFingerprint?(app: McpAppId, grantId: string, text: string): string;
   updates?(personId: string, app: McpAppId, assistant: AssistantKind, token: string | undefined, passesLeakGate: (summary: string) => boolean): Promise<PublicUpdate[]>;
   assistantLinked?(personId: string, assistant: AssistantKind, active: boolean): Promise<void>;
@@ -85,6 +130,11 @@ export interface PlatformParts {
   sessionMaxAge?: number;
   secureCookie?: boolean;
   submitProfile?: (personId: string, app: McpAppId, e164: string, text: string) => Promise<"accepted" | "not_member">;
+  lookingFor?: (personId: string, app: McpAppId, e164: string) => Promise<LookingForView | undefined>;
+  minorNotice?: (personId: string, app: McpAppId, e164: string) => Promise<MinorNotice | undefined>;
+  changeLookingFor?: (personId: string, app: McpAppId, e164: string, grantId: string, ref: string, change: LookingForChange) => Promise<LookingForResult>;
+  photoHoldings?: (personId: string, app: McpAppId, e164: string) => Promise<PhotoHoldingsView | undefined>;
+  photoRequest?: (personId: string, app: McpAppId, e164: string, words: string) => Promise<PhotoRequestResult>;
   updates?: PlatformHooks["updates"];
   assistantLinked?: PlatformHooks["assistantLinked"];
 }
@@ -111,7 +161,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if(p.cloudAuthorityRequired?.(id))return {ok:false,error:"unavailable"};
       const app = p.app(id);
       if (!app) return { ok: false, error: "unavailable" };
-      const r = await p.otp.start(app, e164, ip, false, await p.accounts.banned(e164));
+      const r = await p.otp.start(app, e164, ip, await p.accounts.banned(e164));
       return r.ok ? { ok: true } : { ok: false, error: "rate_limited" };
     },
     async verifyOtp(id, e164, code, ip) {
@@ -144,14 +194,6 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const age = lowestAge(await p.store.ageFloor(key), (await p.accounts.byPhoneHash(key))?.person.lowestAge);
       return !!app && (age === undefined || canJoinApp(age, app));
     },
-    async customChatGptSlopEligible(personId, key) {
-      const app = p.app("slop");
-      const who = await p.accounts.byPhoneHash(key);
-      if (!app || !who || who.person.id !== personId || await p.accounts.banned(who.e164, who.person)) return false;
-      const m = await p.store.getMembership(personId, "slop");
-      return !!m && !m.review && ["active", "onboarding"].includes(m.state)
-        && canMatchInApp(await p.accounts.lowestAge(who.e164, who.person), app);
-    },
     ...(p.submitProfile ? {
       profileSubmissionFingerprint: (app: McpAppId, grantId: string, text: string) => p.accounts.profileSubmissionFingerprint(app, grantId, text),
       submitProfile: async (personId: string, id: McpAppId, key: string, text: string) => {
@@ -159,6 +201,41 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
         if (!who || who.person.id !== personId) return "not_member";
         if (resolveConsent(await p.store.lastConsent(who.e164, id)) === "opted_out") return "stopped";
         return p.submitProfile!(personId, id, who.e164, text);
+      },
+    } : {}),
+    ...(p.lookingFor ? {
+      lookingFor: async (personId: string, id: McpAppId, key: string) => {
+        const who = await p.accounts.byPhoneHash(key);
+        if (!who || who.person.id !== personId) return undefined;
+        return p.lookingFor!(personId, id, who.e164);
+      },
+    } : {}),
+    ...(p.minorNotice ? {
+      minorNotice: async (personId: string, id: McpAppId, key: string) => {
+        const who = await p.accounts.byPhoneHash(key);
+        if (!who || who.person.id !== personId) return undefined;
+        return p.minorNotice!(personId, id, who.e164);
+      },
+    } : {}),
+    ...(p.changeLookingFor ? {
+      changeLookingFor: async (personId: string, id: McpAppId, key: string, grantId: string, ref: string, change: LookingForChange): Promise<LookingForResult> => {
+        const who = await p.accounts.byPhoneHash(key);
+        if (!who || who.person.id !== personId) return { kind: "refused", reason: "not_member" };
+        return p.changeLookingFor!(personId, id, who.e164, grantId, ref, change);
+      },
+    } : {}),
+    ...(p.photoHoldings ? {
+      photoHoldings: async (personId: string, id: McpAppId, key: string) => {
+        const who = await p.accounts.byPhoneHash(key);
+        if (!who || who.person.id !== personId) return undefined;
+        return p.photoHoldings!(personId, id, who.e164);
+      },
+    } : {}),
+    ...(p.photoRequest ? {
+      photoRequest: async (personId: string, id: McpAppId, key: string, words: string): Promise<PhotoRequestResult> => {
+        const who = await p.accounts.byPhoneHash(key);
+        if (!who || who.person.id !== personId) return { status: "unavailable", text: "" };
+        return p.photoRequest!(personId, id, who.e164, words);
       },
     } : {}),
     ...(p.updates ? { updates: p.updates } : {}),
@@ -171,6 +248,11 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const m = await p.store.getMembership(personId, app.id);
       const optedOut = resolveConsent(await p.store.lastConsent(who.e164, app.id)) === "opted_out";
       return publicStatus(m?.state, m?.review, optedOut);
+    },
+    async minorMember(personId, _id, key) {
+      const who = await p.accounts.byPhoneHash(key);
+      if (!who || who.person.id !== personId) return true;
+      return !canBeMatched(await p.accounts.lowestAge(who.e164, who.person));
     },
     async readProfile(personId, id, key) {
       const app = p.app(id);

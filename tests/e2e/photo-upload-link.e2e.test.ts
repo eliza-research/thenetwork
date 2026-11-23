@@ -220,6 +220,40 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     expect([m?.state, m?.profile.photoConsent]).toEqual(["restricted", undefined]);
   }, T);
 
+  // spec/photoUploadLink.md, "A status check says whether a link can still upload, and does not use it"
+  test("the link page reads whether a link is open without using it, and gets the exact photo consent text", async () => {
+    const phone = newPhone();
+    expect((await webJoin(st, "slop", phone, { age: 28 })).res.status).toBe(200);
+    const personId = await personOf(phone);
+    const issue = async () => {
+      const issued = await st.svc.photoLinks.issue(personId, "slop", "agent");
+      if (!issued.ok) throw new Error(JSON.stringify(issued));
+      return /#([A-Za-z0-9_-]{43})$/.exec(issued.url)![1]!;
+    };
+    const status = async (token: string, app: "slop" | "ntwrk" = "slop") => {
+      const res = await st.site(app, "/api/photos/upload", { headers: { "x-photo-upload-link": token } });
+      return { status: res.status, cache: res.headers.get("cache-control"), body: await res.json() };
+    };
+    const closed = { status: 410, cache: "no-store", body: { ok: false, error: "link_unavailable" } };
+    const token = await issue();
+    const open = { status: 200, cache: "no-store", body: { ok: true, consentRequired: true, consent: { version: PHOTO_CONSENT.version, text: PHOTO_CONSENT.text } } };
+    expect(await status(token)).toEqual(open);
+    // A second check, and a check on another app's site, leave the link open.
+    expect(await status(token)).toEqual(open);
+    expect(await status(token, "ntwrk")).toEqual(closed);
+    expect((await upload(token, [png("after-status")], { consent: true })).status).toBe(200);
+    expect(await photoCount(phone)).toBe(1);
+    // A used link, an unknown token and a malformed token get closed answers that name nobody.
+    expect(await status(token)).toEqual(closed);
+    expect(await status("A".repeat(43))).toEqual(closed);
+    expect((await status("not-a-token")).status).toBe(404);
+    // The consent is on file now; an expired link is closed.
+    const next = await issue();
+    expect((await status(next)).body).toMatchObject({ ok: true, consentRequired: false });
+    st.clock.advance(15 * 60_000);
+    expect(await status(next)).toEqual(closed);
+  }, T);
+
   test("an unknown token is refused before the body is read", async () => {
     // A body that is not even multipart: before the fix the server read and judged it (415); now the token is looked up first.
     const res = await st.site("slop", "/api/photos/upload", { method: "POST", body: "x".repeat(1024), headers: { "content-type": "text/plain", "x-photo-upload-link": "A".repeat(43) } });

@@ -49,7 +49,7 @@ await withConformanceDatabase("turn_receipt_conformance", async (sql, url) => {
   const service = new NetworkService({
     url, clock, instance: "turn-receipt-conformance", photoStorage: null,
     env: {
-      PLATFORM_ENV: "staging", PLATFORM_HASH_KEY: "synthetic-turn-receipt-conformance-key", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: SECRET,
+      PLATFORM_ENV: "staging", PLATFORM_HASH_KEY: "synthetic-turn-receipt-conformance-key", SERVICE_TURN_SECRET: SECRET,
       NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify({ authority: AUTHORITY, admitUntil: START + 30 * DAY, drainUntil: START + 60 * DAY }),
     },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "slop:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }],

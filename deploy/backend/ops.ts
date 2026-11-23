@@ -6,7 +6,9 @@ import {
   dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
 } from "../../packages/core/src/vibe/opsAlertShell.js";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
-import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
+import { splitNetworkId } from "../../packages/network/src/store.ts";
+import { DEFAULT_MODEL } from "../../packages/core/src/llm.ts";
+import { qualifiedJudge, readJudgeQualifications } from "../../packages/network/service/review-qualified.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import type { TurnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
@@ -33,6 +35,7 @@ export interface OpsConfig {
   everyMs: number;
   budgets: CostBudgets;
   budgetWarnShare: number;
+  judgeMayApproveRate: number | null;
 }
 
 const TOKEN_MIN = 32;
@@ -69,6 +72,7 @@ export function opsConfigFromEnv(e: Env, base: { env: string; build: string; dep
     everyMs: n("OPS_EVERY_MS", MIN, { min: 10_000 }),
     budgets: costBudgetsFromEnv(e),
     budgetWarnShare: n("COST_BUDGET_WARN_SHARE", 0.8, { max: 1 }),
+    judgeMayApproveRate: qualifiedJudge(readJudgeQualifications(line => console.warn(line)), e.JUDGE_MODEL ?? DEFAULT_MODEL)?.mayApproveRate ?? null,
   };
 }
 
@@ -84,8 +88,12 @@ export interface NetworkMetrics {
   safetySignalsWaiting?: number;
   biasAlerts24h?: number;
   precision7d?: { decided: number; clean: number };
+  judge24h?: JudgeCounts;
+  judge7d?: JudgeCounts;
   error?: string;
 }
+
+export interface JudgeCounts { approved: number; held: number; cannotRun: number; minorApproved: number }
 
 export interface LineMetrics {
   restricted: { action: string; since: number }[];
@@ -124,11 +132,14 @@ export interface NetworkProbe {
   id: string;
   app: string;
   health(): Promise<{ lastTick: { stored: number | null; savedAt: number | null }; backlog: NetworkMetrics["backlog"] }>;
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number }; judge?: { day: JudgeCounts; week: JudgeCounts } }>;
 }
 
 export const PRECISION_MIN_DECIDED = 20;
 export const PRECISION_TARGET = 0.8;
+export const JUDGE_CANNOT_RUN_ALERT = 10;
+export const JUDGE_RATE_MIN_DECISIONS = 20;
+export const JUDGE_RATE_MARGIN = 0.1;
 
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
@@ -170,6 +181,7 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
       ...(s.precision7d ? { precision7d: s.precision7d } : {}),
+      ...(s.judge ? { judge24h: s.judge.day, judge7d: s.judge.week } : {}),
     };
   } catch (e) {
     return { ...empty, error: (e as Error).message.slice(0, 200) };
@@ -181,6 +193,7 @@ export function runtimeProbe(rt: {
   health(): Promise<{ lastTick: { stored: number | null; savedAt: number | null }; backlog: NetworkMetrics["backlog"] }>;
   scoped<T>(fn: (tx: SQL) => Promise<T>): Promise<T>;
 }): NetworkProbe {
+  const { city } = splitNetworkId(rt.id);
   return {
     id: rt.id, app: rt.app.id,
     health: () => rt.health(),
@@ -200,10 +213,21 @@ export function runtimeProbe(rt: {
       const [prec] = (await tx`select count(*)::int as decided,
           count(*) filter (where r.decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(r.edits) = 'array' then r.edits end), 0) = 0)::int as clean
         from network.review_items r join network.opportunities o on o.app_id = r.app_id and o.id = r.opportunity_id
-        where r.app_id = ${rt.app.id} and o.source = 'engine' and r.decision in ('approve', 'reject') and r.decided_at > ${new Date(t - 6 * DAY)}
-          and r.reviewer is not null and r.reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
+        where r.app_id = ${rt.app.id} and o.city = ${city} and o.source = 'engine' and r.decision in ('approve', 'reject') and r.decided_at > ${new Date(t - 6 * DAY)}
+          and r.reviewer is not null and ((r.decision = 'approve' and r.approver = 'staff') or r.decision = 'reject')`) as { decided: number; clean: number }[];
+      const judged = (await tx`select e.at > ${at} as day,
+          count(*) filter (where e.type = 'review_decision')::int as approved,
+          count(*) filter (where e.type = 'review_decision' and exists (select 1 from network.events j where j.app_id = e.app_id and j.type = 'review_judgment'
+            and j.object_id = e.object_id and j.payload->>'revision' = e.payload->>'revision' and j.payload->>'rubric' = 'minor'))::int as minor_approved,
+          count(*) filter (where e.type = 'review_exception')::int as held,
+          count(*) filter (where e.type = 'review_exception' and e.payload->>'verdict' = 'cannot_run')::int as cannot_run
+        from network.events e join network.opportunities o on o.app_id = e.app_id and o.id = e.object_id
+        where e.app_id = ${rt.app.id} and o.city = ${city} and e.at > ${new Date(t - 6 * DAY)}
+          and (e.type = 'review_exception' or (e.type = 'review_decision' and e.payload->>'decision' = 'approve' and e.payload->>'approver' = 'judge')) group by 1`) as { day: boolean; approved: number; minor_approved: number; held: number; cannot_run: number }[];
+      const counts = (rows: typeof judged): JudgeCounts => ({ approved: rows.reduce((x, r) => x + r.approved, 0), held: rows.reduce((x, r) => x + r.held, 0),
+        cannotRun: rows.reduce((x, r) => x + r.cannot_run, 0), minorApproved: rows.reduce((x, r) => x + r.minor_approved, 0) });
       return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
-        precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
+        precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 }, judge: { day: counts(judged.filter(r => r.day)), week: counts(judged) } };
     }),
   };
 }
@@ -212,7 +236,7 @@ export type { Alert, AlertLevel, AlertState, AlertTx, DispatchResult, Notice } f
 
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
 
-export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"]; turns?: OpsMetrics["turns"]; catalog?: OpsMetrics["catalog"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
+export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"]; turns?: OpsMetrics["turns"]; catalog?: OpsMetrics["catalog"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare"> & Partial<Pick<OpsConfig, "judgeMayApproveRate">>): Alert[] {
   const out: Alert[] = [];
   const leading: Alert[] = [];
   if (m.turns && "error" in m.turns) out.push({ key: "turn_read", level: "warn", count: 1, text: `Could not read the shared-line turns: ${m.turns.error}` });
@@ -242,6 +266,13 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     if (p && p.decided >= PRECISION_MIN_DECIDED && p.clean / p.decided < PRECISION_TARGET) {
       const pct = Math.round((100 * p.clean) / p.decided);
       out.push({ key: `precision:${id}`, level: "warn", count: pct, text: `${id}: shadow precision ${pct}% over 7 days (${p.clean} of ${p.decided} person decisions approved without edits; the gate is ${Math.round(PRECISION_TARGET * 100)}%)` });
+    }
+    const j = n.judge24h;
+    if (j && j.cannotRun > JUDGE_CANNOT_RUN_ALERT) out.push({ key: `review_judge_down:${id}`, level: "bad", count: j.cannotRun, bump: true, text: `review judge ${id}: ${j.held} held, ${j.cannotRun} cannot run in 24 h` });
+    const q = c.judgeMayApproveRate ?? null;
+    if (j && q !== null && j.approved + j.held >= JUDGE_RATE_MIN_DECISIONS && j.approved / (j.approved + j.held) > q + JUDGE_RATE_MARGIN) {
+      const r = j.approved / (j.approved + j.held);
+      out.push({ key: `review_judge_rate:${id}`, level: "warn", count: Math.round(100 * r), text: `review judge ${id}: approval rate ${r.toFixed(2)} above qualified ${q.toFixed(2)}` });
     }
     if (f.bans + f.holds > 0) out.push({ key: `safety_action:${id}`, level: "warn", count: f.bans + f.holds, bump: true, text: `${id}: ${f.bans} ban(s) and ${f.holds} hold(s) in 24 h` });
     if (n.backlog.outboundWaiting >= c.outboundBacklog) out.push({ key: `queue_outbound:${id}`, level: "warn", count: n.backlog.outboundWaiting, text: `${id}: ${n.backlog.outboundWaiting} message(s) waiting for delivery` });
@@ -385,6 +416,7 @@ export function createOps(d: OpsDeps) {
   const startedAt = d.now();
   let lastRound = -Infinity;
   let lastAlerts: OpsMetrics["alerts"];
+  let judgeInfoDay = "";
 
   async function collect(accrue: boolean): Promise<OpsMetrics> {
     const now = d.now();
@@ -423,6 +455,11 @@ export function createOps(d: OpsDeps) {
       if (!opsRoundDue(now - lastRound, c.everyMs)) return undefined;
       lastRound = now;
       const m = await collect(true);
+      const today = dayOf(now);
+      if (today !== judgeInfoDay) {
+        judgeInfoDay = today;
+        for (const n of m.networks) if (n.judge24h) d.log.info("review judge minor-rubric approvals in 24 h", { network: n.network, minorApproved: n.judge24h.minorApproved, approved: n.judge24h.approved });
+      }
       const alerts = evaluate(m, c);
       const r = await dispatcher.dispatch(alerts);
       const report = roundReport(!!r?.notices.length, !!r?.posted, !!r?.ok, !!r?.held, !!c.heartbeatUrl);

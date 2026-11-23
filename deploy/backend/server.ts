@@ -1,8 +1,7 @@
 #!/usr/bin/env -S node --import=tsx
 import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, liveSendTable, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem, type PhotoRelayConfig } from "./backend.ts";
-import type { PhotoRelayPolicy } from "../../packages/platform/src/photo-relay.ts";
+import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
 
 const log = jsonLogger(undefined, { svc: "backend" });
 captureConsole(log);
@@ -12,18 +11,13 @@ const { BlooioAdapter: ProviderAdapter } = await import("../../packages/blooio/s
 const { resolveSenderLine } = await import("../../packages/blooio/src/line.ts");
 const { migrate } = await import("../../packages/observatory/db/migrate.ts");
 const { CloudChannelAdapter } = await import("../../packages/network/service/cloud-channel.ts");
-const { BlooioAdapter, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
+const { BlooioAdapter } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
 const { catalogMetrics, createOps, lineMetrics, PgAlertStore, runtimeProbe, turnWatchMetrics } = await import("./ops.ts");
 const { createPublicEventRefresh } = await import("./public-events.ts");
 const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
 const { setLeakLabelKey } = await import("../../packages/core/src/guard.ts");
-
-function photoRelayPolicy(config: PhotoRelayConfig): PhotoRelayPolicy {
-  const reviewers = new Set(config.reviewers);
-  return { version: config.version, notice: config.notice, authorizeReviewer: async reviewerId => reviewers.has(reviewerId) };
-}
 
 async function main() {
   const c = loadConfig(process.env, process.argv);
@@ -60,7 +54,6 @@ async function main() {
   if (raterEnv.status === "refused_weights") log.error("photo rater", raterLog); else log.info("photo rater", raterLog);
   const svc = await NetworkService.fromDatabase({
     photoRater,
-    ...(c.photoRelay ? { photoRelayPolicy: photoRelayPolicy(c.photoRelay), photoDeliveryOrigin: c.photoRelay.deliveryOrigin } : {}),
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN,
     webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
@@ -76,18 +69,14 @@ async function main() {
   });
   const mcp = await createServiceMcp(svc, { databaseUrl: c.databaseUrl, proxySecret: c.proxySecret, log: s => log.info(s), migrate: !c.deployed });
   log.info("mcp", { enabled: !!mcp });
-  log.info("photo relay", { enabled: !!c.photoRelay, version: c.photoRelay?.version ?? null, reviewers: c.photoRelay?.reviewers.length ?? 0 });
+  log.info("photo relay", { enabled: c.photoStorage });
   if (c.deployed && !mcp) throw new Error("refusing to start: the MCP server is off, so the agent signup connector would answer 404");
   await svc.start();
   svc.publicApi.accounts.onPhoneChanged(async () => {
     for (const rt of svc.runtimes.values()) await rt.identities().catch(e => log.warn("identities refresh failed", { network: rt.id, error: (e as Error).message }));
   });
-  const liveSends = liveSendTable(process.env, c.channel, liveSendAllowed);
-  log.info("live sends", { inbound: c.blooioWebhook ? "backend webhook" : "eliza gateway", table: liveSends.map(r => `${r.app}: queued ${r.queued}, turn replies ${r.turnReplies}`) });
-  for (const rt of svc.runtimes.values()) {
-    const sends = liveSends.find(r => r.app === rt.app.id)?.queued ?? "dry-run";
-    log.info("network", { network: rt.id, sends, matching: rt.matchingAllowed ? "allowed" : "off" });
-  }
+  log.info("sends", { channel: c.channel, inbound: c.blooioWebhook ? "backend webhook" : "eliza gateway", turnReplies: "sent by the gateway" });
+  for (const rt of svc.runtimes.values()) log.info("network", { network: rt.id, sends: c.channel, matching: rt.matchingAllowed ? "allowed" : "off" });
 
   const pool = new SQL({ url: c.databaseUrl, max: 1, idleTimeout: 30, connection: { application_name: "network-backend-health" } });
   const opsPool = new SQL({ url: c.databaseUrl, max: 2, idleTimeout: 30, connection: { application_name: "network-backend-ops" } });

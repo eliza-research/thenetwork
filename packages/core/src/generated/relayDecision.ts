@@ -1,8 +1,12 @@
 // GENERATED from spec/relayDecision.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Keep unsafe items from reaching a match / A blocking reason takes precedence over a hold (spec/relayDecision.md) */
-export type RelayVerdict = "Pass" | "Hold" | "Block";
+/** Story: Keep unsafe items from reaching a match / Any reason from the relay checks blocks the item (spec/relayDecision.md) */
+export type RelayVerdict = "Pass" | "Block";
+/** Story: Keep unsafe items from reaching a match / A classifier that cannot run blocks the text (spec/relayDecision.md) */
+export type ClassifierReading = "ReadingClear" | "ReadingFlagged" | "ReadingUnavailable";
+/** Story: Keep unsafe items from reaching a match / A blocked sender learns only what is safe to say (spec/relayDecision.md) */
+export type RelayBlockNotice = "NoticePlain" | "NoticeConsent" | "NoticeRating" | "NoticeContact" | "NoticeRetry" | "NoticeRate";
 /** Story: Relay only to the match I named / A relay names its match when the member has more than one live match (spec/relayDecision.md) */
 export type RelayTargetChoice = "RelayToNoMatch" | "RelayAskWhichMatch" | "RelayToNamedMatch" | "RelayToOnlyMatch" | "RelayNamedNotLive";
 /** Story: Relay only to the match I named / A number ask with several live matches is never scored as abuse (spec/relayDecision.md) */
@@ -22,17 +26,84 @@ export function lawFutureConsentIsStale(consentAt: number, itemAt: number, lifet
   return !(consentAt > itemAt) || relayConsentStale(consentAt, itemAt, lifetime);
 }
 
-/** Story: Keep unsafe items from reaching a match / A blocking reason takes precedence over a hold (spec/relayDecision.md) */
+/** Story: Keep unsafe items from reaching a match / Any reason from the relay checks blocks the item (spec/relayDecision.md) */
 //@ pure
-export function relayVerdict(hasBlock: boolean, hasReason: boolean): RelayVerdict {
-  return hasBlock ? "Block" : (hasReason ? "Hold" : "Pass");
+export function relayVerdict(hasReason: boolean): RelayVerdict {
+  return hasReason ? "Block" : "Pass";
 }
 
-/** Story: Keep unsafe items from reaching a match / A blocking reason takes precedence over a hold (spec/relayDecision.md) */
+/** Story: Keep unsafe items from reaching a match / Any reason from the relay checks blocks the item (spec/relayDecision.md) */
 //@ pure
-export function lawARelayPassHasNoReason(hasBlock: boolean, hasReason: boolean): boolean {
+export function lawARelayPassHasNoReason(hasReason: boolean): boolean {
   //@ ensures \result === true
-  return !(relayVerdict(hasBlock, hasReason) === "Pass") || (!hasBlock && !hasReason);
+  return (relayVerdict(hasReason) === "Pass") === !hasReason;
+}
+
+/** Story: Keep unsafe items from reaching a match / The classifier reads a text that the rules leave to it (spec/relayDecision.md) */
+//@ pure
+export function relayClassifierReads(hasText: boolean, finalReason: boolean, anyReason: boolean, teenPair: boolean): boolean {
+  return hasText && !finalReason && (!anyReason || teenPair);
+}
+
+/** Story: Keep unsafe items from reaching a match / The classifier reads a text that the rules leave to it (spec/relayDecision.md) */
+//@ pure
+export function lawAFinalReasonIsNeverSentToTheClassifier(hasText: boolean, anyReason: boolean, teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return !relayClassifierReads(hasText, true, anyReason, teenPair);
+}
+
+/** Story: Keep unsafe items from reaching a match / The classifier reads a text that the rules leave to it (spec/relayDecision.md) */
+//@ pure
+export function lawACleanTextIsAlwaysRead(teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return relayClassifierReads(true, false, false, teenPair);
+}
+
+/** Story: Keep unsafe items from reaching a match / The classifier reads a text that the rules leave to it (spec/relayDecision.md) */
+//@ pure
+export function lawAnAdultFlaggedTextIsNotRead(finalReason: boolean): boolean {
+  //@ ensures \result === true
+  return !relayClassifierReads(true, finalReason, true, false);
+}
+
+/** Story: Keep unsafe items from reaching a match / A classifier that cannot run blocks the text (spec/relayDecision.md) */
+//@ pure
+export function relayClassifierReading(answered: boolean, flagged: boolean): ClassifierReading {
+  return !answered ? "ReadingUnavailable" : (flagged ? "ReadingFlagged" : "ReadingClear");
+}
+
+/** Story: Keep unsafe items from reaching a match / A classifier that cannot run blocks the text (spec/relayDecision.md) */
+//@ pure
+export function lawAnUnansweredReadIsUnavailable(flagged: boolean): boolean {
+  //@ ensures \result === true
+  return relayClassifierReading(false, flagged) === "ReadingUnavailable";
+}
+
+/** Story: Keep unsafe items from reaching a match / A classifier that cannot run blocks the text (spec/relayDecision.md) */
+//@ pure
+export function lawOnlyAnAnsweredUnflaggedReadIsClear(answered: boolean, flagged: boolean): boolean {
+  //@ ensures \result === true
+  return (relayClassifierReading(answered, flagged) === "ReadingClear") === (answered && !flagged);
+}
+
+/** Story: Keep unsafe items from reaching a match / A blocked sender learns only what is safe to say (spec/relayDecision.md) */
+//@ pure
+export function relayBlockNotice(unsafe: boolean, consent: boolean, rating: boolean, contact: boolean, unchecked: boolean, rate: boolean): RelayBlockNotice {
+  return unsafe ? "NoticePlain" : (consent ? "NoticeConsent" : (rating ? "NoticeRating" : (contact ? "NoticeContact" : (unchecked ? "NoticeRetry" : (rate ? "NoticeRate" : "NoticePlain")))));
+}
+
+/** Story: Keep unsafe items from reaching a match / A blocked sender learns only what is safe to say (spec/relayDecision.md) */
+//@ pure
+export function lawAnUnsafeReasonIsNeverExplained(consent: boolean, rating: boolean, contact: boolean, unchecked: boolean, rate: boolean): boolean {
+  //@ ensures \result === true
+  return relayBlockNotice(true, consent, rating, contact, unchecked, rate) === "NoticePlain";
+}
+
+/** Story: Keep unsafe items from reaching a match / A blocked sender learns only what is safe to say (spec/relayDecision.md) */
+//@ pure
+export function lawRetryOnlyWhenTheClassifierAloneStoppedIt(unsafe: boolean, consent: boolean, rating: boolean, contact: boolean, unchecked: boolean, rate: boolean): boolean {
+  //@ ensures \result === true
+  return !(relayBlockNotice(unsafe, consent, rating, contact, unchecked, rate) === "NoticeRetry") || (unchecked && !unsafe && !consent && !rating && !contact);
 }
 
 /** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
@@ -87,13 +158,6 @@ export function lawAPassWritesNoCaseEvent(severeReason: boolean): boolean {
 export function lawNoSevereReasonWritesNoCaseEvent(verdict: RelayVerdict): boolean {
   //@ ensures \result === true
   return !relaySevereBlockCaseEvent(verdict, false);
-}
-
-/** Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case (spec/relayDecision.md) */
-//@ pure
-export function lawAHeldItemWritesNoCaseEvent(severeReason: boolean): boolean {
-  //@ ensures \result === true
-  return !relaySevereBlockCaseEvent("Hold", severeReason);
 }
 
 /** Story: Relay only to the match I named / A relay names its match when the member has more than one live match (spec/relayDecision.md) */

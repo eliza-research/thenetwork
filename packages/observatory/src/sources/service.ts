@@ -64,7 +64,11 @@ export interface ServiceConfig {
 }
 
 export interface ServiceHealth {
-  ok: boolean; instance: string; channel: string; reviewMode: "human"; matchingAllowed: boolean; matchingEnabled: boolean;
+  ok: boolean; instance: string; channel: string; matchingAllowed: boolean; matchingEnabled: boolean;
+  reviewJudge: {
+    awaiting: number; oldestAwaitingMs: number | null; exceptions: number; exceptionsOverdue: number;
+    qualified: { model: string; promptVersion: string; n: number; mustFlagRecall: number; ciLow: number; mayApproveRate: number; minorMayApproveRate: number; at: string | number } | null;
+  };
   lastTick: { thisInstance: { at: number; ran: boolean } | null; stored: number | null; savedAt: number | null };
   lockHolder: { pid: number; application: string } | null;
   backlog: { review: number; reviewOverdue: number; deferred: number; outboundWaiting: number };

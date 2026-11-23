@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
@@ -69,7 +70,7 @@ describe.skipIf(!pgAvailable)("slop.date: block and report resolve the member's 
     const s = svc = new NetworkService({
       url: URL_, clock, instance: "slop-block", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }],
       tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
-      adapter: () => new DryRunAdapter(() => {}),
+      adapter: () => new DryRunAdapter(() => {}), reviewJudge: holdEveryItem.judge,
     });
     await s.start();
     const people = [

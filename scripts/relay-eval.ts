@@ -17,7 +17,7 @@
 //   Without --live, `fit` prints the plan and the cost estimate and exits.
 //   pnpm run relay-eval rules [--file relay/relay-heldout-2.jsonl] [--json out.json]
 //       Offline, no model call: the rules-only policy (relayItem) on one corpus file (default heldout-2,
-//       never tuned on): the class x pass/hold/block confusion, recall per class with Wilson 95% CIs,
+//       never tuned on): the class x pass/block confusion, recall per class with Wilson 95% CIs,
 //       the false-hold rate on the file's honest rows and on network/benign-adult.txt, and the leak
 //       recall (contact + rating). Then rules + Clef from the recorded answers when the cache covers
 //       the file; otherwise Clef is reported as not measured. Aggregates and reason codes only.
@@ -79,7 +79,7 @@ if (live && missing.length) {
   if (estUsd > budget) die(`estimate ${usd(estUsd)} is over --budget-usd ${budget}; raise it to run`);
   const events: RelayClefEvent[] = [];
   const hook = clefRelayClassifier({
-    token, accountId, model, timeoutMs: num("timeout-ms", 15000), holdOnUnavailable: false,
+    token, accountId, model, timeoutMs: num("timeout-ms", 15000),
     answers: k => { const r = cache.get(k); return r ? { answers: r.answers } : undefined; },
     record: async (key, result) => {
       const row: RelayClefCacheRow = { key, model, bank: RELAY_CLEF_BANK_VERSION, answers: result.answers, ...(result.usage?.input_tokens ? { inputTokens: result.usage.input_tokens } : {}) };
@@ -143,7 +143,7 @@ if (cmd === "fit") {
 }
 
 // ------------------------------------------------------------------------------- rules report
-type Decision = "pass" | "hold" | "block";
+type Decision = "pass" | "block";
 // Function declarations (hoisted): `rules` runs from the top of the file, before these lines.
 type Cls = CorpusRow["class"];
 function classes(): readonly Cls[] { return ["honest", "scam", "harassment", "contact", "rating"]; }
@@ -159,15 +159,15 @@ function fmtRate(r: Rate): string { return `${r.k}/${r.n} = ${(r.rate * 100).toF
 
 function armReport(label: string, rows: readonly CorpusRow[], decide: (t: string) => { decision: Decision; reasons: string[] }, benignRows: readonly CorpusRow[]) {
   const CLASSES = classes();
-  const conf = Object.fromEntries(CLASSES.map(c => [c, { pass: 0, hold: 0, block: 0 }])) as Record<Cls, Record<Decision, number>>;
+  const conf = Object.fromEntries(CLASSES.map(c => [c, { pass: 0, block: 0 }])) as Record<Cls, Record<Decision, number>>;
   const reasonFam: Record<string, number> = {};
   for (const r of rows) {
     const d = decide(r.text.trim());
     conf[r.class][d.decision]++;
     if (d.decision !== "pass") for (const f of new Set(d.reasons.map(x => x.split(":")[0]!))) reasonFam[`${r.class} ${f}`] = (reasonFam[`${r.class} ${f}`] ?? 0) + 1;
   }
-  const stopped = (c: Cls) => conf[c].hold + conf[c].block;
-  const n = (c: Cls) => conf[c].pass + conf[c].hold + conf[c].block;
+  const stopped = (c: Cls) => conf[c].block;
+  const n = (c: Cls) => conf[c].pass + conf[c].block;
   const benignHeld = benignRows.filter(r => decide(r.text.trim()).decision !== "pass").length;
   const out = {
     label, rows: rows.length, confusion: conf,
@@ -177,8 +177,8 @@ function armReport(label: string, rows: readonly CorpusRow[], decide: (t: string
     reasonFamilies: reasonFam,
   };
   console.log(`\n-- ${label} (${rows.length} rows)`);
-  console.log("class        pass  hold  block");
-  for (const c of CLASSES) console.log(`${c.padEnd(12)} ${String(conf[c].pass).padStart(4)}  ${String(conf[c].hold).padStart(4)}  ${String(conf[c].block).padStart(5)}`);
+  console.log("class        pass  block");
+  for (const c of CLASSES) console.log(`${c.padEnd(12)} ${String(conf[c].pass).padStart(4)}  ${String(conf[c].block).padStart(5)}`);
   for (const [k, v] of Object.entries(out.recall)) console.log(`recall ${k}: ${fmtRate(v)}`);
   console.log(`leak recall (contact + rating): ${fmtRate(out.leakRecall)}`);
   console.log(`false hold, file honest rows: ${fmtRate(out.falseHold.fileHonest)}`);

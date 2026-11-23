@@ -29,7 +29,6 @@ import { PhotoIntake, PHOTO_TEXT } from "../../packages/network/service/photoInt
 import { biasReport, type BiasMember, type BiasOpp } from "../../packages/network/service/bias.ts";
 import { reviewerOfRecord, slaAlerts } from "../../packages/network/service/service.ts";
 import { APP_REASONS, DEFAULT_SLA_HOURS, toNetworkReason } from "../../packages/observatory/src/apps.ts";
-import { networkMatchingAllowed } from "../../packages/network/service/matching-scope.ts";
 import { checkInReport, URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { runScenario, type NetScenario } from "../../packages/network/harness/index.ts";
 import type { StaffUser } from "../../packages/observatory/src/types.ts";
@@ -85,7 +84,7 @@ class FakeWorkersAI {
 function offlineWorld(o: { rater?: boolean } = {}) {
   let now = T0;
   const people = new MemoryPeopleStore();
-  const accounts = new Accounts(people, { hashKey: HASH_KEY, now: () => now, env: { PLATFORM_ENV: "dev" }, apps: id => APPS[id] });
+  const accounts = new Accounts(people, { hashKey: HASH_KEY, now: () => now, apps: id => APPS[id] });
   const storage = new MemoryStorage();
   const meta = new MemoryPhotoStore();
   const ai = new FakeWorkersAI();
@@ -115,7 +114,7 @@ function offlineWorld(o: { rater?: boolean } = {}) {
     return { e164, personId: p.id };
   };
   const rows = async (personId: string) => (await meta.list(personId)).length;
-  return { people, accounts, photos, intake, storage, meta, ai, ratings, sleeps, fetched, replies, member, rows, tick: (ms: number) => { now += ms; } };
+  return { people, accounts, photos, intake, storage, meta, ai, ratings, sleeps, fetched, replies, member, rows, at: () => now, tick: (ms: number) => { now += ms; } };
 }
 
 export async function safetyBlock(b: Block): Promise<void> {
@@ -237,7 +236,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     await w.photos.remove(a.personId, "slop", (two as { value: { id: string } }).value.id);
     expect([w.ratings.has(a.personId), await w.rows(a.personId)]).toEqual([false, 0]);
     // The person states 17: the lowest age wins, and nothing is rated or stored again.
-    await w.people.noteAge(a.personId, 17);
+    await w.people.noteAge(a.personId, 17, w.at());
     const before = w.ai.calls;
     expect((await w.photos.upload(a.personId, "slop", jpegWithExif(), PHOTO_CONSENT.version)).ok).toBe(false);
     expect(await w.photos.rate(a.personId, "slop")).toEqual({ rated: false, refused: "adults_only" });
@@ -245,7 +244,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(calls).toBeGreaterThan(0);
   });
 
-  await b.run("rater env: CLEF_RATINGS is on by default (off turns it off); it needs the token; no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
+  await b.run("rater env: ratings are on whenever the token and account are set, and a left-over CLEF_RATINGS=off changes nothing (owner decision 2026-11-22); no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
     const env = { CLOUDFLARE_AI_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account" };
     const placeholder = JSON.stringify(DEFAULT_CLEF_WEIGHTS);
     const fitted = JSON.stringify({ ...DEFAULT_CLEF_WEIGHTS, version: "fit-sim-1", placeholder: false, provenance: { fitter: "sim", fittedAt: "2026-10-09T00:00:00Z", photos: 0, labels: 0, raters: 0 } });
@@ -254,13 +253,13 @@ export async function safetyBlock(b: Block): Promise<void> {
     const files: Record<string, string> = { "/w/placeholder.json": placeholder, "/w/fitted.json": fitted, "/w/noprov.json": noProv, "/w/nover.json": noVersion };
     const ai = new FakeWorkersAI();
     const build = (e: Record<string, string | undefined>) => photoRaterFromEnv(e, { fetch: ai.fetch, sleep: async () => {}, readFile: async p => { const f = files[p]; if (f === undefined) throw new Error(`no file ${p}`); return f; } });
-    expect((await build({ ...env, CLEF_RATINGS: "off", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_flag");
-    expect((await build({ ...env, CLEF_RATINGS: "of" })).status).toBe("off_flag"); // a typo never turns ratings on
     expect((await build({ CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
-    for (const flag of [undefined, "on", " ON "]) {
-      const r = await build({ ...env, CLEF_RATINGS: flag });
+    expect((await build({ CLOUDFLARE_AI_TOKEN: "fake-token", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
+    for (const extra of [{}, { CLEF_RATINGS: "off" }, { CLEF_RATINGS: "of" }]) {
+      const r = await build({ ...env, ...extra });
       expect([r.status, r.weights, typeof r.rater?.rate]).toEqual(["on_placeholder", DEFAULT_CLEF_WEIGHTS.version, "function"]);
     }
+    expect((await build({ ...env, CLEF_RATINGS: "off", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("on");
     for (const p of ["/w/placeholder.json", "/w/noprov.json", "/w/nover.json", "/w/missing.json"]) {
       const r = await build({ ...env, CLEF_WEIGHTS_PATH: p });
       expect([r.status, r.rater]).toEqual(["refused_weights", undefined]);
@@ -360,8 +359,6 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(reviewerOfRecord(req("console-token-0123456789"), user, "console-token-0123456789").user.id).toBe("pat@example.com");
     expect(reviewerOfRecord(req("other-token-0123456789"), user, "console-token-0123456789").user.id).toBe(user.id);
     expect(reviewerOfRecord(req("console-token-0123456789"), user, undefined).user.id).toBe(user.id);
-    expect(networkMatchingAllowed({ PLATFORM_ENV: "production" }, "slop", true)).toBe(true);
-    expect(networkMatchingAllowed({ PLATFORM_ENV: "production" }, "peon", true)).toBe(false);
     // The slop rubric: its own codes, each stored as a PRD 32.8 base code with the slop code kept in the note.
     expect(APP_REASONS.slop.map(r => r.code)).toEqual(["weak_reason", "preference_mismatch", "safety_concern", "privacy_risk", "wrong_timing", "tone", "duplicate", "other"]);
     expect(toNetworkReason("slop", "preference_mismatch", "she wants 30+")).toEqual({ reason: "weak_reason", note: "[preference_mismatch] she wants 30+" });

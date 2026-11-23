@@ -10,10 +10,11 @@ import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
-  // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
+  // spec/outboundAdmission.md, "A current row needs a delivering line and the recipient's eligibility"
   // spec/outboundAdmission.md, "A cancelled booking can notify a participant who received the booked plan"
   // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
   const url = await migratedDb("participation_outbound");
@@ -23,7 +24,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   const app = APPS.friends;
   const phones = ["+12125550381", "+12125550382"];
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550380", clock, liveGate: () => true, log: () => {}, provider: {
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550380", clock, log: () => {}, provider: {
     kind: "sim", send: async request => {
       calls.push(request);
       return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -31,7 +32,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   } });
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
   });
   const sendTurn = async (messageId: string, text: string, receivedAt = clock.now()) => {
     const input: TurnRequest = { app: app.id, channel: "blooio", from: phones[0]!, to: null, messageId,
@@ -50,7 +51,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
       members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const [first, second] = members.map(m => m.id);
-    const w = new Mini(members, { app: app.id, review: "human", plans: false, growth: false });
+    const w = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
     await w.onboard(first!, second!);
     const oppId = w.propose([first!, second!], { category: "hobby" });
     expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === oppId), 2 * DAY)).toBe(true);
@@ -95,7 +96,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     expect(calls.slice(before).map(call => call.idempotencyKey)).toEqual(["tn:logistics-paused", `tn:${releaseId}`]);
 
     // A current day-before reminder sends. A pending copy for the other participant expires at the end of its window.
-    const pair = new Mini(members, { app: app.id, review: "auto", plans: false, growth: false });
+    const pair = new Mini(members, { app: app.id, inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
     pair.clock.set(clock.now());
     await pair.onboard(first!, second!);
     const planId = pair.propose([first!, second!]);

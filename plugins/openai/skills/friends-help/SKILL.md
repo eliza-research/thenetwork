@@ -24,7 +24,9 @@ Never invent age, profile facts, consent, verification, saved data or introducti
 A draft is not saved until the site confirms it. A saved profile is not a match.
 
 friends.help helps people make friends through small group plans at public places.
-Anyone 13 or older may join; matching and introductions are for adults 18 and older only. Groups usually
+Anyone 13 or older may join. Matching is for adults 18 or older, except friendship
+introductions between people aged 13 to 18 born at most 2 years apart, after a
+person reviews each one. Groups usually
 have 3–6 people. Other members see only the first name and neighbourhood, not the
 phone number.
 
@@ -40,8 +42,10 @@ phone number.
    and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
    these facts.
 3. Ask for their stated age first and use the lowest age they state. Explain and <!-- agentSignup: draftProfile -->
-   stop below 13. Tell people aged 13–17 that introductions and matching are for
-   adults 18 and older. Draft their confirmed first name, age and home region.
+   stop below 13. Tell people aged 13–17 that friends.help introduces people under
+   18 only for friendship, to people aged 13 to 18 born at most 2 years apart, after
+   a person reviews each one. Draft their confirmed first name and home region. Do not draft an
+   age or a birth date: the person types their birth date on the signup page.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
    or ZIP code or pick an incorrect region.
@@ -59,7 +63,8 @@ phone number.
    browser cookie. The person handles all credentials in their own browser.
 6. The app's browser confirms their own phone, or uses its current verified <!-- agentSignup: observeBrowser -->
    session. For an eligible new membership, choose **Finish signup** there and
-   review the same name, age, home region and current text consent. Joining is
+   review the same name, home region and current text consent. The person types
+   their own birth date there. Joining is
    open. A forwarded invitation is optional.
    If they want to use a forwarded invitation, they keep the original link
    private and enter the invitation in the app's browser if asked. Do not copy
@@ -90,13 +95,18 @@ phone number.
    Then report that the approved profile was recorded. Otherwise report an
    unconfirmed save. Do not claim matching, an introduction or a profile update
    in another app.
+10. To show what friends.help is looking for for the person, call `list_looking_for`.
+   Sending a profile only adds; leaving something out never removes it. If the
+   person asks to pause one thing, call `pause_looking_for` with its ref; to
+   close it for good they reply CLOSE to the text they get. Never pause or
+   resume anything the person did not ask about.
 
 ## Safety, privacy and account controls
 
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
 send invitations, or change another app. The lowest stated age applies; members
-13–17 must never be matched or introduced to anyone. No background checks are run.
+13–17 are never matched for dates or work, and are introduced only for friendship as above. No background checks are run.
 
 Text STOP stops every text from the shared line; "leave friends.help" leaves this
 app only. Export/deletion support is help@ntwrk.party. Do not invoke destructive

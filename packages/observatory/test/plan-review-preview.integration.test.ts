@@ -19,7 +19,7 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
     analyst = "fixture-friends-analyst", otherApp = "fixture-ntwrk-reviewer";
   const networkId = "friends:nyc";
   const network = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: networkId }, { id: "ntwrk:nyc", matchingEnabled: false }],
+    env: { PLATFORM_ENV: "dev" }, networks: [{ id: networkId }, { id: "ntwrk:nyc", matchingEnabled: false }],
     devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 },
     tokens: `reviewer@*:${serviceToken}`, consoleToken: serviceToken,
   });

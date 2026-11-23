@@ -95,12 +95,8 @@ export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): Profile
 }
 
 export function profileReviewFromEnv(env: Record<string, string | undefined>, now: () => number, fetchImpl?: typeof fetch): Partial<ProfileReviewCallbacks> {
-  const enabled = env.NETWORK_PROFILE_REVIEW_ENABLED;
-  if (enabled === undefined || enabled === "0") return {};
-  if (enabled !== "1") throw new Error("NETWORK_PROFILE_REVIEW_ENABLED must be 0 or 1");
   const routePolicy = networkRoutePolicy(env);
-  if (!routePolicy || !env.NETWORK_CLOUD_DELIVERY_ORIGIN || !env.SERVICE_TURN_SECRET)
-    throw new Error("Profile review requires its existing isolated route, trusted Cloud origin and service key");
+  if (!routePolicy || !env.NETWORK_CLOUD_DELIVERY_ORIGIN || !env.SERVICE_TURN_SECRET) return {};
   return profileReviewFactory({ origin: env.NETWORK_CLOUD_DELIVERY_ORIGIN, secret: env.SERVICE_TURN_SECRET, routePolicy, now,
     development: env.PLATFORM_ENV === "dev", fetch: fetchImpl });
 }

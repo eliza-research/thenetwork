@@ -16,6 +16,8 @@ The [matching question spec](../engineAsks.md) generates Network and Slop questi
 
 In the Date and Hire engine runs, a pair must pass the [pair value gate](../pairValue.md) for its [lane](../matchLane.md) and be kept by a [bounded candidate search](../candidateSearch.md). This model abstracts the scores and the search result. The [candidate pool model](candidate_pool.md) follows search, screening, circles and [global selection](../selectionRun.md).
 
+Changed (owner decision 2026-11-22): the invariant `minorNeverCandidate` is now `teenFriendAgeRule` ([friend introductions with a minor](../friendIntroAge.md)). The model has the staff stop `teenStopped` (default false: on from the start; owner decision 2026-11-22, answers A2 to A5, which deleted the default-off switch because the owner chose "On at launch, no extra checks"). The slop Date lane is not a friendship lane (`teenFriendLane` is false), so the pair age rule is the adult rule whether or not teen introductions are stopped: a minor is never matched in slop.date (`dateAgeOk`). Answer A2 adds the ntwrk `Friend` lane, which this model does not have; slop.date and peon.biz never match a minor (`teenFriendApp` is false for both). The peon part of this model has no member ages, so this model makes no claim about peon.biz. The pair prefix of `pairReason` (`pairAgeAllowed`) is the same for every lane; the [engine rules](engine_rules.md) model checks it for a lane that is not a friendship lane (its `romance` category), and `packages/engine/test/peon-cofounder.integration.test.ts` ("refuses a minor") covers a peon.biz pair. The teen branch of the rule is checked in the [candidate pool](candidate_pool.md) and [engine rules](engine_rules.md) models.
+
 [Standing intent freshness](../standingIntent.md) governs matching
 evidence, judgment views, probe order, and cached matching profiles. The [repeat encounter rules](../repeatEncounter.md) require consent tied to the same completed meeting before a repeat candidate exists.
 
@@ -144,6 +146,8 @@ module matching_engine {
   // hold; "slop" and "peon" leave them out so that deep
   // witnesses stay reachable by random simulation.
   var focus: str
+  // spec/teenIntroSwitch.md: the stored staff stop (default false: teen introductions are on from the start).
+  var teenStopped: bool
 
   // ------------------------------------------------------------------ slop helpers
   pure val emptyOb: Ob = { core: false, loc: false, confirmed: false, readBacks: 0, db: false, noDb: false, goal: false }
@@ -183,6 +187,10 @@ module matching_engine {
     old.filter(t => not(replaced.contains(t))).union(add)
 
   def adult(m: str): bool = AGE.get(m) >= 18 and not(slop.minor.get(m))
+  // spec/friendIntroAge.md pairAgeAllowed in the slop Date lane. Date is not a friendship lane (spec/matchLane.md
+  // teenFriendLane), so for both values of teenStopped the rule is the adult rule. The teen branch (a friendship
+  // lane) is not in this model: the candidate pool and engine rules models check it.
+  def dateAgeOk(x: str, y: str): bool = adult(x) and adult(y)
   def inOpen(m: str): bool = PAIRS.exists(p => has(p, m) and isOpen(slop.opp.get(p).stage))
   // world.ts recentProactive: recent proposals minus unsentProposalIds (config.dispatch.billOnlySent; SD-210, SD-262).
   def engineCount(m: str): int = PAIRS.filter(p => has(p, m)).fold(0, (s, p) => s + window(slop.billed.get(p), now, BUDGET_DAYS))
@@ -282,6 +290,7 @@ module matching_engine {
     flow' = { n: 0, stage: "idle", answers: Set("x", "y").mapBy(m => "none") },
     plan' = { minor: false, budgetFull: false, reliabilityHold: false },
     lastAction' = "init",
+    teenStopped' = false,
   }
   action init = {
     nondet env = Set("prod", "harness").oneOf()
@@ -292,7 +301,7 @@ module matching_engine {
 
   action keepSlop = all { slop' = slop, sh' = sh }
   action keepPeon = all { peon' = peon, ph' = ph }
-  action keepOther = all { flow' = flow, plan' = plan, focus' = focus }
+  action keepOther = all { flow' = flow, plan' = plan, focus' = focus, teenStopped' = teenStopped }
 
   // ================================================================== slop onboarding (slop-onboarding)
   // The loop's next message (service/packs.ts:137-147 next): the read-back while every hard field is set,
@@ -369,6 +378,11 @@ module matching_engine {
     slop' = { ...slop, minor: slop.minor.set(m, true) },
     sh' = sh, keepPeon, keepOther, now' = now, lastAction' = "statesMinorAge",
   }
+  // spec/teenIntroSwitch.md: one staff member stops teen introductions, and one admin turns them on again.
+  action setTeenStop(v: bool): bool = all {
+    teenStopped != v, teenStopped' = v,
+    keepSlop, keepPeon, flow' = flow, plan' = plan, focus' = focus, now' = now, lastAction' = "setTeenStop",
+  }
   // Trust or report hold (network.ts packInput holds), placed or lifted by another actor.
   action setHold(m: str, h: bool): bool = all {
     slop' = { ...slop, held: slop.held.set(m, h) },
@@ -418,7 +432,7 @@ module matching_engine {
         matchedUnconfirmed: sh.matchedUnconfirmed or (gateOk and not(slop.ob.get(p._1).confirmed and slop.ob.get(p._2).confirmed)),
         matchedUnlocated: sh.matchedUnlocated or (gateOk and not(slop.tags.get(p._1).contains("loc") and slop.tags.get(p._2).contains("loc"))),
         matchedUnasked: sh.matchedUnasked or (gateOk and (locUnasked(p._1) or locUnasked(p._2))),
-        matchedMinor: sh.matchedMinor or (gateOk and not(adult(p._1) and adult(p._2))),
+        matchedMinor: sh.matchedMinor or (gateOk and not(dateAgeOk(p._1, p._2))),
         matchedHeld: sh.matchedHeld or (gateOk and (slop.held.get(p._1) or slop.held.get(p._2))),
         matchedNoValue: sh.matchedNoValue or (gateOk and DATE_UNVALUED.contains(p)),
         gateDisagree: sh.gateDisagree or pairHistory(p),
@@ -430,9 +444,11 @@ module matching_engine {
   }
   action slopDailyRun(p: (str, str)): bool = slopRunWithPrompt(p, Set())
 
-  // network.ts review: approve begins the probe (the first member's invite counts on the budget,
-  // outreach.ts:14-17); reject or SLA expiry closes it unsent and marks the pair declined (an avoid edge
-  // for 60 days). Fixed (3c059f6, SD-210 and SD-262): the item is in unsentProposalIds, so the engine
+  // network.ts review (owner decision 2026-11-22, D15 to D17: recordJudgment by the review judge, or decide by
+  // staff for an item the judge held): approve begins the probe (the first member's invite counts on the budget,
+  // outreach.ts:14-17); reject, or SLA expiry of a held item, closes it unsent and marks the pair declined (an
+  // avoid edge for 60 days). Abstraction: the judge here always answers before the deadline, so the model has no
+  // expiry of an item that still waits for the judge (the code closes it without the decline mark). Fixed (3c059f6, SD-210 and SD-262): the item is in unsentProposalIds, so the engine
   // no longer counts it (the model drops the proposal's own billed entry).
   action slopReview(p: (str, str), approve: bool): bool = all {
     slop.opp.get(p).stage == "review",
@@ -642,7 +658,7 @@ module matching_engine {
   action flowStart(n: int): bool = all {
     flow.stage == "idle" or flow.stage == "closed" or flow.stage == "revealed",
     flow' = { n: n, stage: "probing_first", answers: Set("x", "y").mapBy(m => if (m == "x" or n == 2) "pending" else "none") },
-    keepSlop, keepPeon, plan' = plan, focus' = focus, now' = now, lastAction' = "flowStart",
+    keepSlop, keepPeon, plan' = plan, focus' = focus, teenStopped' = teenStopped, now' = now, lastAction' = "flowStart",
   }
   // Fixed (dcf24da, SD-063): attention.ts:808, the first member's yes reveals a flow with no partners.
   action flowAnswer(m: str, yes: bool): bool = all {
@@ -651,13 +667,13 @@ module matching_engine {
     val stage = if (m == "x") (if (not(yes)) "closed" else if (flow.n == 2) "probing_partners" else "revealed")
                 else (if (yes and answers.get("x") == "yes") "revealed" else "closed")
     flow' = { ...flow, answers: answers, stage: stage },
-    keepSlop, keepPeon, plan' = plan, focus' = focus, now' = now, lastAction' = "flowAnswer",
+    keepSlop, keepPeon, plan' = plan, focus' = focus, teenStopped' = teenStopped, now' = now, lastAction' = "flowAnswer",
   }
 
   // ================================================================== plan seat facts (hard-filter-chain)
   action setPlanFacts(mi: bool, b: bool, r: bool): bool = all {
     plan' = { minor: mi, budgetFull: b, reliabilityHold: r },
-    keepSlop, keepPeon, flow' = flow, focus' = focus, now' = now, lastAction' = "setPlanFacts",
+    keepSlop, keepPeon, flow' = flow, focus' = focus, teenStopped' = teenStopped, now' = now, lastAction' = "setPlanFacts",
   }
 
   // ================================================================== time
@@ -677,7 +693,7 @@ module matching_engine {
     any { memberSays(m, ans, k), agentNext(m), sweep(m), engineBasicsAsk(m) },
     nondet m = SLOP_MEMBERS.oneOf()
     nondet h = Set(true, false).oneOf()
-    all { safetyEvents, any { statesMinorAge(m), setHold(m, h) } },
+    all { safetyEvents, any { statesMinorAge(m), setHold(m, h), setTeenStop(h) } },
     nondet p = PAIRS.oneOf()
     nondet ok = Set(true, false).oneOf()
     nondet out = Set("yes", "no").oneOf()
@@ -730,9 +746,10 @@ module matching_engine {
   // ================================================================== invariants
   // Each holds by a rule, not by the code. The register id is the defect a violation reproduced before its fix.
 
-  // AGENTS.md "Code invariants", platform decision 1: minors (13-17) are never matched; filters.ts isMinorAge
-  // (no profile, the pairReason prefix).
-  val minorNeverCandidate = not(sh.matchedMinor)
+  // Owner decision 2026-11-22 (spec/friendIntroAge.md): a pair with a minor needs a friendship lane, so a
+  // minor is never matched in the slop Date lane, whether or not teen introductions are stopped; filters.ts isMinorAge (no
+  // profile, the pairReason prefix).
+  val teenFriendAgeRule = not(sh.matchedMinor)
   // AGENTS.md "Keep every safety guard": a held member is never put in a new opportunity (filters.ts
   // memberReason safety_hold, profile.ts sendTimeReason, network.ts packInput holds).
   val heldNeverCandidate = not(sh.matchedHeld)
@@ -789,7 +806,7 @@ module matching_engine {
   val judgeCacheReused = not(sh.judgeRepeat)
 
   val safety = all {
-    minorNeverCandidate, heldNeverCandidate, proposedPairValued, locatedBeforeMatch, deletedFieldClearsTag,
+    teenFriendAgeRule, heldNeverCandidate, proposedPairValued, locatedBeforeMatch, deletedFieldClearsTag,
     answersReachLoop, askTerminates, engineAgreesWithGate, unsentNotBilled, budgetAcrossAssign,
     activityFitsSlot,
     closedTerminal, openingsPreserved, confirmedInOwnThread, filledRecorded, acceptedPostingPersists,
@@ -969,6 +986,11 @@ module matching_engine {
   // A minor (k) never enters the engine input, whatever k says.
   run minorExcludedTest = initWith("prod", false, "slop")
     .then(hardFields("a")).expect(not(PAIRS.exists(p => has(p, "k") and enginePairs.contains(p))))
+
+  // Teen introductions are on from the start, and slop.date still never matches the minor k (Date is not a
+  // friendship lane).
+  run teenSwitchSlopTest = initWith("prod", false, "slop")
+    .then(hardFields("a")).expect(not(PAIRS.exists(p => has(p, "k") and enginePairs.contains(p))) and safety)
 
   // SD-042 fixed (peon-posting-lifecycle.integration.test.ts): the assistant's "yes" does not post.
   run mcpPostingTest = initWith("prod", false, "peon")

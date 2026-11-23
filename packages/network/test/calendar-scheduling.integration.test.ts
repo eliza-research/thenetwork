@@ -30,7 +30,7 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
   let cloudRevoked = false;
   const service = new NetworkService({
     url, clock, photoStorage: null, log: () => {}, notify: false,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: turnSecret, NETWORK_CALENDAR_FREE_BUSY_SECRET: calendarSecret,
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret, NETWORK_CALENDAR_FREE_BUSY_SECRET: calendarSecret,
       NETWORK_CLOUD_DELIVERY_ORIGIN: "https://calendar.invalid" },
     networks: [{ id: "friends:nyc", matchingEnabled: false }],
     calendarFreeBusyFetch: async (destination, init) => {

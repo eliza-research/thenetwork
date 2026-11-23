@@ -163,14 +163,14 @@ test.skipIf(!pgAvailable)("the persisted queue refuses each ineligible row with 
   const clock = new SimClock(Date.UTC(2026, 10, 7, 21)); // 16:00 New York, inside the send window.
   const app = APPS.friends;
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550680", clock, log: () => {}, liveGate: () => true,
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550680", clock, log: () => {},
     provider: { kind: "sim", async send(request) {
       calls.push(request);
       return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };
     } },
   });
   const service = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {}, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
+    env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "friends:nyc", matchingEnabled: false }], network: { plans: false, growth: false, runHour: 16 },
   });
   try {

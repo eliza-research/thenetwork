@@ -3,7 +3,7 @@
 The Network uses Eliza to help people find dates, friends, work, and things
 to do. Four apps share one backend, one phone identity, one text line, and a
 staff console. People aged 13 or older may join. Adults may match after
-human review and consent.
+an automated review and consent.
 
 [Product specification](spec/product/README.md) ·
 [User stories](spec/product/stories.md) ·
@@ -197,7 +197,7 @@ The shared design system uses these commands.
 | `apps/site` | React source for the brand-specific public sites. |
 | `packages/design-system` | Shared type scales, spacing, themes, and per-brand colors. |
 | `packages/ui` | Shared application, connector, and console components and stories. |
-| `packages/network` | The ConsentNetwork: human review before any member contact, consent-first probes, request fulfilment, safety and trust, the leak guard on every send, Postgres state. `service/` is the production service. `harness/` holds its simulations ([design](docs/network.md)) |
+| `packages/network` | The ConsentNetwork: a recorded approval (the review judge, or staff for a held item) before any member contact, consent-first probes, request fulfilment, safety and trust, the leak guard on every send, Postgres state. `service/` is the production service. `harness/` holds its simulations ([design](docs/network.md)) |
 | `packages/sim` | The simulator: personas with hidden truth, the oracle, persona agents, the per-app worlds (`src/apps`) and the judge ([README](packages/sim/README.md)) |
 | `packages/capital` | The network-capital ledger and its simulation |
 | `packages/blooio` | The Blooio iMessage and SMS channel and its outbound queue ([README](packages/blooio/README.md)) |

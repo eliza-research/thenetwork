@@ -11,6 +11,7 @@ import { expect, test } from "vitest";
 import { DAY, type Category, type Facet, type Member, type MemberId, type Presence } from "@thenetwork/core";
 import { ConsentNetwork, type NetworkState } from "../src/index.ts";
 import { Mini, START, type Spec } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const AREAS = ["Williamsburg", "Bushwick", "East Village", "Park Slope", "Harlem", "Astoria", "Chelsea", "Nowhere"];
 const INTERESTS = ["startups", "climbing", "film", "running", "cooking", "chess", "ai"];
@@ -25,7 +26,7 @@ const pair = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /** A stored member and a stored opportunity, as the real flow writes them (one onboarded request). */
 async function templates() {
-  const x = new Mini([{ id: "a", name: "Alice Able", age: 30 }, { id: "b", name: "Boris Bell", age: 32, skills: ["design"], interests: ["startups"], shareable: true }], { review: "human" });
+  const x = new Mini([{ id: "a", name: "Alice Able", age: 30 }, { id: "b", name: "Boris Bell", age: 32, skills: ["design"], interests: ["startups"], shareable: true }], { inlineJudge: holdEveryItem.inline });
   await x.onboard("a", "b");
   await x.say("a", "I want to meet other founders.");
   const state = x.net.exportState();
@@ -43,7 +44,7 @@ async function world(n: number) {
     interests: INTERESTS.filter((_, k) => rnd(i, k + 2) < 300), skills: SKILLS.filter((_, k) => rnd(i, k + 20) < 120), shareable: i % 3 === 0,
     state: i % 29 === 3 ? "receiving" : "normal",
   }));
-  const mini = new Mini(specs, { review: "human" });
+  const mini = new Mini(specs, { inlineJudge: holdEveryItem.inline });
   const now = mini.clock.now();
   for (let i = 0; i < n; i++) {
     if (i % 7 === 1) mini.presence.push({ memberId: `m${i}`, city: "sf", type: "temporary", areas: [], from: now + DAY, to: now + 3 * DAY });
@@ -78,7 +79,7 @@ async function world(n: number) {
     get(target, p, r) { if (typeof p === "string" && /^\d+$/.test(p)) counts[key]++; return Reflect.get(target, p, r); },
   });
   const ctx = mini.ctx();
-  const net = new ConsentNetwork({ seed: 1, review: "human", maxNewPerDay: 0, engine: { cities: ["nyc"] } });
+  const net = new ConsentNetwork({ seed: 1, inlineJudge: holdEveryItem.inline, maxNewPerDay: 0, engine: { cities: ["nyc"] } });
   net.init({
     ...ctx,
     snapshot: () => ({ ...ctx.snapshot(), members: counted<Member>(mini.members, "members"), presence: counted<Presence>(mini.presence, "presence"), facets: counted<Facet>(mini.facets, "facets") }),

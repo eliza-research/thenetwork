@@ -27,6 +27,7 @@ import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
 import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
 import { World } from "../../engine/src/world.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -1013,7 +1014,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const delivered: SendRequest[] = [];
     const options: Partial<ServiceOptions> = { tokens,
       adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
-        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        app: "friends", city: "nyc", from: "+12125550199", clock, log: () => {},
         provider: { kind: "sim", send: async request => {
           delivered.push(request);
           return { providerMessageId: `report-carryover:${request.idempotencyKey}`, status: "sent" };
@@ -1036,7 +1037,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const bookedPair = async (first: string, second: string, otherName: string) => {
       const world = new Mini([{ id: first, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
         { id: second, name: otherName, age: 30, area: "Greenpoint", interests: ["hiking"] }],
-        { app: "friends", review: "auto", plans: false, growth: false });
+        { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
       world.clock.set(clock.now());
       await world.onboard(first, second);
       const opportunityId = world.propose([first, second]);
@@ -1142,7 +1143,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const delivered: SendRequest[] = [];
     const { s, otp } = service(clock, {
       adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
-        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        app: "friends", city: "nyc", from: "+12125550199", clock, log: () => {},
         provider: { kind: "sim", send: async request => {
           delivered.push(request);
           return { providerMessageId: `safety-fixture:${request.idempotencyKey}`, status: "sent" };
@@ -1161,7 +1162,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const adapter = rt.adapter as BlooioAdapter;
     const world = new Mini([{ id: peerId, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
       { id: recipient, name: "Blair", age: 30, area: "Greenpoint", interests: ["hiking"] }],
-      { app: "friends", review: "auto", plans: false, growth: false });
+      { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
     world.clock.set(clock.now());
     await world.onboard(peerId, recipient);
     const opportunityId = world.propose([peerId, recipient]);

@@ -10,6 +10,8 @@ export interface ServiceSafetyFlow { phase: ServiceSafetyPhase; phoneOnly: boole
 export type StaffClearSummary = "ClearRefused" | "ClearSucceeded" | "ClearNoSignal";
 /** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
 export type AgentSignalRoute = "SignalOpensSafetyCase" | "SignalPausesApp" | "SignalKeptAsContext";
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+export type AgentPauseConfirmation = "PauseConfirmedByReplyText" | "PauseConfirmedInInbox" | "PauseNotConfirmed";
 /** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
 export type AgentSignalPhase = "SignalWaiting" | "SignalReviewed" | "SignalDismissed";
 
@@ -370,16 +372,51 @@ export function lawOtherSignalsLeaveParticipation(kind: string, saved: string): 
   return !(kind !== "opt_out") || agentOptOutParticipation(kind, saved) === saved;
 }
 
-/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
 //@ pure
-export function agentSignalEvidenceShown(safetyRole: boolean, ageInDoubt: boolean): boolean {
-  return safetyRole || !ageInDoubt;
+export function agentPauseConfirmation(kind: string, pauseApplied: boolean, textsOff: boolean): AgentPauseConfirmation {
+  return agentSignalRoute(kind) !== "SignalPausesApp" || !pauseApplied ? "PauseNotConfirmed" : (textsOff ? "PauseConfirmedInInbox" : "PauseConfirmedByReplyText");
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawAppliedPauseGetsOneConfirmation(textsOff: boolean): boolean {
+  //@ ensures \result === true
+  return agentPauseConfirmation("opt_out", true, textsOff) !== "PauseNotConfirmed";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawUnchangedPauseGetsNoConfirmation(kind: string, textsOff: boolean): boolean {
+  //@ ensures \result === true
+  return agentPauseConfirmation(kind, false, textsOff) === "PauseNotConfirmed";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawOptedOutMemberIsNeverTexted(kind: string, pauseApplied: boolean): boolean {
+  //@ ensures \result === true
+  return agentPauseConfirmation(kind, pauseApplied, true) !== "PauseConfirmedByReplyText";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawTextsOnGetTheReplyText(pauseApplied: boolean): boolean {
+  //@ ensures \result === true
+  return !pauseApplied || agentPauseConfirmation("opt_out", pauseApplied, false) === "PauseConfirmedByReplyText";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawOnlyAPauseIsConfirmed(kind: string, pauseApplied: boolean, textsOff: boolean): boolean {
+  //@ ensures \result === true
+  return !(agentSignalRoute(kind) !== "SignalPausesApp") || agentPauseConfirmation(kind, pauseApplied, textsOff) === "PauseNotConfirmed";
 }
 
 /** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
 //@ pure
-export function agentSignalDecisionAllowed(safetyRole: boolean, phase: AgentSignalPhase): boolean {
-  return safetyRole && phase === "SignalWaiting";
+export function agentSignalEvidenceShown(safetyRole: boolean, ageInDoubt: boolean): boolean {
+  return safetyRole || !ageInDoubt;
 }
 
 /** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
@@ -394,6 +431,12 @@ export function lawReviewerNeverReadsMinorEvidence(ageInDoubt: boolean): boolean
 export function lawAdultEvidenceShownToReviewers(safetyRole: boolean): boolean {
   //@ ensures \result === true
   return agentSignalEvidenceShown(safetyRole, false);
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalDecisionAllowed(safetyRole: boolean, phase: AgentSignalPhase): boolean {
+  return safetyRole && phase === "SignalWaiting";
 }
 
 /** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */

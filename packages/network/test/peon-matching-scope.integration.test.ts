@@ -1,8 +1,7 @@
-// spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope", through the real service on
-// Postgres: the service is built from platform.networks (where migration 0011 allows peon:nyc), and the
-// staff API's matching switch and /health give one answer for peon. In production peon matching stays off
-// until the founder's live decision (PEON_LIVE_APPROVED=1); a test environment and that decision allow it;
-// slop follows its registry row in every environment. The admin console shows the /health value.
+// spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran", through the real service
+// on Postgres: the service is built from platform.networks (where migration 0011 allows peon:nyc), and the staff API's
+// matching switch and /health give one answer for peon. Owner decision 2026-11-22: the registry row alone decides,
+// in production too, with no live decision. The admin console shows the /health value.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
@@ -50,39 +49,26 @@ async function withService(env: Record<string, string>, run: (call: (app: string
 const refusals = () => db`select app_id as app, detail->>'reason' as reason from network.staff_audit
   where action='config' and detail->>'phase'='refused' order by at, id`;
 
-test.skipIf(!pgAvailable)("peon matching is allowed by the registry row but stays off in production until its live decision", async () => {
+test.skipIf(!pgAvailable)("peon matching follows its registry row in production with no live decision", async () => {
   expect(await db`select matching_enabled from platform.networks where id='peon:nyc'`).toEqual([{ matching_enabled: true }]);
 
   await withService({ PLATFORM_ENV: "production" }, async call => {
-    expect((await call("peon", "GET", "/health")).body).toMatchObject({ network: "peon:nyc", matchingAllowed: false, matchingEnabled: false });
-    expect(await call("peon", "POST", "/matching", { on: true })).toMatchObject({ status: 409, body: { ok: false, reason: "matching_not_allowed" } });
-    expect((await call("peon", "GET", "/health")).body.matchingEnabled).toBe(false);
-    // slop is not local-only: its registry row decides in production too.
+    expect((await call("peon", "GET", "/health")).body).toMatchObject({ network: "peon:nyc", matchingAllowed: true, matchingEnabled: false });
+    expect((await call("peon", "POST", "/matching", { on: true })).status).toBe(200);
+    expect((await call("peon", "GET", "/health")).body.matchingEnabled).toBe(true);
     expect((await call("slop", "GET", "/health")).body.matchingAllowed).toBe(true);
     expect((await call("slop", "POST", "/matching", { on: true })).status).toBe(200);
   });
-  expect(await refusals()).toEqual([{ app: "peon", reason: "matching_not_allowed" }]);
+  expect(await refusals()).toEqual([]);
 
-  await withService({ PLATFORM_ENV: "production", PEON_LIVE_APPROVED: "1" }, async call => {
-    expect((await call("peon", "GET", "/health")).body.matchingAllowed).toBe(true);
-    expect((await call("peon", "POST", "/matching", { on: true })).status).toBe(200);
-    expect((await call("peon", "GET", "/health")).body.matchingEnabled).toBe(true);
-  });
-
-  // An approved test line (staging) matches peon without the live decision.
-  await withService({ PLATFORM_ENV: "staging" }, async call => {
+  await withService({ PLATFORM_ENV: "production" }, async call => {
     expect((await call("peon", "GET", "/health")).body).toMatchObject({ matchingAllowed: true, matchingEnabled: true });
   });
 
-  // Back in production without the decision, the stored "on" is not enough: the runtime keeps peon off.
+  await db`update platform.networks set matching_enabled=false where id='peon:nyc'`;
   await withService({ PLATFORM_ENV: "production" }, async call => {
     expect((await call("peon", "GET", "/health")).body).toMatchObject({ matchingAllowed: false, matchingEnabled: false });
+    expect(await call("peon", "POST", "/matching", { on: true })).toMatchObject({ status: 409, body: { ok: false, reason: "matching_not_allowed" } });
   });
-
-  // A registry row that does not allow matching wins over the live decision.
-  await db`update platform.networks set matching_enabled=false where id='peon:nyc'`;
-  await withService({ PLATFORM_ENV: "production", PEON_LIVE_APPROVED: "1" }, async call => {
-    expect((await call("peon", "GET", "/health")).body).toMatchObject({ matchingAllowed: false, matchingEnabled: false });
-    expect((await call("peon", "POST", "/matching", { on: true })).status).toBe(409);
-  });
+  expect(await refusals()).toEqual([{ app: "peon", reason: "matching_not_allowed" }]);
 }, 300_000);

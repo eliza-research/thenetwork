@@ -4,8 +4,9 @@
 // dispatch skips, fairness over time, the graph the Network learned, the review gate, and the
 // judge scorer's invariant, canary-leak and minor-contact counts).
 //   node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random]
-//       [--network consent|stub] [--review auto|human]
-// With --review human nobody reviews, so every queued opportunity expires unsent (a check of the gate).
+//       [--network consent|stub] [--judge stand-in|hold-every-item]
+// The review judge is the simulated stand-in (no model call). With --judge hold-every-item the judge holds every item and nobody
+// reviews the exceptions, so every queued opportunity expires unsent (a check of the gate).
 import { parseArgs } from "node:util";
 import { DAY } from "@thenetwork/core";
 import { scoreboard } from "./scoring.ts";
@@ -13,12 +14,13 @@ import { GameSource } from "./sources/game.ts";
 
 const { values: a } = parseArgs({ options: {
   days: { type: "string", default: "14" }, seed: { type: "string", default: "1" }, engine: { type: "string", default: "engine-v1" }, personas: { type: "string", default: "0" },
-  network: { type: "string", default: "consent" }, review: { type: "string", default: "auto" },
+  network: { type: "string", default: "consent" }, judge: { type: "string", default: "stand-in" },
 } });
+if (a.judge !== "stand-in" && a.judge !== "hold-every-item") { console.error("--judge must be stand-in or hold-every-item"); process.exit(1); }
 const days = Number(a.days);
 const g = new GameSource({
   seed: Number(a.seed), days, engine: a.engine as "engine-v1" | "random", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
-  network: a.network as "consent" | "stub", review: a.review as "auto" | "human",
+  network: a.network as "consent" | "stub", judge: a.judge,
 });
 const t0 = performance.now();
 await g.init();

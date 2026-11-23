@@ -5,13 +5,15 @@ import { writePath } from "../../../../core/src/runtime/files.ts";
 import { friendsArms } from "./arms.ts";
 import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
-import { runFriendsWorld } from "./world.ts";
+import { FRIENDS_TEEN_WORLD } from "./persona.ts";
+import { runFriendsWorldAsync } from "./world.ts";
 
 async function main() {
   const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
   const parseSeeds = (s: string) => s.split(",").flatMap(r => { const [a, b] = r.split("-").map(Number); return Array.from({ length: (b ?? a!) - a! + 1 }, (_, i) => a! + i); });
   const seeds = parseSeeds(arg("seeds", "1-4")!);
   const n = Number(arg("n", "400")), weeks = Number(arg("weeks", "8")), planCap = Number(arg("plan-cap", "1"));
+  const teen = { ...(process.argv.includes("--teen") ? FRIENDS_TEEN_WORLD : {}), ...(process.argv.includes("--stop") ? { teenStop: true } : {}) };
 
   const packOverride = arg("pack");
   const ARMS = friendsArms(packOverride ? JSON.parse(packOverride) : {});
@@ -22,7 +24,7 @@ async function main() {
     all[name] = [];
     for (const seed of seeds) {
       const t = performance.now();
-      const m = friendsMetrics(runFriendsWorld({ seed, n, weeks, planCap, matcher: ARMS[name]! }));
+      const m = friendsMetrics(await runFriendsWorldAsync({ seed, n, weeks, planCap, ...teen, matcher: ARMS[name]! }));
       all[name]!.push(m);
       console.error(`${name} seed ${seed}: meetups ${m.meetups}, repeat ${(m.repeatRate * 100).toFixed(0)}%, V14 ${(m.v14 * 100).toFixed(0)}%, track ${(m.friendshipTrackShare * 100).toFixed(1)}%, travel ${m.travel.medianGroupMax.toFixed(0)}m, boroughMin ${m.boroughRatioMin.toFixed(2)}, adv ${m.safety.adversaryContacts}/${m.safety.knownAdversaryContacts}, minor ${m.safety.declaredMinorContacts}/${m.safety.hiddenMinorContacts} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }

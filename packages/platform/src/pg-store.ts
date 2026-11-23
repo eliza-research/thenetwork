@@ -1,7 +1,7 @@
 // PeopleStore on Postgres (the platform schema, migration 0003). The login needs the
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { confirmedUnderage, minMemberAge, textUseAllowedAtAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
+import { type BirthReadings, confirmedUnderage, minMemberAge, textUseAllowedAtAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { rateCounterCutoff } from "../../core/src/generated/platformRetention.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -10,7 +10,8 @@ import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src
 import type { AppId } from "./apps.ts";
 import { resolveConsent, type ConsentEvent, type ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
-import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RateBucket, RateBucketRead, RecordedMemberAge, Session, ShareGrant, StaffBanProjection } from "./store.ts";
+import type { AgeFloorRecord, AppLeaveAdmission, AppLeaveInput, Ban, BirthRecord, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RateBucket, RateBucketRead, RecordedMemberAge, Session, ShareGrant, StaffBanProjection, TeenAgeFactsRow } from "./store.ts";
+import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, lowestAge, mergedFloors, movedPersonAge, type TeenBarReason } from "./age.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -25,15 +26,62 @@ async function lockPersonPhone(tx: SQL, personId: string): Promise<void> {
   await tx`select pg_advisory_xact_lock(hashtextextended(${`person-phone-binding:${personId}`}, 0))`;
 }
 
-async function upsertAgeFloor(tx: SQL, phoneHash: string, age: number, at: number): Promise<number> {
-  const [row] = await tx<{ lowest_age: number }[]>`insert into platform.age_floor (phone_hash, lowest_age, at) values (${phoneHash}, ${age}, ${ts(at)})
-    on conflict (phone_hash) do update set lowest_age=least(platform.age_floor.lowest_age, excluded.lowest_age),
-      at=case when excluded.lowest_age<platform.age_floor.lowest_age then excluded.at else platform.age_floor.at end
-    returning lowest_age`;
-  return row!.lowest_age;
+async function lockAgeFloor(tx: SQL, phoneHash: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`age-floor:${phoneHash}`}, 0))`;
 }
 
-const person = (r: Row): Person => ({ id: r.id, lowestAge: r.lowest_age ?? null, createdAt: ms(r.created_at)!, deletedAt: ms(r.deleted_at) });
+async function putAgeFloor(tx: SQL, phoneHash: string, floor: AgeFloorRecord): Promise<void> {
+  const r = floor.readings;
+  await tx`insert into platform.age_floor (phone_hash, lowest_age, at, birth_lower, birth_upper, birth_youngest, birth_first_exact)
+    values (${phoneHash}, ${floor.age}, ${ts(floor.at)}, ${r?.lower ?? null}, ${r?.upper ?? null}, ${r?.youngest ?? null}, ${floor.firstExact})
+    on conflict (phone_hash) do update set lowest_age=excluded.lowest_age, at=excluded.at,
+      birth_lower=excluded.birth_lower, birth_upper=excluded.birth_upper, birth_youngest=excluded.birth_youngest, birth_first_exact=excluded.birth_first_exact`;
+}
+
+const readingsOf = (lower: unknown, upper: unknown, youngest: unknown): BirthReadings | null =>
+  upper === null || upper === undefined ? null : { lower: Number(lower), upper: Number(upper), youngest: Number(youngest) };
+
+const birthOf = (r: Row): BirthRecord | null => {
+  const readings = readingsOf(r.birth_lower, r.birth_upper, r.birth_youngest);
+  return readings && { readings, birthDate: r.birth_date === null || r.birth_date === undefined ? null : Number(r.birth_date), firstExact: r.birth_first_exact ?? null };
+};
+
+const person = (r: Row): Person => ({ id: r.id, lowestAge: r.lowest_age ?? null, createdAt: ms(r.created_at)!, deletedAt: ms(r.deleted_at), birth: birthOf(r) });
+
+export const ageFloorOf = (r: Row): AgeFloorRecord => ({ age: r.lowest_age, at: ms(r.at)!, readings: readingsOf(r.birth_lower, r.birth_upper, r.birth_youngest), firstExact: r.birth_first_exact ?? null });
+
+export function ageStandingOf(r: Row): AgeStanding {
+  const floor = r.floor_lowest_age === null || r.floor_lowest_age === undefined ? undefined
+    : ageFloorOf({ lowest_age: r.floor_lowest_age, at: r.floor_at, birth_lower: r.floor_birth_lower, birth_upper: r.floor_birth_upper, birth_youngest: r.floor_birth_youngest });
+  return { person: r.id === null || r.id === undefined ? undefined : person(r), floor };
+}
+
+async function readAgeStanding(tx: SQL, personId: string | null, phoneHash: string | null, lock: boolean): Promise<AgeStanding> {
+  const [p] = personId ? (lock ? await tx`select * from platform.people where id=${personId}::uuid for update`
+    : await tx`select * from platform.people where id=${personId}::uuid`) : [];
+  const hash = phoneHash ?? (p?.phone_hash as string | null | undefined) ?? null;
+  if (hash && lock) await lockAgeFloor(tx, hash);
+  const [f] = hash ? await tx`select * from platform.age_floor where phone_hash=${hash}` : [];
+  return { person: p ? person(p) : undefined, floor: f ? ageFloorOf(f) : undefined };
+}
+
+async function writeAgeReading(tx: SQL, personId: string | null, phoneHash: string | null, stated: AgeReading, at: number): Promise<AgeStanding> {
+  const before = await readAgeStanding(tx, personId, phoneHash, true);
+  if (personId && !before.person) throw new Error("no person");
+  const w = ageWrite(phoneHash === null ? { person: before.person, floor: undefined } : before, stated, at);
+  if (!w) return before;
+  if (personId && w.person) {
+    const r = w.person.readings;
+    await tx`update platform.people set lowest_age=${w.person.lowestAge}, birth_lower=${r.lower}, birth_upper=${r.upper}, birth_youngest=${r.youngest},
+      birth_date=${w.person.birthDate}, birth_first_exact=${w.person.firstExact} where id=${personId}::uuid`;
+  }
+  if (phoneHash !== null) {
+    const earlier = before.floor;
+    await putAgeFloor(tx, phoneHash, { age: w.floor.lowestAge, at: earlier && earlier.age <= w.floor.lowestAge ? earlier.at : at, readings: w.floor.readings, firstExact: w.floor.firstExact });
+    if (w.bar) await tx`insert into platform.teen_pool_bars (phone_hash, reason, at) values (${phoneHash}, 'conflict', ${ts(at)}) on conflict (phone_hash) do nothing`;
+  }
+  return readAgeStanding(tx, personId, phoneHash, false);
+}
 const phone = (r: Row): PhoneIdentity => ({ e164: r.e164, personId: r.person_id, verifiedAt: ms(r.verified_at)!, method: r.method, lastSeenAt: ms(r.last_seen_at), hold: r.hold ?? null });
 const membership = (r: Row): Membership => ({
   app: r.app_id, personId: r.person_id, memberId: r.member_id, state: r.state, review: r.review ?? null, firstName: r.first_name ?? null,
@@ -43,7 +91,7 @@ const consent = (r: Row): ConsentEvent => ({
   e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null,
   wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, at: ms(r.at)!,
 });
-const pendingRow = (r: Row): PendingText => ({ phoneHash: r.phone_hash, kind: r.kind, app: r.app_id, name: r.name ?? null, age: r.age ?? null, ...(r.home_city ? { homeCity: r.home_city } : {}), at: ms(r.at)! });
+const pendingRow = (r: Row): PendingText => ({ phoneHash: r.phone_hash, kind: r.kind, app: r.app_id, name: r.name ?? null, age: r.age ?? null, ...(r.birth_date === null || r.birth_date === undefined ? {} : { birthDate: Number(r.birth_date) }), ...(r.home_city ? { homeCity: r.home_city } : {}), at: ms(r.at)! });
 const challenge = (r: Row): OtpChallenge => ({
   id: String(r.id), app: r.app_id, e164: r.e164, provider: r.provider, providerRef: r.provider_ref ?? null, providerChatId: r.provider_chat_id ?? null, codeHash: r.code_hash ?? null, attempts: r.attempts,
   createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!, consumedAt: ms(r.consumed_at),
@@ -84,10 +132,18 @@ export class PgPeopleStore implements PeopleStore {
   async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string; joiningSession?: string | null }) {
     return this.sql.begin(async tx => {
       await lockPhoneBinding(tx, p.e164);
+      if (p.phoneHash) await lockAgeFloor(tx, p.phoneHash);
+      const [floorRow] = p.phoneHash ? await tx`select * from platform.age_floor where phone_hash = ${p.phoneHash}` : [];
+      const floor = floorRow ? ageFloorOf(floorRow) : undefined;
+      const readings = createdReadings(floor, p.lowestAge, p.at);
+      const [lower, upper, youngest] = readings ? [readings.lower, readings.upper, readings.youngest] : [null, null, null];
+      const firstExact = readings ? createdFirstExact(floor) : null;
       // A tombstone with this phone's keyed hash: the same person again (blocks against them still hold).
-      const [back] = p.phoneHash ? await tx`update platform.people set deleted_at = null, lowest_age = ${p.lowestAge}
+      const [back] = p.phoneHash ? await tx`update platform.people set deleted_at = null, lowest_age = ${p.lowestAge},
+          birth_lower = ${lower}, birth_upper = ${upper}, birth_youngest = ${youngest}, birth_date = null, birth_first_exact = ${firstExact}
         where id = (select id from platform.people where phone_hash = ${p.phoneHash} and deleted_at is not null order by deleted_at desc limit 1) returning *` : [];
-      const [r] = back ? [back] : await tx`insert into platform.people (id, lowest_age, created_at, phone_hash) values (${p.id}, ${p.lowestAge}, ${ts(p.at)}, ${p.phoneHash ?? null}) returning *`;
+      const [r] = back ? [back] : await tx`insert into platform.people (id, lowest_age, created_at, phone_hash, birth_lower, birth_upper, birth_youngest, birth_first_exact)
+        values (${p.id}, ${p.lowestAge}, ${ts(p.at)}, ${p.phoneHash ?? null}, ${lower}, ${upper}, ${youngest}, ${firstExact}) returning *`;
       await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${p.e164}, ${r!.id}, ${ts(p.at)}, ${p.method}, ${ts(p.at)})`;
       await new PgPeopleStore(tx).attachPerson(p.e164, r!.id as string, p.joiningSession ?? null, p.at);
       return person(r!);
@@ -106,16 +162,40 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`select lowest_age from platform.age_floor where phone_hash = ${phoneHash}`;
     return r ? (r.lowest_age as number) : undefined;
   }
+  async ageFloorRecord(phoneHash: string) {
+    const [r] = await this.sql`select * from platform.age_floor where phone_hash = ${phoneHash}`;
+    return r ? ageFloorOf(r) : undefined;
+  }
   async noteAgeFloor(phoneHash: string, age: number, at: number) {
-    return upsertAgeFloor(this.sql, phoneHash, age, at);
+    const after = await this.sql.begin(tx => writeAgeReading(tx, null, phoneHash, { kind: "age", age }, at));
+    return after.floor?.age ?? age;
   }
   async clearAgeFloor(phoneHash: string) {
     await this.sql`delete from platform.age_floor where phone_hash = ${phoneHash}`;
   }
-  async noteAge(personId: string, age: number) {
-    const [r] = await this.sql`update platform.people set lowest_age = least(coalesce(lowest_age, ${age}), ${age}) where id = ${personId} returning lowest_age`;
-    if (!r) throw new Error("no person");
-    return r.lowest_age as number;
+  async noteAge(personId: string, age: number, at: number) {
+    const after = await this.sql.begin(tx => writeAgeReading(tx, personId, null, { kind: "age", age }, at));
+    return after.person?.lowestAge ?? age;
+  }
+  async recordAgeReading(personId: string | null, phoneHash: string, stated: AgeReading, at: number) {
+    return effectiveAgeAt(await this.sql.begin(tx => writeAgeReading(tx, personId, phoneHash, stated, at)), at);
+  }
+  async ageStanding(personId: string | null, phoneHash: string | null) {
+    return readAgeStanding(this.sql, personId, phoneHash, false);
+  }
+  async teenBarred(phoneHash: string) {
+    const [r] = await this.sql`select 1 from platform.teen_pool_bars where phone_hash = ${phoneHash}`;
+    return !!r;
+  }
+  async barTeenPool(phoneHash: string, reason: TeenBarReason, at: number) {
+    await this.sql`insert into platform.teen_pool_bars (phone_hash, reason, at) values (${phoneHash}, ${reason}, ${ts(at)}) on conflict (phone_hash) do nothing`;
+  }
+  async teenAgeFacts(personId: string): Promise<TeenAgeFactsRow | undefined> {
+    const [r] = await this.sql`select p.birth_first_exact, p.created_at,
+        (select ph.line_type from platform.phone_identities ph where ph.person_id = p.id and ph.hold is null order by ph.verified_at desc, ph.e164 limit 1) as line_type,
+        array(select m.app_id from platform.memberships m where m.person_id = p.id and m.state <> 'removed' order by m.app_id) as apps
+      from platform.people p where p.id = ${personId}::uuid and p.deleted_at is null`;
+    return r ? { firstExact: r.birth_first_exact ?? null, lineType: r.line_type ?? null, createdAt: ms(r.created_at)!, apps: r.apps as AppId[] } : undefined;
   }
 
   /** Persist the observation inside the app unit that read it, before its member row can be erased. */
@@ -126,13 +206,11 @@ export class PgPeopleStore implements PeopleStore {
     if (!member) return;
     if (member.person_id) {
       await lockPersonPhone(tx, member.person_id);
-      const [saved] = await tx<{ lowest_age: number }[]>`update platform.people p set lowest_age=least(p.lowest_age, ${age})
-        from platform.phone_identities ph, network.members m
+      const [bound] = await tx`select 1 from platform.people p, platform.phone_identities ph, network.members m
         where p.id=${member.person_id}::uuid and p.deleted_at is null and ph.person_id=p.id and ph.e164=${e164} and ph.hold is null
-          and m.app_id=${app} and m.id=${memberId} and m.person_id=p.id and m.account_status<>'removed'
-        returning p.lowest_age`;
-      if (!saved) return;
-      await upsertAgeFloor(tx, phoneHash, saved.lowest_age, at);
+          and m.app_id=${app} and m.id=${memberId} and m.person_id=p.id and m.account_status<>'removed'`;
+      if (!bound) return;
+      await writeAgeReading(tx, member.person_id, phoneHash, { kind: "age", age }, at);
     } else {
       await lockPhoneBinding(tx, e164);
       const [legacy] = await tx`select 1 from network.members m join network.channel_identities c on c.app_id=m.app_id and c.member_id=m.id
@@ -140,7 +218,7 @@ export class PgPeopleStore implements PeopleStore {
           and c.address=${e164} and c.channel in ('imessage','sms')
           and not exists (select 1 from platform.phone_identities where e164=${e164})`;
       if (!legacy) return;
-      await upsertAgeFloor(tx, phoneHash, age, at);
+      await writeAgeReading(tx, null, phoneHash, { kind: "age", age }, at);
     }
     return { personId: member.person_id, phoneHash };
   }
@@ -191,19 +269,22 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`update platform.memberships set state='restricted' where person_id=${personId}::uuid and state not in ('removed','invited')`;
   }
 
-  async enrollmentOwnerAllowed(tx: SQL, personId: string, e164?: string, phoneHash?: string): Promise<boolean> {
+  async enrollmentOwnerAllowed(tx: SQL, personId: string, e164?: string, phoneHash?: string, at?: number): Promise<boolean> {
     await lockPersonPhone(tx, personId);
-    const [owner] = await tx<{ phone_hash: string | null; lowest_age: number | null; verified: boolean }[]>`select p.phone_hash,least(p.lowest_age,f.lowest_age) as lowest_age,
+    const [owner] = await tx<Row[]>`select p.*, f.lowest_age as floor_lowest_age, f.at as floor_at, f.birth_lower as floor_birth_lower,
+        f.birth_upper as floor_birth_upper, f.birth_youngest as floor_birth_youngest,
         exists (select 1 from platform.phone_identities ph where ph.person_id=p.id and ph.hold is null
           ${e164 === undefined ? tx`` : tx`and ph.e164=${e164}`}) as verified
       from platform.people p left join platform.age_floor f on f.phone_hash=p.phone_hash where p.id=${personId}::uuid and p.deleted_at is null`;
     const banned = !!owner && await this.isBanned(phoneHash ?? owner.phone_hash ?? "", personId, tx);
-    return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned) && !confirmedUnderage(owner?.lowest_age ?? -1);
+    const standing = owner ? ageStandingOf(owner) : undefined;
+    const age = !standing ? undefined : at === undefined ? lowestAge(standing.person?.lowestAge ?? undefined, standing.floor?.age) : effectiveAgeAt(standing, at);
+    return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned) && !confirmedUnderage(age ?? -1);
   }
 
   async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null): Promise<boolean> {
     return this.sql.begin(async tx => {
-      if (!await this.enrollmentOwnerAllowed(tx, m.personId, consent.e164, phoneHash)) return false;
+      if (!await this.enrollmentOwnerAllowed(tx, m.personId, consent.e164, phoneHash, consent.at)) return false;
       await tx`delete from platform.suppression where phone_hash=${phoneHash}`;
       await this.putMembership(m, tx);
       await this.addConsent(consent, tx);
@@ -231,8 +312,8 @@ export class PgPeopleStore implements PeopleStore {
       const person = phone && await store.getPerson(phone.personId);
       if (phone && (!person || person.deletedAt !== null)) return "held";
       if (await store.isBanned(phoneHash, person?.id)) return "held";
-      const age = Math.min(person?.lowestAge ?? Infinity, (await store.ageFloor(phoneHash)) ?? Infinity);
-      if (!textUseAllowedAtAge(age, false)) return "under_age";
+      const age = effectiveAgeAt(await store.ageStanding(person?.id ?? null, phoneHash), e.at);
+      if (!textUseAllowedAtAge(age ?? -1, false)) return "under_age";
       await store.addConsent(e);
       if (resolveConsent(await store.lastConsent(e.e164, e.app)) !== "opted_in") return "superseded";
       if (person) await tx`update platform.memberships set state='active'
@@ -308,6 +389,8 @@ export class PgPeopleStore implements PeopleStore {
         ? [b, { ...b, id: `${b.id}:moved`, phoneHash: currentHash }] : [b];
       for (const row of rows) await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
         values (${row.id}, ${row.scope}, ${row.personId}, ${row.phoneHash}, ${row.reason}, ${row.reportId}, ${row.bannedBy}, ${ts(row.at)}) on conflict (id) do nothing`;
+      for (const hash of new Set([b.phoneHash, currentHash])) if (hash) await tx`insert into platform.teen_pool_bars (phone_hash, reason, at)
+        values (${hash}, 'ban', ${ts(b.at)}) on conflict (phone_hash) do nothing`;
       if (b.personId) await tx`update platform.share_grants set revoked_at = ${ts(b.at)} where person_id = ${b.personId} and revoked_at is null`;
       await tx`delete from platform.pending_texts where phone_hash = ${b.phoneHash}
         or phone_hash in (select phone_hash from platform.people where id = ${b.personId}::uuid and phone_hash is not null)`;
@@ -476,8 +559,10 @@ export class PgPeopleStore implements PeopleStore {
   async putPending(p: PendingText) {
     await this.sql.begin(async tx => {
       if (p.kind !== "share") await tx`delete from platform.pending_texts where phone_hash = ${p.phoneHash} and kind = ${p.kind}`;
-      await tx`insert into platform.pending_texts (phone_hash, kind, app_id, name, age, home_city, at) values (${p.phoneHash}, ${p.kind}, ${p.app}, ${p.name}, ${p.age}, ${p.homeCity ?? null}, ${ts(p.at)})
-        on conflict (phone_hash, kind, app_id) do update set name = excluded.name, age = excluded.age, home_city = excluded.home_city, at = excluded.at`;
+      await tx`insert into platform.pending_texts (phone_hash, kind, app_id, name, age, birth_date, home_city, at)
+        values (${p.phoneHash}, ${p.kind}, ${p.app}, ${p.name}, ${p.age}, ${p.birthDate ?? null}, ${p.homeCity ?? null}, ${ts(p.at)})
+        on conflict (phone_hash, kind, app_id) do update set name = excluded.name, age = excluded.age, birth_date = excluded.birth_date,
+          home_city = excluded.home_city, at = excluded.at`;
     });
   }
   async deletePending(phoneHash: string, kind?: PendingKind, app?: AppId) {
@@ -519,8 +604,7 @@ export class PgPeopleStore implements PeopleStore {
     return this.sql.begin(async tx => {
       if (personId) await lockPersonPhone(tx, personId);
       else await lockPhoneBinding(tx, e164);
-      const [owner] = personId ? await tx<{ lowest_age: number | null; phone_hash: string | null }[]>`select lowest_age, phone_hash
-        from platform.people where id = ${personId}::uuid and deleted_at is null for update` : [];
+      const [owner] = personId ? await tx<Row[]>`select * from platform.people where id = ${personId}::uuid and deleted_at is null for update` : [];
       if (personId && !owner) return false;
       const [binding] = personId
         ? await tx<{ e164: string; hold: PhoneHold | null }[]>`select e164, hold from platform.phone_identities
@@ -536,15 +620,20 @@ export class PgPeopleStore implements PeopleStore {
           await tx`delete from platform.age_floor where phone_hash = ${hash}`;
         } else {
           await tx`insert into platform.suppression (phone_hash, reason, at) values (${hash}, 'deleted', ${ts(at)}) on conflict do nothing`;
-          const age = owner?.lowest_age;
-          if (hasAgeToPreserve(!!owner, age != null) && age != null) await tx`insert into platform.age_floor (phone_hash, lowest_age, at)
-            values (${hash}, ${age}, ${ts(at)}) on conflict (phone_hash) do update set lowest_age = excluded.lowest_age, at = excluded.at
-            where excluded.lowest_age < platform.age_floor.lowest_age`;
+          await lockAgeFloor(tx, hash);
+          const [floorRow] = await tx`select * from platform.age_floor where phone_hash = ${hash}`;
+          const before = floorRow ? ageFloorOf(floorRow) : undefined;
+          const erased = owner ? floorAfterErasure({ person: person(owner), floor: before }, at) : undefined;
+          if (hasAgeToPreserve(!!owner, erased !== undefined) && erased) await putAgeFloor(tx, hash, {
+            age: erased.lowestAge, at: before && before.age <= erased.lowestAge ? before.at : at, readings: erased.readings, firstExact: erased.firstExact,
+          });
         }
         await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
           receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
           where request_hash is not null and sender_hash = ${hash}`;
         await tx`delete from platform.pending_texts where phone_hash = ${hash}`;
+        await tx`delete from platform.teen_pool_holds where phone_hash = ${hash}`;
+        await tx`delete from platform.teen_pair_avoid where phone_hash_a = ${hash} or phone_hash_b = ${hash}`;
       }
       await tx`delete from platform.sessions where e164 = ${target} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
       if (target) {
@@ -559,6 +648,7 @@ export class PgPeopleStore implements PeopleStore {
         // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
         await tx`delete from platform.phone_identities where person_id = ${personId}`;
         await tx`update platform.people set lowest_age = null, age_verified_at = null, deleted_at = ${ts(at)},
+          birth_date = null, birth_lower = null, birth_upper = null, birth_youngest = null, birth_first_exact = null,
           phone_hash = case when ${releaseHeldPhone} then null else phone_hash end where id = ${personId}`;
         await tx`select notify.forget_data(${personId}, null)`;
         await tx`delete from platform.phone_changes where person_id = ${personId}::uuid`;
@@ -606,10 +696,27 @@ export class PgPeopleStore implements PeopleStore {
         on conflict (e164, ref) where ref is not null do nothing`;
       await tx`delete from platform.consent_events where e164 = ${m.oldE164}`;
       await tx`update platform.people set phone_hash = ${m.newHash} where id = ${m.personId}::uuid`;
-      const [floor] = await tx`delete from platform.age_floor where phone_hash = ${m.oldHash} returning lowest_age, at`;
+      for (const hash of [m.oldHash, m.newHash].sort()) await lockAgeFloor(tx, hash);
+      const [floor] = await tx`delete from platform.age_floor where phone_hash = ${m.oldHash} returning *`;
       if (floor) {
-        await tx`insert into platform.age_floor (phone_hash, lowest_age, at) values (${m.newHash}, ${floor.lowest_age}, ${floor.at})
-          on conflict (phone_hash) do update set lowest_age = least(platform.age_floor.lowest_age, excluded.lowest_age)`;
+        const [existing] = await tx`select * from platform.age_floor where phone_hash = ${m.newHash}`;
+        await putAgeFloor(tx, m.newHash, mergedFloors(ageFloorOf(floor), existing ? ageFloorOf(existing) : undefined));
+      }
+      await tx`insert into platform.teen_pool_bars (phone_hash, reason, at) select ${m.newHash}, reason, at from platform.teen_pool_bars
+        where phone_hash = ${m.oldHash} on conflict (phone_hash) do nothing`;
+      await tx`insert into platform.teen_pair_avoid (phone_hash_a, phone_hash_b, at)
+        select least(${m.newHash}::text, o.other), greatest(${m.newHash}::text, o.other), o.at from (
+          select case when phone_hash_a = ${m.oldHash} then phone_hash_b else phone_hash_a end as other, at
+          from platform.teen_pair_avoid where phone_hash_a = ${m.oldHash} or phone_hash_b = ${m.oldHash}) o
+        where o.other <> ${m.newHash}
+        on conflict (phone_hash_a, phone_hash_b) do nothing`;
+      await tx`delete from platform.teen_pair_avoid where phone_hash_a = ${m.oldHash} or phone_hash_b = ${m.oldHash}`;
+      const moved = movedPersonAge(await readAgeStanding(tx, m.personId, m.newHash, false), at);
+      if (moved) {
+        const r = moved.person.readings;
+        await tx`update platform.people set lowest_age=${moved.person.lowestAge}, birth_lower=${r.lower}, birth_upper=${r.upper}, birth_youngest=${r.youngest},
+          birth_date=${moved.person.birthDate}, birth_first_exact=${moved.person.firstExact} where id=${m.personId}::uuid`;
+        if (moved.bar) await tx`insert into platform.teen_pool_bars (phone_hash, reason, at) values (${m.newHash}, 'conflict', ${ts(at)}) on conflict (phone_hash) do nothing`;
       }
       await tx`delete from platform.sessions where e164 = ${m.oldE164}`;
       await tx`delete from platform.otp_challenges where e164 = ${m.oldE164}`;

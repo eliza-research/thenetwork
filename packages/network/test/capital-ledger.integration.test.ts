@@ -13,7 +13,7 @@ test.skipIf(!pgAvailable)("SD-153 / SD-156: a restart replays the stored capital
   const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
   const replica = () => new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: () => new DryRunAdapter(() => {}),
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
+    env: { PLATFORM_ENV: "dev" }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
   });
   const first = replica();
   let restarted: NetworkService | undefined;

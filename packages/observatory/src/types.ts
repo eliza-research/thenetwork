@@ -177,6 +177,10 @@ export interface ReviewInfo {
   rerolls?: number;
   /** Approved, but a gate failed on the re-check (e.g. "busy_elsewhere", "held", "matching_paused"): nobody was contacted. */
   invalidated?: string;
+  approver?: "judge" | "staff";
+  exceptionReason?: string;
+  judgeVerdict?: "approve" | "flag" | "undecided" | "cannot_run";
+  judgeExplanation?: string;
 }
 /** A reviewer's action (PRD 32.8). "edit" changes texts, then approves. "reroll" swaps a participant and keeps it waiting. */
 export type ReviewDecision = "approve" | "reject" | "edit" | "reroll";
@@ -330,8 +334,7 @@ export interface ObsRequest {
 
 export interface NetworkInfo {
   kind: "consent" | "stub";
-  /** Review gate (PRD 32.8): "human" = a person approves each opportunity; "auto" = a simulated reviewer (sim only). */
-  review: { mode: "human" | "auto"; queued: number; approved: number; rejected: number; expired: number };
+  review: { queued: number; approved: number; rejected: number; expired: number };
   counters: Record<string, number>;
   gateReasons: Record<string, number>;
   requests: { total: number; fulfilled: number; probing: number; waiting: number; plans: number };
@@ -566,13 +569,13 @@ export interface ConfigChange {
   /** Sim time (game) or wall time (real). */
   at: number;
   actor: string;
-  key: "matching" | "review_mode";
+  key: "matching";
   from: string | boolean | null;
   to: string | boolean;
 }
 export interface ConfigInfo {
   matchingEnabled: boolean;
-  reviewMode: "human" | "auto" | null;
+  reviewJudge: { awaiting: number; exceptions: number; exceptionsOverdue: number } | null;
   /** Network options in force (read-only display). */
   network: Record<string, number | boolean | string | null>;
   /** The outreach numbers (packages/network/src/outreach.ts), read-only. */
@@ -660,7 +663,6 @@ export type ControlCommand =
     /** The review revision the reviewer saw (Review.rerolls); another one is refused as "review_stale". */
     revision?: number;
   }
-  | { type: "review_mode"; mode: "human" | "auto" }
   /** Admin only: the "proactive matching on in NYC" switch. */
   | { type: "matching"; on: boolean }
   | { type: "refresh" } | { type: "shadow_run"; city?: City };

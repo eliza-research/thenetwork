@@ -7,6 +7,7 @@ import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import { friendsPack, FRIENDS_PLANS, type plans } from "@thenetwork/engine";
 import { copy } from "../src/copy.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string) => ({
   id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Greenpoint",
@@ -16,7 +17,7 @@ const climber = (id: string) => ({
 
 async function friendsPartnerFixture(partner: boolean, bothAttended: boolean) {
   const ids = ["a", "b", "c", "d"];
-  const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, review: "human" });
+  const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, inlineJudge: holdEveryItem.inline });
   const now = w.clock.now();
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   await w.onboard(...ids);
@@ -44,7 +45,7 @@ describe("plan probe replies", () => {
     const w = new Mini([...ids.map(id => ({ ...climber(id), area: "Astoria", interests: ["tennis"],
       wants: [{ objective: "find a regular tennis partner", category: "hobby" as const }] })),
       ...["c", "d", "e", "f"].map(id => ({ id, name: id, age: 30, area: "Astoria" }))],
-    { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, review: "human", plans: true, matchingEnabled: true });
+    { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true });
     for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
       tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
     await w.onboard(...ids);
@@ -96,7 +97,7 @@ describe("plan probe replies", () => {
   test.each(["I'm free Sunday afternoon.", "Busy week, nothing free."])("a reviewed generic plan backfills a seat after %s", async reply => {
     const primary = ["a", "b", "c"];
     const ids = [...primary, "d"];
-    const w = new Mini(ids.map(id => ({ ...climber(id), area: "Inwood" })), { review: "human", plans: false });
+    const w = new Mini(ids.map(id => ({ ...climber(id), area: "Inwood" })), { inlineJudge: holdEveryItem.inline, plans: false });
     await w.onboard(...ids);
     const now = w.clock.now();
     const start = Date.UTC(2026, 9, 10, 14);
@@ -143,7 +144,7 @@ describe("plan probe replies", () => {
     const members = ids.map(id => ({ ...climber(id), area: "Prospect Heights", interests: ["coffee", "climbing"], wants: [] }));
     const failures: Record<string, unknown>[] = [];
     for (const seed of [1, 2, 3]) for (const mode of ["before", "at", "after", "booked-join"] as const) {
-      const w = new Mini(members, { seed, review: "human", plans: true, matchingEnabled: true });
+      const w = new Mini(members, { seed, inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true });
       w.clock.set(START + 3 * DAY);
       await w.onboard(...ids);
       await w.run(HOUR);
@@ -188,7 +189,7 @@ describe("plan probe replies", () => {
     // spec/planDecision.md, "An unanswered plan closes when its deadline passes"
     const ids = ["a", "b", "c"];
     for (const order of [["a", "b", "c"], ["b", "c", "a"]]) {
-      const w = new Mini(ids.map(climber), { review: "human" });
+      const w = new Mini(ids.map(climber), { inlineJudge: holdEveryItem.inline });
       await w.onboard(...ids);
       const now = w.clock.now();
       const plan: plans.Plan = {
@@ -214,7 +215,7 @@ describe("plan probe replies", () => {
   test("a smaller group that keeps two seats after a booking conflict is asked again as a pair, counted as one fallback", async () => {
     // spec/planDecision.md, "A group plan never books two members directly"
     const ids = ["a", "b", "c", "d", "x"];
-    const w = new Mini(ids.map(climber), { review: "human" });
+    const w = new Mini(ids.map(climber), { inlineJudge: holdEveryItem.inline });
     await w.onboard(...ids);
     const now = w.clock.now();
     const plan: plans.Plan = {
@@ -254,7 +255,7 @@ describe("plan probe replies", () => {
     // spec/planDecision.md, "A Friends replacement needs a current pair value with every remaining member"
     const primary = ["a", "b", "c"];
     const ids = [...primary, "d", "e"];
-    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, review: "human" });
+    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline });
     const now = w.clock.now();
     for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
     await w.onboard(...ids);
@@ -288,7 +289,7 @@ describe("plan probe replies", () => {
     const primary = ["a", "b", "c"];
     const history = [["a", "d", "e"], ["a", "f", "g"]];
     const ids = [...new Set([...primary, ...history.flat()])];
-    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, review: "human" });
+    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline });
     const now = w.clock.now();
     for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
     await w.onboard(...ids);

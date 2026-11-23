@@ -22,16 +22,16 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
   let gs: ObsState, rs: ObsState;
   beforeAll(async () => {
     url = await testDb();
-    g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, review: "human", scenario: "spam_wave" });
+    g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, judge: "hold-every-item", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: DAY });
-    // A reviewer edits one item and re-rolls another; an admin flips the matching switch; then the simulated reviewer takes over.
-    const q = g.state().opportunities.filter(o => o.state === "IN_REVIEW");
-    await g.control({ type: "review", oppId: q[0]!.id, decision: "edit", objective: "a coffee nearby", secondsSpent: 45 }, "rev@example.org");
-    await g.control({ type: "review", oppId: q[1]!.id, decision: "reroll", swapOut: q[1]!.participants[1], secondsSpent: 12 }, "rev@example.org");
+    // A reviewer edits one held item and re-rolls another; an admin flips the matching switch.
+    const q = g.state().opportunities.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason);
+    expect(q.length).toBeGreaterThanOrEqual(2);
+    expect((await g.control({ type: "review", oppId: q[0]!.id, decision: "edit", objective: "a coffee nearby", secondsSpent: 45 }, "rev@example.org")).ok).toBe(true);
+    expect((await g.control({ type: "review", oppId: q[1]!.id, decision: "reroll", swapOut: q[1]!.participants[1], secondsSpent: 12 }, "rev@example.org")).ok).toBe(true);
     await g.control({ type: "matching", on: false }, "admin@example.org");
     await g.control({ type: "matching", on: true }, "admin@example.org");
-    await g.control({ type: "review_mode", mode: "auto" }, "admin@example.org");
     await g.control({ type: "step", ms: 4 * DAY });
     gs = g.state();
     const sql = new SQL(url);
@@ -57,7 +57,7 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     expect(reviewed.some(o => o.review?.rerolls === 1)).toBe(true);
     const strip = (xs: ObsState["requests"]) => (xs ?? []).map(({ ageHours: _a, ...r }) => r).sort((a, b) => a.id.localeCompare(b.id));
     expect(strip(rs.requests)).toEqual(strip(gs.requests));
-    expect(rs.network).toMatchObject({ kind: "consent", matchingEnabled: true, review: { mode: "human" } });
+    expect(rs.network).toMatchObject({ kind: "consent", matchingEnabled: true });
     expect(rs.network!.counters).toEqual(gs.network!.counters);
     expect(rs.network!.trust).toEqual(gs.network!.trust);
     // Trust levels reach the member list in real mode too.
@@ -124,8 +124,7 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     expect(rsf.hold.sort()).toEqual(gsf.hold.sort());
     expect((await real.safetyAction({ action: "close", caseId: rsf.cases[0]!.id }, "x")).ok).toBe(false);
     const cfg = await real.config();
-    // Both switches name the staff member who changed them (setReviewMode(mode, actor)).
-    expect(cfg.history.map(h => [h.key, h.from, h.to, h.actor])).toEqual([["matching", true, false, "admin@example.org"], ["matching", false, true, "admin@example.org"], ["review_mode", "human", "auto", "admin@example.org"]]);
+    expect(cfg.history.map(h => [h.key, h.from, h.to, h.actor])).toEqual([["matching", true, false, "admin@example.org"], ["matching", false, true, "admin@example.org"]]);
     expect(cfg.canChange).toBe(false);
     const said = g.world.channel.all().find(m => m.direction === "outbound" && !m.system && /\b[A-Za-z]{8,}\b/.test(m.body))!;
     const hits = await real.search(said.body.match(/\b[A-Za-z]{8,}\b/)![0]);

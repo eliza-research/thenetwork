@@ -6,7 +6,7 @@ export type CasePhase = "NoCase" | "CaseOpen" | "CaseHeld" | "CaseLifted" | "Cas
 /** Story: Review a safety case without removing a hold by accident / An event opens a case or adds to its current record (spec/safetyCase.md) */
 export interface SafetyCase { phase: CasePhase }
 /** Story: Review a safety case without removing a hold by accident / A staff action requires an actor and an applicable record (spec/safetyCase.md) */
-export type StaffActionResult = "AllowedAction" | "ActorRequired" | "NotOnHold" | "UnknownCase" | "AlreadyClosed" | "UnknownReport" | "UnknownMember" | "NoMinorSignal" | "AgeUnknown" | "RecordMinor" | "StatedMinor";
+export type StaffActionResult = "AllowedAction" | "ActorRequired" | "NotOnHold" | "UnknownCase" | "AlreadyClosed" | "UnknownReport" | "UnknownMember" | "NoMinorSignal" | "AgeUnknown" | "RecordMinor" | "StatedMinor" | "TeenBarred" | "TeenOlderReported";
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 export type ReportPhase = "ReportOpen" | "ReportHeld" | "ReportBanned" | "ReportDismissed";
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
@@ -237,6 +237,33 @@ export function lawBanBlocksOrdinaryInbound(compliance: boolean): boolean {
 //@ pure
 export function minorClearResult(actorPresent: boolean, memberKnown: boolean, hasSignal: boolean, ageKnown: boolean, recordMinor: boolean, statedMinor: boolean): StaffActionResult {
   return !actorPresent ? "ActorRequired" : (!memberKnown ? "UnknownMember" : (!hasSignal ? "NoMinorSignal" : (!ageKnown ? "AgeUnknown" : (recordMinor ? "RecordMinor" : (statedMinor ? "StatedMinor" : "AllowedAction")))));
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
+//@ pure
+export function teenDoubtClearResult(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, barred: boolean, olderOrLyingReport: boolean): StaffActionResult {
+  return !actorPresent ? "ActorRequired" : (!memberKnown ? "UnknownMember" : (!hasDoubt ? "NoMinorSignal" : (!birthExact || !birthTeen ? "AgeUnknown" : (barred ? "TeenBarred" : (olderOrLyingReport ? "TeenOlderReported" : "AllowedAction")))));
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
+//@ pure
+export function lawTeenDoubtClearNeverClearsABar(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, olderOrLyingReport: boolean): boolean {
+  //@ ensures \result === true
+  return teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, true, olderOrLyingReport) !== "AllowedAction";
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
+//@ pure
+export function lawTeenDoubtClearNeverClearsOlderReport(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, barred: boolean): boolean {
+  //@ ensures \result === true
+  return teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, barred, true) !== "AllowedAction";
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date (spec/safetyCase.md) */
+//@ pure
+export function lawTeenDoubtClearNeedsExactTeenBirth(actorPresent: boolean, memberKnown: boolean, hasDoubt: boolean, birthExact: boolean, birthTeen: boolean, barred: boolean, olderOrLyingReport: boolean): boolean {
+  //@ ensures \result === true
+  return !(teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, barred, olderOrLyingReport) === "AllowedAction") || (actorPresent && memberKnown && hasDoubt && birthExact && birthTeen && !barred && !olderOrLyingReport);
 }
 
 /** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */

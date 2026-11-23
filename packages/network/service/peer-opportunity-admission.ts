@@ -1,5 +1,6 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { peerContactSeatStatuses, peerContactTypes, queuedPeerContactPolicy } from "../../core/src/generated/outboundAdmission.ts";
+import { storedTeenStatus } from "./teen-roster.ts";
 
 function peerRosters(tx: SQL, app: string, recipient: string, ids: string[]) {
   return tx`select msg.id as message_id, member.id as member_id, member.person_id
@@ -29,8 +30,18 @@ export async function lockPeerOpportunityContact(tx: SQL, app: string, runtime: 
 }
 
 /** Recheck participant authority in the provider claim or signed handoff transaction. */
-export async function peerOpportunityContactRestricted(tx: SQL, app: string, recipient: string, ids: string[]): Promise<boolean> {
+export async function peerOpportunityContactRestricted(tx: SQL, app: string, recipient: string, ids: string[], now: number): Promise<boolean> {
   if (!ids.length) return false;
+  const messages = await tx<{ id: string; opportunity_id: string }[]>`select msg.id, msg.opportunity_id from network.messages msg
+    where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.member_id=${recipient} and msg.direction='outbound'
+      and msg.opportunity_id is not null and msg.type in ${tx(peerContactTypes)} order by msg.opportunity_id, msg.id`;
+  const rosters = await peerRosters(tx, app, recipient, ids);
+  for (const oppId of new Set(messages.map(m => m.opportunity_id))) {
+    const own = new Set(messages.filter(m => m.opportunity_id === oppId).map(m => m.id));
+    const roster = rosters.filter(r => own.has(String(r.message_id))).map(r => String(r.member_id));
+    const teen = await storedTeenStatus(tx, app, oppId, now, roster);
+    if (teen.status === "failed" || (teen.status === "unmarked" && teen.minor)) return true;
+  }
   const [row] = await tx<{ blocked: boolean; restricted: boolean }[]>`with roster as (${peerRosters(tx, app, recipient, ids)})
     select exists (
       select 1 from roster a join roster b on b.message_id=a.message_id and a.member_id<b.member_id

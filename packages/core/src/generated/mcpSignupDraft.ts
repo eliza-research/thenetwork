@@ -221,6 +221,26 @@ export function lawUsedOrRefusedForAgeDraftIsDeleted(signupResult: string): bool
   return !(signupResult === "joined" || signupResult === "under_age" || signupResult === "review") || signupDraftAfterSignup(signupResult) === "DeleteDraft";
 }
 
+/** Story: Review the draft when I finish signup on the connection page / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
+//@ pure
+export function signupDraftAfterAgeRecorded(ageAllowed: boolean): DraftSettlement {
+  return ageAllowed ? "KeepDraft" : "DeleteDraft";
+}
+
+/** Story: Review the draft when I finish signup on the connection page / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
+//@ pure
+export function lawRefusedRecordedAgeDeletesDraft(ageAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !(!ageAllowed) || signupDraftAfterAgeRecorded(ageAllowed) === "DeleteDraft";
+}
+
+/** Story: Review the draft when I finish signup on the connection page / A recorded age that the app does not allow deletes the draft at once (spec/mcpSignupDraft.md) */
+//@ pure
+export function lawAllowedRecordedAgeKeepsDraft(ageAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !ageAllowed || signupDraftAfterAgeRecorded(ageAllowed) === "KeepDraft";
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: DraftPreparation, event: Event): boolean {

@@ -5,8 +5,7 @@
 // RealClock swapped out); nothing leaves the machine.
 //
 // Daters join by texting "slop" and "Name, age", answer the onboarding questions in their own words,
-// are matched behind a human review queue (the reviewer approves every item at the next tick), probe
-// each other and book dates from the offered slots. Around the world: the person cap (across apps), quiet hours, a
+// are matched, probe each other and book dates from the offered slots. Around the world: the person cap (across apps), quiet hours, a
 // STOP in the middle of a probe, "leave slop" in the middle of a scheduled match, a ban in the middle
 // of a relay thread (the signed /internal/turn + /internal/relay wire), a restart with a row waiting
 // for the morning, and a minor who joins but is never matched.
@@ -128,7 +127,6 @@ function nyHour(at: number): number {
   return Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date(at)));
 }
 
-/** Reviewers approve every item at the next tick, as slop-live does (the worst case for the rules). */
 async function approve(w: World) {
   const q = await (await H.staff(w.svc, H.REVIEWER, "GET", "/apps/slop/review")).json() as { items?: { kind?: string; oppId: string; revision: number }[] };
   const approved = (w.notes.approved ??= new Map<string, number>()) as Map<string, number>;
@@ -145,6 +143,7 @@ async function pump(w: World, ms: number, step = 30 * MINUTE) {
     w.clock.advance(Math.min(step, ms - t));
     await w.svc.inboxTick();
     for (const rt of w.svc.runtimes.values()) await rt.tick();
+    await w.svc.reviewJudgeTick();
     await w.svc.purge();
     await H.receipts(w.svc, w.clock, w.fake);
     await approve(w);

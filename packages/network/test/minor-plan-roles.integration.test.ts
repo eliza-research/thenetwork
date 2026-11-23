@@ -7,6 +7,7 @@ import { FRIENDS_PLANS, friendsPack, type plans } from "@thenetwork/engine";
 import { bookingNoticeReceiptKey, meetingFeedbackKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string) => ({
   id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Greenpoint",
@@ -17,7 +18,7 @@ const climber = (id: string) => ({
 /** A reviewed group plan of a, b, c and d (quorum 4 unless given) with e as its alternate, every invitee probed. */
 async function probedGroupPlan(quorum = 4) {
   const ids = ["a", "b", "c", "d", "e"];
-  const w = new Mini(ids.map(climber), { review: "human" });
+  const w = new Mini(ids.map(climber), { inlineJudge: holdEveryItem.inline });
   await w.onboard(...ids);
   const now = w.clock.now();
   const plan: plans.Plan = {
@@ -41,7 +42,7 @@ async function probedGroupPlan(quorum = 4) {
 // with d as an invitee waited for review.
 test("a plan submitted for review lists no member who is not an adult at that moment", async () => {
   const ids = ["a", "b", "c", "d", "e"];
-  const w = new Mini(ids.map(climber), { review: "human" });
+  const w = new Mini(ids.map(climber), { inlineJudge: holdEveryItem.inline });
   await w.onboard(...ids);
   const now = w.clock.now();
   const plan = (id: string, invited: string[], alternates: string[]): plans.Plan => ({
@@ -210,7 +211,7 @@ async function settledFriendsTable(eAge: number | null = 30) {
   const venue = PLAN_VENUES.find(v => v.activities.includes(activity))!;
   const ids = ["a", "b", "c"];
   const w = new Mini([...ids, "e"].map((id, index) => ({ id, name: ["Ari", "Ben", "Cara", "Eve"][index]!, age: id === "e" ? eAge ?? undefined : 30,
-    area: venue.area, interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+    area: venue.area, interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true,
     plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
   for (const { id } of w.members) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
@@ -258,7 +259,7 @@ async function crewFromATableEWasAskedAbout() {
   const venue = PLAN_VENUES.find(v => v.activities.includes(activity))!;
   const ids = ["a", "b", "c", "d", "e"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara", "Dov", "Eve"][index]!, age: id === "e" ? undefined : 30, area: venue.area,
-    interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+    interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS });
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   await w.onboard("a", "b", "c", "d");
@@ -328,7 +329,7 @@ test("a crew member found to be a minor ends the crew's sessions, even when enou
   const venue = PLAN_VENUES.find(v => v.activities.includes(activity))!;
   const ids = ["a", "b", "c", "d"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara", "Dov"][index]!, age: 30, area: venue.area,
-    interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+    interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS });
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   await w.onboard(...ids);
@@ -354,7 +355,7 @@ test("a crew member who stated 30 and writes that they are 12 ends the crew", as
   const venue = PLAN_VENUES.find(v => v.activities.includes(activity))!;
   const ids = ["a", "b", "c", "d"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara", "Dov"][index]!, age: id === "b" ? undefined : 30, area: venue.area,
-    interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+    interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS });
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   await w.onboard("a", "c", "d");

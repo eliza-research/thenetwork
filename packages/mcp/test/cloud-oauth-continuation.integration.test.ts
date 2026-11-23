@@ -34,7 +34,7 @@ async function fixture({cloudAheadS=0,bearerIssuedOffsetS=-10}={}){
   if(req.url.endsWith('/validate')&&validationFailure==='identity-mismatch'&&result)return Response.json({ok:true,identity:{...result,userId:'44444444-4444-4444-8444-444444444444'}});
   return req.url.endsWith('/exchange')?Response.json(result??{ok:false},{status:result?200:403}):Response.json(result?{ok:true,identity:result}:{ok:false},{status:result?200:403});
  },{preconnect(){}}) as typeof fetch;
- const people=new MemoryPeopleStore();const env={PLATFORM_ENV:'staging',STAGING_SITE_ORIGINS:JSON.stringify(NETWORK_FRESH_PERSON_SITES),NETWORK_CLOUD_AUTH_ENABLED:'true',NETWORK_CLOUD_AUTH_MODE:'own-pages-fresh-person-v1',NETWORK_CLOUD_AUTH_LOGIN_ORIGIN:'https://cloud.eliza.app',NETWORK_CLOUD_AUTH_API_ORIGIN:'https://api.eliza.app',SERVICE_TURN_SECRET:secret};
+ const people=new MemoryPeopleStore();const env={PLATFORM_ENV:'staging',STAGING_SITE_ORIGINS:JSON.stringify(NETWORK_FRESH_PERSON_SITES),NETWORK_CLOUD_AUTH_MODE:'own-pages-fresh-person-v1',NETWORK_CLOUD_AUTH_LOGIN_ORIGIN:'https://cloud.eliza.app',NETWORK_CLOUD_AUTH_API_ORIGIN:'https://api.eliza.app',SERVICE_TURN_SECRET:secret};
  const api=createPublicApi({store:people,now:()=>now,hashKey:'synthetic-hash-key',sessionSecret:'synthetic-session-key',env,cloudAuthFetch:transport,cloudValidationTtlMs:0,otp:{name:'must-not-be-called',send:async()=>{otp++;throw Error('OTP forbidden in this continuation')}},turnstile:{verify:async()=>true}});
  // One pre-existing fictional account fixture, not a signup or authenticated-session shortcut.
  const person=await api.accounts.createPerson(phone,'inbound_message',30);

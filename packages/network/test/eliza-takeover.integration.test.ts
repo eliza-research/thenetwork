@@ -26,7 +26,7 @@ let escaped = 0;
 const cloudCalls: string[] = [];
 let seq = 0;
 
-const env = (extra: Record<string, string> = {}) => ({PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret, NETWORK_CLOUD_DELIVERY_ORIGIN: cloud.url.origin, ...extra});
+const env = (extra: Record<string, string> = {}) => ({PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret, NETWORK_CLOUD_DELIVERY_ORIGIN: cloud.url.origin, ...extra});
 beforeAll(async () => {
   await admin.unsafe(`create database ${db}`);
   console.info(`[owned-db] ${db}`);

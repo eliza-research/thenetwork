@@ -13,13 +13,14 @@ interface ConsoleStep {
   step: StaffStep;
   method: Method;
   console: string;
-  service: (id: string, app: AppId) => string;
+  service: (id: string, app: AppId, revision: string) => string;
   action: string;
   target?: Target;
   query?: readonly string[];
 }
 
 const ID = /^(?!\.{1,2}$)[^\s/]{1,600}$/;
+const REVISION = /^\d{1,9}$/;
 
 export const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
   { step: "ReadPostings", method: "GET", console: "/api/staff/postings", service: () => "/postings", action: "step_read_postings", query: ["managerId"] },
@@ -40,6 +41,9 @@ export const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
   { step: "ReplayPrivacy", method: "POST", console: "/api/staff/privacy/replay", service: () => "/privacy/replay", action: "step_replay_privacy" },
   { step: "ResolveInboundTurn", method: "POST", console: "/api/staff/inbound/resolve", service: () => "/inbound/resolve", action: "step_resolve_inbound_turn" },
   { step: "ReadTurnWatch", method: "GET", console: "/api/staff/turn-watch", service: () => "/ops/turns", action: "step_read_turn_watch" },
+  { step: "ReadJudgedReviews", method: "GET", console: "/api/staff/review/judged", service: () => "/review/judged", action: "step_read_review_judged", query: ["since"] },
+  { step: "ReadJudgedReviews", method: "GET", console: "/api/staff/review/judged/:id/:revision", service: (id, _app, revision) => `/review/judged/${id}/${revision}`, action: "step_read_review_judged", target: "opportunity" },
+  { step: "StopApprovedReview", method: "POST", console: "/api/staff/review/:id/stop", service: id => `/review/${id}/stop`, action: "step_stop_review", target: "opportunity" },
 ];
 
 const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
@@ -62,6 +66,8 @@ const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
   [/^\/(?:staff\/)?relay\/held$/, "ReadHeldRelay", "ReadHeldRelay"],
   [/^\/(?:staff\/)?relay\/[^/]+\/photo$/, "ReadHeldRelay", "ReadHeldRelay"],
   [/^\/(?:staff\/)?relay\/[^/]+\/(?:release|reject)$/, "DecideHeldRelay", "DecideHeldRelay"],
+  [/^\/review\/judged(\/[^/]+\/\d+)?$/, "ReadJudgedReviews", "ReadJudgedReviews"],
+  [/^\/review\/[^/]+\/stop$/, "StopApprovedReview", "StopApprovedReview"],
   [/^\/review\/[^/]+$/, "DecideReviewItem", "DecideReviewItem"],
   [/^\/safety\/(?:hold|ban|dismiss|lift|close|clear-minor)$/, "DecideSafetyCase", "DecideSafetyCase"],
 ];
@@ -115,6 +121,8 @@ function handler(d: StaffStepDeps, s: ConsoleStep) {
     let id: string | undefined;
     try { id = req.params.id === undefined ? undefined : decodeURIComponent(req.params.id); } catch { id = ""; }
     if (id !== undefined && !ID.test(id)) return d.json({ ok: false, error: "invalid id", code: "bad_id" }, 400);
+    const revision = req.params.revision;
+    if (revision !== undefined && !REVISION.test(revision)) return d.json({ ok: false, error: "invalid revision", code: "bad_revision" }, 400);
     let body: Record<string, unknown> | undefined;
     if (s.method === "POST") {
       const read = await readObject(req);
@@ -125,7 +133,7 @@ function handler(d: StaffStepDeps, s: ConsoleStep) {
     const url = new URL(req.url);
     const query = new URLSearchParams();
     for (const name of s.query ?? []) { const v = url.searchParams.get(name); if (v !== null) query.set(name, v); }
-    const path = s.service(id === undefined ? "" : encodeURIComponent(id), app) + (query.size ? `?${query}` : "");
+    const path = s.service(id === undefined ? "" : encodeURIComponent(id), app, revision ?? "") + (query.size ? `?${query}` : "");
     const target = s.target && id !== undefined ? { targetType: s.target, targetId: id } : {};
     const reason = reasonOf(body);
     const write = s.method === "POST";

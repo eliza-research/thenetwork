@@ -32,6 +32,8 @@ export type Event =
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 export const phoneChangesPerDay: number = 3;
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+export const phoneChangeWindowMs: number = exact_phoneChange(exact_phoneChange(exact_phoneChange(24 * 60) * 60) * 1000);
 /** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 export const phoneChangeLifetimeMs: number = exact_phoneChange(exact_phoneChange(15 * 60) * 1000);
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
@@ -116,6 +118,13 @@ export function phoneChangeSlotOpen(startsBefore: number): boolean {
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
+export function phoneChangeRetryAfterSeconds(slotRefused: boolean, at: number, otpWaitMs: number): number {
+  const local_0 = slotRefused ? exact_phoneChange(phoneChangeWindowMs - remainder_phoneChange(at, phoneChangeWindowMs)) : otpWaitMs;
+  return local_0 < 1 ? 1 : quotient_phoneChange(exact_phoneChange(local_0 + 999), 1000);
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
 export function canCheckStartRate(change: PhoneChange): boolean {
   return change.phase === "AwaitingRateLimit";
 }
@@ -151,6 +160,27 @@ export function canRecordPendingWrite(change: PhoneChange): boolean {
 export function recordPendingWrite(change: PhoneChange): PhoneChange {
   //@ ensures (inv(change) && canRecordPendingWrite(change)) ==> alwaysMoveRequiresProof(\result)
   return { ...change, phase: "PendingRecorded" };
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
+export function lawRetryAfterIsAtLeastOneSecond(slotRefused: boolean, at: number, otpWaitMs: number): boolean {
+  //@ ensures \result === true
+  return phoneChangeRetryAfterSeconds(slotRefused, at, otpWaitMs) >= 1;
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
+export function lawSlotRetryEndsWithTheDay(at: number, otpWaitMs: number): boolean {
+  //@ ensures \result === true
+  return !(at >= 0) || phoneChangeRetryAfterSeconds(true, at, otpWaitMs) <= quotient_phoneChange(phoneChangeWindowMs, 1000);
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
+export function lawOtpRetryCoversItsWait(at: number, otpWaitMs: number): boolean {
+  //@ ensures \result === true
+  return exact_phoneChange(phoneChangeRetryAfterSeconds(false, at, otpWaitMs) * 1000) >= otpWaitMs;
 }
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
@@ -395,4 +425,19 @@ export function initialHolds(): PhoneChange {
 export function exact_phoneChange(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
+}
+
+/** Whole-number division as Quint does it: towards zero. */
+//@ pure
+export function quotient_phoneChange(a: number, b: number): number {
+  //@ requires b !== 0
+  if (b === 0) throw new RangeError(`${a} cannot be divided by zero`);
+  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;
+}
+
+/** The remainder of that division; it has the sign of the dividend. */
+//@ pure
+export function remainder_phoneChange(a: number, b: number): number {
+  //@ requires b !== 0
+  return a - b * quotient_phoneChange(a, b);
 }

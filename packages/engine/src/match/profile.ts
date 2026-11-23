@@ -140,7 +140,6 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
     return set;
   };
   for (const memberId of w.ids) {
-    if (sendTimeReason(w, memberId) !== null) continue;
     for (const membership of vectors.memberships(w, memberId)) {
       const { id, lane, side, market } = membership;
       if (existingFriendPlan && lane !== "Friend") continue;

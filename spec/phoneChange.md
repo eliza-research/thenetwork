@@ -1,6 +1,6 @@
 # Change the phone on my account
 
-A member whose number changed tells their own agent. The agent sends the app's one-purpose phone-change link, `https://<domain>/phone`, and never asks for the new number or a code. In the browser, the person signs in on the current number: with a platform code on an OTP site, or with a Cloud phone proof on a Cloud sign-in site. That fresh sign-in is the confirmation from the old number of [Story F25](product/stories.md#story-f25--keep-my-account-when-my-number-changes). The person then enters the new number and the platform code that the OTP service sends to it. The OTP service verifies the new number in both sign-in modes, so the agent and Eliza Cloud never see that code. The link is the only entry point: the sites show no account page, and the agent's own connector grant is not a fresh proof of the current number. A person who no longer holds the current number cannot give that confirmation and writes to help@ntwrk.party for steward recovery. The published skills give the link only when the sites serve the `/phone` page, so an agent never sends a link that does not open. The storage transaction still owns the identity move, consent history, old sessions, pending messages, age floor, grants, and audit record.
+A member whose number changed tells their own agent. The agent sends the app's one-purpose phone-change link, `https://<domain>/phone`, and never asks for the new number or a code. A member who texts `CHANGE NUMBER` (or "change my number", "update my phone number") on the text line gets the same link in one short reply, on the site origin that the app's other member links use. Changed on 2026-11-22 (owner decision, one-purpose pages): before, nothing on the text line sent the link. In the browser, the person signs in on the current number: with a platform code on an OTP site, or with a Cloud phone proof on a Cloud sign-in site. That fresh sign-in is the confirmation from the old number of [Story F25](product/stories.md#story-f25--keep-my-account-when-my-number-changes). The person then enters the new number and the platform code that the OTP service sends to it. The OTP service verifies the new number in both sign-in modes, so the agent and Eliza Cloud never see that code. The link is the only entry point: the sites show no account page, and the agent's own connector grant is not a fresh proof of the current number. A person who no longer holds the current number cannot give that confirmation and writes to help@ntwrk.party for steward recovery. The published skills give the link only when the sites serve the `/phone` page, so an agent never sends a link that does not open. The text reply has no such check, because the site page set has no phone page value yet: the text reply ships only in the same release as the `/phone` page file, and that release order waits for the owner's answer (2026-11-22, one-purpose pages). When the page set gets the phone page value, the text reply checks it as the skills do. The storage transaction still owns the identity move, consent history, old sessions, pending messages, age floor, grants, and audit record.
 
 The shell's store move keeps the person's member IDs and history. In the same transaction, it moves the current native connector grants bound to that person. It ends active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. It ends those tokens and audits the revocation. The member can reconnect an affected assistant. The store move ends old phone sessions, including Cloud sessions, ends messages still queued for the old number, and removes the old number's identity, so the old number gets no more messages. The shell routes a person-bound member only through their current verified phone. The [phone identity](models/phone_identity.md) and [identity lifecycle](models/identity_sagas.md) models keep the storage interleavings. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
 
@@ -57,10 +57,27 @@ pure def checkStartPolicy(change: PhoneChange, oldNumberAllowed: bool): PhoneCha
 
 ### A challenge needs a send slot and a persisted request
 
-The account has three start requests per day. The store must grant a slot while the prior count is below three. A start request can continue only when the store grants the slot and the account made fewer than three start requests earlier on that day. If its allowance or the OTP service refuses, return the existing rate-limit outcome. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number.
+The account has three start requests per day. The store must grant a slot while the prior count is below three. A start request can continue only when the store grants the slot and the account made fewer than three start requests earlier on that day. If its allowance or the OTP service refuses, return the existing rate-limit outcome. The rate-limit outcome carries a `retry-after` time in whole seconds, never less than one: when the account's slot is refused, the time to the end of the day window that the slot counts in; when the OTP service refuses, the OTP service's own wait, rounded up. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number. Changed on 2026-11-22 (owner decision, one-purpose pages): the rate-limit outcome had no wait, so the phone page could not tell the member when to try again.
 
 ```quint
 pure val phoneChangesPerDay: int = 3
+pure val phoneChangeWindowMs: int = 24 * 60 * 60 * 1000
+pure val atValues = Set(-1, 0, 1, 86399999, 86400000, 86400001)
+pure val otpWaitMsValues = Set(-1, 0, 1, 999, 1000, 1001, 30000)
+pure val slotRefusedValues = Set(true, false)
+
+pure def phoneChangeRetryAfterSeconds(slotRefused: bool, at: int, otpWaitMs: int): int =
+  val waitMs = if (slotRefused) phoneChangeWindowMs - at % phoneChangeWindowMs else otpWaitMs
+  if (waitMs < 1) 1 else (waitMs + 999) / 1000
+
+pure def lawRetryAfterIsAtLeastOneSecond(slotRefused: bool, at: int, otpWaitMs: int): bool =
+  phoneChangeRetryAfterSeconds(slotRefused, at, otpWaitMs) >= 1
+
+pure def lawSlotRetryEndsWithTheDay(at: int, otpWaitMs: int): bool =
+  at >= 0 implies phoneChangeRetryAfterSeconds(true, at, otpWaitMs) <= phoneChangeWindowMs / 1000
+
+pure def lawOtpRetryCoversItsWait(at: int, otpWaitMs: int): bool =
+  phoneChangeRetryAfterSeconds(false, at, otpWaitMs) * 1000 >= otpWaitMs
 
 pure def phoneChangeSlotOpen(startsBefore: int): bool = 0 <= startsBefore and startsBefore < phoneChangesPerDay
 pure def canCheckStartRate(change: PhoneChange): bool = change.phase == AwaitingRateLimit

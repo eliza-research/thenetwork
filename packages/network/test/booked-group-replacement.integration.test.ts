@@ -33,7 +33,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
   ] as const;
   const calls: SendRequest[] = [];
   const makeService = () => {
-    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550370", clock, liveGate: () => true, log: () => {}, provider: {
+    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550370", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         calls.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -41,7 +41,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     } });
     return { adapter, service: new NetworkService({
       url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
       networks: [{ id: networkId }], devMatching: [networkId],
       network: { plans: false, growth: false, maxNewPerDay: 0, plansConfig: { probeWindowHours: 6 } }, tokens: "reviewer@friends:group-reviewer",
     }) };

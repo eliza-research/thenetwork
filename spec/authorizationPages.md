@@ -260,27 +260,42 @@ pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
 
 ### Each scope shows as one short sentence, never as its scope name
 
-The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. Saved-profile reads must be requested explicitly. The default connection scopes do not include them. The page never shows the scope name of the server.
+The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. Saved-profile reads must be requested explicitly. The default connection scopes do not include them. The page never shows the scope name of the server. Changed (owner decision 2026-11-22): the profile write sentence now also says that the assistant can pause or turn back on what the app looks for, and the profile read sentence says that it can read that list, because the looking-for tools use these two scopes and the person must see that before Allow. Changed (owner decision 2026-11-22): the photos scope is new; it must be requested explicitly, it is not a default scope, and its sentence says that the assistant sees only the photo list and never the photos, and that the person confirms each send on their phone. Changed (owner decision 2026-11-22): only the slop.date site offers the photos scope, because only slop.date keeps photos; the other sites leave it out of their metadata and drop it from a request, so their consent page never shows the slop.date photo sentence and their grants never hold a scope they cannot use.
 
 ```quint
-type Scope = AppsRead | MembershipRead | ProfileWrite | ProfileRead
+type Scope = AppsRead | MembershipRead | ProfileWrite | ProfileRead | PhotosUse
 
 pure val defaultScopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite)
-pure val scopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite, ProfileRead)
+pure val scopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite, ProfileRead, PhotosUse)
 
 pure def scopeName(scope: Scope): str =
   if (scope == AppsRead) "apps:read"
   else if (scope == MembershipRead) "membership:read"
   else if (scope == ProfileRead) "profile:read"
+  else if (scope == PhotosUse) "photos:use"
   else "profile:write"
 
 pure def scopeText(scope: Scope): str =
   if (scope == AppsRead) "See which Network apps are available"
   else if (scope == MembershipRead) "Read your membership status and new updates"
-  else if (scope == ProfileRead) "Read the profile you saved for this app"
-  else "Save your profile and prepare signup details"
+  else if (scope == ProfileRead) "Read the profile you saved for this app and what it looks for for you"
+  else if (scope == PhotosUse) "See your slop.date photo list (numbers, names, days, who has each) and ask to send one. It never sees the photos, and you confirm each send on your phone."
+  else "Save your profile, prepare signup details, and pause or turn back on what this app looks for for you"
 
 pure def lawScopeTextIsNotTheScopeName(scope: Scope): bool = scopeText(scope) != scopeName(scope)
+
+pure def lawPhotosScopeIsNeverDefault(scope: Scope): bool =
+  defaultScopes.includes(scope) implies scope != PhotosUse
+
+pure def scopeOfferedOn(scope: Scope, slopHost: bool): bool = scope != PhotosUse or slopHost
+
+pure def lawPhotosScopeOnlyOnSlop(scope: Scope, slopHost: bool): bool =
+  (scope == PhotosUse and scopeOfferedOn(scope, slopHost)) implies slopHost
+
+pure def lawSlopOffersEveryScope(scope: Scope): bool = scopeOfferedOn(scope, true)
+
+pure def lawDefaultScopesOfferedEverywhere(scope: Scope, slopHost: bool): bool =
+  defaultScopes.includes(scope) implies scopeOfferedOn(scope, slopHost)
 ```
 
 ### Only Allow on a consent page returns a code to the assistant

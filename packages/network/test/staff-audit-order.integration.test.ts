@@ -42,7 +42,7 @@ beforeAll(async () => {
       if (auditDown) throw new Error("synthetic audit sink outage");
       await audit.write(entry);
     } },
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     networks: [{ id: "friends:nyc", matchingEnabled: false }], network: { seed: 1 }, log: () => {},
     adapter: (_net, rt) => new CloudChannelAdapter({ clock, app: rt.app.id, city: rt.city, from: "+12125550230", origin: "http://127.0.0.1:9", secret,
       env: { PLATFORM_ENV: "dev" } }),

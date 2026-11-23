@@ -4,12 +4,13 @@ import { describe, expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
 describe("block and report targets in a group plan", () => {
   test("a probe-only invitee is neither offered nor shown names", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park"), climber("e", "Eve Lu")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park"), climber("e", "Eve Lu")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b", "c", "d", "e");
     const id = w.propose(["a", "b", "c"]);
     for (let i = 0; i < 6 && w.meetings.length === 0; i++) {
@@ -44,7 +45,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a booked group closes when only two consenting members remain", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b", "c");
     const id = w.propose(["a", "b", "c"]);
     for (let i = 0; i < 6 && w.meetings.length === 0; i++) {
@@ -79,7 +80,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a report by pronoun with no date ahead asks who first; the name then files it", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -96,7 +97,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("affirming 'Who do you mean: Ben?' with 'yes' files the report", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -112,7 +113,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a member with no counterparts can block someone by name after answering 'Who do you mean?'", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b");
     let from = w.mark();
     await w.say("a", "block him");
@@ -129,7 +130,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("active probe reply 'yes' is not hijacked by pendingSafety", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b", "c");
     // 'a' triggers a safety clarification question
     let from = w.mark();
@@ -150,7 +151,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("reporting someone not a counterpart after 'Who do you mean?' does not file a report", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b");
     let from = w.mark();
     await w.say("a", "report him, he was creepy");

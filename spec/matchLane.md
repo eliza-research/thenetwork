@@ -2,7 +2,7 @@
 
 A lane is one kind of relationship: a friend, a date, a cofounder, an introduction, a hire, a mentor or an investor. This library gives each lane its shape, its sides, its private standing offset and its one table of limits. It also says which app offers which lane. The [reciprocal pair value](pairValue.md) supplies the pair arithmetic that each lane uses.
 
-The engine shell supplies, for each membership in a pair check, the integer `PairSide`: the utility of the other member, the private standing and its uncertainty, and the exchange value. The shell extracts memberships from each app pack. The pack still owns consent: its ontology lanes in `packages/engine/src/pack.ts` are opt-in categories, not relationship lanes. The shell keeps every hard pair rule (minors are never matched, blocks, holds, pauses, geography) in its one pair gate, and calls `lanePairValue` only for a pair that passes that gate. Standing is private: it never appears in member-facing text, explanations or relay. The flow models are the [matching engine](models/matching_engine.md) and the [candidate pool](models/candidate_pool.md). The product stories are [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction), [Story F12](product/stories.md#story-f12--join-a-small-group) and [Story F33](product/stories.md#story-f33--choose-a-hiring-introduction).
+The engine shell supplies, for each membership in a pair check, the integer `PairSide`: the utility of the other member, the private standing and its uncertainty, and the exchange value. The shell extracts memberships from each app pack. The pack still owns consent: its ontology lanes in `packages/engine/src/pack.ts` are opt-in categories, not relationship lanes. The shell keeps every hard pair rule (the [friend introduction age rule](friendIntroAge.md), blocks, holds, pauses, geography) in its one pair gate, and calls `lanePairValue` only for a pair that passes that gate. Standing is private: it never appears in member-facing text, explanations or relay. The flow models are the [matching engine](models/matching_engine.md) and the [candidate pool](models/candidate_pool.md). The product stories are [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction), [Story F12](product/stories.md#story-f12--join-a-small-group) and [Story F33](product/stories.md#story-f33--choose-a-hiring-introduction).
 
 ## Story: Peers meet as equals
 
@@ -270,4 +270,76 @@ pure def lawEveryAppHasALane(app: str): bool =
     (laneOffered(app, Friend) or laneOffered(app, Date) or laneOffered(app, Cofounder) or
       laneOffered(app, Intro) or laneOffered(app, Hire) or laneOffered(app, Mentor) or
       laneOffered(app, Invest))
+```
+
+## Story: Friendship lanes offer teen introductions
+
+> As a person aged 13 to 17, I want introductions only for friendship, on friends.help and in the Friend lane of The Network, so that no app matches me for dates or work.
+
+### Only the friendship lanes of friends.help and ntwrk admit a teen introduction
+
+A teen introduction can occur only in app `friends` or app `ntwrk`: in the Friend lane of either app, in the categories `social` and `hobby` of `friends`, or in the category `social` of `ntwrk`. A group plan with a teen (a table, a crew or an activity partner plan) occurs only in app `friends`. Every caller of the [friend introduction age rule](friendIntroAge.md) computes its `friendshipLane` argument with these definitions, and no caller compares app or category strings for this decision. The pack declaration `minors: "teenFriendship"` on a pack lane is valid only where `teenFriendCategory` holds, and the run-time decision always calls these definitions. Changed (owner decision 2026-11-22): before this rule no lane admitted a person aged 13 to 17; the owner allowed friendship introductions for teens, and this rule keeps them inside friends.help. Changed (owner decision 2026-11-22, answers A2 to A5): the owner answered "friends.help and ntwrk", so the Friend lane and the `social` category of The Network also admit a teen introduction, slop.date and peon.biz still never do, and teen group plans stay on friends.help.
+
+```quint
+pure val categoryValues = Set("social", "hobby", "romance", "professional", "help", "events", "growth")
+
+pure def teenFriendApp(app: str): bool = app == "friends" or app == "ntwrk"
+
+pure def teenFriendLane(app: str, lane: MatchLane): bool = teenFriendApp(app) and lane == Friend
+
+pure def teenFriendCategory(app: str, category: str): bool =
+  (app == "friends" and (category == "social" or category == "hobby")) or (app == "ntwrk" and category == "social")
+
+pure def teenGroupPlanApp(app: str): bool = app == "friends"
+
+pure def lawTeenLanesOnlyInFriendApps(app: str, lane: MatchLane, category: str): bool =
+  (teenFriendLane(app, lane) or teenFriendCategory(app, category) or teenGroupPlanApp(app)) implies (app == "friends" or app == "ntwrk")
+
+pure def lawNoTeenOnSlopOrPeon(lane: MatchLane, category: str): bool =
+  not(teenFriendLane("slop", lane) or teenFriendLane("peon", lane) or teenFriendCategory("slop", category)
+    or teenFriendCategory("peon", category) or teenGroupPlanApp("slop") or teenGroupPlanApp("peon"))
+
+pure def lawTeenFriendLaneSameOnBothApps(lane: MatchLane): bool = teenFriendLane("friends", lane) == teenFriendLane("ntwrk", lane)
+
+pure def lawNtwrkTeenCategoryIsSocial(category: str): bool = teenFriendCategory("ntwrk", category) implies category == "social"
+
+pure def lawTeenFriendLaneIsOffered(app: str, lane: MatchLane): bool = teenFriendLane(app, lane) implies laneOffered(app, lane)
+
+pure def lawTeenPlansOnlyOnFriends(app: str): bool = teenGroupPlanApp(app) implies app == "friends"
+```
+
+### A teen is never in a date or work lane
+
+No app admits a teen introduction in the Date, Cofounder, Intro, Hire, Mentor or Invest lane, or in the `romance` or `professional` category. Changed (owner decision 2026-11-22): the owner allowed friendship introductions for teens only, so dates and work stay closed to every person under 18 in every app.
+
+```quint
+pure def lawNoTeenDateOrWork(app: str): bool =
+  not(teenFriendLane(app, Date)) and not(teenFriendLane(app, Hire)) and not(teenFriendLane(app, Cofounder))
+    and not(teenFriendLane(app, Invest)) and not(teenFriendLane(app, Mentor)) and not(teenFriendLane(app, Intro))
+    and not(teenFriendCategory(app, "romance")) and not(teenFriendCategory(app, "professional"))
+```
+
+### Only a known friendship generator makes a teen item
+
+A teen item comes only from a generator that this rule names. In app `ntwrk` these are the one-to-one introduction from a live intent (`intent_to_capability`), the Friend circle (`group_composer`) and the member request (`request`). In app `friends` these are the friend circle, the activity partner, the member request, the weekly plan, the repeat from the Network's plan history (`friends_repeat`) and the crew. A generator that this rule does not name is adults only, so a new generator never admits a minor without a change to this rule. The repeat generators, the event generator, the warm path, help requests, the newcomer welcome, network growth, gathering repeats and the player generator are never teen generators. The Network's weekly plans and monthly gatherings on `ntwrk` are adults only. Changed (owner decision 2026-11-22, answers A2 to A5): before this rule every engine generator in `friends` that passed the age rule could make a teen item; the owner opened the ntwrk Friend lane and small teen groups, so the build names each generator that may make a teen item, and every other generator stays adults only.
+
+```quint
+pure val generatorValues = Set("intent_to_capability", "group_composer", "request", "friend_circle", "activity_partner",
+  "plan", "friends_repeat", "crew", "same_table_again", "second_encounter", "event_anchor", "warm_path", "help_request",
+  "newcomer_welcome", "network_growth", "plans_buddy", "gathering_second_encounter", "player", "nc_detection")
+
+pure def teenGenerator(app: str, generator: str): bool =
+  (app == "ntwrk" and (generator == "intent_to_capability" or generator == "group_composer" or generator == "request"))
+    or (app == "friends" and (generator == "friend_circle" or generator == "activity_partner" or generator == "request"
+      or generator == "plan" or generator == "friends_repeat" or generator == "crew"))
+
+pure def lawTeenGeneratorOnlyInFriendApps(app: str, generator: str): bool = teenGenerator(app, generator) implies teenFriendApp(app)
+
+pure def lawNtwrkHasNoTeenPlans(generator: str): bool =
+  (generator == "plan" or generator == "friends_repeat" or generator == "crew") implies not(teenGenerator("ntwrk", generator))
+
+pure def lawRepeatsAndContributorsNeverTeen(app: str): bool =
+  not(teenGenerator(app, "second_encounter") or teenGenerator(app, "same_table_again") or teenGenerator(app, "event_anchor")
+    or teenGenerator(app, "warm_path") or teenGenerator(app, "help_request") or teenGenerator(app, "newcomer_welcome")
+    or teenGenerator(app, "network_growth") or teenGenerator(app, "gathering_second_encounter") or teenGenerator(app, "player"))
 ```

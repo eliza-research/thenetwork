@@ -117,3 +117,24 @@ pure def sometimesRejectsCallback(signIn: SignIn): bool = signIn.phase == Reject
 pure def sometimesDeniesSignIn(signIn: SignIn): bool = signIn.phase == DenySignIn
 pure def sometimesCloudUnavailable(signIn: SignIn): bool = signIn.phase == CloudUnavailable
 ```
+
+### A failed callback returns to the phone page or the home-help page with an error code
+
+When the callback fails and its sealed pending handoff is for the routed app and names the phone-change page `/phone` or the private home-help page `/home-help`, the answer is a redirect to that page with one `error` query value. The value names only the kind of failure: `sign_in_expired` for an expired or mismatched handoff or a malformed code (400), `sign_in_refused` for a refused exchange, identity or phone (403), and `sign_in_unavailable` when Cloud or storage is unavailable (503). A failure for `/join`, for the connector path, or with no readable handoff keeps the JSON answer. Both answers clear the pending cookie. Changed on 2026-11-22 (owner decision, one-purpose pages): before, a failed sign-in left the phone page and the home-help page on a raw JSON answer that the page could not show.
+
+```quint
+type CallbackPage = JoinReturn | PhoneReturn | HomeHelpReturn | ConnectorReturn | NoReturn
+
+pure val failureStatusValues = Set(400, 403, 503, 500)
+
+pure def failedCallbackReturnsToPage(page: CallbackPage): bool = page == PhoneReturn or page == HomeHelpReturn
+
+pure def callbackFailureCode(failureStatus: int): str =
+  if (failureStatus == 400) "sign_in_expired" else if (failureStatus == 403) "sign_in_refused" else "sign_in_unavailable"
+
+pure def lawJoinAndConnectorFailuresStayJson(page: CallbackPage): bool =
+  (page == JoinReturn or page == ConnectorReturn or page == NoReturn) implies not(failedCallbackReturnsToPage(page))
+
+pure def lawFailureCodeIsOneOfThree(failureStatus: int): bool =
+  Set("sign_in_expired", "sign_in_refused", "sign_in_unavailable").contains(callbackFailureCode(failureStatus))
+```

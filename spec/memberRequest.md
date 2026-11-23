@@ -54,13 +54,24 @@ pure def routeNewRequest(flow: MemberRequestFlow, matching: bool, eligible: bool
 
 ### Only the member's pending request for a withdrawn desire closes
 
-A withdrawal affects that member's waiting or probing people request when it has the withdrawn desire. Close a linked opportunity only in review or probing, then mark the request closed and withdrawn. A later explicit ask can start a new request.
+A withdrawal affects that member's waiting or probing people request when it has the withdrawn desire. A withdrawal comes only from a pause or close that the member's own thread words or the member's agent made, under [the standing change rule](standingIntentManagement.md). Which linked opportunity closes follows that rule's retirement rule. Then mark the request closed and withdrawn. A request withdrawn by a pause or close of a want records that want; a later resume, KEEP or UNDO of that want restores it to waiting. A later explicit ask can start a new request for a closed want, but not for a paused want ([the add rule](standingIntentManagement.md)). A withdrawn request keeps its link to an opportunity that is still in review or probing, so a booking or a close of that opportunity still finds it; a restore makes it wait again only when that opportunity has ended. When that opportunity later closes, the member who withdrew the request hears nothing: no "none yet" answer and no retry note, because the member stopped the search. Changed (owner decision 2026-11-22): before, a negation in profile text withdrew the request, and every withdrawal closed an opportunity in probing; now only the member's words or the agent's pause withdraw it, it can be restored, and the later close of the opportunity that a pause kept does not tell the member that the search goes on.
 
 ```quint
 pure def memberRequestWithdrawable(sameMember: bool, people: bool, desireMatches: bool, withdrawn: bool, status: str): bool =
   sameMember and people and desireMatches and not(withdrawn) and (status == "none" or status == "probing")
 
-pure def closeOpportunityForRequestWithdrawal(stage: str): bool = stage == "review" or stage == "probing"
+pure def withdrawnRequestKeepsOpportunity(stage: str): bool = stage == "review" or stage == "probing"
+
+pure def requesterHearsOpportunityClose(withdrawn: bool, requesterUnavailable: bool, requesterSaidNo: bool): bool =
+  not(withdrawn) and not(requesterUnavailable) and not(requesterSaidNo)
+
+pure val stageValues = Set("review", "probing", "scheduled", "closed")
+
+pure def lawWithdrawnRequestHearsNoClose(requesterUnavailable: bool, requesterSaidNo: bool): bool =
+  not(requesterHearsOpportunityClose(true, requesterUnavailable, requesterSaidNo))
+
+pure def lawEndedOpportunityIsNotKept(stage: str): bool =
+  (stage == "scheduled" or stage == "closed") implies not(withdrawnRequestKeepsOpportunity(stage))
 
 pure def canApplyRequestWithdrawal(flow: MemberRequestFlow): bool = flow.phase == RequestStarting
 pure def applyRequestWithdrawal(flow: MemberRequestFlow, matched: bool): MemberRequestFlow =

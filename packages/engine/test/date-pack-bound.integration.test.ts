@@ -96,15 +96,28 @@ test("the Date pair bound and class caps are at least the pack value, and many f
   expect(violations).toEqual({ bound: 0, cap: 0, boundOverCap: 0, untouchedCap: 0 });
 });
 
+const COHORTS = [["woman", "woman", 10], ["man", "man", 10], ["woman", "man", 9], ["man", "woman", 9]] as const;
+const DATERS = COHORTS.reduce((n, [, , size]) => n + size, 0);
+const TWINS = ["d00", "d01"], UNTAGGED = "d20";
+
 function daterInput(): ReturnType<typeof emptyInput> {
   const r = new Rng(20261122);
   const input = emptyInput();
-  for (let n = 0; n < 40; n++) {
-    const id = `d${String(n).padStart(2, "0")}`, is = n % 2 === 0 ? "woman" : "man";
+  let n = 0;
+  for (const [is, seeks, size] of COHORTS) for (let k = 0; k < size; k++, n++) {
+    const id = `d${String(n).padStart(2, "0")}`;
     input.members.push(baseMember(id, { homeCity: "nyc", prefs: { romanceOptIn: true, categoriesOptIn: ["romance"] } }));
     input.facets.push(facet(id, 0, "preference", "Private dating preferences", [
-      `romance:is:${is}`, `romance:seeks:${is === "woman" ? "man" : "woman"}`, "romance:age:18-65", "slop:zip:11222", "slop:max_miles:10",
+      `romance:is:${is}`, `romance:seeks:${seeks}`, "romance:age:18-65", "slop:zip:11222", "slop:max_miles:10",
     ], "agent_private"));
+    if (id === UNTAGGED) continue;
+    if (TWINS.includes(id)) {
+      input.facets.push(facet(id, 1, "fact", "Dating answers", ["slop:goal:long_term", "slop:smoking:never", "slop:drinking:social", "slop:wants_kids:yes",
+        "slop:religion_importance:1", "slop:politics:left", "slop:activity:coffee"], "agent_private"));
+      ["climbing", "jazz"].forEach((tag, j) => input.facets.push(facet(id, 2 + j, "interest", tag, [tag])));
+      input.facets.push(facet(id, 9, "availability_pattern", "Free evenings", [`slop:free:${SLOTS[0]}`], "agent_private"));
+      continue;
+    }
     const answers = [
       ...(r.bool(0.8) ? [`slop:goal:${r.pick(["casual", "long_term", "unsure"])}`] : []),
       ...(r.bool(0.7) ? [`slop:smoking:${r.pick(["never", "sometimes", "regular"])}`] : []),
@@ -126,21 +139,51 @@ test("the Date pair bound and class caps keep every Date search equal to the sea
   const vectors = slopPack.vectors;
   if (!vectors) throw new Error("slopPack has no match vectors");
   const unbounded: AppPack = { ...slopPack, vectors: { ...vectors, packBound: undefined, packClasses: undefined } };
+  const { searchLimit } = laneLimits("Date");
   const [bounded, full] = [slopPack, unbounded].map(pack => {
     const w = new World(daterInput(), SLOP_ENGINE_DEFAULTS, localEmbed, pack);
     const profiles = w.match.profiles.filter(p => p.lane === "Date");
-    const kept = profiles.map(p => {
+    const searches = profiles.map(p => {
       const result = w.match.candidates(p);
       expect(result.exact).toBe(true);
       expect(result.kept).toEqual(bruteForceCandidates(w, w.match.index, p));
-      return { id: p.id, kept: result.kept.map(c => [c.profile.id, c.value]) };
+      return { id: p.id, member: p.memberId, kept: result.kept.map(c => [c.profile.id, c.value]), checks: result.checks, touches: result.touches };
     });
-    return { profiles: profiles.length, kept, tally: w.match.tally() };
+    return { profiles: profiles.length, kept: searches.map(({ id, kept }) => ({ id, kept })), searches, tally: w.match.tally() };
   });
-  expect(bounded.profiles).toBe(40);
+  expect(bounded.profiles).toBe(DATERS);
   expect(bounded.kept).toEqual(full.kept);
   expect(bounded.kept.some(entry => entry.kept.length > 0)).toBe(true);
-  for (const { tally } of [bounded, full]) expect(tally).toMatchObject({ members: 40, exact: 40, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0 });
+  expect(bounded.kept.find(entry => entry.id === TWINS[0])!.kept.map(([id]) => id)).toContain(TWINS[1]);
+  expect(bounded.kept.every(entry => entry.kept.length < searchLimit)).toBe(true);
+  for (const { tally } of [bounded, full]) expect(tally).toMatchObject({ members: DATERS, exact: DATERS, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0 });
+  bounded.searches.forEach((search, i) => {
+    const other = full.searches[i]!;
+    expect(other.id).toBe(search.id);
+    expect(search.checks).toBeLessThanOrEqual(other.checks);
+    expect(search.touches).toBeLessThanOrEqual(other.touches);
+  });
+  const w = laneWeights("Date"), floor = laneLimits("Date").rules.utilityFloor;
+  let infeasibleBelow = 1000;
+  while (directedUtility([{ weight: w.complement, value: 0 }, { weight: w.affinity, value: 0 }, { weight: w.pack, value: infeasibleBelow }]) >= floor) infeasibleBelow--;
+  expect(infeasibleBelow).toBe(933);
+  const world = new World(daterInput(), SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
+  const people = slopProfiles(world.input, world.canonical);
+  let start = 0;
+  const cohortOf = COHORTS.map(([is, seeks, size]) => { const ids = Array.from({ length: size }, (_, k) => `d${String(start + k).padStart(2, "0")}`); start += size; return { is, seeks, ids }; });
+  const own = cohortOf.find(c => c.ids.includes(UNTAGGED))!;
+  const partners = cohortOf.filter(c => c.is === own.seeks && c.seeks === own.is).flatMap(c => c.ids);
+  expect(partners).toHaveLength(9);
+  const untaggedProfile = people.get(UNTAGGED as MemberId)!;
+  expect([untaggedProfile.interests, untaggedProfile.free]).toEqual([[], []]);
+  for (const id of partners) {
+    const cap = datePackClassCap(untaggedProfile, datePackClassKey(people.get(id as MemberId)!), true, slopPack.options);
+    expect([id, cap <= infeasibleBelow]).toEqual([id, true]);
+  }
+  const untaggedBounded = bounded.searches.find(s => s.member === UNTAGGED)!, untaggedFull = full.searches.find(s => s.member === UNTAGGED)!;
+  expect([untaggedBounded.checks, untaggedBounded.touches]).toEqual([0, 0]);
+  expect(untaggedFull.checks).toBeGreaterThan(0);
+  expect(untaggedFull.touches).toBeGreaterThan(0);
   expect(bounded.tally.checks).toBeLessThan(full.tally.checks);
   expect(bounded.tally.touches).toBeLessThan(full.tally.touches);
 });

@@ -88,12 +88,12 @@ interface WsData { app: AppId; user: StaffUser; cls: ViewClass; truth: boolean }
 const SIM: readonly StaffRole[] = ["reviewer", "safety", "engineer"];
 export const CONTROL_ROLES: Readonly<Record<ControlCommand["type"], readonly StaffRole[]>> = {
   play: SIM, pause: SIM, speed: SIM, step: SIM, propose: SIM, takeover: SIM, reply: SIM, say: SIM, god: SIM, peek: SIM, lens: ["safety"], check_scenario: SIM,
-  review: ["reviewer"], review_mode: [], matching: [], reset: [],
+  review: ["reviewer"], matching: [], reset: [],
   refresh: ["reviewer", "safety", "analyst"], shadow_run: ["analyst"],
 };
 const LAB_ROLES: readonly StaffRole[] = ["analyst", "engineer"];
 const QUIET = new Set(["play", "pause", "speed", "step", "refresh"]);
-const GAME_ONLY = new Set(["play", "pause", "speed", "step", "propose", "takeover", "reply", "say", "god", "peek", "lens", "check_scenario", "reset", "review_mode"]);
+const GAME_ONLY = new Set(["play", "pause", "speed", "step", "propose", "takeover", "reply", "say", "god", "peek", "lens", "check_scenario", "reset"]);
 
 const LOCAL_DB_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url).hostname.toLowerCase()); } catch { return true; } };
@@ -595,7 +595,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (!cmd || typeof cmd.type !== "string") return json({ ok: false, error: "bad command" }, 400);
           const need = Object.hasOwn(CONTROL_ROLES, cmd.type) ? CONTROL_ROLES[cmd.type] : undefined;
           if (!need) return json({ ok: false, error: "unknown command" }, 400);
-          const target = "oppId" in cmd ? { targetType: "opportunity" as const, targetId: cmd.oppId } : "memberId" in cmd ? { targetType: "member" as const, targetId: cmd.memberId } : cmd.type === "matching" || cmd.type === "review_mode" ? { targetType: "config" as const, targetId: cmd.type } : {};
+          const target = "oppId" in cmd ? { targetType: "opportunity" as const, targetId: cmd.oppId } : "memberId" in cmd ? { targetType: "member" as const, targetId: cmd.memberId } : cmd.type === "matching" ? { targetType: "config" as const, targetId: cmd.type } : {};
           const detail = auditDetail(cmd);
           if (!allowed(u, need, app, seen)) {
             await record(u, app, { action: cmd.type, ...target, ok: false, detail: { ...detail, refused: "forbidden" } });
@@ -922,13 +922,12 @@ if (import.meta.main) {
     port: { type: "string", default: process.env.PORT ?? "4747" }, mode: { type: "string", default: "game" },
     seed: { type: "string", default: "1" }, personas: { type: "string", default: "0" }, engine: { type: "string", default: "engine-v1" },
     days: { type: "string", default: "60" }, "db-url": { type: "string" }, network: { type: "string", default: "consent" },
-    city: { type: "string", default: "nyc" }, level: { type: "string" }, review: { type: "string", default: "auto" },
+    city: { type: "string", default: "nyc" }, level: { type: "string" },
     "time-aware": { type: "boolean", default: false },
   } });
-  if (a.review !== "auto" && a.review !== "human") { console.error("--review must be auto or human"); process.exit(1); }
   const obs = await createServer({
     port: Number(a.port), mode: a.mode as Mode,
-    game: { seed: Number(a.seed), personas: Number(a.personas), engine: a.engine as GameOptions["engine"], days: Number(a.days), network: a.network as "consent" | "stub", city: a.city as "nyc" | "all", scenario: a.level ?? null, review: a.review, timeAware: a["time-aware"] },
+    game: { seed: Number(a.seed), personas: Number(a.personas), engine: a.engine as GameOptions["engine"], days: Number(a.days), network: a.network as "consent" | "stub", city: a.city as "nyc" | "all", scenario: a.level ?? null, timeAware: a["time-aware"] },
     real: { url: a["db-url"] },
   });
   console.log(`The Network Observatory → ${obs.openUrl}  (mode: ${obs.mode()}${process.env.OBSERVATORY_REAL_ONLY === "1" ? ", real only" : ""})`);

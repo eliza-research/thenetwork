@@ -12,7 +12,8 @@ import { parseProfileReviewWithdrawalProof, type ProfileReviewWithdrawalRequest,
   type ProfileReviewWithdrawalProof } from "../../core/src/svc/profile-review-withdrawal.ts";
 import { parseProfileReviewDisconnectProof, parseProfileReviewDisconnectRequest,
   type ProfileReviewDisconnectRequest, type ProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
-import { fold, isSensitiveTerm, type AppId } from "@thenetwork/core";
+import { canBeMatched, fold, isSensitiveTerm, type AppId } from "@thenetwork/core";
+import { effectiveAgesOf } from "./snapshot.ts";
 
 export interface SuggestionOwner { userId: string; organizationId: string; personId: string; app: AppId; chatId: string }
 export interface SourceSuggestion {
@@ -80,8 +81,8 @@ export class ProfileSuggestions {
       throw new Error("Suggestion authority expired during transaction");
   }
 
-  private async owned(tx: SQL, owner: SuggestionOwner) {
-    return await this.ownerAuthorized(tx, owner) ? this.lockedMember(tx, owner) : undefined;
+  private async owned(tx: SQL, owner: SuggestionOwner, now?: number) {
+    return await this.ownerAuthorized(tx, owner) ? this.lockedMember(tx, owner, now) : undefined;
   }
 
   private async ownerAuthorized(tx: SQL, owner: SuggestionOwner): Promise<boolean> {
@@ -89,15 +90,15 @@ export class ProfileSuggestions {
     return !this.authorizeOwner || await this.authorizeOwner(owner, tx);
   }
 
-  private async lockedMember(tx: SQL, owner: SuggestionOwner) {
+  private async lockedMember(tx: SQL, owner: SuggestionOwner, now?: number) {
     await tx`select id from platform.people where id=${owner.personId} for update`;
-    const member = await this.memberRow(tx, owner, true);
+    const member = await this.memberRow(tx, owner, true, now);
     this.checkAuthority();
     return member;
   }
 
-  private async memberRow(tx: SQL, owner: SuggestionOwner, lock: boolean): Promise<{ id: string; eligible: boolean } | undefined> {
-    const rows = await tx`select n.id,(n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18
+  private async memberRow(tx: SQL, owner: SuggestionOwner, lock: boolean, now?: number): Promise<{ id: string; eligible: boolean } | undefined> {
+    const rows = await tx`select n.id,(n.account_status='active' and not n.opted_out
       and m.state in ('active','onboarding') and m.review is null
       and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
       and not exists(select 1 from platform.suppression s where s.phone_hash=p.phone_hash)
@@ -108,11 +109,12 @@ export class ProfileSuggestions {
         and m.state<>'removed' ${lock ? tx`for update of n, m` : tx``}`;
     const row = rows[0] as { id: string; eligible: boolean } | undefined;
     if (!row) return undefined;
-    return { id: row.id, eligible: row.eligible && !await personLedgerOptedOut(tx, owner.personId, owner.app) };
+    const adult = now !== undefined && canBeMatched((await effectiveAgesOf(tx, owner.app, [row.id], now)).get(row.id));
+    return { id: row.id, eligible: row.eligible && adult && !await personLedgerOptedOut(tx, owner.personId, owner.app) };
   }
 
-  private async batch(tx: SQL, owner: SuggestionOwner, id: string) {
-    const member = await this.owned(tx, owner);
+  private async batch(tx: SQL, owner: SuggestionOwner, id: string, now?: number) {
+    const member = await this.owned(tx, owner, now);
     return member ? this.batchRow(tx, owner, member, id) : undefined;
   }
 
@@ -155,7 +157,7 @@ export class ProfileSuggestions {
   async priorReview(owner: SuggestionOwner, batchId: string, claim: SuggestionReviewClaim, now: number): Promise<StoredReviewResult | undefined> {
     if (!Number.isFinite(now)) return { kind: "denied" };
     return this.sql.begin(async tx => {
-      const member = await this.owned(tx, owner);
+      const member = await this.owned(tx, owner, this.fence?.now() ?? now);
       if (!member) return undefined;
       const turn = await this.reviewTurn(tx, owner, member.id, claim);
       const prior = turn?.action_receipts?.[reviewReceiptKey(batchId)];
@@ -240,7 +242,7 @@ export class ProfileSuggestions {
     if (claim && (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(claim.batchId)
       || !/^msg:(blooio|twilio):[^\r\n\u0000]{1,512}$/u.test(claim.turnId) || !/^[0-9a-f]{64}$/u.test(claim.requestSha256))) return null;
     return this.sql.begin(async tx => {
-      const member = await this.ownerAuthorized(tx, owner) ? await this.memberRow(tx, owner, false) : undefined;
+      const member = await this.ownerAuthorized(tx, owner) ? await this.memberRow(tx, owner, false, this.fence?.now() ?? now) : undefined;
       let collection = stepSource(initialSource, { type: "startSourceCollection", eligible: !!member?.eligible, claimed: !!claim });
       if (!member || collection.phase === "SourceDenied") return null;
       const id = claim?.batchId ?? randomUUID();
@@ -258,7 +260,7 @@ export class ProfileSuggestions {
         if (!allowed) break;
         grants.set(key, (grant as SourceGrant).issuedAt);
       }
-      const after = allowed ? await this.lockedMember(tx, owner) : undefined;
+      const after = allowed ? await this.lockedMember(tx, owner, this.fence?.now() ?? now) : undefined;
       const collectionTurn = after && claim ? await this.collectionTurn(tx, owner, after.id, claim, input, id, now, true) : undefined;
       const cleanedSince = !!after && await this.cleanedSinceGrant(tx, owner, input.suggestions.map(s => ({ connectionId: s.connectionId, issuedAt: grants.get(scopeKey(s))! })));
       collection = stepSource(collection, { type: "readLiveSourceConsent", allowed,
@@ -313,7 +315,7 @@ export class ProfileSuggestions {
   async getPendingBatch(owner: SuggestionOwner, id: string, now: number): Promise<SuggestionReviewBatch | null> {
     if (!Number.isFinite(now)) return null;
     return this.sql.begin(async tx => {
-      const b = await this.batch(tx, owner, id);
+      const b = await this.batch(tx, owner, id, this.fence?.now() ?? now);
       const value = b ? await this.view(tx, b, this.fence?.now() ?? now) : null;
       this.checkAuthority(value ? b : undefined);
       return value;
@@ -324,9 +326,9 @@ export class ProfileSuggestions {
     claim?: SuggestionReviewClaim): Promise<StoredReviewResult> {
     if (!Number.isFinite(now)) return { kind: "denied" };
     return this.sql.begin(async tx => {
-      const unlocked = await this.ownerAuthorized(tx, owner) ? await this.memberRow(tx, owner, false) : undefined;
+      const unlocked = await this.ownerAuthorized(tx, owner) ? await this.memberRow(tx, owner, false, this.fence?.now() ?? now) : undefined;
       const granted = unlocked ? await this.acceptGrants(tx, owner, unlocked, input) : new Set<string>();
-      const member = unlocked ? await this.lockedMember(tx, owner) : undefined;
+      const member = unlocked ? await this.lockedMember(tx, owner, this.fence?.now() ?? now) : undefined;
       if (!member || member.id !== unlocked!.id) return { kind: "denied" };
       const claimed = claim ? await this.claimReview(tx, owner, member, input.batchId, claim, now) : "new";
       if (claimed !== "new") { this.checkAuthority(); return claimed; }

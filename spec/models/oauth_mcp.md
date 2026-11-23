@@ -16,6 +16,8 @@ no longer erases the draft; it lives at most ten minutes. This model keeps no dr
 its draft machine left with the retired tool, and the next model pass adds it again.
 A staff ban also deletes the signup drafts of every banned number; because the model keeps no
 draft state, its `ban` action still writes no grant, token or request state.
+A recorded age that an app does not allow also deletes the phone's draft of that app at once
+(owner decision of 2026-11-22); this writes no grant, token or request state either.
 The Finish signup enrollment and its stored handoff state ([signup handoff](../agentPhoneHandoff.md))
 are also outside this model; `tests/e2e/connector-signup.e2e.test.ts` covers them.
 
@@ -23,6 +25,14 @@ are also outside this model; `tests/e2e/connector-signup.e2e.test.ts` covers the
 Random simulation did not reach it within the model's bounds, because `becomeMinor` and an "own"
 `produceItem` were one environment branch among many. `step` now lists them once more as their own
 branch. Like the doubled progress families, this changes only how often the simulator picks them.
+
+Changed (owner decision 2026-11-22): `noIntroToMinor` is replaced by `teenFriendAgeRule` ([friend introductions with a minor](../friendIntroAge.md), [connector tools](../connectorTools.md) `readerAgeAllowed`). A reader who is not an adult reads an update about another member only while the item is a friends.help teen item that the rule allows now (`ConsentNetwork.teenItemCurrent`): staff have not stopped teen introductions, the reader is teen ready, and the item was not closed by the teen sweep. A stop, a report and the sweep end readability for good. `teenSwitchOffNoMinor` is the earlier rule for the stopped case.
+
+Changed (owner decision 2026-11-22, answers A2 to A5): readiness is derived, with no staff confirm step: a minor with an exact birth date (`birthExact`) and no barred phone is teen ready (`teenReadyIn`). The action `teenConfirm` and the set `teenReady` are deleted, and `teenBirthDate` (the person states an exact birth date) takes their place; `teenReadyIsMinor` is deleted because readiness is now a definition. Teen introductions are on from the start (`teenStopped` is false); `teenStop` and `teenResume` replace `teenSwitch` (the staff roles are in [review_desk](review_desk.md) and [opportunity](opportunity.md)). Erasure deletes the birth date, and a bar stays on the number. This model's apps are friends, peon and slop: a teen item is a friends.help item here, and an ntwrk `Friend`-lane teen item takes the same path in the code (`teenFriendApp`). A report is a bar here (a stricter abstraction: the code keeps a minor report as a doubt until the teen doubt clear of [safety_trust](safety_trust.md)).
+
+Changed (owner decision 2026-11-22, standing changes): the tool family adds `listLookingFor`, `pauseLookingFor` and `resumeLookingFor` ([connector tools](../connectorTools.md), "The agent can list the person's standing things"). They have the same grant owner check as `checkStatus` and serve only an active member; a resume serves only an adult. `lookingForOnlyActive` and `agentResumeOnlyAdult` state this, and `noBannedUse`, `servedOnLiveOwnGrant` and `heldIsHeld` cover the three calls. The network change, its daily limit of three agent changes and the text to the person are in [standing changes](../standingIntentManagement.md), not here. A grant holds the profile read scope only when its request asked for it; the model fixes this by request number (`readsProfile`: grant 2 only). A list needs that scope, and `listed` records that a result showed summaries; `lookingForListNeedsProfileRead` states that only a grant with the profile read scope sees them, from `submit_profile` and the change results too. Changed (owner decision 2026-11-22): before this sentence the model had no scopes, so it could not show that `submit_profile` gave the list to a grant with the default scopes only.
+
+Changed (owner decision 2026-11-22, photo relay): the tool family adds `myPhotos` and `photoRequest` ([connector tools](../connectorTools.md), "The agent sees the person's photo list"). The model adds the slop.date app and its client `cS`, because only the slop.date host lists the photo tools. A grant holds the separate `photos:use` scope only when its request asked for it; the model fixes this by request number (`readsPhotos`: grant 3 only), as it does for the profile read scope. Changed after review (owner decision 2026-11-22): only the slop.date site offers `photos:use` (spec/authorizationPages.md `scopeOfferedOn`), and the other sites drop it from a request, so a grant on another app never holds it; the guard `gr.app == "slop"` beside `readsPhotos` in `photoCall` and in `photoToolsOnlySlopWithScope` is this rule. A call without the scope is refused before the call (403), so the action is not enabled then. The calls have the grant owner check of `checkStatus` and serve only an active adult; `photoToolsOnlySlopWithScope` and `photoToolsOnlyActiveAdult` state this, and `noBannedUse`, `servedOnLiveOwnGrant` and `heldIsHeld` cover the two calls. The photo list, the proposal text and the offer are in [photo relay](../photoRelayItem.md) and the [photo relay model](photo_relay_item.md), not here: a `photo_request` never consents.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -44,7 +54,7 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 // cloud-grant-authority (as an oracle), mcp-request-gate, grant-owner-binding,
 // output-leak-gate, inbox-read-seen, assistant-surface-signal, submit-profile-intake,
 // oauth-client-lifecycle, oauth-forget-revoke, oauth-phone-move, oauth-sweep-retention.
-// Not in this model: openai-surface-gate (a boolean config table; no app here is slop), skill-signup
+// Not in this model: openai-surface-gate (a boolean config table; the slop.date grants here are on the full surface), skill-signup
 // (agent text, see SD-058 in the findings file).
 //
 // Abstractions (hand-written):
@@ -73,10 +83,10 @@ module oauth_mcp {
   // ---------------------------------------------------------------- constants
   pure val PERSONS = Set("p1", "p2")
   pure val PHONES = Set("n1", "n2")
-  pure val APPS = Set("friends", "peon")
-  pure val CLIENTS = Set("cF", "cP")
+  pure val APPS = Set("friends", "peon", "slop")
+  pure val CLIENTS = Set("cF", "cP", "cS")
   /** The app a client registered on (H:331; every grant of a client is for this app). */
-  pure def clientApp(c: str): str = if (c == "cF") "friends" else "peon"
+  pure def clientApp(c: str): str = if (c == "cF") "friends" else if (c == "cS") "slop" else "peon"
   pure val REQS = Set(1, 2, 3)
   pure val ITEMS = Set(1, 2)
   pure val NONE = "none"
@@ -95,8 +105,9 @@ module oauth_mcp {
   type Tok = { g: int, kind: str, origin: str, rotated: bool, revoked: bool, expired: bool }
   type Client = { exists: bool, old: bool }
   type Quota = { count: int, accepted: int }
-  type Item = { live: bool, person: str, app: str, kind: str, seen: bool, oppOpen: bool, leaky: bool }
-  type Effect = { kind: str, person: str, grant: int, ok: bool, status: str, items: Set[int] }
+  // teenOk: a teen item that the rule allowed when it was made and that no sweep has ended (teenItemCurrent).
+  type Item = { live: bool, person: str, app: str, kind: str, seen: bool, oppOpen: bool, leaky: bool, teenOk: bool }
+  type Effect = { kind: str, person: str, grant: int, ok: bool, status: str, items: Set[int], listed: bool }
 
   type OAuth = {
     reqs: int -> Req, grants: int -> Grant, codes: int -> Code, toks: int -> Tok, nextTok: int,
@@ -107,6 +118,9 @@ module oauth_mcp {
     // under13: a person whose lowest age is under 13 (the join age of every app, apps.ts).
     under13: Set[str], deleted: Set[str],
     member: (str, str) -> str, forgotten: Set[(str, str)],
+    // The stored teen stop (the key teenStop is present), the people with an exact birth date, and the barred
+    // phones (platform.teen_pool_bars, keyed by phone_hash: a bar stays on the number after erasure).
+    teenStopped: bool, birthExact: Set[str], teenBarred: Set[str],
   }
   type Inbox = { items: int -> Item, active: Set[str] }
   type Procs = { appr: int -> str, deny: int -> str, exch: int -> str, refr: int -> str }
@@ -126,9 +140,13 @@ module oauth_mcp {
   var pc: Procs
   var gh: Ghost
 
-  pure val NO_EFFECT: Effect = { kind: "none", person: NONE, grant: 0, ok: true, status: "", items: Set() }
+  pure val NO_EFFECT: Effect = { kind: "none", person: NONE, grant: 0, ok: true, status: "", items: Set(), listed: false }
+  /** The scopes of a grant are fixed by its request: grant 2 holds profile:read beside the default scopes; grants 1 and 3 hold the default scopes only. */
+  pure def readsProfile(g: int): bool = g == 2
+  /** Grant 3 holds photos:use beside the default scopes when it is a slop.date grant (spec/authorizationPages.md: never a default scope; scopeOfferedOn drops it on the other hosts). */
+  pure def readsPhotos(g: int): bool = g == 3
   pure def eff(kind: str, person: str, g: int, ok: bool): Effect =
-    { kind: kind, person: person, grant: g, ok: ok, status: "", items: Set() }
+    { kind: kind, person: person, grant: g, ok: ok, status: "", items: Set(), listed: false }
 
   // ---------------------------------------------------------------- helpers (platform reads)
   /** K:156-158 personForKey: null when the number is on hold or has no live person. */
@@ -217,9 +235,10 @@ module oauth_mcp {
       banned: Set(), holdNum: Set(), netHeld: Set(), minor: Set(), under13: Set(), deleted: Set(),
       member: tuples(PERSONS, APPS).mapBy(k => if (k._1 == "p1") "active" else "none"),
       forgotten: Set(),
+      teenStopped: false, birthExact: Set(), teenBarred: Set(),
     },
     ib' = {
-      items: ITEMS.mapBy(i => { live: false, person: NONE, app: "", kind: "", seen: false, oppOpen: false, leaky: false }),
+      items: ITEMS.mapBy(i => { live: false, person: NONE, app: "", kind: "", seen: false, oppOpen: false, leaky: false, teenOk: false }),
       active: Set(),
     },
     pc' = { appr: REQS.mapBy(r => "idle"), deny: REQS.mapBy(r => "idle"), exch: REQS.mapBy(g => "idle"), refr: Map() },
@@ -418,7 +437,7 @@ module oauth_mcp {
     val dead = not(liveG(oa, g)) or not(oa.toks.keys().exists(t => oa.toks.get(t).g == g))
     revokeWithAudit(g, Set(("code_replay", g)),
       { kind: "replay", person: NONE, grant: g, ok: trueReplay or dead,
-        status: if (trueReplay) "true" else if (dead) "dead" else "false", items: Set() }),
+        status: if (trueReplay) "true" else if (dead) "dead" else "false", items: Set(), listed: false }),
     pf' = pf, pc' = pc,
   }
 
@@ -449,7 +468,7 @@ module oauth_mcp {
     val g = k.g
     val gr = oa.grants.get(g)
     val idle = { ...pc, refr: pc.refr.set(t, "idle") }
-    val replay = { kind: "replay", person: NONE, grant: g, ok: true, status: "true", items: Set() }
+    val replay = { kind: "replay", person: NONE, grant: g, ok: true, status: "true", items: Set(), listed: false }
     if (pc.refr.get(t) == "checkedRot") all {
       pc' = idle, revokeWithAudit(g, Set(("refresh_replay", g)), replay),
     } else if (gr.st != "live" or gr.expired) all {
@@ -523,12 +542,12 @@ module oauth_mcp {
     if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "getUpdates")
     else {
       val mine = ITEMS.filter(i => ib.items.get(i).live and not(ib.items.get(i).seen) and ib.items.get(i).person == now and ib.items.get(i).app == gr.app and now != NONE)
-      val retired = mine.filter(i => not(ib.items.get(i).oppOpen) or (ib.items.get(i).kind != "own" and pf.minor.contains(now)))
+      val retired = mine.filter(i => not(ib.items.get(i).oppOpen) or (ib.items.get(i).kind != "own" and pf.minor.contains(now) and not(teenReadable(i))))
       val withheld = mine.filter(i => not(retired.contains(i)) and ib.items.get(i).leaky)
       val shown = mine.filter(i => not(retired.contains(i)) and not(ib.items.get(i).leaky))
       all {
         ib' = { ...ib, items: ib.items.keys().mapBy(i => if (mine.contains(i) and not(withheld.contains(i))) { ...ib.items.get(i), seen: true } else ib.items.get(i)) },
-        gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: shown } },
+        gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: shown, listed: false } },
         oa' = oa, pf' = pf, pc' = pc,
       }
     }
@@ -542,7 +561,7 @@ module oauth_mcp {
     val now = personForKey(pf, gr.phone)
     if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "status")
     else all {
-      gh' = { ...gh, last: { kind: "status", person: now, grant: g, ok: true, status: statusOf(pf, now, gr.app), items: Set() } },
+      gh' = { ...gh, last: { kind: "status", person: now, grant: g, ok: true, status: statusOf(pf, now, gr.app), items: Set(), listed: false } },
       oa' = oa, pf' = pf, ib' = ib, pc' = pc,
     }
   }
@@ -563,21 +582,72 @@ module oauth_mcp {
     val oaQ = { ...oa, quota: oa.quota.set(g, { ...q, count: count }) }
     if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "profile")
     else if (now == NONE or st != "active") all {
-      oa' = oa, gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: false, status: st, items: Set() } },
+      oa' = oa, gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: false, status: st, items: Set(), listed: false } },
       pf' = pf, ib' = ib, pc' = pc,
     } else if (count > PROFILE_CAP) all {
-      oa' = oaQ, gh' = { ...gh, last: { kind: "quotaRefused", person: now, grant: g, ok: false, status: st, items: Set() } },
+      oa' = oaQ, gh' = { ...gh, last: { kind: "quotaRefused", person: now, grant: g, ok: false, status: st, items: Set(), listed: false } },
       pf' = pf, ib' = ib, pc' = pc,
     } else {
       val accepted = not(pf.banned.contains(now))
       all {
         oa' = if (accepted) { ...oaQ, quota: oaQ.quota.set(g, { count: count, accepted: q.accepted + 1 }) } else oaQ,
-        gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: accepted, status: st, items: Set() } },
+        gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: accepted, status: st, items: Set(), listed: accepted and readsProfile(g) } },
         pf' = pf, ib' = ib, pc' = pc,
       }
     }
   }
 
+  /**
+   * T list_looking_for, pause_looking_for and resume_looking_for (spec/connectorTools.md, "The agent can list the
+   * person's standing things"): checkGrantOwner, then the status gate (active only, toolAllowedFor), then SVC
+   * lookingFor or changeLookingFor, which recheck the phone, the person, the ban and the review (activeMembership).
+   * A resume needs an adult (SVC changeLookingFor passes canBeMatched to agentStandingChange). The network state that a
+   * pause or a resume changes, its daily limit and its text to the person are outside this model
+   * (spec/standingIntentManagement.md standingChangeOutcome); the effect records whether the call served the person.
+   * H:1392 refuses a list without the profile read scope before the call (403), so the action is not enabled then.
+   * T callTool (resultShowsLookingFor): `listed` records that the result showed summaries, only with the profile read scope.
+   */
+  action lookingForCall(t: int, kind: str): bool = all {
+    bearerOk(t),
+    val g = oa.toks.get(t).g
+    val gr = oa.grants.get(g)
+    val now = personForKey(pf, gr.phone)
+    val st = statusOf(pf, now, gr.app)
+    val served = now != NONE and st == "active" and not(pf.banned.contains(now)) and (kind != "resumeLookingFor" or not(pf.minor.contains(now)))
+    if (kind == "listLookingFor" and not(readsProfile(g))) false
+    else if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, kind)
+    else all {
+      gh' = { ...gh, last: { kind: kind, person: now, grant: g, status: st, items: Set(), ok: served, listed: served and readsProfile(g) } },
+      oa' = oa, pf' = pf, ib' = ib, pc' = pc,
+    }
+  }
+  action listLookingFor(t: int): bool = lookingForCall(t, "listLookingFor")
+  action pauseLookingFor(t: int): bool = lookingForCall(t, "pauseLookingFor")
+  action resumeLookingFor(t: int): bool = lookingForCall(t, "resumeLookingFor")
+
+  /**
+   * T my_photos and photo_request (spec/connectorTools.md, "The agent sees the person's photo list"): toolListed lists
+   * them only on the slop.date host, and H refuses a call without photos:use before the call (403), so the action is not
+   * enabled then. Then checkGrantOwner, the status gate (active only, toolAllowedFor) and the age gate (minorMember is
+   * false only for a known adult), then SVC photoHoldings or photoRequest. The list, the proposal text and the offer are
+   * outside this model; the effect records whether the call served the person.
+   */
+  action photoCall(t: int, kind: str): bool = all {
+    bearerOk(t),
+    val g = oa.toks.get(t).g
+    val gr = oa.grants.get(g)
+    val now = personForKey(pf, gr.phone)
+    val st = statusOf(pf, now, gr.app)
+    val served = now != NONE and st == "active" and not(pf.banned.contains(now)) and not(pf.minor.contains(now))
+    if (gr.app != "slop" or not(readsPhotos(g))) false
+    else if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, kind)
+    else all {
+      gh' = { ...gh, last: { kind: kind, person: now, grant: g, status: st, items: Set(), ok: served, listed: false } },
+      oa' = oa, pf' = pf, ib' = ib, pc' = pc,
+    }
+  }
+  action myPhotos(t: int): bool = photoCall(t, "myPhotos")
+  action photoRequest(t: int): bool = photoCall(t, "photoRequest")
 
   // ---------------------------------------------------------------- crashes (a process stops between two statements)
   /** Before the approval's transaction nothing is written; after it, linked(true) may not run (SD-186 part (a), kept by contract). */
@@ -677,6 +747,50 @@ module oauth_mcp {
     pf' = { ...pf, minor: pf.minor.union(Set(p)) },
     oa' = oa, ib' = ib, pc' = pc, gh' = { ...gh, last: eff("minor", p, 0, true) },
   }
+  /**
+   * Owner decision 2026-11-22, answers A2 to A5. spec/friendIntroAge.md teenReady, derived: a minor with an exact
+   * birth date and no barred phone is teen ready, with no staff step.
+   */
+  def teenReadyIn(q: Platform, p: str): bool =
+    q.minor.contains(p) and q.birthExact.contains(p) and phonesOf(q, p).forall(n => not(q.teenBarred.contains(n)))
+  /** The person states an exact birth date (the join or the text line, a birth-date reading). */
+  action teenBirthDate(p: str): bool = all {
+    pf.minor.contains(p), not(pf.birthExact.contains(p)),
+    not(pf.under13.contains(p)), not(pf.banned.contains(p)), not(pf.deleted.contains(p)), phonesOf(pf, p).size() > 0,
+    pf' = { ...pf, birthExact: pf.birthExact.union(Set(p)) },
+    oa' = oa, ib' = ib, pc' = pc, gh' = { ...gh, last: eff("teenBirthDate", p, 0, true) },
+  }
+  /**
+   * A report, an older-than-stated statement, a conflict or a bar: readiness ends and each phone is barred.
+   * ABSTRACTION (stricter than the code): here a minor report is a permanent bar. In the code a minor report, a
+   * minor signal and an age conflict are a doubt that safety or admin staff can clear (NetworkService.clearMinor,
+   * teenDoubtClearResult); the clear path is modeled in safety_trust (`teenDoubtClear`), not here.
+   */
+  action teenReadyLost(p: str): bool = all {
+    teenReadyIn(pf, p),
+    pf' = { ...pf, teenBarred: pf.teenBarred.union(phonesOf(pf, p)) },
+    ib' = { ...ib, items: ib.items.keys().mapBy(i => if (ib.items.get(i).person == p) { ...ib.items.get(i), teenOk: false } else ib.items.get(i)) },
+    oa' = oa, pc' = pc, gh' = { ...gh, last: eff("teenReadyLost", p, 0, true) },
+  }
+  /** The staff stop (spec/teenIntroSwitch.md; on from the start). A stop ends every teen item for good. */
+  action teenStop: bool = all {
+    not(pf.teenStopped),
+    pf' = { ...pf, teenStopped: true },
+    ib' = { ...ib, items: ib.items.keys().mapBy(i => { ...ib.items.get(i), teenOk: false }) },
+    oa' = oa, pc' = pc, gh' = { ...gh, last: eff("teenStop", NONE, 0, true) },
+  }
+  /** One admin turns teen introductions on again; the items that the stop ended stay ended. */
+  action teenResume: bool = all {
+    pf.teenStopped,
+    pf' = { ...pf, teenStopped: false },
+    oa' = oa, ib' = ib, pc' = pc, gh' = { ...gh, last: eff("teenResume", NONE, 0, true) },
+  }
+  /** The teen sweep closes a teen item (a birthday at 19, a rule change): it is no longer current. */
+  action teenItemEnds(i: int): bool = all {
+    ib.items.get(i).teenOk,
+    ib' = { ...ib, items: ib.items.setBy(i, x => { ...x, teenOk: false, oppOpen: false }) },
+    oa' = oa, pf' = pf, pc' = pc, gh' = { ...gh, last: eff("teenItemEnds", NONE, 0, true) },
+  }
   /** A new person for a number with none (p2 joins later on n2). */
   action createPerson(n: str): bool = all {
     pf.owner.get(n) == NONE, not(pf.holdNum.contains(n)), phonesOf(pf, "p2").size() == 0, not(pf.deleted.contains("p2")),
@@ -698,8 +812,19 @@ module oauth_mcp {
   action produceItem(i: int, p: str, a: str, kind: str, leaky: bool): bool = all {
     not(ib.items.get(i).live), pf.member.get((p, a)) == "active", not(pf.banned.contains(p)),
     kind != "intro" or not(pf.minor.contains(p)),
-    ib' = { ...ib, items: ib.items.set(i, { live: true, person: p, app: a, kind: kind, seen: false, oppOpen: true, leaky: leaky }) },
+    ib' = { ...ib, items: ib.items.set(i, { live: true, person: p, app: a, kind: kind, seen: false, oppOpen: true, leaky: leaky, teenOk: false }) },
     oa' = oa, pf' = pf, pc' = pc, gh' = { ...gh, last: eff("item", p, 0, true) },
+  }
+  /**
+   * Owner decision 2026-11-22: a friends.help teen item (an intro or a probe of a teen friendship introduction)
+   * for a teen-ready minor, made only while teen introductions are not stopped and the rule holds (P9 to P15 in
+   * the network).
+   */
+  action produceTeenItem(i: int, p: str, kind: str, leaky: bool): bool = all {
+    not(ib.items.get(i).live), pf.member.get((p, "friends")) == "active", not(pf.banned.contains(p)),
+    kind != "own", not(pf.teenStopped), teenReadyIn(pf, p),
+    ib' = { ...ib, items: ib.items.set(i, { live: true, person: p, app: "friends", kind: kind, seen: false, oppOpen: true, leaky: leaky, teenOk: true }) },
+    oa' = oa, pf' = pf, pc' = pc, gh' = { ...gh, last: eff("teenItem", p, 0, true) },
   }
   /** The opportunity behind an item closes (completed, cancelled, skipped). The item is not touched. */
   action closeOpp(i: int): bool = all {
@@ -770,6 +895,7 @@ module oauth_mcp {
       pf' = { ...pf,
         owner: pf.owner.keys().mapBy(n => if (ns.contains(n)) NONE else pf.owner.get(n)),
         deleted: pf.deleted.union(Set(p)), netHeld: pf.netHeld.filter(k => k._1 != p),
+        birthExact: pf.birthExact.exclude(Set(p)),
         member: pf.member.keys().mapBy(k => if (k._1 == p) "removed" else pf.member.get(k)),
         forgotten: pf.forgotten.union(tuples(ns, APPS)) },
       pc' = pc,
@@ -812,7 +938,9 @@ module oauth_mcp {
       oa' = { ...ended,
         grants: ended.grants.keys().mapBy(g => { val x = ended.grants.get(g); if (movable.contains(g)) { ...x, phone: dst } else x }) },
       // Ghost: a forget recorded for an earlier owner of dst does not cover the person who moves in.
-      pf' = { ...pf, owner: pf.owner.set(src, NONE).set(dst, p), forgotten: pf.forgotten.filter(k => k._1 != dst) },
+      // pg-store movePhone copies the teen-pool bar of src to dst; readiness reads the bar of the current number.
+      pf' = { ...pf, owner: pf.owner.set(src, NONE).set(dst, p), forgotten: pf.forgotten.filter(k => k._1 != dst),
+              teenBarred: if (pf.teenBarred.contains(src)) pf.teenBarred.union(Set(dst)) else pf.teenBarred },
       gh' = { ...gh, audits: gh.audits.union(retiring.map(g => ("revoked", g))), revokedEver: gh.revokedEver.union(retiring),
         last: { ...eff("movePhone", p, 0, true), status: src } },
     },
@@ -840,6 +968,8 @@ module oauth_mcp {
       flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
       flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
       any { produceItem(i, p, a, "own", b), becomeMinor(p) },
+      // Owner decision 2026-11-22: the teen path (birth date, stop, resume, teen item, sweep, report).
+      any { teenBirthDate(p), teenStop, teenResume, produceTeenItem(i, p, kind, b), teenItemEnds(i), teenReadyLost(p) },
       // the environment: the person cancels or revokes, a process stops, clocks and the sweep,
       // the network and its inbox, staff and account changes
       any {
@@ -864,7 +994,7 @@ module oauth_mcp {
     refrCheck(t), refrRotate(t), revokeEndpoint(t), revokeAccessToken(t),
   }
   /** The client calls a tool. */
-  action toolFamily(t: int): bool = any { getUpdates(t), checkStatus(t), submitProfile(t) }
+  action toolFamily(t: int): bool = any { getUpdates(t), checkStatus(t), submitProfile(t), listLookingFor(t), pauseLookingFor(t), resumeLookingFor(t), myPhotos(t), photoRequest(t) }
 
   // ================================================================ invariants (from the rules)
 
@@ -876,7 +1006,7 @@ module oauth_mcp {
    * lets that one transaction commit; every later use of those tokens fails this check (bearer, refresh).
    */
   val noBannedUse =
-    not(Set("getUpdates", "status", "profile", "exchCheck", "refrCheck").contains(gh.last.kind) and gh.last.ok
+    not(Set("getUpdates", "status", "profile", "exchCheck", "refrCheck", "listLookingFor", "pauseLookingFor", "resumeLookingFor", "myPhotos", "photoRequest").contains(gh.last.kind) and gh.last.ok
         and pf.banned.contains(gh.last.person))
 
   /**
@@ -903,7 +1033,7 @@ module oauth_mcp {
    * about the person who consented.
    */
   val servedOnLiveOwnGrant =
-    (Set("getUpdates", "status", "profile").contains(gh.last.kind) and gh.last.ok) implies {
+    (Set("getUpdates", "status", "profile", "listLookingFor", "pauseLookingFor", "resumeLookingFor", "myPhotos", "photoRequest").contains(gh.last.kind) and gh.last.ok) implies {
       val gr = oa.grants.get(gh.last.grant)
       gr.st == "live" and not(gr.expired) and personForKey(pf, gr.phone) == gr.person and gh.last.person == gr.person
     }
@@ -960,12 +1090,40 @@ module oauth_mcp {
     val held = gh.last.grant > 0 and pf.netHeld.contains((gh.last.person, oa.grants.get(gh.last.grant).app))
     not(gh.last.kind == "status" and gh.last.status == "active" and held)
     and not(gh.last.kind == "profile" and gh.last.ok and held)
+    and not(Set("listLookingFor", "pauseLookingFor", "resumeLookingFor", "myPhotos", "photoRequest").contains(gh.last.kind) and gh.last.ok and held)
 
   /**
-   * SD-214, MCP54. AGENTS decision 1: minors are never matched or connected; a reader who cannot be
-   * matched reads only items about themselves (spec/connectorTools.md).
+   * Owner decision 2026-11-22 (spec/connectorTools.md toolAllowedFor): the looking-for tools serve only an active
+   * member, and the agent turns a search back on only for an adult.
    */
-  val noIntroToMinor = gh.last.kind == "getUpdates" implies
+  val lookingForOnlyActive =
+    (Set("listLookingFor", "pauseLookingFor", "resumeLookingFor").contains(gh.last.kind) and gh.last.ok) implies gh.last.status == "active"
+  val agentResumeOnlyAdult = (gh.last.kind == "resumeLookingFor" and gh.last.ok) implies not(pf.minor.contains(gh.last.person))
+  /** Owner decision 2026-11-22 (spec/connectorTools.md resultShowsLookingFor): a result shows what the app looks for only to a grant with profile:read. */
+  val lookingForListNeedsProfileRead = gh.last.listed implies readsProfile(gh.last.grant)
+  /** Owner decision 2026-11-22 (spec/connectorTools.md toolListed, grantCovers): a photo tool acts only on a slop.date grant with photos:use. */
+  val photoToolsOnlySlopWithScope =
+    Set("myPhotos", "photoRequest").contains(gh.last.kind) implies
+      (gh.last.grant > 0 and oa.grants.get(gh.last.grant).app == "slop" and readsPhotos(gh.last.grant))
+  /** Owner decision 2026-11-22 (spec/connectorTools.md toolAllowedFor; photos are for adults only): a photo tool serves only an active adult. */
+  val photoToolsOnlyActiveAdult =
+    (Set("myPhotos", "photoRequest").contains(gh.last.kind) and gh.last.ok) implies
+      (gh.last.status == "active" and not(pf.minor.contains(gh.last.person)))
+
+  /**
+   * SD-214, MCP54. AGENTS decision 1, changed by the owner decision of 2026-11-22: a minor is matched or
+   * connected only through a teen friendship item under teenFriendAgeRule; a reader who cannot be matched
+   * reads only items about themselves, and a minor reads about another member only through such an item that
+   * is still readable (spec/connectorTools.md).
+   */
+  def teenReadable(i: int): bool =
+    ib.items.get(i).teenOk and not(pf.teenStopped) and teenReadyIn(pf, ib.items.get(i).person)
+  // Changed (owner decision 2026-11-22, spec/friendIntroAge.md teenFriendAgeRule): a reader who is not an adult
+  // reads about another member only through a teen item that the rule allows now.
+  val teenFriendAgeRule = gh.last.kind == "getUpdates" implies
+    gh.last.items.forall(i => not(ib.items.get(i).kind != "own" and pf.minor.contains(gh.last.person)) or teenReadable(i))
+  // While teen introductions are stopped a minor reads only items about themselves (the earlier noIntroToMinor).
+  val teenSwitchOffNoMinor = (gh.last.kind == "getUpdates" and pf.teenStopped) implies
     gh.last.items.forall(i => not(ib.items.get(i).kind != "own" and pf.minor.contains(gh.last.person)))
 
   /**
@@ -973,7 +1131,7 @@ module oauth_mcp {
    * is marked seen only when it was retired for a reader who cannot be matched.
    */
   val withheldStaysUnseen = ITEMS.forall(i => (ib.items.get(i).live and ib.items.get(i).leaky and ib.items.get(i).oppOpen and ib.items.get(i).seen)
-    implies (ib.items.get(i).kind != "own" and pf.minor.contains(ib.items.get(i).person)))
+    implies (ib.items.get(i).kind != "own" and pf.minor.contains(ib.items.get(i).person) and not(teenReadable(i))))
 
   /**
    * SD-430. T:327 next_step "They answer by replying to the text": an update shown as new must still
@@ -1012,9 +1170,10 @@ module oauth_mcp {
 
   val safety = and {
     noBannedUse, replayIsTrue, codeOnce, oneRefreshHead, revokedTerminal, servedOnLiveOwnGrant,
-    activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, noIntroToMinor, withheldStaysUnseen, noStaleUpdate,
+    activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, teenFriendAgeRule, teenSwitchOffNoMinor, withheldStaysUnseen, noStaleUpdate,
     everyRevocationAudited, oneOutcome, grantHasCodeAndAudit, requestRetention, clientKeptOnceGranted,
-    quotaCountsAccepted, numberChangeWorks,
+    quotaCountsAccepted, numberChangeWorks, lookingForOnlyActive, agentResumeOnlyAdult, lookingForListNeedsProfileRead,
+    photoToolsOnlySlopWithScope, photoToolsOnlyActiveAdult,
   }
 
   /** The invariants that the code kept before the fixes (no register defect). */
@@ -1045,6 +1204,12 @@ module oauth_mcp {
   val witness_denyLoses = not(gh.last.kind == "denyExpired" and gh.granted.contains(gh.last.grant))
   /** A held member reads on_hold (SD-428). */
   val witness_heldReadsOnHold = not(gh.last.kind == "status" and gh.last.status == "on_hold")
+  /** The person's agent pauses one standing thing (owner decision 2026-11-22). */
+  val witness_agentPauses = not(gh.last.kind == "pauseLookingFor" and gh.last.ok)
+  /** A minor's agent cannot turn a search back on. */
+  val witness_minorResumeRefused = not(gh.last.kind == "resumeLookingFor" and not(gh.last.ok) and pf.minor.contains(gh.last.person))
+  /** The person's agent reads their slop.date photo list (owner decision 2026-11-22). */
+  val witness_photoListShown = not(gh.last.kind == "myPhotos" and gh.last.ok)
 
   // ================================================================ run tests (traces from the code and its tests)
   /** p1 connects client c on number n with request r and holds its token pair (legacy or Cloud grant). */
@@ -1058,6 +1223,38 @@ module oauth_mcp {
   run fullFlowTest =
     init.then(connect(1, "cF", false)).then(checkStatus(1))
       .expect(gh.last.kind == "status" and gh.last.status == "active" and safety and activeExactlyGrants)
+
+  /** tests/e2e/agent-profile.e2e.test.ts: list_looking_for and pause_looking_for for an active member; a held member gets nothing. */
+  run lookingForTest =
+    init.then(connect(2, "cF", false)).then(listLookingFor(1))
+      .expect(gh.last.kind == "listLookingFor" and gh.last.ok and gh.last.listed and safety)
+      .then(pauseLookingFor(1))
+      .expect(gh.last.kind == "pauseLookingFor" and gh.last.ok and gh.last.listed and safety)
+      .then(becomeMinor("p1")).then(resumeLookingFor(1))
+      .expect(gh.last.kind == "resumeLookingFor" and not(gh.last.ok) and agentResumeOnlyAdult and safety)
+
+  /** packages/mcp/test/oauth.test.ts "slop.date photo tools": a grant with photos:use reads the list; a minor gets nothing. */
+  run photoToolsTest =
+    init.then(connect(3, "cS", false)).then(myPhotos(1))
+      .expect(gh.last.kind == "myPhotos" and gh.last.ok and photoToolsOnlySlopWithScope and safety)
+      .then(photoRequest(1))
+      .expect(gh.last.kind == "photoRequest" and gh.last.ok and safety)
+      .then(becomeMinor("p1")).then(myPhotos(1))
+      .expect(gh.last.kind == "myPhotos" and not(gh.last.ok) and photoToolsOnlyActiveAdult and safety)
+
+  /** A default grant (no photos:use) cannot call a photo tool. */
+  run photoToolsNeedScopeTest =
+    init.then(connect(1, "cS", false)).then(myPhotos(1)).fail()
+      .then(staffHold("p1")).then(pauseLookingFor(1))
+      .expect(not(gh.last.ok) and heldIsHeld and safety)
+
+  /** packages/mcp/test/mcp.test.ts: with the default scopes only, submit_profile and pause_looking_for show no summaries, and list_looking_for is refused. */
+  run lookingForScopeTest =
+    init.then(connect(1, "cF", false)).then(submitProfile(1))
+      .expect(gh.last.kind == "profile" and gh.last.ok and not(gh.last.listed) and safety)
+      .then(pauseLookingFor(1))
+      .expect(gh.last.kind == "pauseLookingFor" and gh.last.ok and not(gh.last.listed) and safety)
+      .then(listLookingFor(1)).fail()
 
   /** oauth.test.ts "a second use of the code revokes what the first issued". */
   run codeReplayTest =
@@ -1153,7 +1350,39 @@ module oauth_mcp {
     init.then(connect(1, "cF", false)).then(produceItem(1, "p1", "friends", "intro", false))
       .then(produceItem(2, "p1", "friends", "own", false))
       .then(becomeMinor("p1")).then(getUpdates(1))
-      .expect(gh.last.items == Set(2) and ib.items.get(1).seen and ib.items.get(2).seen and noIntroToMinor and safety)
+      .expect(gh.last.items == Set(2) and ib.items.get(1).seen and ib.items.get(2).seen and teenFriendAgeRule and safety)
+
+  /**
+   * Owner decision 2026-11-22, answers A2 to A5: a minor with an exact birth date reads a friends.help teen intro
+   * with no staff step; after the stop the next teen intro is retired, and the minor reads only their own items.
+   */
+  run teenIntroReadTest =
+    init.then(connect(1, "cF", false)).then(becomeMinor("p1")).then(teenBirthDate("p1"))
+      .then(produceTeenItem(1, "p1", "intro", false)).then(getUpdates(1))
+      .expect(gh.last.items == Set(1) and teenFriendAgeRule and safety)
+      .then(produceTeenItem(2, "p1", "probe", false)).then(teenStop).then(getUpdates(1))
+      .expect(gh.last.items == Set() and ib.items.get(2).seen and teenSwitchOffNoMinor and safety)
+
+  /** A minor without an exact birth date gets no teen item; a barred minor gets none either. */
+  run teenNoBirthDateTest =
+    init.then(connect(1, "cF", false)).then(becomeMinor("p1"))
+      .then(produceTeenItem(1, "p1", "intro", false)).fail()
+  run teenBarredTest =
+    init.then(connect(1, "cF", false)).then(becomeMinor("p1")).then(teenBirthDate("p1")).then(teenReadyLost("p1"))
+      .then(produceTeenItem(1, "p1", "intro", false)).fail()
+  /** The bar is on the number. After erasure a new minor on the same number with a birth date is not teen ready. */
+  run teenBarAfterEraseTest =
+    init.then(becomeMinor("p1")).then(teenBirthDate("p1")).then(teenReadyLost("p1"))
+      .then(deleteAll("p1")).then(createPerson("n1")).then(becomeMinor("p2"))
+      .then(join("p2", "friends")).then(teenBirthDate("p2"))
+      .expect(pf.owner.get("n1") == "p2" and pf.teenBarred.contains("n1") and not(teenReadyIn(pf, "p2")) and safety)
+      .then(produceTeenItem(1, "p2", "intro", false)).fail()
+  /** The bar moves with a number change: the person on the new number is still barred. */
+  run teenBarMovesTest =
+    init.then(becomeMinor("p1")).then(teenBirthDate("p1")).then(teenReadyLost("p1"))
+      .then(movePhone("p1", "n1", "n2"))
+      .expect(pf.teenBarred.contains("n2") and not(teenReadyIn(pf, "p1")) and safety)
+      .then(produceTeenItem(1, "p1", "intro", false)).fail()
 
   /** MCP55 fix (e2e "an update that fails the output leak gate is withheld and stays unseen"). */
   run withheldTest =

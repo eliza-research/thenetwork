@@ -6,13 +6,14 @@
 import { describe, expect, test } from "vitest";
 import { HOUR } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
 describe("review revision", () => {
   // spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw"
   test("an approval of the revision before a re-roll is refused, contacts nobody, and the current revision can still be approved", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { review: "human" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")], { inlineJudge: holdEveryItem.inline });
     await w.onboard("a", "b", "c");
     const id = w.propose(["a", "b"], { alternates: ["c"] });
     expect(await w.runUntil(() => w.net.reviewQueue().some(x => x.oppId === id))).toBe(true);
@@ -22,6 +23,7 @@ describe("review revision", () => {
 
     // Reviewer 2 re-rolls Ben out with the revision they saw.
     expect(w.net.decide(id, "reroll", { reviewer: "staff-2", swapOut: "b", revision: seen.revision })).toEqual({ ok: true });
+    await w.net.tick(w.clock.now());
     const now = w.net.reviewQueue().find(x => x.oppId === id)!;
     expect(now.proposal.participants).toEqual(["a", "c"]);
     expect(now.revision).toBe(1);

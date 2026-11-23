@@ -11,7 +11,10 @@ import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPr
 import { durableStaffHoldSnapshotStatus, staffBanSnapshotStatus } from "../../core/src/generated/staffSafetyService.ts";
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
 import { peonSeats } from "@thenetwork/engine";
+import { earliestDayKeyOf, latestDayKeyOf } from "../../core/src/birth-date.ts";
+import { ageOnDay, birthDateExact, effectiveBirthKey, laterBirthKey, mergeReading, readingsConflict, type BirthReadings } from "../../core/src/generated/memberAge.ts";
 import { readPublicEvents } from "./public-events.ts";
+import { teenFriendApp } from "../../core/src/generated/matchLane.ts";
 
 /** Static SQL-only purpose fence for automated inputs; never interpolate a caller-provided identifier. */
 export function automatedFacetPredicate(sql: SQL, memberJoin = false) {
@@ -41,6 +44,36 @@ export function effectiveParticipation(row: {participation_state: ParticipationS
   const state = override === "KeepBase" ? row.participation_state
     : override === "UseNormal" ? "normal" : override === "UseQuiet" ? "quiet" : "paused";
   return { state, window, active };
+}
+
+const readingOf = (lower: unknown, upper: unknown, youngest: unknown): BirthReadings | undefined =>
+  upper === null || upper === undefined ? undefined : { lower: Number(lower), upper: Number(upper), youngest: Number(youngest) };
+
+export function birthFieldsOf(r: any, now: number): Pick<Member, "birthKey" | "birthExact" | "ageConflict" | "maxAge" | "teenBarred" | "teenHeld"> & { age?: number } {
+  const person = readingOf(r.ab_birth_lower, r.ab_birth_upper, r.ab_birth_youngest);
+  const floor = readingOf(r.ab_floor_birth_lower, r.ab_floor_birth_upper, r.ab_floor_birth_youngest);
+  const merged = person && floor ? mergeReading(true, person, floor.lower, floor.upper) : person ?? floor;
+  if (!merged) return {};
+  const readings = person && floor ? { ...merged, youngest: laterBirthKey(merged.youngest, floor.youngest) } : merged;
+  const key = effectiveBirthKey(readings);
+  const birthDate = r.ab_birth_date === null || r.ab_birth_date === undefined ? undefined : Number(r.ab_birth_date);
+  return {
+    age: ageOnDay(key, earliestDayKeyOf(now)), maxAge: ageOnDay(key, latestDayKeyOf(now)), birthKey: key,
+    birthExact: birthDateExact(birthDate !== undefined, birthDate ?? 0, readings), ageConflict: readingsConflict(readings),
+    teenBarred: r.ab_teen_pool_barred === true, teenHeld: r.ab_teen_pool_held === true,
+  };
+}
+
+export async function effectiveAgesOf(tx: SQL, app: string, memberIds: readonly string[], now: number): Promise<Map<string, number | undefined>> {
+  if (memberIds.length === 0) return new Map();
+  const rows = await tx`select a.member_id, a.age as matching_age, (m.age is null or p.id is null or p.lowest_age is null) as age_missing,
+      a.birth_date as ab_birth_date, a.birth_lower as ab_birth_lower, a.birth_upper as ab_birth_upper, a.birth_youngest as ab_birth_youngest,
+      a.floor_birth_lower as ab_floor_birth_lower, a.floor_birth_upper as ab_floor_birth_upper, a.floor_birth_youngest as ab_floor_birth_youngest
+    from platform.matching_ages a join network.members m on m.app_id=a.app_id and m.id=a.member_id
+    left join platform.people p on p.id=m.person_id
+    where a.app_id=${app} and a.member_id in ${tx([...new Set(memberIds)])}`;
+  return new Map(rows.map(r => [String(r.member_id), r.age_missing === true ? undefined
+    : birthFieldsOf(r, now).age ?? (r.matching_age === null ? undefined : Number(r.matching_age))]));
 }
 
 const CORE_EDGES = new Set<EdgeType>(["invited_by", "vouched_for", "knows", "met", "introduced", "helped", "hosted", "enjoyed", "would_interact_again", "group_only", "avoid", "blocked"]);
@@ -94,8 +127,13 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
  */
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
-  const [members, facets, intents, presence, edges, recent, parts, personBlocks, events] = await Promise.all([
-    sql`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at from network.members m
+  const [members, facets, intents, presence, edges, recent, parts, personBlocks, events, teenAvoid] = await Promise.all([
+    sql`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at,
+      a.birth_date as ab_birth_date, a.birth_lower as ab_birth_lower, a.birth_upper as ab_birth_upper, a.birth_youngest as ab_birth_youngest,
+      a.floor_birth_lower as ab_floor_birth_lower, a.floor_birth_upper as ab_floor_birth_upper, a.floor_birth_youngest as ab_floor_birth_youngest,
+      a.teen_pool_barred as ab_teen_pool_barred,
+      exists (select 1 from platform.teen_pool_holds h join platform.people hp on hp.phone_hash = h.phone_hash
+        where hp.id = m.person_id and h.app_id <> m.app_id) as ab_teen_pool_held from network.members m
       left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
     // Acceptance authorizes private intake, not matching or downstream automated use. Privacy scope is independent.
@@ -112,6 +150,10 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
       join network.members t on t.person_id = pb.to_person and t.app_id = ${app} order by f.id, t.id`,
     scope.purpose === "profile_review" ? [] : readPublicEvents(sql, now, scope.city),
+    teenFriendApp(app) ? sql`select f.id as from_id, t.id as to_id, a.at as created_at from platform.teen_pair_avoid a
+      join platform.people pa on pa.phone_hash = a.phone_hash_a join platform.people pb on pb.phone_hash = a.phone_hash_b
+      join network.members f on f.person_id = pa.id and f.app_id = ${app}
+      join network.members t on t.person_id = pb.id and t.app_id = ${app} order by f.id, t.id` : [],
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.
   const joined = new Set((members as any[]).map(r => r.id as string));
@@ -138,6 +180,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.matching_age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
+      ...birthFieldsOf(r, now),
     })),
     facets: (facets as any[]).filter(r => keep(r.member_id)).map(facetOf), intents: (intents as any[]).filter(r => keep(r.member_id)).map(intentOf),
     presence: matchingPresence.filter(p => keep(p.memberId)),
@@ -145,6 +188,8 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       ...(edges as any[]).filter(e => CORE_EDGES.has(e.type) && keep(e.from_id) && keep(e.to_id)).map((e): Edge => ({ from: e.from_id, to: e.to_id, type: e.type, strength: e.strength, explicit: e.explicit, createdAt: ms(e.created_at) ?? 0 })),
       ...(personBlocks as any[]).filter(e => keep(e.from_id) && keep(e.to_id) && !(edges as any[]).some(x => x.type === "blocked" && x.from_id === e.from_id && x.to_id === e.to_id))
         .map((e): Edge => ({ from: e.from_id, to: e.to_id, type: "blocked", strength: 1, explicit: true, createdAt: ms(e.created_at) ?? 0 })),
+      ...(teenAvoid as any[]).filter(e => keep(e.from_id) && keep(e.to_id))
+        .map((e): Edge => ({ from: e.from_id, to: e.to_id, type: "avoid", strength: 1, explicit: true, createdAt: ms(e.created_at) ?? 0 })),
     ],
     recentProposals: (recent as any[]).map((o): Proposal => ({
       id: o.id, kind: o.kind, participants: (partsBy.get(o.id) ?? []).filter(p => p.role === "participant").map(p => p.member_id),

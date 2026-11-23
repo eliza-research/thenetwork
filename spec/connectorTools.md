@@ -15,14 +15,15 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 
 ### Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date
 
-There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool. Changed: the Join draft tool is back, because the Finish signup step of the connection page now reads the draft that it saves (audit MCP16 and SIG46).
+There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool. Only the slop.date host lists the two photo tools, `my_photos` and `photo_request`, and the slop.date host is only on the full surface. Changed: the Join draft tool is back, because the Finish signup step of the connection page now reads the draft that it saves (audit MCP16 and SIG46). Changed (owner decision 2026-11-22): the photo tools are new, and only slop.date keeps photos.
 
-The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. A connection to a disabled OpenAI host is not available. The full surface applies the ordinary host rule. The shell refuses a request to a host that is not available before it lists or calls a tool, so the tool list of an available host uses the ordinary host rule.
+The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. A connection to a disabled OpenAI host is not available. The full surface applies the ordinary host rule. The shell refuses a request to a host that is not available before it lists or calls a tool, so the tool list of an available host uses the ordinary host rule. A ChatGPT connector that a person adds at `https://slop.date/mcp` (a registered client whose redirects all go to chatgpt.com or chat.openai.com) is a full-surface connection of the slop.date host, for every person, with the same tools and checks as every other full-surface connection, with one exception: its connection page does not offer browser signup, so a person who is not yet a slop.date member joins slop.date first and then connects. The slop.date site still has no OpenAI surface, and an OpenAI client of another kind stays unavailable on slop.date. Changed (owner decision 2026-11-22, "the connector opens to everyone"): before, only allowlisted adults (`MCP_CUSTOM_CHATGPT_SLOP`) could use this connector, with onboarding tools only; the allowlist and its extra checks are removed.
 
 ```quint
 type AppId = Ntwrk | Slop | Peon | Friends
 type Surface = FullSurface | OpenAiSurface
-type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | ReadProfileTool | SubmitProfileTool | GetUpdatesTool
+type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | ReadProfileTool | SubmitProfileTool | GetUpdatesTool |
+  ListLookingForTool | PauseLookingForTool | ResumeLookingForTool | MyPhotosTool | PhotoRequestTool
 
 pure def appOffered(surface: Surface, app: AppId): bool = surface == FullSurface or app != Slop
 
@@ -34,8 +35,14 @@ pure def configuredHostServes(surface: Surface, host: AppId, openAiEnabled: bool
 pure def lawConfiguredOptOutBlocksOpenAiHost(host: AppId): bool =
   not(configuredHostServes(OpenAiSurface, host, false))
 
+pure def photoTool(tool: ToolName): bool = tool == MyPhotosTool or tool == PhotoRequestTool
+
 pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
-  hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk)
+  hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk) and
+  (not(photoTool(tool)) or host == Slop)
+
+pure def lawPhotoToolsOnlyOnSlop(host: AppId, surface: Surface, tool: ToolName): bool =
+  (photoTool(tool) and toolListed(host, surface, tool)) implies (host == Slop and surface == FullSurface)
 
 pure def lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bool =
   toolListed(host, surface, PrepareSignupTool) implies (host == Friends or host == Ntwrk)
@@ -48,34 +55,43 @@ pure def lawFullSurfaceOffersEveryApp(app: AppId): bool = appOffered(FullSurface
 
 ### Public tools need no sign-in, and member tools need the person's own grant
 
-`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` needs its own explicitly authorized profile read scope. `submit_profile` and `prepare_signup` need the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
+`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` and `list_looking_for` need the explicitly authorized profile read scope. `submit_profile`, `prepare_signup`, `pause_looking_for` and `resume_looking_for` need the profile write scope. `my_photos` and `photo_request` need the explicitly authorized photos scope (`photos:use`), which no other scope includes and no other tool needs. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access. Changed (owner decision 2026-11-22): the three looking-for tools are new; the list reads saved profile state, so it needs the profile read scope, and a pause or a resume changes it, so it needs the profile write scope. Changed (owner decision 2026-11-22): the photo tools are new and need their own scope, so that a person can give an agent the profile scopes without the photo list.
 
 ```quint
-type Scope = NoScope | MembershipRead | ProfileWrite | ProfileRead
+type Scope = NoScope | MembershipRead | ProfileWrite | ProfileRead | PhotosUse
 
 pure def scopeFor(tool: ToolName): Scope =
   if (tool == AppInfoTool or tool == StartSignupTool) NoScope
   else if (tool == CheckStatusTool or tool == GetUpdatesTool) MembershipRead
-  else if (tool == ReadProfileTool) ProfileRead
+  else if (tool == ReadProfileTool or tool == ListLookingForTool) ProfileRead
+  else if (photoTool(tool)) PhotosUse
   else ProfileWrite
 
 pure def lawPublicToolsNeedNoSignIn(tool: ToolName): bool =
   (scopeFor(tool) == NoScope) iff (tool == AppInfoTool or tool == StartSignupTool)
 
-pure def grantCovers(tool: ToolName, hasRead: bool, hasWrite: bool, hasProfileRead: bool): bool =
+pure def grantCovers(tool: ToolName, hasRead: bool, hasWrite: bool, hasProfileRead: bool, hasPhotos: bool): bool =
   scopeFor(tool) == NoScope or (scopeFor(tool) == MembershipRead and hasRead) or
-  (scopeFor(tool) == ProfileWrite and hasWrite) or (scopeFor(tool) == ProfileRead and hasProfileRead)
+  (scopeFor(tool) == ProfileWrite and hasWrite) or (scopeFor(tool) == ProfileRead and hasProfileRead) or
+  (scopeFor(tool) == PhotosUse and hasPhotos)
 
-pure def lawGrantCoversPublicTools(tool: ToolName, hasRead: bool, hasWrite: bool, hasProfileRead: bool): bool =
-  scopeFor(tool) == NoScope implies grantCovers(tool, hasRead, hasWrite, hasProfileRead)
+pure def lawGrantCoversPublicTools(tool: ToolName, hasRead: bool, hasWrite: bool, hasProfileRead: bool, hasPhotos: bool): bool =
+  scopeFor(tool) == NoScope implies grantCovers(tool, hasRead, hasWrite, hasProfileRead, hasPhotos)
 
-pure def lawProfileReadScopeIsSeparate(hasRead: bool, hasWrite: bool): bool =
-  not(grantCovers(ReadProfileTool, hasRead, hasWrite, false))
+pure def lawProfileReadScopeIsSeparate(hasRead: bool, hasWrite: bool, hasPhotos: bool): bool =
+  not(grantCovers(ReadProfileTool, hasRead, hasWrite, false, hasPhotos)) and not(grantCovers(ListLookingForTool, hasRead, hasWrite, false, hasPhotos))
+
+pure def lawPhotoScopeIsSeparate(tool: ToolName, hasRead: bool, hasWrite: bool, hasProfileRead: bool, hasPhotos: bool): bool =
+  (photoTool(tool) implies not(grantCovers(tool, hasRead, hasWrite, hasProfileRead, false))) and
+  (not(photoTool(tool)) implies (grantCovers(tool, hasRead, hasWrite, hasProfileRead, hasPhotos) == grantCovers(tool, hasRead, hasWrite, hasProfileRead, false)))
+
+pure def lawLookingForChangesNeedWrite(tool: ToolName): bool =
+  (tool == PauseLookingForTool or tool == ResumeLookingForTool) implies scopeFor(tool) == ProfileWrite
 ```
 
 ### The member status decides which member tool can act
 
-The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Each status has one next step that the agent tells the person: join or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status. Changed: the join step now names a path that works from a live connection (audit MCP15). On The Network, slop.date and friends.help, the person disconnects the app in their agent, connects it again and chooses Finish signup on the connection page; on peon.biz, the person opens the app's join page. The text keyword stays a second path where the app has one.
+The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Only an active member can list, pause or resume what the app looks for on their behalf, see their photo list or ask to send a photo. Each status has one next step that the agent tells the person: join or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status. Changed: the join step now names a path that works from a live connection (audit MCP15). On The Network, slop.date and friends.help, the person disconnects the app in their agent, connects it again and chooses Finish signup on the connection page; on peon.biz, the person opens the app's join page. The text keyword stays a second path where the app has one. Changed (owner decision 2026-11-22): the looking-for tools are new and serve only an active member, because a pause or a resume sends the person a text, and a stopped, held or onboarding member gets no such text. Changed (owner decision 2026-11-22): the photo tools serve only an active member, because a photo goes only to a match and a send request is confirmed by a text. Changed (owner decision 2026-11-22, answers A2 to A5): for an active member under 18, the nothing-to-do step is the notice that the line gives that member ([which introductions the app makes](textEnrollment.md#a-minor-hears-which-introductions-the-app-makes)), read from the network; before, the connector chose the text by app alone and promised friendship introductions while staff had stopped them or the age was in doubt. When the network cannot give the notice, the connector uses the notice for a stored doubt, which promises no introductions.
 
 ```quint
 type MemberStatus = NotJoined | Invited | Onboarding | Active | Stopped | OnHold
@@ -96,7 +112,7 @@ pure def lawStoppedMembershipCannotSubmitProfile(storedStatus: str, reviewRequir
 
 pure def toolAllowedFor(tool: ToolName, status: MemberStatus): bool =
   if (tool == SubmitProfileTool) liveMember(status)
-  else if (tool == ReadProfileTool) status == Active
+  else if (tool == ReadProfileTool or tool == ListLookingForTool or tool == PauseLookingForTool or tool == ResumeLookingForTool or photoTool(tool)) status == Active
   else if (tool == PrepareSignupTool) (status == NotJoined or status == Invited)
   else true
 
@@ -114,6 +130,13 @@ pure def lawSubmitOnlyForLiveMembers(status: MemberStatus): bool =
 pure def lawDraftOnlyBeforeJoining(status: MemberStatus): bool =
   toolAllowedFor(PrepareSignupTool, status) iff (status == NotJoined or status == Invited)
 
+pure def lawLookingForOnlyForActiveMembers(status: MemberStatus): bool =
+  (toolAllowedFor(ListLookingForTool, status) or toolAllowedFor(PauseLookingForTool, status) or toolAllowedFor(ResumeLookingForTool, status))
+    implies status == Active
+
+pure def lawPhotoToolsOnlyForActiveMembers(status: MemberStatus): bool =
+  (toolAllowedFor(MyPhotosTool, status) or toolAllowedFor(PhotoRequestTool, status)) implies status == Active
+
 pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
   toolAllowedFor(AppInfoTool, status) and toolAllowedFor(StartSignupTool, status) and
   toolAllowedFor(CheckStatusTool, status) and toolAllowedFor(GetUpdatesTool, status)
@@ -127,13 +150,16 @@ The agent first reaches one host on one surface. The host is fixed before any to
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
 type ToolResult =
   NoResult | PublicFacts | AppNotAvailable | SignInNeeded | StatusShown | ProfileAccepted |
-  ProfileNotForStatus | DraftSaved | DraftRefused | UpdatesShown | TooManyToday | SavedProfileShown | SavedProfileUnavailable
+  ProfileNotForStatus | DraftSaved | DraftRefused | UpdatesShown | TooManyToday | SavedProfileShown | SavedProfileUnavailable |
+  LookingForUnavailable | LookingForShown | LookingForChanged | LookingForUnchanged |
+  PhotoListShown | PhotoRequestAnswered | PhotoToolUnavailable
 type Connection = {
   phase: ConnectionPhase,
   host: AppId,
   surface: Surface,
   hasWrite: bool,
   hasProfileRead: bool,
+  hasPhotos: bool,
   status: MemberStatus,
   profileApproved: bool,
   profileSent: bool,
@@ -145,7 +171,7 @@ type Connection = {
   lastResult: ToolResult
 }
 pure val initial: Connection = {
-  phase: Unbound, host: Ntwrk, surface: FullSurface, hasWrite: false, hasProfileRead: false, status: NotJoined,
+  phase: Unbound, host: Ntwrk, surface: FullSurface, hasWrite: false, hasProfileRead: false, hasPhotos: false, status: NotJoined,
   profileApproved: false, profileSent: false, sentToday: 0, draftPrepared: false,
   tokenUnseen: false, otherUnseen: false, lastShown: 0, lastResult: NoResult
 }
@@ -162,8 +188,8 @@ pure def lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): bool =
 
 pure def canAuthorize(c: Connection): bool = c.phase == Anonymous or c.phase == Revoked
 
-pure def authorize(c: Connection, withWrite: bool, withProfileRead: bool): Connection =
-  { ...c, phase: Connected, hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, draftPrepared: false, lastResult: NoResult }
+pure def authorize(c: Connection, withWrite: bool, withProfileRead: bool, withPhotos: bool): Connection =
+  { ...c, phase: Connected, hasWrite: withWrite, hasProfileRead: withProfileRead, hasPhotos: withPhotos, sentToday: 0, draftPrepared: false, lastResult: NoResult }
 
 pure def canCallPublicTool(c: Connection, tool: ToolName): bool =
   (c.phase == Anonymous or c.phase == Connected) and scopeFor(tool) == NoScope
@@ -175,7 +201,7 @@ pure def canCallWithoutAccess(c: Connection, tool: ToolName): bool =
   bound(c) and toolListed(c.host, c.surface, tool) and
   ((c.phase == Anonymous and scopeFor(tool) != NoScope) or
    c.phase == Revoked or
-   (c.phase == Connected and not(grantCovers(tool, true, c.hasWrite, c.hasProfileRead))))
+   (c.phase == Connected and not(grantCovers(tool, true, c.hasWrite, c.hasProfileRead, c.hasPhotos))))
 
 pure def callWithoutAccess(c: Connection, tool: ToolName): Connection =
   { ...c, lastResult: SignInNeeded }
@@ -188,6 +214,9 @@ pure def alwaysWriteNeedsConnection(c: Connection): bool =
 
 pure def alwaysUnboundHasNoDraft(c: Connection): bool =
   c.phase == Unbound implies not(c.draftPrepared)
+
+pure def alwaysPhotosNeedConnection(c: Connection): bool =
+  c.hasPhotos implies c.phase == Connected
 ```
 
 ### A grant that no longer belongs to the phone's person ends the connection
@@ -209,11 +238,13 @@ pure def lawOnlyObservedOwnerChangeEndsGrant(available: bool, held: bool, samePe
 pure def canCallAfterOwnerChange(c: Connection): bool = c.phase == Connected
 
 pure def callAfterOwnerChange(c: Connection): Connection =
-  { ...c, phase: Revoked, hasWrite: false, hasProfileRead: false, lastResult: SignInNeeded }
+  { ...c, phase: Revoked, hasWrite: false, hasProfileRead: false, hasPhotos: false, lastResult: SignInNeeded }
 
 pure def memberResult(r: ToolResult): bool =
   r == StatusShown or r == ProfileAccepted or r == ProfileNotForStatus or r == DraftSaved or
-  r == DraftRefused or r == UpdatesShown or r == TooManyToday or r == SavedProfileShown or r == SavedProfileUnavailable
+  r == DraftRefused or r == UpdatesShown or r == TooManyToday or r == SavedProfileShown or r == SavedProfileUnavailable or
+  r == LookingForUnavailable or r == LookingForShown or r == LookingForChanged or r == LookingForUnchanged or
+  r == PhotoListShown or r == PhotoRequestAnswered or r == PhotoToolUnavailable
 
 pure def alwaysMemberResultsNeedConnection(c: Connection): bool =
   memberResult(c.lastResult) implies c.phase == Connected
@@ -254,9 +285,75 @@ pure def stepSavedProfileNeedsReadAuthority(before: Connection, via: str, after:
 pure def sometimesSavedProfileShown(c: Connection): bool = c.lastResult == SavedProfileShown
 ```
 
+### The agent can list the person's standing things and pause or resume one, but never close one
+
+`list_looking_for` shows the things that the app looks for on the person's behalf in this one app: their active and paused wants, requests and job posts, each with a reference, and what they closed in the last 30 days. It changes nothing. `pause_looking_for` and `resume_looking_for` change one thing that the reference names, and only after the person asked in the conversation. The connector never closes anything: to close a thing for good, the person replies CLOSE to the text that the app sends, or texts the close command. The platform rechecks the current phone, member, ban, age and app consent on each call. The network decides the change ([standing change rule](standingIntentManagement.md)): at most three applied agent changes a day for each person across all grants, never a resume of a thing that the person closed, a resume for adults only, and no change to a job post. Each applied change sends the person one text with how to undo it; a change that the person cannot be told about (texts are off) is refused. A call that finds the thing already in the asked state changes nothing and sends nothing. The list text and each summary pass the output leak gate; a summary that fails is left out. Changed (owner decision 2026-11-22): before this rule the agent could not see what the app looked for, and the only way to end a want was profile text that an assistant wrote; now profile text only adds, and the person's own agent can pause and resume one named thing, which the person can undo. A result of another tool shows a summary of a standing thing only when the token holds the profile read scope: `submit_profile` then returns `looking_for` and `check_with_person`, and `pause_looking_for` and `resume_looking_for` return the changed item. With the profile write scope only, `submit_profile` returns empty lists and, when a submitted profile may not match what is active, a next step that asks the person to check by text, and a pause or a resume returns no item. Changed (owner decision 2026-11-22): before this sentence a grant with only the default profile write scope read the summaries through `submit_profile` and the change results, which went around the separate profile read consent.
+
+```quint
+pure def lookingForTool(tool: ToolName): bool =
+  tool == ListLookingForTool or tool == PauseLookingForTool or tool == ResumeLookingForTool
+
+pure def resultShowsLookingFor(hasProfileRead: bool): bool =
+  grantCovers(ListLookingForTool, false, false, hasProfileRead, false)
+
+pure def lawLookingForResultNeedsProfileRead(hasProfileRead: bool): bool =
+  resultShowsLookingFor(hasProfileRead) == hasProfileRead
+
+pure def canCallLookingForTool(c: Connection, tool: ToolName): bool =
+  c.phase == Connected and lookingForTool(tool) and
+    (if (tool == ListLookingForTool) c.hasProfileRead else c.hasWrite)
+
+pure def callLookingForTool(c: Connection, tool: ToolName, currentMembership: bool, changed: bool): Connection =
+  { ...c, lastResult:
+    if (not(toolAllowedFor(tool, c.status)) or not(currentMembership)) LookingForUnavailable
+    else if (tool == ListLookingForTool) LookingForShown
+    else if (changed) LookingForChanged
+    else LookingForUnchanged }
+
+pure def stepLookingForChangeNeedsWriteAndActive(before: Connection, via: str, after: Connection): bool =
+  (after.lastResult == LookingForChanged and before.lastResult != LookingForChanged) implies
+    (via == "callLookingForTool" and before.phase == Connected and before.hasWrite and before.status == Active)
+
+pure def stepLookingForListNeedsRead(before: Connection, via: str, after: Connection): bool =
+  (after.lastResult == LookingForShown and before.lastResult != LookingForShown) implies
+    (via == "callLookingForTool" and before.phase == Connected and before.hasProfileRead and before.status == Active)
+
+pure def sometimesLookingForShown(c: Connection): bool = c.lastResult == LookingForShown
+pure def sometimesLookingForChanged(c: Connection): bool = c.lastResult == LookingForChanged
+pure def sometimesLookingForUnchanged(c: Connection): bool = c.lastResult == LookingForUnchanged
+pure def sometimesLookingForUnavailable(c: Connection): bool = c.lastResult == LookingForUnavailable
+```
+
+### The agent sees the person's photo list and asks to send a photo, but never sees a photo and never confirms a send
+
+On slop.date, `my_photos` shows the person's own photo list: for each photo its number, its name if the person gave one, the day it was added, and the first name and state of each match who was offered it (asked, checking, ready or opened). It never shows a photo id, a photo, a thumbnail, a link, a rating or anything about the match other than the first name. `photo_request` passes the person's own words about a photo, such as "send Maya the beach one". The service reads the words as it reads them on the text line, and texts the person the proposal with its check page link. The result says only that a text went, that a step was done (a name, a take-back), that the request was refused, or that photos are not available, with the reply text without any link. The agent can never confirm a send: only the person's YES to the text on their phone, or Send on the check page, is consent. The platform checks the current phone, the member, the ban, the app consent and the age on each call, and a person who is not a known adult gets the unavailable answer. Added (owner decision 2026-11-22): the person can review in their own agent which photos the app has and who has each, and ask for a send in their own words; the agent sees the list only with the separate photos scope, and never the photos.
+
+```quint
+pure val hasPhotosValues = Set(true, false)
+pure val withPhotosValues = Set(true, false)
+pure val adultMemberValues = Set(true, false)
+
+pure def canCallPhotoTool(c: Connection, tool: ToolName): bool =
+  c.phase == Connected and photoTool(tool) and c.hasPhotos and toolListed(c.host, c.surface, tool)
+
+pure def callPhotoTool(c: Connection, tool: ToolName, currentMembership: bool, adultMember: bool): Connection =
+  { ...c, lastResult:
+    if (not(toolAllowedFor(tool, c.status)) or not(currentMembership) or not(adultMember)) PhotoToolUnavailable
+    else if (tool == MyPhotosTool) PhotoListShown
+    else PhotoRequestAnswered }
+
+pure def stepPhotoToolNeedsPhotosScopeAndActive(before: Connection, via: str, after: Connection): bool =
+  ((after.lastResult == PhotoListShown or after.lastResult == PhotoRequestAnswered) and after.lastResult != before.lastResult) implies
+    (via == "callPhotoTool" and before.phase == Connected and before.hasPhotos and before.status == Active and before.host == Slop)
+
+pure def sometimesPhotoListShown(c: Connection): bool = c.lastResult == PhotoListShown
+pure def sometimesPhotoRequestAnswered(c: Connection): bool = c.lastResult == PhotoRequestAnswered
+pure def sometimesPhotoToolUnavailable(c: Connection): bool = c.lastResult == PhotoToolUnavailable
+```
+
 ### The agent sends an approved profile once, only for a live member, within the daily limit
 
-The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once. The agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. Check the exact phone owner and any current opt-out again before forwarding a claimed profile to the app. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
+The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once. The agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. Check the exact phone owner and any current opt-out again before forwarding a claimed profile to the app. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count. After the app takes the profile, the result lists what is active and what to check with the person only for a token with the profile read scope ([looking-for rule](#the-agent-can-list-the-persons-standing-things-and-pause-or-resume-one-but-never-close-one)). Changed (owner decision 2026-11-22): the list in this result now needs the profile read scope, as `list_looking_for` does.
 
 ```quint
 pure val profileDailyCap = 5
@@ -356,25 +453,25 @@ pure def stepReadingNeverAddsUnseen(before: Connection, via: str, after: Connect
 
 ### A reader who cannot be matched never reads an update about another member
 
-A person aged 13 to 17 uses the agent for themselves and is never told about another member. A person of unknown age cannot be matched either. The read decides each selected update from four facts: the update is current (its opportunity, if any, is still open), the reader can be matched (a known age of 18 or more in this app), the update is about another member (it belongs to an opportunity), and its summary passes the output leak gate. An update that is not current, or that is about another member while the reader cannot be matched, is retired: it is not shown and it is marked seen, so no later read on any surface shows it. An update about the reader only (a reminder, an event for themselves) stays readable at every age. Changed: before this rule the connector had no age check, and a member whose lowest age dropped to 13 to 17 still read earlier updates about adults (audit MCP54).
+The read decides each selected update from four facts: the update is current (its opportunity, if any, is still open), the reader's age allows the item (`readerAgeAllowed`), the update is about another member (it belongs to an opportunity), and its summary passes the output leak gate. For an item that is not a teen friendship item, the reader's age allows it only when the reader can be matched (a known age of 18 or more in this app). For a teen friendship item (an item with a minor that the age rule of spec/friendIntroAge.md admitted), the reader's age allows it only while the age rule holds for its roster now, while no stop is stored, for every reader, the adult partner included. So a person aged 13 to 17 reads about another member only for a current teen friendship item, and a person of unknown age never does. An update that is not current, or that is about another member while the reader's age does not allow the item, is retired: it is not shown and it is marked seen, so no later read on any surface shows it. An update about the reader only (a reminder, an event for themselves) stays readable at every age. Changed: before this rule the connector had no age check, and a member whose lowest age dropped to 13 to 17 still read earlier updates about adults (audit MCP54). Changed (owner decision 2026-11-22): the parameter `readerMatchable` is now `readerAgeAllowed`, because a minor may read about a current teen friendship item, and an adult reader of a teen friendship item reads about it only while the age rule holds for it. Changed (owner decision 2026-11-22, answers A2 to A5): the stored switch that two admins turned on is replaced by a stored stop, so a teen item is readable while no stop is stored.
 
 ```quint
 type ConnectorUpdateOutcome = InboxUpdateShown | InboxUpdateRetired | InboxUpdateWithheld
 
-pure def connectorUpdateOutcome(stillCurrent: bool, readerMatchable: bool, aboutAnotherMember: bool, passesLeakGate: bool): ConnectorUpdateOutcome =
-  if (not(stillCurrent) or (aboutAnotherMember and not(readerMatchable))) InboxUpdateRetired
+pure def connectorUpdateOutcome(stillCurrent: bool, readerAgeAllowed: bool, aboutAnotherMember: bool, passesLeakGate: bool): ConnectorUpdateOutcome =
+  if (not(stillCurrent) or (aboutAnotherMember and not(readerAgeAllowed))) InboxUpdateRetired
   else if (not(passesLeakGate)) InboxUpdateWithheld
   else InboxUpdateShown
 
 pure def lawUnmatchableReaderNeverReadsAboutAnotherMember(stillCurrent: bool, passesLeakGate: bool): bool =
   connectorUpdateOutcome(stillCurrent, false, true, passesLeakGate) == InboxUpdateRetired
 
-pure def lawOwnUpdateReadableAtEveryAge(readerMatchable: bool): bool =
-  connectorUpdateOutcome(true, readerMatchable, false, true) == InboxUpdateShown
+pure def lawOwnUpdateReadableAtEveryAge(readerAgeAllowed: bool): bool =
+  connectorUpdateOutcome(true, readerAgeAllowed, false, true) == InboxUpdateShown
 
-pure def lawShownUpdateIsCurrentSafeAndAllowed(stillCurrent: bool, readerMatchable: bool, aboutAnotherMember: bool, passesLeakGate: bool): bool =
-  connectorUpdateOutcome(stillCurrent, readerMatchable, aboutAnotherMember, passesLeakGate) == InboxUpdateShown implies
-    (stillCurrent and passesLeakGate and (readerMatchable or not(aboutAnotherMember)))
+pure def lawShownUpdateIsCurrentSafeAndAllowed(stillCurrent: bool, readerAgeAllowed: bool, aboutAnotherMember: bool, passesLeakGate: bool): bool =
+  connectorUpdateOutcome(stillCurrent, readerAgeAllowed, aboutAnotherMember, passesLeakGate) == InboxUpdateShown implies
+    (stillCurrent and passesLeakGate and (readerAgeAllowed or not(aboutAnotherMember)))
 ```
 
 ### A withheld update stays unseen
@@ -384,15 +481,15 @@ A current update that the reader may read but whose summary fails the output lea
 ```quint
 pure def connectorUpdateMarkedSeen(updateOutcome: ConnectorUpdateOutcome): bool = updateOutcome != InboxUpdateWithheld
 
-pure def lawAllowedUpdateFailingGateStaysUnseen(readerMatchable: bool, aboutAnotherMember: bool): bool =
-  (readerMatchable or not(aboutAnotherMember)) implies
-    not(connectorUpdateMarkedSeen(connectorUpdateOutcome(true, readerMatchable, aboutAnotherMember, false)))
+pure def lawAllowedUpdateFailingGateStaysUnseen(readerAgeAllowed: bool, aboutAnotherMember: bool): bool =
+  (readerAgeAllowed or not(aboutAnotherMember)) implies
+    not(connectorUpdateMarkedSeen(connectorUpdateOutcome(true, readerAgeAllowed, aboutAnotherMember, false)))
 
-pure def lawRetiredUpdateIsMarkedSeen(readerMatchable: bool, aboutAnotherMember: bool, passesLeakGate: bool): bool =
-  connectorUpdateMarkedSeen(connectorUpdateOutcome(false, readerMatchable, aboutAnotherMember, passesLeakGate))
+pure def lawRetiredUpdateIsMarkedSeen(readerAgeAllowed: bool, aboutAnotherMember: bool, passesLeakGate: bool): bool =
+  connectorUpdateMarkedSeen(connectorUpdateOutcome(false, readerAgeAllowed, aboutAnotherMember, passesLeakGate))
 
-pure def lawFailedGateIsNeverShown(stillCurrent: bool, readerMatchable: bool, aboutAnotherMember: bool): bool =
-  connectorUpdateOutcome(stillCurrent, readerMatchable, aboutAnotherMember, false) != InboxUpdateShown
+pure def lawFailedGateIsNeverShown(stillCurrent: bool, readerAgeAllowed: bool, aboutAnotherMember: bool): bool =
+  connectorUpdateOutcome(stillCurrent, readerAgeAllowed, aboutAnotherMember, false) != InboxUpdateShown
 ```
 
 ### Request limits count each person's grant, and the client address has only a coarse ceiling

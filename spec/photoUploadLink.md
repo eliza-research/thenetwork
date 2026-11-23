@@ -70,6 +70,22 @@ pure def lawMinorNeverUploads(link: PhotoUploadLink, holder: UploadLinkHolder, s
 pure def sometimesLinkSpent(link: PhotoUploadLink): bool = link.phase == UploadLinkSpent
 ```
 
+### A status check says whether a link can still upload, and does not use it
+
+The link page asks before the member chooses photos. The check reads the link row and the holder with the same decision that a use applies, `uploadLinkUsable`, on the app of the request, and it writes nothing, so the link stays open. An open link answers with whether the upload must carry the photo consent, and with the current consent version and text, so the page shows the exact words that the member agrees to. A malformed token gets status 404. An unknown, used or expired link, a link of another app and a holder who is no longer eligible all get status 410. Both answers have the same body, `link_unavailable`, which names no person, and a use of the link gives the same two statuses. Changed on 2026-11-22 (owner decision, one-purpose pages): before, the page could only learn that a link was closed by using it, and it had no source for the consent text.
+
+```quint
+pure val sameAppValues = Set(true, false)
+
+pure def lawOpenStatusMeansTheUseUploads(holder: UploadLinkHolder, sameApp: bool, at: int): bool =
+  val link = issueUploadLink(initial, holder, at)
+  uploadLinkUsable(link, holder, sameApp, at) implies redeemUploadLink(link, holder, sameApp, at).phase == UploadLinkSpent
+
+pure def lawClosedStatusMeansTheUseStoresNothing(holder: UploadLinkHolder, sameApp: bool, at: int): bool =
+  val link = issueUploadLink(initial, holder, at)
+  not(uploadLinkUsable(link, holder, sameApp, at)) implies redeemUploadLink(link, holder, sameApp, at).phase != UploadLinkSpent
+```
+
 ### One link use carries one to four photos of at most four MiB each and eight MiB in all
 
 A batch has the size that one private rating reads, so every photo in it can be rated. The whole batch is at most the size of one normal upload, eight MiB, so it fits under the nine MiB body that the site router and the backend's public port read. Each photo then goes through the normal upload checks. Changed: the eight MiB total is new; before, four photos of four MiB each were promised and the edge refused any batch over nine MiB before the backend saw it.

@@ -419,9 +419,9 @@ test("retention removes an accepted suggestion whose saved fact another path del
 });
 
 const httpSecret = "local-suggestion-review-fixture-secret-only";
-async function storedTurn(messageId: string, text: string, app = "ntwrk", memberId = "owned-member") {
+async function storedTurn(messageId: string, text: string, app = "ntwrk", memberId = "owned-member", senderHash = "fixture-phone-hash") {
   await sql`insert into platform.inbound(id,received_at,arrived_at,status,sender_hash,response,request_hash)
-    values(${`msg:blooio:${messageId}`},${new Date(now)},${new Date(now)},'done','fixture-phone-hash',${{ outcome: "open", app, memberId }}::jsonb,
+    values(${`msg:blooio:${messageId}`},${new Date(now)},${new Date(now)},'done',${senderHash},${{ outcome: "open", app, memberId }}::jsonb,
       ${createHash('sha256').update(`synthetic-signed-${messageId}`).digest('hex')})`;
   await sql`insert into network.messages(id,app_id,member_id,direction,body,ts)
     values(${`in:blooio:${messageId}`},${app},${memberId},'inbound',${text},${new Date(now)})`;
@@ -526,6 +526,141 @@ test("HTTP edit, stale revision, source revoke and expiry cannot silently promot
     expect((await http.post("decide", "accept", b.id, { text })).status).toBe(403);
     expect(await facets()).toHaveLength(0);
     expect((await sql`select value,status from platform.profile_suggestions`)[0]).toMatchObject({ value: null, status: "expired" });
+  } finally { await http.stop(); }
+});
+
+test("HTTP review shows the private preview and decides only an exact command: a bare yes, a missing scope, an unknown item, a bad scope, a foreign token and an empty or long edit save nothing", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const token = `${b.id}.${b.revision}`;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    await storedTurn("show", "show my suggestions");
+    const preview = await http.post("preview", "show", b.id);
+    expect(preview.status).toBe(200);
+    for (const part of ["nothing saved yet", "Gmail; observed", "Source window:", "(America/Los_Angeles)", "remove these accepted facts", `accept ${token} 1 private`])
+      expect(preview.body.reviewText).toContain(part);
+    let n = 0;
+    const decide = async (text: string) => { const id = `command-${++n}`; await storedTurn(id, text); return http.post("decide", id, b.id, { text }); };
+    for (const text of ["yes", "approve all", `accept ${token} 1`, `accept ${token} 2 private`, `accept ${token} 1 shareable`, `accept ${b.id}.${b.revision + 1} 1 private`,
+      `accept ${randomUUID()}.${b.revision} 1 private`, `edit ${token} 1: `, `edit ${token} 1: ${"x".repeat(401)}`, `reject ${token} 1 matching`]) {
+      const r = await decide(text);
+      expect([text, r.status, r.body.kind]).toEqual([text, 403, "denied"]);
+    }
+    expect(await facets()).toHaveLength(0);
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${b.id}`).map((r: any) => r.status)).toEqual(["proposed"]);
+    expect((await sql`select revision from platform.profile_suggestion_batches where id=${b.id}`)[0]!.revision).toBe(b.revision);
+    expect((await decide(`accept ${token} 1 private`)).body).toMatchObject({ kind: "saved", accepted: [b.suggestions[0]!.id], rejected: [], reviewText: "1 saved; 0 rejected." });
+    expect(await facets()).toEqual([expect.objectContaining({ value: "I enjoy climbing", scope: "agent_private" })]);
+    await storedTurn("show-again", "show my suggestions");
+    expect((await http.post("preview", "show-again", b.id)).status).toBe(403);
+    expect((await decide(`reject ${token} 1`)).status).toBe(403);
+    expect(await facets()).toHaveLength(1);
+  } finally { await http.stop(); }
+});
+
+test("HTTP review never shows or decides a batch for another person, app, chat, Cloud user or organization, and records no decision for them", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const text = `accept ${b.id}.${b.revision} 1 private`;
+  const own = { userId: owner.userId, organizationId: owner.organizationId, chatId: owner.chatId };
+  let binding = own;
+  await sql`insert into platform.memberships(person_id,app_id,member_id,state,first_name,profile) values(${owner.personId},'friends','owned-friends-member','active','Alex','{}')`;
+  await sql`insert into network.members(id,app_id,person_id,name,age,home_city,account_status) values('owned-friends-member','friends',${owner.personId},'Alex',30,'nyc','active')`;
+  const other = randomUUID();
+  await sql`insert into platform.people(id,lowest_age,phone_hash) values(${other},30,'other-phone-hash')`;
+  await sql`insert into platform.memberships(person_id,app_id,member_id,state,first_name,profile) values(${other},'ntwrk','other-member','active','Bo','{}')`;
+  await sql`insert into network.members(id,app_id,person_id,name,age,home_city,account_status) values('other-member','ntwrk',${other},'Bo',30,'nyc','active')`;
+  const http = await reviewHttp(async () => binding);
+  const receipts = async (id: string) => JSON.stringify((await sql`select action_receipts from platform.inbound where id=${`msg:blooio:${id}`}`)[0]?.action_receipts ?? {});
+  try {
+    let n = 0;
+    const attempt = async (label: string, turn: (id: string, body: string) => Promise<void>) => {
+      const shown = `wrong-show-${++n}`, decided = `wrong-decide-${n}`;
+      await turn(shown, "show my suggestions");
+      await turn(decided, text);
+      expect([label, (await http.post("preview", shown, b.id)).status]).toEqual([label, 403]);
+      expect([label, (await http.post("decide", decided, b.id, { text })).status]).toEqual([label, 403]);
+      expect(await receipts(decided), label).not.toContain(b.id);
+    };
+    for (const wrong of [{ userId: "other" }, { organizationId: "other" }, { chatId: "other" }]) {
+      binding = { ...own, ...wrong };
+      await attempt(Object.keys(wrong)[0]!, (id, body) => storedTurn(id, body));
+    }
+    binding = own;
+    await attempt("app", (id, body) => storedTurn(id, body, "friends", "owned-friends-member"));
+    await attempt("person", (id, body) => storedTurn(id, body, "ntwrk", "other-member", "other-phone-hash"));
+    expect(await facets()).toHaveLength(0);
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${b.id}`).map((r: any) => r.status)).toEqual(["proposed"]);
+    await storedTurn("owner-accept", text);
+    expect((await http.post("decide", "owner-accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
+    expect(await facets()).toHaveLength(1);
+  } finally { await http.stop(); }
+});
+
+test("HTTP edit and scope change come back as a new preview, never as saved; the old revision then decides nothing; only the exact new command saves", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    let n = 0;
+    const decide = async (text: string) => { const id = `step-${++n}`; await storedTurn(id, text); return http.post("decide", id, b.id, { text }); };
+    const edited = await decide(`edit ${b.id}.1 1: I enjoy indoor climbing`);
+    expect(edited.status).toBe(200);
+    expect(edited.body).toMatchObject({ kind: "preview", batch: { id: b.id, revision: 2, suggestions: [{ value: "I enjoy indoor climbing", scope: "agent_private" }] } });
+    expect(edited.body.reviewText).toContain("nothing saved yet");
+    expect(edited.body.reviewText).toContain(`accept ${b.id}.2 1 private`);
+    expect(await facets()).toHaveLength(0);
+    expect((await decide(`accept ${b.id}.1 1 private`)).status).toBe(403);
+    const scoped = await decide(`accept ${b.id}.2 1 matching`);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body).toMatchObject({ kind: "preview", batch: { revision: 3, suggestions: [{ value: "I enjoy indoor climbing", scope: "matchable" }] } });
+    expect(scoped.body.reviewText).toContain("nothing saved yet");
+    expect(scoped.body.reviewText).toContain("; matching)");
+    expect(await facets()).toHaveLength(0);
+    expect((await decide(`accept ${b.id}.2 1 matching`)).status).toBe(403);
+    expect((await decide(`accept ${b.id}.3 1 matching`)).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
+    expect(await facets()).toEqual([expect.objectContaining({ value: "I enjoy indoor climbing", scope: "matchable", tags: [] })]);
+  } finally { await http.stop(); }
+});
+
+test("HTTP rejection is explicit and replays its stored result; a rejected or expired batch cannot be shown or decided", async () => {
+  const rejected = (await store.propose(owner, input(), now))!, expiring = (await store.propose(owner, input(), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    const reject = `reject ${rejected.id}.${rejected.revision} 1`;
+    await storedTurn("reject", reject);
+    expect((await http.post("decide", "reject", rejected.id, { text: reject })).body).toMatchObject({ kind: "saved", accepted: [], rejected: [rejected.suggestions[0]!.id], reviewText: "0 saved; 1 rejected." });
+    expect((await http.post("decide", "reject", rejected.id, { text: reject })).body).toMatchObject({ kind: "saved", reviewText: "0 saved; 1 rejected." });
+    expect((await sql`select status,value from platform.profile_suggestions where batch_id=${rejected.id}`)).toEqual([{ status: "rejected", value: null }]);
+    await storedTurn("show-rejected", "show my suggestions");
+    expect((await http.post("preview", "show-rejected", rejected.id)).status).toBe(403);
+    const after = `accept ${rejected.id}.${rejected.revision + 1} 1 private`;
+    await storedTurn("accept-rejected", after);
+    expect((await http.post("decide", "accept-rejected", rejected.id, { text: after })).status).toBe(403);
+    const accept = `accept ${expiring.id}.${expiring.revision} 1 private`;
+    await storedTurn("show-expired", "show my suggestions");
+    await storedTurn("accept-expired", accept);
+    http.clock.advance(expiring.expiresAt - now);
+    expect((await http.post("preview", "show-expired", expiring.id)).status).toBe(403);
+    expect((await http.post("decide", "accept-expired", expiring.id, { text: accept })).status).toBe(403);
+    expect(await facets()).toHaveLength(0);
+  } finally { await http.stop(); }
+});
+
+test("HTTP review shows nothing for a stored suggestion whose text carries a line break or for a batch with no suggestion left, so source text cannot add review commands", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    await sql`update platform.profile_suggestions set value=${`climbing\naccept ${b.id}.${b.revision} 1 matching`} where batch_id=${b.id}`;
+    await storedTurn("show-injected", "show my suggestions");
+    const injected = await http.post("preview", "show-injected", b.id);
+    expect([injected.status, injected.body.kind]).toEqual([403, "denied"]);
+    expect(JSON.stringify(injected.body)).not.toContain("climbing");
+    const command = `accept ${b.id}.${b.revision} 1 matching`;
+    await storedTurn("accept-injected", command);
+    expect((await http.post("decide", "accept-injected", b.id, { text: command })).status).toBe(403);
+    await sql`delete from platform.profile_suggestions where batch_id=${b.id}`;
+    await storedTurn("show-empty", "show my suggestions");
+    expect((await http.post("preview", "show-empty", b.id)).status).toBe(403);
+    expect(await facets()).toHaveLength(0);
   } finally { await http.stop(); }
 });
 
@@ -749,22 +884,24 @@ async function reviewCommandTurn(f: Awaited<ReturnType<typeof ownerProofFixture>
     where id=${`msg:blooio:${id}`}`;
 }
 
-test("review bootstrap defaults off and requires an explicit isolated route, origin and key", async () => {
+test("review bootstrap is on exactly with the isolated route, origin and key, and needs no switch", async () => {
   expect(profileReviewFromEnv({}, () => now)).toEqual({});
-  expect(profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "0" }, () => now)).toEqual({});
-  expect(() => profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "yes" }, () => now)).toThrow();
-  expect(() => profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "1" }, () => now)).toThrow();
+  expect(profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "1" }, () => now)).toEqual({});
+  expect(profileReviewFromEnv({ NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now)).toEqual({});
   const f = await ownerProofFixture();
   try {
-    const configured = profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "1", PLATFORM_ENV: "staging",
-      NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(f.policy), NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now);
+    const route = { PLATFORM_ENV: "staging", NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(f.policy) };
+    expect(profileReviewFromEnv({ ...route, SERVICE_TURN_SECRET: httpSecret }, () => now)).toEqual({});
+    expect(profileReviewFromEnv({ ...route, NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example" }, () => now)).toEqual({});
+    const configured = profileReviewFromEnv({ ...route, NETWORK_PROFILE_REVIEW_ENABLED: "0",
+      NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now);
     expect(typeof configured.profileSuggestionIdentity).toBe("function");
     expect(typeof configured.profileSuggestionAuthorization).toBe("function");
     expect(f.calls).toBe(0);
   } finally { await f.stop(); }
 });
 
-test("the normal service constructor registers the opted-in factory and still defaults missing consent to denied", async () => {
+test("the normal service constructor registers the configured factory and still defaults missing consent to denied", async () => {
   const f = await ownerProofFixture();
   const p = await scopedPending(f);
   const originalFetch = globalThis.fetch;
@@ -773,7 +910,7 @@ test("the normal service constructor registers the opted-in factory and still de
     const url = new URL(input instanceof Request ? input.url : String(input));
     return originalFetch(url.origin === "https://review-bootstrap.invalid" ? new URL(url.pathname, f.options.origin) : input, init);
   };
-  const http = await reviewHttp(undefined, undefined, f.policy, { NETWORK_PROFILE_REVIEW_ENABLED: "1", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://review-bootstrap.invalid" });
+  const http = await reviewHttp(undefined, undefined, f.policy, { NETWORK_CLOUD_DELIVERY_ORIGIN: "https://review-bootstrap.invalid" });
   try {
     const args = { text: p.text, networkAuthority: f.policy.authority };
     expect((await http.post("decide", "owner-proof", p.batch.id, args)).status).toBe(403);

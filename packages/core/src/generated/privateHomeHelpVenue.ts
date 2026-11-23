@@ -59,34 +59,41 @@ export function lawHomeHelpVenueRevocationRequiresCurrentOwner(owner: boolean, c
 
 /** Story: Control who can read my home-help address / The conversation points each participant to the private page (spec/privateHomeHelpVenue.md) */
 //@ pure
-export function homeHelpAddressStep(requester: boolean, helper: boolean, unanimousCurrentConsent: boolean, addressStored: boolean, now: number, expiresAt: number): HomeHelpAddressStep {
-  return requester && mayStoreHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt) ? (addressStored ? "RequesterAddressSaved" : "RequesterAddsAddress") : (helper && addressStored && mayReadHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt) ? "HelperReadsAddress" : "AddressStepClosed");
+export function homeHelpAddressStep(requester: boolean, helper: boolean, unanimousCurrentConsent: boolean, addressStored: boolean, addressRevoked: boolean, now: number, expiresAt: number): HomeHelpAddressStep {
+  return requester && mayStoreHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt) ? (addressStored ? "RequesterAddressSaved" : (addressRevoked ? "AddressStepClosed" : "RequesterAddsAddress")) : (helper && addressStored && mayReadHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt) ? "HelperReadsAddress" : "AddressStepClosed");
 }
 
 /** Story: Control who can read my home-help address / The conversation points each participant to the private page (spec/privateHomeHelpVenue.md) */
 //@ pure
-export function lawHomeHelpAddressStepNeedsConsent(requester: boolean, helper: boolean, addressStored: boolean, now: number, expiresAt: number): boolean {
+export function lawHomeHelpAddressStepNeedsConsent(requester: boolean, helper: boolean, addressStored: boolean, addressRevoked: boolean, now: number, expiresAt: number): boolean {
   //@ ensures \result === true
-  return homeHelpAddressStep(requester, helper, false, addressStored, now, expiresAt) === "AddressStepClosed";
+  return homeHelpAddressStep(requester, helper, false, addressStored, addressRevoked, now, expiresAt) === "AddressStepClosed";
 }
 
 /** Story: Control who can read my home-help address / The conversation points each participant to the private page (spec/privateHomeHelpVenue.md) */
 //@ pure
-export function lawHomeHelpAddressStepNeedsParticipant(unanimousCurrentConsent: boolean, addressStored: boolean, now: number, expiresAt: number): boolean {
+export function lawHomeHelpAddressStepNeedsParticipant(unanimousCurrentConsent: boolean, addressStored: boolean, addressRevoked: boolean, now: number, expiresAt: number): boolean {
   //@ ensures \result === true
-  return homeHelpAddressStep(false, false, unanimousCurrentConsent, addressStored, now, expiresAt) === "AddressStepClosed";
+  return homeHelpAddressStep(false, false, unanimousCurrentConsent, addressStored, addressRevoked, now, expiresAt) === "AddressStepClosed";
 }
 
 /** Story: Control who can read my home-help address / The conversation points each participant to the private page (spec/privateHomeHelpVenue.md) */
 //@ pure
-export function lawHelperWaitsForStoredAddress(unanimousCurrentConsent: boolean, now: number, expiresAt: number): boolean {
+export function lawHelperWaitsForStoredAddress(unanimousCurrentConsent: boolean, addressRevoked: boolean, now: number, expiresAt: number): boolean {
   //@ ensures \result === true
-  return homeHelpAddressStep(false, true, unanimousCurrentConsent, false, now, expiresAt) === "AddressStepClosed";
+  return homeHelpAddressStep(false, true, unanimousCurrentConsent, false, addressRevoked, now, expiresAt) === "AddressStepClosed";
 }
 
 /** Story: Control who can read my home-help address / The conversation points each participant to the private page (spec/privateHomeHelpVenue.md) */
 //@ pure
-export function lawExpiredHomeHelpAddressStepIsClosed(requester: boolean, helper: boolean, unanimousCurrentConsent: boolean, addressStored: boolean, expiresAt: number): boolean {
+export function lawRevokedAddressClosesTheRequesterStep(helper: boolean, unanimousCurrentConsent: boolean, now: number, expiresAt: number): boolean {
   //@ ensures \result === true
-  return homeHelpAddressStep(requester, helper, unanimousCurrentConsent, addressStored, expiresAt, expiresAt) === "AddressStepClosed";
+  return homeHelpAddressStep(true, helper, unanimousCurrentConsent, false, true, now, expiresAt) === "AddressStepClosed";
+}
+
+/** Story: Control who can read my home-help address / The conversation points each participant to the private page (spec/privateHomeHelpVenue.md) */
+//@ pure
+export function lawExpiredHomeHelpAddressStepIsClosed(requester: boolean, helper: boolean, unanimousCurrentConsent: boolean, addressStored: boolean, addressRevoked: boolean, expiresAt: number): boolean {
+  //@ ensures \result === true
+  return homeHelpAddressStep(requester, helper, unanimousCurrentConsent, addressStored, addressRevoked, expiresAt, expiresAt) === "AddressStepClosed";
 }

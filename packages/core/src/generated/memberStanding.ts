@@ -1,6 +1,6 @@
 // GENERATED from spec/memberStanding.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type LaneShape as matchLane_LaneShape, type LaneSide as matchLane_LaneSide, type LaneWeights as matchLane_LaneWeights, type MatchLane as matchLane_MatchLane, type LaneLimits as matchLane_LaneLimits, standingCeiling as matchLane_standingCeiling, standingUncertaintyCeiling as matchLane_standingUncertaintyCeiling, laneWeights as matchLane_laneWeights, laneOffered as matchLane_laneOffered, lawEveryAppHasALane as matchLane_lawEveryAppHasALane, laneShape as matchLane_laneShape, laneSidesCompatible as matchLane_laneSidesCompatible, laneLimits as matchLane_laneLimits, lawLaneWeightsWellFormed as matchLane_lawLaneWeightsWellFormed, lawLaneSidesSymmetric as matchLane_lawLaneSidesSymmetric, laneOffset as matchLane_laneOffset, lawLaneLimitsWellFormed as matchLane_lawLaneLimitsWellFormed, lawLaneOffsetAntisymmetric as matchLane_lawLaneOffsetAntisymmetric, lanePairValue as matchLane_lanePairValue, lawLanePairValueSymmetric as matchLane_lawLanePairValueSymmetric } from "./matchLane.ts";
+import { type LaneShape as matchLane_LaneShape, type LaneSide as matchLane_LaneSide, type LaneWeights as matchLane_LaneWeights, type MatchLane as matchLane_MatchLane, type LaneLimits as matchLane_LaneLimits, standingCeiling as matchLane_standingCeiling, standingUncertaintyCeiling as matchLane_standingUncertaintyCeiling, teenFriendApp as matchLane_teenFriendApp, teenFriendCategory as matchLane_teenFriendCategory, teenGroupPlanApp as matchLane_teenGroupPlanApp, teenGenerator as matchLane_teenGenerator, laneWeights as matchLane_laneWeights, laneOffered as matchLane_laneOffered, lawEveryAppHasALane as matchLane_lawEveryAppHasALane, laneShape as matchLane_laneShape, teenFriendLane as matchLane_teenFriendLane, lawNtwrkTeenCategoryIsSocial as matchLane_lawNtwrkTeenCategoryIsSocial, lawTeenPlansOnlyOnFriends as matchLane_lawTeenPlansOnlyOnFriends, lawTeenGeneratorOnlyInFriendApps as matchLane_lawTeenGeneratorOnlyInFriendApps, lawNtwrkHasNoTeenPlans as matchLane_lawNtwrkHasNoTeenPlans, lawRepeatsAndContributorsNeverTeen as matchLane_lawRepeatsAndContributorsNeverTeen, lawTeenLanesOnlyInFriendApps as matchLane_lawTeenLanesOnlyInFriendApps, lawNoTeenOnSlopOrPeon as matchLane_lawNoTeenOnSlopOrPeon, lawTeenFriendLaneSameOnBothApps as matchLane_lawTeenFriendLaneSameOnBothApps, lawTeenFriendLaneIsOffered as matchLane_lawTeenFriendLaneIsOffered, lawNoTeenDateOrWork as matchLane_lawNoTeenDateOrWork, laneSidesCompatible as matchLane_laneSidesCompatible, laneLimits as matchLane_laneLimits, lawLaneWeightsWellFormed as matchLane_lawLaneWeightsWellFormed, lawLaneSidesSymmetric as matchLane_lawLaneSidesSymmetric, laneOffset as matchLane_laneOffset, lawLaneLimitsWellFormed as matchLane_lawLaneLimitsWellFormed, lawLaneOffsetAntisymmetric as matchLane_lawLaneOffsetAntisymmetric, lanePairValue as matchLane_lanePairValue, lawLanePairValueSymmetric as matchLane_lawLanePairValueSymmetric } from "./matchLane.ts";
 import { type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, type UtilityTerm as pairValue_UtilityTerm } from "./pairValue.ts";
 
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
@@ -29,8 +29,8 @@ export const standingMiddle: number = quotient_memberStanding(matchLane_standing
 
 /** Story: Estimate standing from facts, never from popularity / Standing exists only for an adult who consented to the lane (spec/memberStanding.md) */
 //@ pure
-export function standingReadable(adult: boolean, consented: boolean): boolean {
-  return adult && consented;
+export function standingReadable(ageEligible: boolean, consented: boolean): boolean {
+  return ageEligible && consented;
 }
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
@@ -41,8 +41,8 @@ export function standingHistoryUsable(hasHistory: boolean, evidenceStillPermits:
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
 //@ pure
-export function standingMayRetain(adult: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
-  return standingReadable(adult, lanePermitted) && activeAccount;
+export function standingMayRetain(ageEligible: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
+  return standingReadable(ageEligible, lanePermitted) && activeAccount;
 }
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
@@ -54,9 +54,9 @@ export function lawWithdrawnEvidenceInvalidatesStanding(hasHistory: boolean): bo
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
 //@ pure
-export function lawStandingRetentionRequiresAuthority(adult: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
+export function lawStandingRetentionRequiresAuthority(ageEligible: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
   //@ ensures \result === true
-  return !(!adult || !activeAccount || !lanePermitted) || !standingMayRetain(adult, activeAccount, lanePermitted);
+  return !(!ageEligible || !activeAccount || !lanePermitted) || !standingMayRetain(ageEligible, activeAccount, lanePermitted);
 }
 
 /** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */

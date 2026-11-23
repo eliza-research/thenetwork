@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { HOUR } from "@thenetwork/core";
 import { Mini, type Spec } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string): Spec => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
   wants: [{ objective: "find a regular climbing partner", category: "hobby" }] });
@@ -10,7 +11,7 @@ async function probedPair(app: "ntwrk" | "slop") {
   const people = slop
     ? [{ ...climber("a", "Ana Diaz"), romance: { is: "woman", seeks: ["man"] } }, { ...climber("b", "Ben Ito"), romance: { is: "man", seeks: ["woman"] } }]
     : [climber("a", "Ana Diaz"), climber("b", "Ben Ito")];
-  const w = new Mini(people, { app, review: "auto" });
+  const w = new Mini(people, { app, inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"], slop ? { category: "romance", objective: "a first date" } : {});
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);

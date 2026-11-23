@@ -18,6 +18,8 @@ A group backfill skips an alternate who would change the probe words that a memb
 
 The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
 
+Changed (owner decision 2026-11-22, answers A2 to A5): a friends.help group plan can seat members aged 13 to 17 when every pair with a minor passes the teen pair rule, the roster has at most 6 people, and the activity and place are all-ages ([friend introductions with a minor](../friendIntroAge.md) `groupAgeAllowed`, `teenRosterSizeAllowed`, `teenPlaceAllowed`). The model chooses at the start whether the plan is a teen plan (`teenPlan`). In a teen plan every invited member and the alternate pass the rule at the start, and the set `minors` stands for the members who fail the rule now (19 on the meeting end day, a lost readiness, a report or a bar, a stop of teen introductions): the seat check, the close of the whole plan and the guards are then the same as the minors policy, so nobody is dropped (Q22). A teen plan gets no fallback: the smaller group, the partner plan, the solo event and the next-week offer are refused, and the plan closes when quorum fails (`planFallbackF`; network.ts `offerGroupReplacement` and the fallback return with no offer for a teen item). A late join from the plan's own reviewed alternate stays, with the rule run again. In a teen plan `noMinorContact` and `minorEndsBooking` are the teen plan rule, and `teenNoFallback` states the rest. The first build had `teenPlanRule`, a copy of those two invariants, and `teenPlanSmall`, a size bound that could not fail with five members; both are deleted because they checked nothing. Outside this model: the roster size (`teenRosterSizeAllowed`, checked when the item is submitted: the [opportunity](opportunity.md) run `teenGroupTooBigTest` (t7, 7 people) is refused), the place rule (`teenPlanPlace`, checked when the plan is submitted, before this model starts: `planCatalogPlace` refuses a venue or an activity that is not all-ages; the [opportunity](opportunity.md) model has the refusal, and [plan_crew](plan_crew.md) checks it for crew sessions), and organizing reach (`withReach` returns a plan with a minor unchanged; `teen-friend-intro.integration.test.ts`). While teen introductions are stopped, a teen plan has every minor in `minors`, which is the old minors-policy invariant `noMinorContact`.
+
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -134,6 +136,8 @@ module plan_run {
   type Env = {
     now: int, optedOut: Set[str], watch: Set[str], minors: Set[str], blocks: Set[(str, str)],
     intro: str -> str, minSize: int, quorum: int,
+    // owner decision 2026-11-22, answer A4: a friends.help teen plan (minors = the members who fail the rule)
+    teen: bool,
     // oracles
     streakBad: Set[str], eventExists: bool
   }
@@ -359,7 +363,9 @@ module plan_run {
   pure def planFallbackF(e: Env, o: Opp, eligible: Set[str]): (Opp, Set[str]) = {
     val o1 = { ...o, runStage: "closed" }
     val yes = if (eligible == Set()) yesOf(o1.answers) else yesOf(o1.answers).intersect(eligible)
-    if (yes.size() == 0) (closeF(e, { ...o1, fallbackKind: "none" }, "plan did not come together"), Set())
+    // A teen plan gets no fallback (owner decision 2026-11-22, answer A4): it closes, and the yes-sayers hear it.
+    if (e.teen) (note(closeF(e, { ...o1, fallbackKind: "none" }, "plan did not come together"), yes), Set())
+    else if (yes.size() == 0) (closeF(e, { ...o1, fallbackKind: "none" }, "plan did not come together"), Set())
     else if (yes.size() >= 2 and e.minSize <= 2 and S - e.now > LATEJOIN) {
       if (yes.size() == 2)
         // Exactly two: the plan closes and a fresh partner plan is submitted for review (network.ts:3160-3168,
@@ -517,7 +523,7 @@ module plan_run {
 
   def envOf(streakBad: Set[str], eventExists: bool): Env = {
     now: now, optedOut: optedOut, watch: watch, minors: minors, blocks: blocks, intro: intro, minSize: minSize, quorum: quorum,
-    streakBad: streakBad, eventExists: eventExists
+    teen: teenPlan, streakBad: streakBad, eventExists: eventExists
   }
   def env0: Env = envOf(Set(), false)
 
@@ -585,14 +591,17 @@ module plan_run {
   // Ghost: the trace started at the initial state. The witnesses ask for it, so that a witness state is
   // reached by the actions of the model and not given by a checkpoint.
   var fromStart: bool
+  // Owner decision 2026-11-22, answer A4: the plan is a friends.help teen plan (chosen at the start).
+  var teenPlan: bool
 
   /** Start at checkpoint cp: 0 the initial state, 1 CP_TWO_YES, 2 CP_BOOKED (quorum 3), 3 CP_TWO_YES at the deadline. */
-  action initAt(ms: int, q: int, cp: int): bool = all {
+  action initAt(ms: int, q: int, cp: int): bool = initTeen(ms, q, cp, false)
+  action initTeen(ms: int, q: int, cp: int, tp: bool): bool = all {
     now' = if (cp == 3) D else 0,
     plan' = if (cp == 0) OPP0 else if (cp == 2) CP_BOOKED else CP_TWO_YES,
     optedOut' = Set(), watch' = Set(), minors' = Set(), blocks' = Set(), minSize' = ms,
     quorum' = if (cp == 2) QUORUM else q,
-    intro' = MEMBERS.mapBy(_ => "none"), todo' = IDLE, fromStart' = cp == 0,
+    intro' = MEMBERS.mapBy(_ => "none"), todo' = IDLE, fromStart' = cp == 0, teenPlan' = tp,
   }
   action initWith(ms: int): bool = initQ(ms, QUORUM)
   action initQ(ms: int, q: int): bool = initAt(ms, q, 0)
@@ -600,11 +609,12 @@ module plan_run {
     nondet ms = Set(2, 3).oneOf()
     nondet q = Set(3, 4).oneOf()
     nondet cp = 0.to(3).oneOf()
-    initAt(ms, q, cp)
+    nondet tp = Set(true, false).oneOf()
+    initTeen(ms, q, cp, tp)
   }
 
   action keepEnv = all {
-    fromStart' = fromStart, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro,
+    fromStart' = fromStart, teenPlan' = teenPlan, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro,
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -709,7 +719,7 @@ module plan_run {
     val r = dropMember(e, plan, m, false)
     all { plan' = r.o, todo' = todoOf(r, Set(), false) },
     optedOut' = optedOut.union(Set(m)),
-    now' = now, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart,
+    now' = now, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
   /** Trust goes to watch (onTrustChange, network.ts:1188): dropMember. */
@@ -719,7 +729,7 @@ module plan_run {
     val r = dropMember(e, plan, m, false)
     all { plan' = r.o, todo' = todoOf(r, Set(), false) },
     watch' = watch.union(Set(m)),
-    now' = now, optedOut' = optedOut, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart,
+    now' = now, optedOut' = optedOut, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
   /**
@@ -734,7 +744,7 @@ module plan_run {
     val r = dropMember(e, plan, m, true)
     all { plan' = r.o, todo' = todoOf(r, Set(), false) },
     minors' = minors.union(Set(m)),
-    now' = now, optedOut' = optedOut, watch' = watch, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart,
+    now' = now, optedOut' = optedOut, watch' = watch, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
   /** A member blocks another (applyBlock, network.ts:1426): an open opportunity with both is closed. */
@@ -750,20 +760,20 @@ module plan_run {
       else o1
     plan' = if (both) closeF(e, o2, "blocked") else plan,
     blocks' = blocks.union(Set((m, x))),
-    now' = now, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart,
+    now' = now, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
   /** An intro probe reaches a plan member who is not busy (network.ts:4373-4379: a plan yes is not busy). */
   action introProbe(m: str): bool = all {
     idle, intro.get(m) == "none", not(busyInPlan(m)), seatOk(env0, m),
     intro' = intro.set(m, "probing"),
-    now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart,
+    now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart, teenPlan' = teenPlan,
   }
   /** The member picks the plan's time: evidence() counts only scheduled items as away (network.ts:2285). */
   action introYes(m: str): bool = all {
     idle, intro.get(m) == "probing",
     intro' = intro.set(m, "yes"),
-    now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart,
+    now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart, teenPlan' = teenPlan,
   }
   /**
    * The other side says yes: reveal() (network.ts:2443) books it. A member booked in the plan near that time
@@ -773,7 +783,7 @@ module plan_run {
     idle, intro.get(m) == "yes", seatOk(env0, m),
     val clash = plan.stage == "scheduled" and plan.status.get(m) == "yes"
     intro' = intro.set(m, if (clash) "none" else "booked"),
-    now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart,
+    now' = now, plan' = plan, todo' = IDLE, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, fromStart' = fromStart, teenPlan' = teenPlan,
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -904,7 +914,11 @@ module plan_run {
     plan.stage == "scheduled" implies MEMBERS.forall(l => plan.knows.get(l).forall(x =>
       not(plan.status.get(l) == "yes" and plan.status.get(x) == "yes") or plan.knows.get(x).contains(l)))
 
-  /** Minors (13-17) are never matched or connected (AGENTS.md age policy, core/src/policy.ts). */
+  /**
+   * AGENTS.md age policy (owner decision 2026-11-22): a minor (13-17) is connected only through a teen friendship
+   * item under teenFriendAgeRule. In an adult plan `minors` is every minor; in a teen plan it is the members who
+   * fail the rule now. Nobody in `minors` is told, and nobody in it is seated in a booked plan.
+   */
   val noMinorContact: bool =
     not(plan.minorMsg) and (plan.stage == "scheduled" implies yesMembers(plan).forall(id => not(minors.contains(id))))
 
@@ -921,7 +935,7 @@ module plan_run {
   /** STOP stops every app (AGENTS.md platform decision 7): no message to an opted-out member. */
   val noContactAfterStop: bool = not(plan.optedOutMsg)
 
-  /** Every proactive proposal goes through human review first (AGENTS.md code invariants). */
+  /** Every proactive proposal gets a recorded approval first, by the review judge or by staff for a held item (AGENTS.md code invariants; owner decision 2026-11-22, D15 to D17). */
   val reviewBeforeContact: bool = plan.runStage == "none" implies not(plan.sent)
 
   /**
@@ -931,11 +945,17 @@ module plan_run {
   val partnerPlanNotBooked: bool =
     plan.partnerAsked != Set() implies (plan.stage == "closed" and plan.seated == Set() and plan.partnerAsked.size() == 2)
 
+  // Owner decision 2026-11-22, answer A4 (spec/friendIntroAge.md groupAgeAllowed, teenRosterSizeAllowed): a teen
+  // plan never seats or tells a member who fails the rule (noMinorContact and minorEndsBooking, with `minors` as
+  // the members who fail it), and a failure closes the whole plan; it gets no fallback or partner plan. The size
+  // bound is checked when the item is submitted (opportunity t7, teenGroupSmall), before this model starts.
+  val teenNoFallback: bool = teenPlan implies ((plan.fallbackKind == "" or plan.fallbackKind == "none") and plan.partnerAsked == Set())
+
   // The invariants hold between two units (`idle`); inside a unit, bookPlan or planFallback is still to run.
   val safety: bool = idle implies and {
     pairNeverBookedFromGroup, groupNeverShrinksToPair, noNameBeforeQuorum, planInvitedCurrent, noStaleRefusal,
     noBookAfterDeadline, noDoubleBooking, yesSayerTold, noMinorContact, minorEndsBooking, noContactAcrossBlock,
-    noContactAfterStop, reviewBeforeContact, partnerPlanNotBooked,
+    noContactAfterStop, reviewBeforeContact, partnerPlanNotBooked, teenNoFallback,
   }
 
   // The guards that must hold whatever else changes (minors, blocks, STOP, review).
@@ -1115,6 +1135,20 @@ module plan_run {
       .then(tick(NOSTREAK, false)).then(settle)
       .expect(plan.stage == "closed" and plan.fallbackKind == "next_week" and plan.answers.get("b") == "no"
               and plan.answers.get("c") == "no" and plan.told == Set("a") and safety)
+
+  /**
+   * Owner decision 2026-11-22, answer A4: the same silent plan as a friends.help teen plan. Quorum fails and the plan
+   * closes with no fallback: no next-week offer, no smaller group and no partner plan; the one yes-sayer hears it.
+   */
+  run teenNoFallbackTest =
+    initTeen(3, QUORUM, 0, true).then(approve)
+      .then(prb("a")).then(prb("b")).then(prb("c")).then(prb("d"))
+      .then(ans("a", true)).then(ans("d", false))
+      .then(prb("e")).then(ans("e", false))
+      .then(clock).then(clock).then(clock)
+      .then(tick(NOSTREAK, false)).then(settle)
+      .expect(plan.stage == "closed" and plan.fallbackKind == "none" and plan.partnerAsked == Set()
+              and plan.told == Set("a") and safety)
 
   /** The checkpoints are reachable: the actions reach them from the initial state (quorum 3 and 4). */
   run cpTwoYesTest =

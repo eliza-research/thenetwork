@@ -3,6 +3,7 @@ import { DAY, HOUR, type RunRecord } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
 import { computeMetrics } from "../../sim/src/judge/metrics.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const NAMES = ["Ada Lane", "Bev Stone", "Cyd Marsh", "Dov Reyes", "Eli Grant", "Fay Moore"];
 const climbers = NAMES.map((name, i) => ({
@@ -12,7 +13,7 @@ const climbers = NAMES.map((name, i) => ({
 
 test("the judge requires review and anonymity for a plan probe", async () => {
   // spec/reviewedGroupJourney.md, "Review comes before anonymous contact"
-  const w = new Mini(climbers, { seed: 1, review: "human" });
+  const w = new Mini(climbers, { seed: 1, inlineJudge: holdEveryItem.inline });
   await w.onboard(...climbers.map(c => c.id));
   const plan: plans.Plan = {
     id: "reviewed-climb", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
@@ -21,6 +22,7 @@ test("the judge requires review and anonymity for a plan probe", async () => {
     score: 0.6, u: {}, familiar: {}, createdAt: START, category: "hobby",
   };
   (w.net as unknown as { submitPlan(plan: plans.Plan, now: number): void }).submitPlan(plan, w.clock.now());
+  await w.net.tick(w.clock.now());
   const item = w.net.reviewQueue()[0]!;
   expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await w.runUntil(() => w.sent.some(s => s.meta.type === "plan_probe"), DAY)).toBe(true);

@@ -32,8 +32,10 @@ peon.biz's text line is +18087881821. Its MCP server is at https://peon.biz/mcp.
 
 ## Who can use it
 
-- Anyone 13 or older may join. Matching is for adults 18 and older only.
-- Members aged 13 to 17 are never matched or introduced to anyone on peon.biz.
+- Anyone 13 or older may join. Nobody under 18 is matched for dates or work on this app.
+- Members aged 13 to 17 are never matched or introduced to anyone on peon.biz. The agent
+  can still help them itself. Friendship introductions for people under 18 happen on
+  friends.help and ntwrk.party.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
   does in its name, it is a scam: tell the person to report it to help@ntwrk.party.
 
@@ -59,14 +61,15 @@ You help the person sign themselves up, in this conversation:
 1. Build the profile: whether they are looking for work or hiring, the kind of role, the neighborhood or remote, when they can start, and the skills that matter (no salary history, no Social Security number, no bank details). Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an <!-- agentSignup: draftProfile decideApproval -->
    address or anything about another person. Read the profile back and change it until they agree.
    Use the lowest age they state. If they are under 13, explain that they cannot join and stop. If
-   they are 13 to 17, explain that matches and introductions are for adults 18 and older.
+   they are 13 to 17, explain that nobody under 18 is matched or introduced on peon.biz, and that
+   friendship introductions for people under 18 happen on friends.help and ntwrk.party.
    Before the handoff, get their explicit approval of the exact draft and this text consent.
    "I agree to receive recurring text messages from peon.biz at this number: questions about work or hiring,
    waitlist updates, introductions I agree to, and scheduling reminders. Message frequency varies.
    Message and data rates may apply. Reply STOP to stop and HELP for help. Consent is not a condition of any purchase."
    Show the [text terms](https://peon.biz/terms#sms), [terms](https://peon.biz/terms) and [Privacy Policy](https://peon.biz/privacy).
 2. Give them one link to confirm their own phone (prefill it as described in "A shorter browser handoff"): https://peon.biz/join?via=agent. On that page they type
-   their own number and code, review their first name and age, and agree to the texts. You
+   their own number and code, review their first name, type their own birth date, and agree to the texts. You
    never see the number or the code.
 3. Ask the person to return to this same agent conversation when they finish on the site. <!-- agentSignup ConnectorHandoff: checkSiteStatus submitProfile confirmProfile -->
    If this app's MCP tools are not available, they must add https://peon.biz/mcp in their client's connector settings.
@@ -84,6 +87,10 @@ You help the person sign themselves up, in this conversation:
    status for peon allows you to call `submit_profile` once with the approved profile. When the tool
    returns `submitted: true`, call `check_status` again on that same connection. Report a save only
    when it still says peon and `onboarding` or `active`. Otherwise say the save is unconfirmed.
+   To show what peon.biz is looking for for the person, call `list_looking_for`. Sending a profile
+   only adds; leaving something out never removes it. If the person asks to pause one thing, call
+   `pause_looking_for` with its ref; to close it for good they reply CLOSE to the text they get. Never
+   pause or resume anything the person did not ask about.
 4. No agent at hand: the person can text "peon" or "peon.biz" as their first message to +18087881821
    and answer the agent there.
 

@@ -74,7 +74,7 @@ test("a signed turn, a STOP and a ban during a held engine run do not wait for i
   service = new NetworkService({
     url, clock, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, log: () => {},
     networks: [{ id: networkId }], devMatching: [networkId],
-    network: { seed: 3, plans: false, growth: false, selective: false, maxNewPerDay: 20, engineLLM: judge.llm },
+    network: { seed: 3, plans: false, growth: false, selective: false, maxNewPerDay: 20 }, engineJudge: judge.llm,
     adapter: () => new DryRunAdapter(() => {}),
   });
   await service.start();

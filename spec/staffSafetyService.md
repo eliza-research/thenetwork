@@ -181,7 +181,7 @@ pure def lawNoDuplicateLockedBanPhone(hash: str): bool = not(includeLockedBanPho
 
 ### An interrupted ban resumes from its saved authority
 
-Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, and all current app restrictions finish. An authorized retry uses the original decision and finishes pending work without writing another ban. The saved report ID goes only to the runtime that holds it for that member. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.
+Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, all current app restrictions, and the deletion of the connector signup drafts of every banned number in every app finish. The draft deletion runs after the runtime updates and before completion, so a failed deletion leaves the ban pending for the retry. Changed 2026-11-22 (owner decision of 2026-11-22, carry-over of the connector review): the code already deleted the drafts before it recorded completion, but this list did not name that step, so the rule and the code did not agree. An authorized retry uses the original decision and finishes pending work without writing another ban. The saved report ID goes only to the runtime that holds it for that member. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.
 
 ```quint
 pure def lawIncompleteRecordedBanCanResume(flow: ServiceSafetyFlow): bool =
@@ -208,7 +208,7 @@ pure def lawBannedEnrollmentCannotCommit(liveOwner: bool, verifiedBinding: bool)
 
 ## Story: Route an agent signal to an accountable decision
 
-> As a member who tells the shared agent about a safety problem, or that I want no more introductions, I want that signal to reach a person or to take effect, and never to wait unread.
+> As a member who tells the shared agent about a safety problem, or that I want no more introductions, I want that signal to reach a person or to take effect, and never to wait unread. When it pauses my matching, I want to be told once what was paused and how to undo it.
 
 ### An agent signal goes to the decision that owns it
 
@@ -237,6 +237,38 @@ pure def lawAgentOptOutPausesOnlyMatching(saved: str): bool =
 
 pure def lawOtherSignalsLeaveParticipation(kind: str, saved: str): bool =
   kind != "opt_out" implies agentOptOutParticipation(kind, saved) == saved
+```
+
+### An applied agent pause gives the member one confirmation
+
+When an opt-out signal changes the saved setting of the member to paused, the service gives the member exactly one confirmation. The confirmation says that matching is paused in that app, and that the member can say ‘resume matching’ to undo the pause. A signal that changes nothing, because matching is already paused, gives no confirmation. A retry of the same signal replays its stored receipt and does not run again. The service makes the decision in the transaction that holds the lock on the member row and writes the pause, the confirmation and the receipt, so two replicas cannot both confirm one pause. The text confirmation is a reply to the action of the member in their own open turn through the shared agent. It is not proactive outreach, so it does not use a slot of the daily cap of three proactive messages: that cap counts proactive messages only. The outbound queue still applies the reply window, the consent ledger, the opt-out of the member and the leak guard to the text at send time. When the texts of the member are off (the consent ledger of their number or their member row says opted out), the service does not text the confirmation. It adds an inbox update. The agent of the member reads that update through the connector, and the updates read of the shared line shows it after the member sends START. The connector and the updates read apply the output leak gate to it. The inbox update is a requested item, so after the member sends START the notify digest can text it if their agent did not read it first. Thus its words stay true before START, after START and after the member resumes: it says that matching on that app was paused as the member asked, that the member can text ‘resume matching’ on the line of that app to undo it, and that a member who turned texts off replies START first. Changed on 2026-11-22 (owner decision 2026-11-22, review of the first build): before, the inbox update said that texts are off, and the digest could text that sentence after START, when it was false. Writing the update as already delivered was the other option; it was not taken because it adds a delivery that did not occur, and the outcome sweep then records it as ignored on a text surface. Other signal kinds give no confirmation. A STOP that commits after the pause stops the queued text at send time: the member then gets no confirmation, and is not texted after STOP. Changed on 2026-11-22 (owner decision 2026-11-22): before this rule an agent opt-out paused matching silently, so the member did not know that it took effect or how to undo it.
+
+```quint
+type AgentPauseConfirmation = PauseConfirmedByReplyText | PauseConfirmedInInbox | PauseNotConfirmed
+
+pure def agentPauseConfirmation(kind: str, pauseApplied: bool, textsOff: bool): AgentPauseConfirmation =
+  if (agentSignalRoute(kind) != SignalPausesApp or not(pauseApplied)) PauseNotConfirmed
+  else if (textsOff) PauseConfirmedInInbox
+  else PauseConfirmedByReplyText
+
+pure val kindValues = Set("opt_out", "travel", "safety_concern", "pause")
+pure val pauseAppliedValues = Set(true, false)
+pure val textsOffValues = Set(true, false)
+
+pure def lawAppliedPauseGetsOneConfirmation(textsOff: bool): bool =
+  agentPauseConfirmation("opt_out", true, textsOff) != PauseNotConfirmed
+
+pure def lawUnchangedPauseGetsNoConfirmation(kind: str, textsOff: bool): bool =
+  agentPauseConfirmation(kind, false, textsOff) == PauseNotConfirmed
+
+pure def lawOptedOutMemberIsNeverTexted(kind: str, pauseApplied: bool): bool =
+  agentPauseConfirmation(kind, pauseApplied, true) != PauseConfirmedByReplyText
+
+pure def lawTextsOnGetTheReplyText(pauseApplied: bool): bool =
+  pauseApplied implies agentPauseConfirmation("opt_out", pauseApplied, false) == PauseConfirmedByReplyText
+
+pure def lawOnlyAPauseIsConfirmed(kind: str, pauseApplied: bool, textsOff: bool): bool =
+  agentSignalRoute(kind) != SignalPausesApp implies agentPauseConfirmation(kind, pauseApplied, textsOff) == PauseNotConfirmed
 ```
 
 ### Safety staff decide a waiting agent signal once

@@ -164,6 +164,28 @@ export function sometimesDeniesSignIn(signIn) {
 export function sometimesCloudUnavailable(signIn) {
     return signIn.phase === "CloudUnavailable";
 }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function callbackFailureCode(failureStatus) {
+    return failureStatus === 400 ? "sign_in_expired" : (failureStatus === 403 ? "sign_in_refused" : "sign_in_unavailable");
+}
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function failedCallbackReturnsToPage(page) {
+    return page === "PhoneReturn" || page === "HomeHelpReturn";
+}
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function lawFailureCodeIsOneOfThree(failureStatus) {
+    //@ ensures \result === true
+    return ["sign_in_expired", "sign_in_refused", "sign_in_unavailable"].includes(callbackFailureCode(failureStatus));
+}
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function lawJoinAndConnectorFailuresStayJson(page) {
+    //@ ensures \result === true
+    return !(page === "JoinReturn" || page === "ConnectorReturn" || page === "NoReturn") || !failedCallbackReturnsToPage(page);
+}
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current, event) {

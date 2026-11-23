@@ -4,7 +4,7 @@
 import { matcherHeartbeatMillis, millisPerHour, missedMatcherHeartbeat, nearReviewDeadline, safetyDueAt, safetyOverdue, waitExceedsSla } from "../../core/src/generated/operationsTiming.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
-import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
+import { URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
 import type { AppId } from "./apps.ts";
 import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, ObsOpportunity, ObsRequest, ObsSafetyCase, ObsState, ReportKind, SafetyInfo, SafetyReport, ScoreMetric } from "./types.ts";
@@ -169,11 +169,8 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   const due = joined.filter(m => m.joinedAt !== undefined && x.now - m.joinedAt >= FIRST_VALUE_DAYS * DAY);
   const fast = due.filter(m => { const t = first.get(m.id); return t !== undefined && t - m.joinedAt! <= FIRST_VALUE_DAYS * DAY; }).length;
 
-  // Shadow precision (PRD 34.6 and the 32.8 precision gate): engine proposals a person decided (shadow runs
-  // included; the simulated reviewer and expiries left out), approved without an edit, over approved plus
-  // rejected. The baseline that must hold before matching is switched on.
-  const decided = x.opps.filter(o => (o.source === "engine" || o.source === "shadow") && o.review?.reviewer && o.review.reviewer !== SIM_AUTO_REVIEWER
-    && (o.review.decision === "approve" || o.review.decision === "reject"));
+  const decided = x.opps.filter(o => (o.source === "engine" || o.source === "shadow") && o.review?.reviewer
+    && ((o.review.decision === "approve" && o.review.approver === "staff") || o.review.decision === "reject"));
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
   const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
@@ -197,15 +194,15 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     metric({ key: "attention_burden", label: "Proactive messages per member per week", value: joined.length ? delivered / joined.length / weeks : null, unit: "per_member_week", n: delivered,
       how: "Delivered agent-started messages, per joined member, per week of the period." }),
     metric({ key: "reviewer_minutes", label: "Reviewer minutes per sent proposal", value: x.reviewSeconds > 0 && x.sentProposals > 0 ? x.reviewSeconds / 60 / x.sentProposals : null, unit: "minutes", n: x.sentProposals, target: { op: "<=", value: 2 },
-      how: "Recorded review time over opportunities a person approved that started (the simulated reviewer is left out). No value until reviewers record time." }),
+      how: "Recorded staff review time over approved opportunities that started (the review judge or staff approved them). No value until reviewers record time." }),
     metric({ key: "shadow_precision", label: "Shadow precision (approved without edits)", value: share(clean, decided.length), unit: "share", n: decided.length, target: { op: ">=", value: 0.8 },
-      how: "Engine proposals (shadow runs included) a person approved without an edit, over those a person approved or rejected. The simulated reviewer and expired items are left out. PRD 32.8 precision gate; PRD 34.6 shadow mode." }),
+      how: "Engine proposals (shadow runs included) staff approved without an edit, over those staff approved or rejected. Judge approvals and expired items are left out. PRD 32.8 precision gate; PRD 34.6 shadow mode." }),
     metric({ key: "opt_outs", label: "Opt-out rate", value: share(optedOut, joined.length), unit: "share", n: joined.length, target: { op: "<=", value: 0.05 },
       how: "Joined members who texted STOP (the PRD mute and complaint rate; mutes are not recorded separately)." }),
     metric({ key: "invite_rate", label: "Members who invited someone", value: share(x.inviters, joined.length), unit: "share", n: joined.length, target: { op: ">=", value: 0.3 },
       how: "Joined members who sent at least one invite." }),
     metric({ key: "minors_contacted", label: "Minor contacts", value: x.minorContacts, unit: "count", n: x.minorContacts ?? 0, target: { op: "==", value: 0 },
-      how: "Members under 18 contacted about another member (judge scorer in game mode; in real mode, messages about an opportunity while the recipient or anyone in it was treated as under 18, by the record age or the Network's age state)." }),
+      how: "Members under 18 contacted about another member (judge scorer in game mode; in real mode, messages about an opportunity while the recipient or anyone in it was treated as under 18, by the record age or the Network's age state). A teen friendship item (friends.help social or hobby, or an ntwrk.party social item, from a teen friendship generator) is not counted only while the teen age rule held at the message time and holds now, for a roster of 2 to 6, and teen introductions were not stopped: the later of the last staff audit row and the last event log row before the message decides, and with neither they are on; when the audit, the events or the snapshot cannot be read, nothing is exempt. The readings at the message time are this app's age events with the current birth date and bar, and a minor signal recorded only in another app is not seen here. A closing notice that names nobody is not counted only in an item that held the rule earlier. The opportunity row stores no format, roles, event anchor, place or meeting hours, so this count does not check the teen shape, the all-ages place or the 10:00 to 19:00 hours; the matcher and the send-time checks enforce them, and the simulation judge counts the place and the hours." }),
     metric({ key: "leaks", label: "Leaks", value: x.leaks, unit: "count", n: x.leaks ?? 0, target: { op: "==", value: 0 },
       how: "Canary leaks (judge scorer in game mode; leak or canary invariant events in real mode)." }),
   ];

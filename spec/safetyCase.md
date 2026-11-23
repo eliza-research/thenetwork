@@ -57,6 +57,7 @@ An actor is required. Lifting a hold requires an existing trust hold. Closing a 
 
 ```quint
 type StaffActionResult = AllowedAction | ActorRequired | NotOnHold | UnknownCase | AlreadyClosed | UnknownReport | UnknownMember | NoMinorSignal | AgeUnknown | RecordMinor | StatedMinor
+  | TeenBarred | TeenOlderReported
 
 pure def holdLiftResult(actorPresent: bool, currentlyHeld: bool): StaffActionResult =
   if (not(actorPresent)) ActorRequired else if (currentlyHeld) AllowedAction else NotOnHold
@@ -178,6 +179,35 @@ pure def minorClearResult(actorPresent: bool, memberKnown: bool, hasSignal: bool
   else if (recordMinor) RecordMinor
   else if (statedMinor) StatedMinor
   else AllowedAction
+```
+
+### Staff clear doubt about a teen's age only for a clean teen birth date
+
+A member aged 13 to 17 with an exact birth date is teen ready without a staff step. A stored doubt (a minor signal, a minor report or an age conflict) keeps the member out of every teen pool until a staff member with the `safety` or `admin` role clears it. The clear is allowed only for a known actor and a known member who has a doubt to clear, whose record has an exact birth date that gives an age of 13 to 18 on the Clock day, whose phone has no teen-pool bar, and who has no `older_than_stated` or `lying` report. A clear never removes the minor mark, a bar or an `older_than_stated` report. A clear dismisses the open and held `minor` reports about the member, and it leaves every other report as it is. Changed (owner decision 2026-11-22, A3, refix): the clear kept the open `minor` reports, and an open report keeps a member out of the teen pool, so a reported teen stayed unready after a clear. A `minor` report about a known minor is a stored doubt and not a bar: the person minor signal and the teen pool hold keep the member out of the teen pools of the other apps until the clear. Changed (owner decision 2026-11-22, A3, refix): a `minor` report about a known minor also barred the phone from every teen pool, so the clear always refused the reported teen. This is the one resolution route for a doubt, not a step for every teen; it includes the minor signal that the age block set for every legacy minor. Changed (owner decision 2026-11-22, answers A2 to A5): a safety reviewer confirmed every teen age before the first introduction; the owner chose "no extra checks", so the confirm step is gone and only a stored doubt needs a staff clear.
+
+```quint
+pure def teenDoubtClearResult(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthTeen: bool,
+    barred: bool, olderOrLyingReport: bool): StaffActionResult =
+  if (not(actorPresent)) ActorRequired
+  else if (not(memberKnown)) UnknownMember
+  else if (not(hasDoubt)) NoMinorSignal
+  else if (not(birthExact) or not(birthTeen)) AgeUnknown
+  else if (barred) TeenBarred
+  else if (olderOrLyingReport) TeenOlderReported
+  else AllowedAction
+
+pure def lawTeenDoubtClearNeverClearsABar(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthTeen: bool,
+    olderOrLyingReport: bool): bool =
+  teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, true, olderOrLyingReport) != AllowedAction
+
+pure def lawTeenDoubtClearNeverClearsOlderReport(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthTeen: bool,
+    barred: bool): bool =
+  teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, barred, true) != AllowedAction
+
+pure def lawTeenDoubtClearNeedsExactTeenBirth(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthTeen: bool,
+    barred: bool, olderOrLyingReport: bool): bool =
+  teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthTeen, barred, olderOrLyingReport) == AllowedAction
+    implies (actorPresent and memberKnown and hasDoubt and birthExact and birthTeen and not(barred) and not(olderOrLyingReport))
 ```
 
 ### A minor signal on one app holds the person on every app until a later clear

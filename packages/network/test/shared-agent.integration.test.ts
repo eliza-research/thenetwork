@@ -35,7 +35,7 @@ const start = async (routePolicy?: Record<string, unknown>, collectedQueue = fal
   if (realm?.database !== db || !["dev","staging"].includes(realm.value)) throw new Error("Owned test realm required");
   await sql`update platform.settings set value=${routePolicy ? "staging" : "dev"} where key='environment'`;
   service = new NetworkService({url, clock, photoStorage:null, instance:"signed-turn-integration",
-    env:{PLATFORM_ENV:routePolicy ? "staging" : "dev", PLATFORM_HASH_KEY:"synthetic-route-test-hash-key", CLEF_RATINGS:"off", SERVICE_TURN_SECRET:secret, ...(routePolicy ? {NETWORK_ROUTE_AUTHORITY_POLICY:JSON.stringify(routePolicy)} : {})}, networks:[{id:"ntwrk:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false},{id:"friends:nyc",matchingEnabled:false}],
+    env:{PLATFORM_ENV:routePolicy ? "staging" : "dev", PLATFORM_HASH_KEY:"synthetic-route-test-hash-key", SERVICE_TURN_SECRET:secret, ...(routePolicy ? {NETWORK_ROUTE_AUTHORITY_POLICY:JSON.stringify(routePolicy)} : {})}, networks:[{id:"ntwrk:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false},{id:"friends:nyc",matchingEnabled:false}],
     network:{seed:1}, publicApi:{minStartMs:0,minVerifyMs:0,otp:{name:"fixture",send:async () => {code="314159";return {code};}}},
     adapter:(_net, rt) => {
       if (collectedQueue) return new BlooioAdapter({ app: rt.app.id, city: rt.city, from: "+12125550160", clock, env: {}, log: () => {},
@@ -768,7 +768,7 @@ test("full canonical deletion scrubs signed context, replies and receipts withou
 
 test("the Cloud turn secret is never also a staff bearer token", () => {
   const make = (o: {tokens?: string; consoleToken?: string}) => new NetworkService({url, clock, photoStorage:null, instance:"turn-secret-separation",
-    env:{PLATFORM_ENV:"dev", CLEF_RATINGS:"off", SERVICE_TURN_SECRET:secret}, networks:[{id:"ntwrk:nyc",matchingEnabled:false}], log:()=>{}, ...o});
+    env:{PLATFORM_ENV:"dev", SERVICE_TURN_SECRET:secret}, networks:[{id:"ntwrk:nyc",matchingEnabled:false}], log:()=>{}, ...o});
   expect(() => make({tokens:`admin@*:${secret}`})).toThrow(/SERVICE_TURN_SECRET must differ/);
   expect(() => make({tokens:`reviewer@slop:other-staff-token-0001,admin@*:console-token-00000001`, consoleToken:secret})).toThrow(/SERVICE_TURN_SECRET must differ/);
   expect(() => make({tokens:"admin@*:console-token-00000001", consoleToken:"console-token-00000001"})).not.toThrow();

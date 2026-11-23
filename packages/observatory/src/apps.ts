@@ -2,7 +2,7 @@
 // The app list, names, domains and ages come from the platform registry (packages/platform/src/apps.ts):
 // a rename there changes the console too. This file adds what only the console needs: the review
 // reason codes and the review SLA per app. Whether an app may match is the service's decision
-// (spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope"): the console reads it from /health.
+// (spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"): the console reads it from /health.
 import { APP_IDS, APPS, isAppId, type AppId } from "../../platform/src/apps.ts";
 import { REVIEW_REASONS, type ReviewReason } from "./types.ts";
 

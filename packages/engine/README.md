@@ -64,7 +64,7 @@ The engine source carries no comments (AGENTS.md, Clarity). The rules that a rea
 - `packs/peon/match.ts`. A job seat of a verified employer is Offering and an adult candidate is Seeking, once for each role family the candidate seeks. Skill levels are one tag per level, and an unverified claim counts one level lower. Standing is the private role level; the pack value is pay, directed. A seat or a candidate without a stated level, family or pay has no membership. `peonSeats` makes a job seat only for a manager whose recorded age is a whole number that `canBeMatched` accepts.
 - `packs/network/index.ts` `networkPack`. world.ts, engine.ts, attention.ts and plans.ts import it for their default `pack` argument, so its top level reads only leaf data: it wraps function values from other modules in arrows, and `eligibility`, `generators` and `vectors` are getters, because rules.ts is in the filters and world import cycle. A member aged 13 to 17 can join and use the agent alone and is never matched or connected (account tier `matchable: false`). The pack has no Date lane, so it asks no romance preference question. The consent default is wanter first, with the booked plan as the reveal and an easy opt-out. A romance item goes only to an adult who opted in to romance; a view without `categoriesOptIn` has no romance consent. `NETWORK_PACK_VERSION` is not written to the run log.
 - `packs/peon/seats.ts`. In the service a hiring manager is one member, and each job is one intent (category professional, details `peon:job ...`) whose facets carry `peon:posting:<intent id>`. `peonSeats` (service snapshot, app peon) makes one seat member `job:<intent id>` for each posting, with the posting's facets and intent, the manager's company facts (company, verified, safety cues), presence and blocks, so a candidate who blocked the manager never sees the manager's jobs. The posting rows leave the manager, who can also be a candidate. The seat holds `peon:openings:<n>`, the posted headcount (1 when none is stated, 0 when the posting is not active), and `seatOwner`, which the service uses to route the probe and the intro; the engine never reads it. `peonSeatCapacity` (the peon engineInput hook in packages/network/service/packs.ts) gives the openings left: the posted openings minus the candidates in an intro both sides accepted, a hire, or an intro still in flight (spec/peonCapacity.md, "Only live or successful introductions occupy an opening"); declined, expired, cancelled and no-show intros free the opening. A seat with no opening left reads `peon:openings:0` (the job_closed member rule), and `peon:seat_cap:<n>` caps the seat's slate in one run at the openings left, so a seat is never over-filled. The simulated hiring world writes seats directly and does not call these functions.
-- `relay.ts`. After a mutual yes, every item one member sends the other goes through `relayItem` (`relayItemAsync` with the Clef hook in production). Only `rendered` reaches the other person, and it is empty unless the decision is pass. The relay log row has no body and no contact value. Checks, in order, with the most severe outcome kept: parties (the two participants, both `canBeMatched`, no block, no opt-out, a hold holds), state (mutual and open), consent (a fresh explicit request for this item; photos need consent and owned opaque ids), text (LeakGuard, contact patterns, rating words, a minor's self-disclosure blocks and flags the age), classifier (rules, then the hook, which can only add reasons; a hook error holds), and rate (burst, daily, photos per day, one contact share per opportunity). The relay reads no clock and no randomness.
+- `relay.ts`. After a mutual yes, every item one member sends the other goes through `relayItem` (`relayItemAsync` with the Clef hook in production). Only `rendered` reaches the other person, and it is empty unless the decision is pass. The relay log row has no body and no contact value. Checks: parties (the two participants, both `canBeMatched`, no block, no opt-out, no hold), state (mutual and open), consent (a fresh explicit request for this item; photos need consent and owned opaque ids), text (LeakGuard, contact patterns, rating words, a minor's self-disclosure flags the age), classifier (rules, then the hook, which can only add reasons; `relayClassifierReads` decides when it reads, and an error, a timeout or an answer that does not parse gives `classifier:unavailable`), and rate (burst, daily, photos per day, one contact share per opportunity). Any reason blocks the item, and `relaySenderNotice` gives the sender's notice (spec/relayDecision.md; owner decision 2026-11-22, D18: the hold for staff is removed). The relay reads no clock and no randomness.
 
 ## Design overview: code to PRD map
 
@@ -107,6 +107,47 @@ Not adopted yet: OR-Tools / ILP selection, Adamic-Adar and Burt-constraint graph
 
 ## Minors policy (PRD 17.4, as amended by the founder decision of 2026-10-05)
 
+Changed (owner decision 2026-11-22, answers A2 to A5): friends.help and the Friend lane of The Network
+can introduce a person aged 13 to 17 for friendship. The rule is `groupAgeAllowed` in
+[spec/friendIntroAge.md](../../spec/friendIntroAge.md). It applies only when `EngineInput.teenIntros` is
+true (the network sets it while staff have not stopped teen introductions), only in the friends.help
+categories `social` and `hobby` and the ntwrk category `social` (`teenFriendCategory` in
+[spec/matchLane.md](../../spec/matchLane.md)), and only to members that the network marks `teenReady`.
+Each other person in the roster is aged 13 to 18, is teen ready, and has a birth date at most 2 calendar
+years from the minor's. `World.minDay` and `World.maxDay` are the earliest and the latest civil date at
+`input.now`. The pack declares the lanes with `LaneDef.minors`, and `validatePack` refuses
+`"teenFriendship"` outside those categories. `candidateAgeReason` also needs a teen generator
+(`teenGenerator`: ntwrk `intent_to_capability` and `group_composer`; friends `friend_circle` and
+`activity_partner`; member requests and friends plans), the shape of a friendship meeting
+(`teenIntroShape`: a teen role for every person, one-to-one or small group, no `via`, no event anchor) and
+at most 6 people (`teenRosterSizeAllowed`). The engine gives each alternate of a roster with a minor the
+role `guest` (small group) or `peer` (one to one) before the screen, and a proposal with a minor carries
+its `format`. Teen rosters get no warm tie, no shareable attribute or area in a probe and no facet text in
+an explanation; `buildProbe` refuses a teen roster unless the spec names the generator, the format and the
+roles. On friends.help only, the weekly planner builds small teen groups: tables, activity partners,
+repeats and crews whose roster passes `teenGroupReason` (the rule, the size and `teenGroupPlanApp`), at an
+activity and a place marked all ages (`activityAllAges`, `venueAllAges`, `teenPlaceAllowed`), at New York
+times from 10:00 to 19:00 (`teenPlanWindowAllowed`), with no host; `teenPlanReason` is the one plan check,
+and `buildPlanProbe` gives a teen plan the tag-only form (activity, time, public place and borough). Adult
+plans never use an entry marked `adultPlans: false`. `same_table_again` and the ntwrk planner stay adults
+only. `candidateAgeReason` and `buildProbe` read the age rule on the latest civil date of the meeting
+window end (or of `input.now`, whichever is later), so a partner who turns 19 before the meeting is
+refused. An attention item of a minor passes the minor gate only when the network sets
+`teenFriendAllowed` and the item names its other members. The relay guard accepts only moderated text for
+a pair that the network marks `teenFriendPair`, blocks on the `teen:` codes and every off-platform move, uses
+`RELAY_LIMITS.teenDaily`, and never fails open. In a teen pair it blocks on `teen:adult_age` when the sender
+states an age of 19 or more, or a birth year that can give 19 or more on the latest civil date, and it
+blocks a minor sender's own age words with `teen:age_talk` in place of `minor:signal`.
+`relayItemAsync` calls the generated `teenRelayHeld`: a teen-pair text without a clean pass from the rules
+and the classifier is blocked, and a text that no classifier read gets `teen:unclassified` (owner decision
+2026-11-22, D18: no relayed text waits for staff). When
+`teenIntros` is absent or false, the table below is the full policy.
+
+The slop onboarding question `slop_age` stays an age question. The network join step asks for the
+birthday and stores the birth date (spec/textEnrollment.md). The slop loop starts from that age and asks
+`slop_age` only when the member record has no age, and the slop extractor stores an age, not a birth
+date. slop.date never matches a person under 18, so the slop loop does not need the birthday.
+
 PRD 17.4 originally said "adults only (18+)". The amended policy: **members under 18 can join, but
 are never connected to other people.** Minors get single-player value only (concierge answers,
 public event and place recommendations, their own profile and preferences), which lives outside
@@ -121,9 +162,9 @@ engine this is a hard filter, enforced in layers, and never traded for score:
 | Pair filter | `pairReason` returns `underage` for any pair with a minor. This also makes minors incompatible (`-Infinity`) in the group composer. | `filters.ts` |
 | Generators | Warm path re-checks the target and `via`. Group composer themes don't count minors (so 3 adults + 2 minors is not a theme). Network growth never turns a minor's unmet intent into an ask, and never counts minors toward a host-less area. | `generators.ts` |
 | Group composer | Drops minors from the pool and returns no group if a minor is forced, so a minor is never a member, host or alternate. | `group.ts` `composeGroup` |
-| Configuration filter | `candidateReason` rejects any configuration where a participant, alternate or `via` is a minor (`underage`, counted in `funnel.rejectedBy`). | `filters.ts` `involvesMinor` |
+| Configuration filter | `candidateReason` rejects any configuration where the participants and alternates fail `groupAgeAllowed`, or where a `via` is present and the roster has a minor (`underage`, counted in `funnel.rejectedBy`). | `filters.ts` `candidateAgeReason` |
 | Final guard | After selection, anything touching a minor is withheld (fail closed) and counted in `funnel.rejectedAfterSelection`. This should never fire; the property test asserts it doesn't. | `engine.ts` |
-| Run log | Minors appear only as an aggregate count (`funnel.memberFunnel.underage`, `memberExclusions.underage`). They have no exposure debt, no empty states, no scored or judged configurations, and no cohort keys. | `engine.ts`, `policy.ts` |
+| Run log | With `teenIntros` off, minors appear only as an aggregate count (`funnel.memberFunnel.underage`, `memberExclusions.underage`). They have no exposure debt, no empty states, no scored or judged configurations, and no cohort keys. With `teenIntros` on, a teen-ready member has a friends `Friend` profile, so a teen roster that passes `groupAgeAllowed` is scored and judged like any other configuration, and a teen intent in `social` or `hobby` can have an empty state. Minors never get exposure debt or a cohort key. | `engine.ts`, `policy.ts` |
 
 Covered by opportunity kinds: intros, groups, event co-attendance, help requests (requester, helpers
 and alternates), member-initiated/warm-path intros (target and `via`), second encounters, newcomer

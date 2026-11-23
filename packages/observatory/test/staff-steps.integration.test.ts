@@ -16,7 +16,7 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
   const clock = new SimClock(Date.UTC(2026, 10, 2, 16));
   const consoleToken = "fixture-console-service-token-0001", rawToken = "fixture-shared-peon-admin-token-01";
   const network = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
+    env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }, { id: "slop:nyc", matchingEnabled: false }],
     tokens: `admin@*:${consoleToken},admin@peon:${rawToken}`, consoleToken,
   });
@@ -68,6 +68,9 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
       { token: globalAdmin, path: "/api/staff/privacy/replay", body: { reason }, service: "/privacy/replay", action: "step_replay_privacy" },
       { token: globalAdmin, path: "/api/staff/inbound/resolve", body: { id: "msg:blooio:never-stuck" }, service: "/inbound/resolve", action: "step_resolve_inbound_turn" },
       { token: globalAdmin, path: "/api/staff/turn-watch", service: "/ops/turns", action: "step_read_turn_watch" },
+      { token: peonReviewer, path: "/api/staff/review/judged?app=peon&since=0", service: "/review/judged", action: "step_read_review_judged" },
+      { token: peonSafety, path: "/api/staff/review/judged/opp-1/0?app=peon", service: "/review/judged/opp-1/0", action: "step_read_review_judged", targetId: "opp-1" },
+      { token: peonReviewer, path: "/api/staff/review/opp-1/stop?app=peon", body: { revision: 0 }, service: "/review/opp-1/stop", action: "step_stop_review", targetId: "opp-1" },
     ];
     for (const s of steps) {
       const person = await idOf(s.token);
@@ -107,6 +110,9 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
     expect((await api(verify, slopReviewer, decision)).status).toBe(403);
     expect((await api("/api/staff/postings?app=peon", slopReviewer)).status).toBe(403);
     expect((await api("/api/staff/signals?app=peon", slopReviewer)).status).toBe(403);
+    expect((await api("/api/staff/review/judged?app=peon", slopReviewer)).status).toBe(403);
+    expect((await api("/api/staff/review/opp-1/stop?app=peon", slopReviewer, { revision: 0 })).status).toBe(403);
+    expect((await api("/api/staff/review/judged/opp-1/x?app=peon", peonReviewer)).status).toBe(400);
     expect((await api("/api/staff/employers/m-1/verify?app=slop", globalAdmin, decision)).status).toBe(403);
     expect((await api("/api/staff/privacy/replay", peonAdmin, { reason })).status).toBe(403);
     expect((await api("/api/staff/privacy/replay", ntwrkAdmin, { reason })).status).toBe(403);
@@ -130,6 +136,7 @@ test.skipIf(!pgAvailable)("console staff steps carry the signed-in person to the
     }
     const decisions: Array<[string, object]> = [
       ["/review/opp-never-queued", { decision: "approve", revision: 0 }],
+      ["/review/opp-never-queued/stop", { revision: 0 }],
       ["/safety/hold", { memberId: "m-1", note: "report checked" }],
       ["/safety/ban", { memberId: "m-1", by: "person", note: "report checked" }],
       ["/safety/dismiss", { reportId: "r-1", note: "report checked" }],

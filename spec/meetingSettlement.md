@@ -310,3 +310,98 @@ pure def verifiedMeetingValueAllowed(attended: bool, worthwhile: bool, independe
 pure def lawMeetingValueCannotConfirmItself(attended: bool, worthwhile: bool): bool =
   not(verifiedMeetingValueAllowed(attended, worthwhile, 0))
 ```
+
+## Story: Choose a report or a block after a meeting that went wrong
+
+> As a member who tells the check-in that something went wrong, I want the Network to ask me once whether to report or block the person, so that I do not have to know the right words.
+
+### A check-in answer that describes a problem asks once whether to report or block
+
+Read the member's answer to the feedback prompt with the existing readers only: the check-in report reader gives a report kind (a cue), and the urgent kinds are harassment, unsafe, scam and minor; the no-show reader gives a no-show cue; the concern reader finds a problem said without a report kind, such as "he made me uncomfortable" or "something felt off", and ignores a denied concern ("I wasn't uncomfortable at all"). A positive or neutral answer, and a negative answer about chemistry only ("we didn't click", "not my type"), is fine and asks nothing. An app that files every cue at once (slop.date and peon.biz, the `postDateReports` hook, for a meeting that is not a group plan) keeps that path. An urgent cue files the report at once in every app, without a question, when the meeting was an adult pair. Otherwise a cue or a concern about the one other attendee of an adult pair gets one question in the member's own thread: whether to report that person to the safety team, block them, or neither. An adult pair is a meeting that is not a group plan, with exactly one other booked attendee, where both people are known adults by the existing age decisions; a minor, an age doubt, or a group plan gets no question and no new urgent path. The question names only the first name that the feedback prompt already named, offers report, block or no, and goes through the leak guard as a direct reply (no pause path, no proactive cap). If the leak guard refuses it, the member gets the ordinary thanks and nothing waits. The Network stores ids and the report kind, never the member's words: the member, the meeting, the person asked about, the kind (the cue, else "other"), and the time of the question. The feedback is kept as feedback whatever the member answers later. Changed (owner decision 2026-11-22): before, a problem said without the word "report" or "block" was kept only as feedback and opened no case in ntwrk.party and friends.help, and a concern without a report kind opened no case in any app; now the member is asked once, and an urgent cue opens the case at once in every app. Changed (owner decision 2026-11-22, answers A2 to A5): a teen pair gets the same steps as an adult pair. A teen pair is a meeting that is not a group plan, with exactly one other booked attendee, of a done teen friendship item whose roster still passes the teen friendship rule at the time of the answer and holds both people. An urgent cue files the report at once, and a cue or a concern gets the one question. The question to a member of a teen pair names nobody: it says "them" in place of the first name. Before, a teen who told the check-in that something went wrong got only the thanks, and no case opened.
+
+```quint
+type CheckInReading = CheckInFine | CheckInConcern | CheckInCue | CheckInUrgent
+type CheckInSafetyStep = CheckInNoStep | CheckInAsk | CheckInFileNow
+
+pure def checkInReading(cueRead: bool, urgentCue: bool, concernRead: bool): CheckInReading =
+  if (cueRead and urgentCue) CheckInUrgent
+  else if (cueRead) CheckInCue
+  else if (concernRead) CheckInConcern
+  else CheckInFine
+
+pure def checkInSafetyStep(reading: CheckInReading, appFilesEveryCue: bool, adultPair: bool, teenPair: bool): CheckInSafetyStep =
+  if (reading == CheckInFine) CheckInNoStep
+  else if (appFilesEveryCue and reading != CheckInConcern) CheckInFileNow
+  else if (not(adultPair or teenPair)) CheckInNoStep
+  else if (reading == CheckInUrgent) CheckInFileNow
+  else CheckInAsk
+
+pure def lawFineAnswerAsksNothing(appFilesEveryCue: bool, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInFine, appFilesEveryCue, adultPair, teenPair) == CheckInNoStep
+
+pure def lawNoCueAndNoConcernIsFine(urgentCue: bool): bool =
+  checkInReading(false, urgentCue, false) == CheckInFine
+
+pure def lawUrgentCueFilesAtOnceInAnAdultPair(appFilesEveryCue: bool): bool =
+  checkInSafetyStep(CheckInUrgent, appFilesEveryCue, true, false) == CheckInFileNow
+
+pure def lawUrgentCueIsNeverAsked(appFilesEveryCue: bool, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInUrgent, appFilesEveryCue, adultPair, teenPair) != CheckInAsk
+
+pure def lawCuesStillFileWhereTheyDid(reading: CheckInReading, adultPair: bool, teenPair: bool): bool =
+  (reading == CheckInCue or reading == CheckInUrgent) implies checkInSafetyStep(reading, true, adultPair, teenPair) == CheckInFileNow
+
+pure def lawQuestionNeedsAnAdultPair(reading: CheckInReading, appFilesEveryCue: bool): bool =
+  checkInSafetyStep(reading, appFilesEveryCue, false, false) != CheckInAsk
+
+pure def lawConcernAsksInAnAdultPair(appFilesEveryCue: bool): bool =
+  checkInSafetyStep(CheckInConcern, appFilesEveryCue, true, false) == CheckInAsk
+
+pure def lawTeenPairGetsTheAdultPairStep(reading: CheckInReading, appFilesEveryCue: bool): bool =
+  checkInSafetyStep(reading, appFilesEveryCue, false, true) == checkInSafetyStep(reading, appFilesEveryCue, true, false)
+```
+
+### The answer to the check-in question acts once, then the question closes
+
+The question waits for the member's next own text (not a reaction, not text from an assistant) for 24 hours, the same window as "Who do you mean?", and the shared line routes a short answer to the app that asked in the same way. While another question of the Network is open in the same thread (an anonymous probe, a day-of check-in for a booked meeting, a crew offer or the weekly check-in), only a text that uses the words report, flag or block answers the check-in question; a bare yes or no goes to the other question and the check-in question stays open. Otherwise any own text closes the question, so it is never asked again. An answer received before the question or handled more than 24 hours after it is not an answer: the question lapses and the feedback stays. The Network reads the answer clause by clause. A clause that ends in a question mark ("Should I report him?") chooses nothing. A clause with a refusal before the word ("I don't want to report him", "rather not block") refuses that choice. "Both" counts only as a whole answer ("both", "both please"), never inside a sentence ("we both moved on"). An answer that says report (also "report and block", "both", or "report him") opens the safety case exactly as a check-in report does: the pair block, the close of the pair's open items, the trust report as someone who met the person, the report with its stored kind, source "check_in" and the meeting, and the urgent hold when the kind is urgent. A report also blocks, so an answer that refuses the block does not choose the report. An answer that says block blocks exactly as "block <name>" does for a person the member met. An answer that says no or neither, or refuses each choice it names, closes the question with a short acknowledgement. An answer that both refuses and chooses ("No, report him") is unclear. A report or block command that names a person other than the person asked about, or a name that matches nobody or more than one person, goes to the ordinary report and block flow. Any other answer is unclear: it opens no case, it is not asked again, and the Network reads the text as an ordinary message. The check-in log keeps flags and ids only, never the member's words. Changed (owner decision 2026-11-22): this answer is new; before, the Network asked nothing after a check-in answer. Changed again (owner decision 2026-11-22, review of the first build): a refusal now wins over a choice, a question or a refused word chooses nothing, and a bare answer goes to another open question, because the first reader filed reports that the member had refused and lost the answers to probes and day-of check-ins.
+
+```quint
+type CheckInSafetyAnswer = AnswerReport | AnswerBlock | AnswerNeither | AnswerUnclear
+
+pure val checkInSafetyAnswerMs = 24 * 3600000
+
+pure def checkInSafetyAnswerCurrent(questionAt: int, answerAt: int, answerHandledAt: int): bool =
+  questionAt <= answerAt and answerAt <= answerHandledAt and answerHandledAt - questionAt <= checkInSafetyAnswerMs
+
+pure def checkInSafetyAnswerApplies(namesChoice: bool, otherQuestionOpen: bool): bool =
+  namesChoice or not(otherQuestionOpen)
+
+pure def checkInSafetyAnswer(wantsReport: bool, wantsBlock: bool, declines: bool): CheckInSafetyAnswer =
+  if (declines and (wantsReport or wantsBlock)) AnswerUnclear
+  else if (wantsReport) AnswerReport
+  else if (wantsBlock) AnswerBlock
+  else if (declines) AnswerNeither
+  else AnswerUnclear
+
+pure val questionAtValues = Set(0, 1)
+pure val answerAtValues = Set(-1, 0, 1, 86400000, 86400001, 86400002)
+pure val answerHandledAtValues = Set(0, 1, 86400000, 86400001, 86400002)
+
+pure def lawReportAndBlockFilesTheReport(otherQuestionOpen: bool): bool =
+  checkInSafetyAnswerApplies(true, otherQuestionOpen) and checkInSafetyAnswer(true, true, false) == AnswerReport
+
+pure def lawRefusalWithAChoiceActsOnNobody(wantsReport: bool, wantsBlock: bool): bool =
+  checkInSafetyAnswer(wantsReport, wantsBlock, true) != AnswerReport and checkInSafetyAnswer(wantsReport, wantsBlock, true) != AnswerBlock
+
+pure def lawBareAnswerWaitsForTheOtherQuestion(otherQuestionOpen: bool): bool =
+  checkInSafetyAnswerApplies(false, otherQuestionOpen) == not(otherQuestionOpen)
+
+pure def lawUnclearAnswerActsOnNobody(declines: bool): bool =
+  checkInSafetyAnswer(false, false, declines) != AnswerReport and checkInSafetyAnswer(false, false, declines) != AnswerBlock
+
+pure def lawLateAnswerLapses(questionAt: int, answerAt: int): bool =
+  not(checkInSafetyAnswerCurrent(questionAt, answerAt, questionAt + checkInSafetyAnswerMs + 1))
+
+pure def lawEarlyAnswerIsNotTheAnswer(questionAt: int, answerHandledAt: int): bool =
+  not(checkInSafetyAnswerCurrent(questionAt, questionAt - 1, answerHandledAt))
+```

@@ -88,7 +88,7 @@ module photos_rating {
   /** uploadMaxPerPerson (spec/photoPolicy.md is 6; 2 here). */
   pure val MAX_PHOTOS: int = 2
   /** PHOTO_CONSENT.version (photos.ts): a constant of the build. */
-  pure val CONSENT: str = "2026-11-21"
+  pure val CONSENT: str = "2026-11-22"
   pure val HEADERS: Set[str] = Set(CONSENT, "old", "")
   pure val ADULT_AGE: int = 25
   pure val MINOR_AGE: int = 15

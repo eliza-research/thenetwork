@@ -14,7 +14,7 @@ test.skipIf(!pgAvailable)("staff approve an exact ordered gathering selection on
   const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
   const secret = "synthetic-gathering-invitation-review-turn-key";
   const service = new NetworkService({ url, clock, log: () => {}, photoStorage: null, notify: false,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     tokens: "admin@ntwrk:ntwrk-admin,reviewer@ntwrk:ntwrk-reviewer,admin@friends:friends-admin", consoleToken: "ntwrk-admin",
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }],
   });

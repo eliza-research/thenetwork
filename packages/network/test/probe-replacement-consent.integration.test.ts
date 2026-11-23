@@ -9,6 +9,7 @@ import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
 import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
   wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
@@ -16,7 +17,7 @@ const people = [climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", 
 const probesTo = (w: Mini, id: string, from = 0) => w.to(id, from).filter(s => s.meta.type === "probe" || s.meta.type === "plan_probe");
 
 test.each(["yes", "no"])("a member who agreed is asked again about the replacement before any reveal (answer again: %s)", async again => {
-  const w = new Mini(people, { review: "auto" });
+  const w = new Mini(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   w.propose(["a", "b"], { alternates: ["c"] });
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
@@ -48,7 +49,7 @@ test.each(["yes", "no"])("a member who agreed is asked again about the replaceme
 });
 
 test("an activity-partner plan asks the first member again before its alternate partner", async () => {
-  const w = new Mini(people, { review: "human" });
+  const w = new Mini(people, { inlineJudge: holdEveryItem.inline });
   await w.onboard("a", "b", "c");
   const now = w.clock.now();
   const plan: plans.Plan = {
@@ -57,6 +58,7 @@ test("an activity-partner plan asks the first member again before its alternate 
     size: { min: 2, target: 2, max: 2 }, quorum: 2, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
   };
   (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+  await w.net.tick(w.clock.now());
   const item = w.net.reviewQueue()[0]!;
   expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await w.runUntil(() => w.probed("a"), 2 * DAY)).toBe(true);
@@ -78,7 +80,7 @@ test("an activity-partner plan asks the first member again before its alternate 
 test("a probe still waiting for its answer is sent again when the other member is replaced", async () => {
   // The first member's probe described the second member. The second member stops before their turn;
   // a yes to the old probe must not introduce the first member to the alternate.
-  const w = new Mini(people, { review: "auto" });
+  const w = new Mini(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   w.propose(["a", "b"], { alternates: ["c"] });
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
@@ -100,7 +102,7 @@ test("a probe still waiting for its answer is sent again when the other member i
 test("a member asked again who stops before the new probe still counts as told when found to be a minor", async () => {
   // A re-ask must not erase the record that the member heard about the opportunity: the minors policy
   // reads it (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
-  const w = new Mini([...people, climber("d", "Dev Rao")], { review: "auto" });
+  const w = new Mini([...people, climber("d", "Dev Rao")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c", "d");
   const id = w.propose(["a", "b"], { alternates: ["c", "d"] });
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
@@ -121,7 +123,7 @@ test("a member asked again who stops before the new probe still counts as told w
 });
 
 test("an answer to a probe that a replacement voided hears once that the plan changed and counts as nothing", async () => {
-  const w = new Mini(people, { review: "auto" });
+  const w = new Mini(people, { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b", "c");
   w.propose(["a", "b"], { alternates: ["c"] });
   expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
@@ -155,7 +157,7 @@ test("an answer to a probe that a replacement voided hears once that the plan ch
 });
 
 test("the reviewer reads the probe and introduction words that each reviewed alternate would bring", async () => {
-  const w = new Mini(people, { review: "human" });
+  const w = new Mini(people, { inlineJudge: holdEveryItem.inline });
   await w.onboard("a", "b", "c");
   w.propose(["a", "b"], { alternates: ["c"] });
   expect(await w.runUntil(() => w.net.reviewQueue().length > 0)).toBe(true);
@@ -193,7 +195,7 @@ test("the reviewer reads the probe and introduction words that each reviewed alt
 test("a group plan backfill skips an alternate who would change the words that the others heard", async () => {
   const sharer = (id: string, name: string, interests: string[]) => ({ ...climber(id, name), interests, shareable: true });
   const w = new Mini([sharer("a", "Ana Diaz", ["climbing"]), sharer("b", "Ben Ito", ["climbing"]), sharer("c", "Cleo Park", ["climbing"]),
-    sharer("d", "Dev Rao", ["climbing"]), sharer("e", "Eli Moss", ["hiking"]), sharer("f", "Fay Lund", ["climbing"])], { review: "human" });
+    sharer("d", "Dev Rao", ["climbing"]), sharer("e", "Eli Moss", ["hiking"]), sharer("f", "Fay Lund", ["climbing"])], { inlineJudge: holdEveryItem.inline });
   await w.onboard("a", "b", "c", "d", "e", "f");
   const now = w.clock.now();
   const plan: plans.Plan = {
@@ -202,6 +204,7 @@ test("a group plan backfill skips an alternate who would change the words that t
     size: { min: 4, target: 4, max: 4 }, quorum: 4, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
   };
   (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+  await w.net.tick(w.clock.now());
   const item = w.net.reviewQueue()[0]!;
   expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await w.runUntil(() => ["a", "b", "c", "d"].every(id => w.probed(id)), 2 * DAY)).toBe(true);

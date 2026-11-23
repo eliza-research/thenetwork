@@ -3,7 +3,7 @@
 The staff console server (`src/server.ts`) serves the console page, a REST API under `/api/*` and a WebSocket at `/ws`. It has two modes: game mode (a simulated world, `src/sources/game.ts`) and real mode (the Network's Postgres, `src/sources/real.ts`). The browser code is in `web/` and belongs to the console UI work.
 
 ```bash
-pnpm run observatory [--port 4747] [--mode game|real] [--seed 1] [--personas 0] [--engine engine-v1|random|off] [--db-url postgres://...] [--review auto|human] [--time-aware]
+pnpm run observatory [--port 4747] [--mode game|real] [--seed 1] [--personas 0] [--engine engine-v1|random|off] [--db-url postgres://...] [--days 60] [--network consent|stub] [--city nyc|all] [--level <scenario>] [--time-aware]
 ```
 
 ## Staff sign-in

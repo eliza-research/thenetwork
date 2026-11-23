@@ -18,7 +18,9 @@ must vouch for someone else. Use a private confirmation that expires in
 fifteen minutes. The member must already hold their current app's issued
 forwarding link. That link has passed ordinary vouch review and used its
 allowance. Stage and confirm a private draft only while the configured
-carrier accepts first contact and live delivery is approved. If the carrier
+carrier accepts first contact. Changed (owner decision 2026-11-22): live
+delivery is no longer a separate approval, because the owner approved every
+app and the configured channel alone decides whether a send is real. If the carrier
 cannot send, give the inviter the forwarding option without storing the
 recipient or asking for confirmation. A prior prompt can be replayed only
 for its current exact owner, link, recipient and unconfirmed draft. Its
@@ -80,9 +82,6 @@ pure def expectedInviteChallengeCurrent(issuedAt: int, now: int): bool =
 
 pure def expectedInviteChallengeLive(issuedAt: int, now: int, expiresAt: int): bool =
   expectedInviteChallengeCurrent(issuedAt, now) and expectedInviteLive(now, expiresAt)
-
-pure def expectedInviteTransportAllows(carrierAcceptsFirstContact: bool, liveApproved: bool): bool =
-  carrierAcceptsFirstContact and liveApproved
 
 pure def expectedInviteChallengeCanReplay(transportAvailable: bool, awaitingConfirmation: bool,
   exactDraft: bool, issuedAt: int, now: int, expiresAt: int): bool =

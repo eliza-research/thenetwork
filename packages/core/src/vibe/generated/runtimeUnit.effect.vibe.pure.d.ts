@@ -54,18 +54,6 @@ export declare function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: bo
 export declare function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
 export declare function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean;
-/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
-export declare function appMatchingLocalOnly(app: string): boolean;
-/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
-export declare function matchingSwitchAllowed(registryAllows: boolean, app: string, production: boolean, liveApproved: boolean): boolean;
-/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
-export declare function lawRegistryOffNeverAllowsMatching(app: string, production: boolean, liveApproved: boolean): boolean;
-/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
-export declare function lawLocalOnlyAppNeedsLiveDecisionInProduction(registryAllows: boolean, app: string): boolean;
-/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
-export declare function lawLocalOnlyAppMatchesOutsideProduction(app: string, liveApproved: boolean): boolean;
-/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
-export declare function lawPilotAppFollowsRegistry(registryAllows: boolean, app: string, production: boolean, liveApproved: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */
 export declare function matchingDisabledByRegistry(matchingAllowed: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */

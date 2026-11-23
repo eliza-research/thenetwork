@@ -99,6 +99,7 @@ export interface JudgeVerdict {
 export interface EngineProposal extends Proposal {
   category: Category; roles: Record<MemberId, Role>; expiresAt: number; anchor?: Anchor; via?: MemberId;
   lane?: MatchLane; entities?: Candidate["entities"]; cofounderIntents?: Candidate["cofounderIntents"];
+  format?: Format;
   safetyClass: SafetyClass; threshold: number; channels: string[]; judged: boolean;
   selectorRank: number; selectionProbability: number;
   acceptance?: Record<MemberId, number>;
@@ -174,6 +175,7 @@ export interface AttentionItem {
   key: string;
   stage?: "first" | "partner";
   evi?: number;
+  teenFriendAllowed?: boolean;
 }
 
 export type HoldReason = "cap" | "below_send_value" | "quiet_hours" | "awaiting_review" | "only_when_asked" | "digest_wait";

@@ -6,7 +6,7 @@
 
 ### An opportunity expires at its review deadline
 
-The deadline is exclusive. If the clock reaches it before the expiry tick, the review endpoint refuses the action and the tick closes the item without sending.
+The deadline is exclusive. If the clock reaches it before the expiry tick, the review endpoint refuses the action and the tick closes the item without sending. The deadline also ends an exception that the review judge held for staff: it expires unsent. Changed (owner decision 2026-11-22, D17, "Hold for staff"): staff reviewed every item before its deadline; now the deadline ends an item that waits for the judge or that the judge held, and no held item is sent late.
 
 ```quint
 pure def reviewLate(currentTime: int, deadline: int): bool =

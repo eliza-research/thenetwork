@@ -24,7 +24,9 @@ Never invent age, profile facts, consent, verification, saved data or introducti
 A draft is not saved until the site confirms it. A saved profile is not a match.
 
 The Network helps people find the connections they ask for: friends or work.
-Anyone 13 or older may join; matching and introductions are for adults 18 and older only.
+Anyone 13 or older may join. Matching is for adults 18 or older, except friendship
+introductions between people aged 13 to 18 born at most 2 years apart, after a
+person reviews each one.
 It asks before any introduction. A saved general profile does not enroll the person
 in another app or start matching.
 
@@ -40,14 +42,18 @@ in another app or start matching.
    and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
    these facts.
 3. Ask for their stated age first and use the lowest age they state. Explain and <!-- agentSignup: draftProfile -->
-   stop below 13. Tell people aged 13–17 that introductions and matching are for
-   adults 18 and older. Draft their confirmed first name, age and home region.
+   stop below 13. Tell people aged 13–17 that The Network introduces people under
+   18 only for friendship, to people aged 13 to 18 born at most 2 years apart, after
+   a person reviews each one, and never for dates or work. Draft their confirmed first name and home
+   region. Do not draft an age or a birth date: the person types their birth date on
+   the signup page.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
    or ZIP code or pick an incorrect region.
    Draft a general profile with interests, availability and the kinds of connections
    they want: friends or work. Keep separate app details out. These
-   interests do not enroll the person in another app.
+   interests do not enroll the person in another app. For people aged 13–17, draft
+   friendship only, never dates or work.
 4. Show the exact draft and the app's current text consent wording. Explain <!-- agentSignup: decideApproval -->
    recurring texts, variable frequency, possible message and data rates, STOP
    and HELP. Link the [text terms](https://ntwrk.party/terms#sms),
@@ -60,7 +66,8 @@ in another app or start matching.
    browser cookie. The person handles all credentials in their own browser.
 6. The app's browser confirms their own phone, or uses its current verified <!-- agentSignup: observeBrowser -->
    session. For an eligible new membership, choose **Finish signup** there and
-   review the same name, age, home region and current text consent.
+   review the same name, home region and current text consent. The person types
+   their own birth date there.
    The Network is invitation-only. The browser checks any invitation assigned to
    the verified phone or the forwarded invitation the person provides.
    If they want to use a forwarded invitation, they keep the original link
@@ -92,13 +99,18 @@ in another app or start matching.
    Then report that the approved profile was recorded. Otherwise report an
    unconfirmed save. Do not claim matching, an introduction or a profile update
    in another app.
+10. To show what The Network is looking for for the person, call `list_looking_for`.
+   Sending a profile only adds; leaving something out never removes it. If the
+   person asks to pause one thing, call `pause_looking_for` with its ref; to
+   close it for good they reply CLOSE to the text they get. Never pause or
+   resume anything the person did not ask about.
 
 ## Safety, privacy and account controls
 
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
 send invitations, or change another app. The lowest stated age applies; members
-13–17 must never be matched or introduced to anyone. No background checks are run.
+13–17 are never matched for dates or work, and are introduced only for friendship as above. No background checks are run.
 
 Text STOP stops every text from the shared line; "leave ntwrk.party" leaves this
 app only. Export/deletion support is help@ntwrk.party. Do not invoke destructive

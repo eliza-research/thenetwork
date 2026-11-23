@@ -141,7 +141,7 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     await s.start();
     const misses: unknown[] = [];
     for (const row of ROWS.filter((r): r is Extract<Row, { kind: "join" }> => r.kind === "join")) {
-      const said = parseJoinText(row.text, APP_WORDS, true);
+      const said = parseJoinText(row.text, APP_WORDS, true, 20261005);
       const reading = { age: said.age ?? null, ...(row.reading.name !== undefined ? { name: said.name } : {}) };
       const from = newPhone();
       expect(await text(s, clock, from, "hi")).toBe("join_asked");

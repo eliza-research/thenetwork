@@ -64,6 +64,14 @@ export function sometimesRejectsCallback(signIn) { return M.sometimesRejectsCall
 export function sometimesDeniesSignIn(signIn) { return M.sometimesDeniesSignIn(signIn); }
 /** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) @throws {never} */
 export function sometimesCloudUnavailable(signIn) { return M.sometimesCloudUnavailable(signIn); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function callbackFailureCode(failureStatus) { return M.callbackFailureCode(failureStatus); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function failedCallbackReturnsToPage(page) { return M.failedCallbackReturnsToPage(page); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function lawFailureCodeIsOneOfThree(failureStatus) { return M.lawFailureCodeIsOneOfThree(failureStatus); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function lawJoinAndConnectorFailuresStayJson(page) { return M.lawJoinAndConnectorFailuresStayJson(page); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

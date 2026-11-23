@@ -41,14 +41,6 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   const dev = devShortcutsAllowed(env);
   const stageOrigins = stagingSiteOrigins(env);
   const privateOpenAiApps = o.privateOpenAiApps ?? (env.MCP_PRIVATE_OPENAI_APPS ?? "").split(",").map(s => s.trim()).filter(Boolean);
-  const customFlag = env.MCP_CUSTOM_CHATGPT_SLOP ?? "off";
-  if (customFlag !== "off" && customFlag !== "on") throw new Error("MCP_CUSTOM_CHATGPT_SLOP must be off or on");
-  const customChatGptSlopPersonIds = customFlag === "on" ? (env.MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS ?? "").split(",").map(s => s.trim()).filter(Boolean) : undefined;
-  if (customChatGptSlopPersonIds) {
-    if (privateOpenAiApps.length) throw new Error("custom ChatGPT Slop cannot use the dev pilot");
-    if (!["staging", "production"].includes(env.PLATFORM_ENV ?? "")) throw new Error("custom ChatGPT Slop needs explicit staging or production");
-    if (!customChatGptSlopPersonIds.length || customChatGptSlopPersonIds.includes("*")) throw new Error("custom ChatGPT Slop needs an explicit person allowlist");
-  }
   if (privateOpenAiApps.some(id => !isMcpAppId(id))) throw new Error("MCP_PRIVATE_OPENAI_APPS must name existing apps");
   if (privateOpenAiApps.length && !dev) throw new Error("MCP_PRIVATE_OPENAI_APPS is for an owned dev runtime only");
   const siteKey = env.TURNSTILE_SITE_KEY?.trim();
@@ -104,15 +96,21 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       app: id => svc.apps[id],
       // The same cookie as the platform API (packages/platform/src/api.ts): sid_<app> in dev, __Host-sid elsewhere.
       cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
-      // submit_profile: the person's own profile, from their own agent, to their own member (decision 10).
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
+      lookingFor: (personId, app, e164) => (isAppId(app) ? svc.lookingFor(personId, app, e164) : Promise.resolve(undefined)),
+      minorNotice: (personId, app, e164) => (isAppId(app) ? svc.minorNotice(personId, app, e164) : Promise.resolve(undefined)),
+      changeLookingFor: (personId, app, e164, grantId, ref, change) => (isAppId(app)
+        ? svc.changeLookingFor(personId, app, e164, grantId, ref, change) : Promise.resolve({ kind: "refused", reason: "not_member" } as const)),
+      photoHoldings: (personId, app, e164) => (isAppId(app) ? svc.photoHoldings(personId, app, e164) : Promise.resolve(undefined)),
+      photoRequest: (personId, app, e164, words) => (isAppId(app) ? svc.photoRequest(personId, app, e164, words)
+        : Promise.resolve({ status: "unavailable" as const, text: "I can't send photos here." })),
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
         updates: (personId, app, assistant, token, passesLeakGate) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token, passesLeakGate) : Promise.resolve([])),
         assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
       } : {}),
     }),
-    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], customChatGptSlopPersonIds, proxySecret: o.proxySecret, log, now,
+    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], proxySecret: o.proxySecret, log, now,
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
@@ -128,6 +126,10 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   });
   svc.onEraseAccount(personId => mcp.forgetPerson(personId));
   svc.onBan(phoneHashes => mcp.discardSignupDrafts(phoneHashes));
+  for (const accounts of new Set([svc.accounts, api.accounts])) {
+    accounts.setAgeRecordedListener(phoneHash => mcp.discardAgeRefusedSignupDrafts(phoneHash)
+      .catch((e: unknown) => log(`[mcp] signup draft age check failed: ${(e as Error).message}`)));
+  }
   return mcp;
 }
 
@@ -174,6 +176,7 @@ export function startTicks(svc: NetworkService, log: (s: string) => void = conso
   const round = () => {
     const done = Promise.all([
       inboxThenNetworks(), worker("retention", () => svc.purge()), worker("notify", () => svc.notifyTick()),
+      worker("review_judge", () => svc.reviewJudgeTick()),
     ]).then(() => undefined);
     inFlight.add(done);
     void done.finally(() => inFlight.delete(done));

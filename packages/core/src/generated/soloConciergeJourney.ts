@@ -1,6 +1,7 @@
 // GENERATED from spec/soloConciergeJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 import { maxSoloEventOptions as soloConcierge_maxSoloEventOptions, soloReplyHasRoom as soloConcierge_soloReplyHasRoom, soloEventPrecedes as soloConcierge_soloEventPrecedes, soloReplyReplayAllowed as soloConcierge_soloReplyReplayAllowed, soloEventCityAllowed as soloConcierge_soloEventCityAllowed, soloEventEligible as soloConcierge_soloEventEligible, lawTripAwayPreventsLocalSuggestion as soloConcierge_lawTripAwayPreventsLocalSuggestion, lawSoloReplyHoldsAtMostThree as soloConcierge_lawSoloReplyHoldsAtMostThree, lawChangedSoloReplyCannotReplay as soloConcierge_lawChangedSoloReplyCannotReplay, soloEventAgeAllowed as soloConcierge_soloEventAgeAllowed, lawYoungSoloListingsNeedAllAges as soloConcierge_lawYoungSoloListingsNeedAllAges } from "./soloConcierge.ts";
+import { type BirthReadings as memberAge_BirthReadings } from "./memberAge.ts";
 
 /** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export type Audience = "AdultMember" | "YoungerMember";

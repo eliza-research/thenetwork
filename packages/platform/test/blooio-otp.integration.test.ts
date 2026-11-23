@@ -57,7 +57,8 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     expect(() => new BlooioOtpProvider({ ...ENV, OTP_PROVIDER: "twilio" })).toThrow("OTP_PROVIDER=blooio");
     for (const env of [{ ...ENV, BLOOIO_API_KEY: "" }, { ...ENV, BLOOIO_FROM: "" }, { ...ENV, BLOOIO_FROM_NUMBER: "+12125550101" }]) expect(() => new BlooioOtpProvider(env)).toThrow();
     const base = { PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/test", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/test", PLATFORM_HASH_KEY: KEY, PLATFORM_SESSION_SECRET: `session-${KEY}`, PLATFORM_PROXY_SECRET: KEY, LEAK_LABEL_KEY: KEY, TURNSTILE_SECRET_KEY: "synthetic",
-      TURNSTILE_SITE_KEY: "synthetic-site", NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/test", SERVICE_TURN_SECRET: `turn-${KEY}`, NETWORK_SERVICE_TOKENS: `admin@*:staff-${KEY}` };
+      TURNSTILE_SITE_KEY: "synthetic-site", NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/test", SERVICE_TURN_SECRET: `turn-${KEY}`, NETWORK_SERVICE_TOKENS: `admin@*:staff-${KEY}`, PHOTO_STORAGE: "r2",
+      SURPLUS_API_KEY: "synthetic-surplus-key" };
     expect(bootConfigProblems({ ...base, ...ENV })).toEqual([]);
     expect(bootConfigProblems({ ...base, ...ENV, PLATFORM_SESSION_SECRET: KEY })).toEqual(["a PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY"]);
     expect(bootConfigProblems({ ...base, ...ENV, PLATFORM_ENV: "production", PLATFORM_SESSION_SECRET: KEY })).toEqual(["a PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY"]);
@@ -92,7 +93,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     } finally { await http.stop(true); }
   });
 
-  test("configured production phone-code apps retain genuine OTP, profile persistence and send/guess caps", async () => {
+  test("production Blooio OTP keeps the browser check for every app, and genuine OTP, profile persistence and send/guess caps", async () => {
     mode = "queued";
     const p = phone();
     const options = {
@@ -101,7 +102,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       env: { PLATFORM_ENV: "production" },
       hashKey: KEY,
       sessionSecret: `session-${KEY}`,
-      turnstile: { verify: async () => false },
+      turnstile: { verify: async (token: string | undefined) => token === "ok" },
       now: () => now,
       ipOf: () => "203.0.113.231",
       minStartMs: 0,
@@ -138,28 +139,13 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       expect(await blocked.json()).toMatchObject({ error: "turnstile" });
       expect(requests.length).toBe(before);
       expect(await store.latestChallenge("friends", p)).toBeUndefined();
-      for (const policy of ["peon", "friends,friends", "friends,", "unknown"]) {
-        expect(() =>
-          createPublicApi({ ...options, env: { ...options.env, PLATFORM_PHONE_OTP_ONLY_APPS: policy } }),
-        ).toThrow("PLATFORM_PHONE_OTP_ONLY_APPS");
-      }
-      expect(() =>
-        createPublicApi({
-          ...options,
-          otp: { name: "twilio_verify", send: async () => ({}) },
-          env: { ...options.env, PLATFORM_PHONE_OTP_ONLY_APPS: "friends" },
-        }),
-      ).toThrow("Blooio");
-      expect(() =>
-        createPublicApi({
-          ...options,
-          turnstile: undefined,
-          env: { ...options.env, PLATFORM_PHONE_OTP_ONLY_APPS: "friends" },
-        }),
-      ).toThrow("Turnstile");
+      expect(() => createPublicApi({ ...options, turnstile: undefined })).toThrow("Turnstile");
       api = createPublicApi({ ...options, env: { ...options.env, PLATFORM_PHONE_OTP_ONLY_APPS: "friends" } });
+      const leftOver = await call("friends.help", "/api/auth/otp/start", { phone: p });
+      expect([leftOver.status, await leftOver.json()]).toEqual([400, { ok: false, error: "turnstile" }]);
+      expect(requests.length).toBe(before);
       expect((await call("slop.date", "/api/auth/otp/start", { phone: p })).status).toBe(400);
-      const start = await call("friends.help", "/api/auth/otp/start", { phone: p });
+      const start = await call("friends.help", "/api/auth/otp/start", { phone: p, turnstileToken: "ok" });
       expect(start.status).toBe(200);
       const sent = requests.at(-1)!;
       expect(sent.to).toBe(p);
@@ -171,7 +157,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
         expiresAt: now + 600000,
       });
       const count = requests.length;
-      const limited = await call("friends.help", "/api/auth/otp/start", { phone: p });
+      const limited = await call("friends.help", "/api/auth/otp/start", { phone: p, turnstileToken: "ok" });
       expect(limited.status).toBe(429);
       expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
       expect(requests.length).toBe(count);
@@ -211,7 +197,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       });
       expect((await call("slop.date", "/api/me", undefined, cookie)).status).toBe(401);
       const guessed = phone();
-      expect((await call("friends.help", "/api/auth/otp/start", { phone: guessed })).status).toBe(200);
+      expect((await call("friends.help", "/api/auth/otp/start", { phone: guessed, turnstileToken: "ok" })).status).toBe(200);
       const code = requests.at(-1)!.code,
         wrong = code === "000000" ? "999999" : "000000";
       for (let attempt = 0; attempt < 5; attempt++)
@@ -299,32 +285,26 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     expect(JSON.stringify(rows)).not.toContain("+1212");
   });
 
-  test("a phone-code-only app counts one assistant address against a coarse ceiling and keeps every per-person limit", async () => {
+  test("every app keeps the browser check and the standard address limit; a left-over PLATFORM_PHONE_OTP_ONLY_APPS changes nothing", async () => {
     mode = "queued";
     now = Date.UTC(2026, 10, 2);
     const api = createPublicApi({
       // A longer send timeout than provider(): this case makes many sends on a shared machine.
       store, otp: new BlooioOtpProvider(ENV, { baseUrl: `http://127.0.0.1:${server.port}/v4`, timeoutMs: 5000 }),
       env: { PLATFORM_ENV: "production", PLATFORM_PHONE_OTP_ONLY_APPS: "friends" }, hashKey: KEY, sessionSecret: `session-${KEY}`,
-      turnstile: { verify: async () => true }, now: () => now, ipOf: () => "198.51.100.77", minStartMs: 0, minVerifyMs: 0, log: line => logs.push(line),
+      turnstile: { verify: async (token: string | undefined) => token === "ok" }, now: () => now, ipOf: () => "198.51.100.77", minStartMs: 0, minVerifyMs: 0, log: line => logs.push(line),
     });
     const call = async (host: string, path: string, body: unknown) =>
       (await api.fetch(new Request(`https://${host}${path}`, { method: "POST", headers: { host, "content-type": "application/json" }, body: JSON.stringify(body) })))!;
-    const people = Array.from({ length: 32 }, (_, i) => `+1415555${String(2000 + i)}`);
-    // Every person behind one assistant egress address starts and checks a code: more than the
-    // standard ten starts and thirty checks an hour of one address bucket.
-    for (const p of people) {
-      expect((await call("friends.help", "/api/auth/otp/start", { phone: p })).status).toBe(200);
-      const verified = await call("friends.help", "/api/auth/otp/verify", { phone: p, code: requests.at(-1)!.code });
-      expect(verified.status).toBe(200);
-    }
-    // The per-person limits still apply on the named app.
-    expect((await call("friends.help", "/api/auth/otp/start", { phone: people[0] })).status).toBe(429);
-    // An app the option does not name keeps the standard address limit for the same address.
-    const others = Array.from({ length: 11 }, (_, i) => `+1415555${String(3000 + i)}`);
+    const before = requests.length;
+    const unchecked = await call("friends.help", "/api/auth/otp/start", { phone: "+14155552999" });
+    expect([unchecked.status, await unchecked.json()]).toEqual([400, { ok: false, error: "turnstile" }]);
+    expect(requests.length).toBe(before);
+    const people = Array.from({ length: 11 }, (_, i) => `+1415555${String(2000 + i)}`);
     const statuses: number[] = [];
-    for (const p of others) statuses.push((await call("slop.date", "/api/auth/otp/start", { phone: p, turnstileToken: "ok" })).status);
+    for (const p of people) statuses.push((await call("friends.help", "/api/auth/otp/start", { phone: p, turnstileToken: "ok" })).status);
     expect(statuses.slice(0, 10)).toEqual(Array(10).fill(200));
     expect(statuses[10]).toBe(429);
+    expect(requests.length).toBe(before + 10);
   });
 });

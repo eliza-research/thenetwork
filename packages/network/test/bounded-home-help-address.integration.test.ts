@@ -36,11 +36,11 @@ async function addressWorld(database: string) {
   const otp = new FakeOtp();
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, notify: false, instance: "home-help-address",
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     tokens: "safety@ntwrk:ntwrk-safety,reviewer@ntwrk:ntwrk-reviewer",
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }], devMatching: ["ntwrk:nyc"],
     network: { growth: false }, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
-    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, liveGate: () => true, log: () => {},
+    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {},
       provider: { kind: "sim", async send(request) {
         sent.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };
@@ -224,6 +224,59 @@ test.skipIf(!pgAvailable)("after everyone agreed, a staff safety hold on a helpe
     expect(await say(rae, addressCommand)).toEqual([CLOSED]);
     expect(await say(ari, addressCommand)).toEqual([CLOSED]);
     expect((await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).status).toBe(409);
+  } finally {
+    await world.close();
+  }
+}, 120_000);
+
+// spec/privateHomeHelpVenue.md, "The conversation points each participant to the private page"
+test.skipIf(!pgAvailable)("the private page reads each participant's step without the address, and a revoked address closes the requester's step", async () => {
+  const world = await addressWorld("home_help_address_status");
+  const { sql, sent, clock, say, site, login, service } = world;
+  try {
+    const { rae, ari, bea, people, code, addressCommand } = await world.ready();
+    const outsider = people[3][0];
+    const status = { action: "status", id: code, revision: 2 };
+    const closed = { status: 409, body: { ok: false, error: "home_help_venue_unavailable" } };
+
+    // Approved, but nobody has agreed yet: the status gets the same closed answer as the other actions.
+    await login(rae);
+    expect(await site(rae, "/api/home-help/venue", status)).toEqual(closed);
+
+    await service.tick();
+    await say(rae, `YES HOME HELP ${code} 2`);
+    for (let i = 0; i < 8 && sent.filter(s => s.text.includes(`YES HOME HELP ${code} 2`)).length < 3; i++) { clock.advance(30 * MINUTE); await service.tick(); }
+    for (const helper of [ari, bea]) expect(await say(helper, `YES HOME HELP ${code} 2`)).toEqual([expect.stringContaining(addressCommand)]);
+
+    // Everyone agreed: the requester's step is open and empty; a helper waits; a person outside the roster is closed.
+    expect(await site(rae, "/api/home-help/venue", status)).toEqual({ status: 200, body: { ok: true, role: "requester", addressSaved: false } });
+    await login(ari);
+    expect(await site(ari, "/api/home-help/venue", status)).toEqual(closed);
+    await login(outsider);
+    expect(await site(outsider, "/api/home-help/venue", status)).toEqual(closed);
+
+    expect(await site(rae, "/api/home-help/venue", { action: "submit", id: code, revision: 2, address: ADDRESS })).toEqual({ status: 200, body: { ok: true } });
+    expect(await site(rae, "/api/home-help/venue", status)).toEqual({ status: 200, body: { ok: true, role: "requester", addressSaved: true } });
+    expect(await site(ari, "/api/home-help/venue", status)).toEqual({ status: 200, body: { ok: true, role: "helper", addressSaved: true } });
+    expect(await site(outsider, "/api/home-help/venue", status)).toEqual(closed);
+    // The status reads and changes nothing: the helper still reads the address after it.
+    expect(await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).toEqual({ status: 200, body: { ok: true, address: ADDRESS } });
+
+    // After a revocation a submit stores nothing, so the requester's step is closed on the page and in the conversation.
+    expect(await site(rae, "/api/home-help/venue", { action: "revoke", id: code, revision: 2 })).toEqual({ status: 200, body: { ok: true } });
+    expect(await site(rae, "/api/home-help/venue", status)).toEqual(closed);
+    expect(await site(ari, "/api/home-help/venue", status)).toEqual(closed);
+    expect(await site(rae, "/api/home-help/venue", { action: "submit", id: code, revision: 2, address: ADDRESS })).toEqual(closed);
+    expect(await say(rae, addressCommand)).toEqual([CLOSED]);
+    expect(await say(ari, addressCommand)).toEqual([CLOSED]);
+
+    const stored = JSON.stringify([
+      await sql`select response, replies from platform.inbound`,
+      await sql`select body from network.messages`,
+      await sql`select payload from network.events`,
+    ]);
+    expect(stored).not.toContain("Canary Street");
+    expect(JSON.stringify(sent)).not.toContain("Canary Street");
   } finally {
     await world.close();
   }

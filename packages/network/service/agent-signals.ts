@@ -1,9 +1,16 @@
-import { agentOptOutParticipation, agentSignalAfterDecision, agentSignalEvidenceShown, agentSignalRoute, agentSignalWaitsForStaff, type AgentSignalPhase } from "../../core/src/generated/staffSafetyService.ts";
+import type { MemberId } from "@thenetwork/core";
+import {
+  agentOptOutParticipation, agentPauseConfirmation, agentSignalAfterDecision, agentSignalEvidenceShown, agentSignalRoute, agentSignalWaitsForStaff,
+  type AgentPauseConfirmation, type AgentSignalPhase,
+} from "../../core/src/generated/staffSafetyService.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
+import { PgNotifyStore } from "../../notify/src/pg-store.ts";
 import { allowed } from "../../observatory/src/staff.ts";
 import type { StaffRole, StaffUser } from "../../observatory/src/types.ts";
-import type { AppId } from "../../platform/src/apps.ts";
+import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
+import { ledgerOptedOut } from "./consent-ledger-read.ts";
+import type { NetworkRuntime } from "./runtime.ts";
 
 export type AgentSignalKind = "opt_out" | "travel" | "safety_concern";
 export type AgentSignal = { kind: AgentSignalKind; evidence: string };
@@ -27,24 +34,52 @@ export function parseAgentSignals(input: unknown): AgentSignal[] | undefined {
   return signals;
 }
 
-export async function recordAgentSignals(tx: SQL, o: { app: AppId; memberId: string; actionId: string; signals: AgentSignal[]; now: number }): Promise<{ recorded: number }> {
-  const at = new Date(o.now);
+export const AGENT_PAUSE_CONFIRMATION_TYPE = "agent_pause_confirmation";
+
+export function agentPauseConfirmationText(app: Pick<AppInfo, "name">, confirmation: Exclude<AgentPauseConfirmation, "PauseNotConfirmed">): string {
+  return confirmation === "PauseConfirmedByReplyText"
+    ? `Matching is paused on ${app.name}, as you asked. Say ‘resume matching’ when you want new introductions again.`
+    : `Matching on ${app.name} was paused, as you asked. To undo it, text ‘resume matching’ on the ${app.name} line. If you turned texts off, reply START first.`;
+}
+
+export async function recordAgentSignals(tx: SQL, o: {
+  runtime: Pick<NetworkRuntime, "app" | "system">; memberId: MemberId; personId: string; e164: string; actionId: string; signals: AgentSignal[]; now: number;
+}): Promise<{ recorded: number }> {
+  const app = o.runtime.app.id, at = new Date(o.now);
   for (const [index, signal] of o.signals.entries()) {
     const status = agentSignalRoute(signal.kind) === "SignalPausesApp" ? FACET_STATUS.SignalReviewed : FACET_STATUS.SignalWaiting;
     await tx`insert into network.facets(app_id,id,member_id,kind,value,tags,privacy_scope,provenance,source,status,valid_from)
-      values(${o.app},${`service-signal:${o.actionId}:${index}`},${o.memberId},'fact',${signal.evidence},${tx.array([`signal:${signal.kind}`], "TEXT")},
+      values(${app},${`service-signal:${o.actionId}:${index}`},${o.memberId},'fact',${signal.evidence},${tx.array([`signal:${signal.kind}`], "TEXT")},
         'agent_private','inferred','chat',${status},${at})`;
   }
   if (o.signals.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
-    values(${o.app},${at},'agent',${o.memberId},'network_signals_proposed','member',${o.memberId},${{ kinds: o.signals.map(signal => signal.kind), count: o.signals.length }}::jsonb)`;
-  if (o.signals.some(signal => signal.kind === "opt_out")) {
-    const [member] = await tx<{ participation_state: string }[]>`select participation_state from network.members where app_id=${o.app} and id=${o.memberId}`;
-    if (!member) throw new Error("Agent opt-out member is unavailable");
-    const state = agentOptOutParticipation("opt_out", member.participation_state);
-    const saved = await tx`update network.members set participation_state=${state}, participation_window=null
-      where app_id=${o.app} and id=${o.memberId} and (participation_state is distinct from ${state} or participation_window is not null) returning id`;
-    if (saved.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
-      values(${o.app},${at},'agent',${o.memberId},'member_state_requested','member',${o.memberId},${{ state: "paused", from: null, until: null, source: "agent_signal" }}::jsonb)`;
+    values(${app},${at},'agent',${o.memberId},'network_signals_proposed','member',${o.memberId},${{ kinds: o.signals.map(signal => signal.kind), count: o.signals.length }}::jsonb)`;
+  const pause = o.signals.find(signal => agentSignalRoute(signal.kind) === "SignalPausesApp");
+  if (!pause) return { recorded: o.signals.length };
+  const [member] = await tx<{ participation_state: string; opted_out: boolean }[]>`select participation_state,opted_out from network.members
+    where app_id=${app} and id=${o.memberId}`;
+  if (!member) throw new Error("Agent opt-out member is unavailable");
+  const state = agentOptOutParticipation(pause.kind, member.participation_state);
+  const saved = await tx`update network.members set participation_state=${state}, participation_window=null
+    where app_id=${app} and id=${o.memberId} and (participation_state is distinct from ${state} or participation_window is not null) returning id`;
+  if (saved.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
+    values(${app},${at},'agent',${o.memberId},'member_state_requested','member',${o.memberId},${{ state: "paused", from: null, until: null, source: "agent_signal" }}::jsonb)`;
+  const textsOff = saved.length > 0 && (member.opted_out || await ledgerOptedOut(tx, o.e164, app));
+  const confirmation = agentPauseConfirmation(pause.kind, saved.length > 0, textsOff);
+  switch (confirmation) {
+    case "PauseNotConfirmed":
+      break;
+    case "PauseConfirmedByReplyText":
+      o.runtime.system(o.memberId, `agent-pause:${o.actionId}`, agentPauseConfirmationText(o.runtime.app, confirmation), "reply", AGENT_PAUSE_CONFIRMATION_TYPE);
+      break;
+    case "PauseConfirmedInInbox":
+      await new PgNotifyStore(tx).addItem({ personId: o.personId, app, eventType: AGENT_PAUSE_CONFIRMATION_TYPE, subjectId: o.actionId,
+        urgency: "requested", summary: agentPauseConfirmationText(o.runtime.app, confirmation) }, o.now);
+      break;
+    default: {
+      const exhaustive: never = confirmation;
+      throw new Error(`Unknown agent pause confirmation ${String(exhaustive)}`);
+    }
   }
   return { recorded: o.signals.length };
 }

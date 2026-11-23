@@ -1,10 +1,13 @@
-import { relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
-import { canBeMatched, labelHash, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { relayKindAllowed, teenFriendMaxAge } from "../../core/src/generated/friendIntroAge.ts";
+import { ageOnDay } from "../../core/src/generated/memberAge.ts";
+import { relayBlockNotice, relayClassifierReading, relayClassifierReads, relayConsentStale, relayVerdict, type RelayBlockNotice } from "../../core/src/generated/relayDecision.ts";
+import { teenRelayHeld } from "../../core/src/generated/teenIntroSwitch.ts";
+import { canBeMatched, labelHash, latestDayKeyOf, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 const RELAY_POLICY_VERSION = "relay-1.0.0";
 
 type RelayKind = "text" | "contact_share" | "photo";
-type RelayDecision = "pass" | "hold" | "block";
+type RelayDecision = "pass" | "block";
 
 export interface RelayParty {
   id: MemberId;
@@ -48,6 +51,7 @@ export interface RelayItem {
 interface RelayLimits {
   burst: { n: number; windowMs: number };
   daily: number;
+  teenDaily: number;
   photosDaily: number;
   contactShares: number;
   consentTtlMs: number;
@@ -55,7 +59,7 @@ interface RelayLimits {
   maxPhotos: number;
 }
 export const RELAY_LIMITS: RelayLimits = {
-  burst: { n: 6, windowMs: 10 * 60_000 }, daily: 40, photosDaily: 6, contactShares: 1, consentTtlMs: 15 * 60_000, maxChars: 1000, maxPhotos: 3,
+  burst: { n: 6, windowMs: 10 * 60_000 }, daily: 40, teenDaily: 10, photosDaily: 6, contactShares: 1, consentTtlMs: 15 * 60_000, maxChars: 1000, maxPhotos: 3,
 };
 
 export interface RelayRecord {
@@ -81,6 +85,7 @@ export interface RelayContext {
   guard?: LeakGuard;
   extraRules?: (text: string) => string[];
   limits?: Partial<RelayLimits>;
+  teenFriendPair?: boolean;
 }
 
 export interface RelayResult {
@@ -92,11 +97,10 @@ export interface RelayResult {
   senderNotice: string;
 }
 
-const RELAY_REASON_FAMILIES = {
-  block: ["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "llm_severe", "clef_severe"],
-  hold: ["safety", "leak", "contact", "rating", "scam", "offplatform", "fishing", "injection", "harass", "rate", "text", "llm", "clef"],
-} as const;
-const BLOCK_PREFIX = new Set<string>(RELAY_REASON_FAMILIES.block);
+const FINAL_FAMILIES = new Set(["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "llm_severe", "clef_severe"]);
+const CONTACT_FAMILIES = new Set(["contact", "fishing", "offplatform"]);
+const EXPLAINED_FAMILIES = new Set(["consent", "rating", "rate", "classifier", ...CONTACT_FAMILIES]);
+const familyOf = (reason: string) => reason.split(":")[0]!;
 
 const R = (s: string) => new RegExp(s, "i");
 const PAY = "(?:send|wire|transfer|lend|loan|venmo|zelle|cash ?app|paypal|give|spot|front)";
@@ -139,7 +143,49 @@ const RELAY_RULES: { code: string; re: RegExp }[] = [
   { code: "harass:sexual", re: R("\\b(?:send|show)\\s+(?:me\\s+)?(?:nudes?|noods|naughty pics?|(?:a |some |more )?(?:pics?|photos?|pictures?|selfies?) of (?:your|ur) (?:body|tits|boobs|ass|chest|dick|butt|legs|feet)|(?:a |some |more )?(?:body|bikini|lingerie|bed(?:room)?) (?:pics?|photos?|selfies?)|something sexy|a sexy (?:pic|photo))\\b|\\bnudes\\b|\\bnude (?:pics?|photos?|selfies?)\\b|\\bdtf\\b|\\bdon'?t be (?:a |so |such a )?(?:prude|tease|frigid|uptight)\\b|\\b(?:you|u) know (?:you|u) want (?:it|this|me)\\b|\\bwe both know (?:why|what) (?:we'?re|this is|you)\\b|\\b(?:you|u) owe me\\b|\\bwhat are (?:you|u) wearing\\b|\\b(?:bring|wear)\\b[^.?!]{0,15}\\b(?:lingerie|condoms?)\\b|\\b(?:sex|fuck|smash|bang|hook ?up|sleep together|sleep with (?:me|you))\\b[^.?!]{0,40}\\b(?:tonight|first|after|right after|instead|now|before)\\b|\\b(?:skip|forget)\\b[^.?!]{0,15}\\b(?:the )?(?:coffee|date|drinks|dinner|museum|walk)\\b[^.?!]{0,30}\\b(?:my|your) (?:place|apartment|bed)\\b|\\b(?:back to|come over to|come to) (?:my|your) (?:place|apartment|bed|room|hotel)\\b") },
 ];
 
-const MINOR_SIGNAL = R("\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?(?:1[3-7])(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|\\b(?:1[3-7])\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b");
+const MINOR_SIGNAL = R("\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?(?:1[3-7])(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?a\\s+1[3-7]\\s*-?\\s*(?:yo|y/o|years?[- ]old)\\b|\\b1[3-7]\\s*-?\\s*(?:yo|y/o|years?[- ]old)(?:\\s+(?:girl|guy|boy|kid))?\\s+here\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b");
+
+const TEEN_RELAY_RULES: { code: string; re: RegExp }[] = [
+  { code: "teen:secrecy", re: R("\\b(?:don'?t|do not|dont|never)\\s+(?:tell|show|mention (?:this|it|me) to)\\s+(?:your|ur|anyone|anybody|nobody)\\b|\\b(?:our|a|little)\\s+(?:little\\s+)?secret\\b|\\bkeep\\s+(?:this|it|us|that)\\s+(?:between us|(?:a )?secret|quiet|private|to yourself|from)\\b|\\bbetween (?:you and me|us)\\b|\\b(?:delete|clear|erase)\\s+(?:this|these|the|our|my)\\s+(?:messages?|texts?|chats?|convo|conversation)\\b|\\b(?:parents?|mom|dad|mum|family|teachers?)\\s+(?:can'?t|cannot|shouldn'?t|don'?t need to|doesn'?t need to|won'?t)\\s+(?:know|find out|see)\\b") },
+  { code: "teen:age_probe", re: R("\\bhow old (?:are|r) (?:you|u)\\b|\\b(?:what'?s|whats|what is) (?:your|ur) (?:real |actual |true )?age\\b|\\b(?:are|r) (?:you|u) (?:really|actually) \\d{1,2}\\b|\\bwhat grade (?:are|r) (?:you|u)\\b|\\b(?:are|r) (?:you|u) (?:home )?(?:alone|by yourself)\\b|\\b(?:are|r|is) (?:your|ur) (?:parents?|mom|dad|mum|family) (?:home|around|there|out|away|asleep|awake)\\b|\\bwhen do (?:your|ur) (?:parents?|mom|dad|mum) (?:leave|get home|come home)\\b") },
+  { code: "teen:gift", re: R("\\b(?:gift ?cards?|gifts?|presents?|money|cash|venmo|cash ?app|zelle|paypal|robux|v-?bucks|allowance)\\b|\\b(?:buy|get|send|give|pay for|treat)\\s+(?:you|u)\\b|\\bmy treat\\b|\\bon me\\b") },
+  { code: "teen:picture", re: R("\\b(?:send|post|share|show|take)\\s+(?:me\\s+)?(?:a\\s+|some\\s+|more\\s+|another\\s+|your\\s+|ur\\s+)?(?:pics?|photos?|pictures?|selfies?|snaps?|videos?|vids?)\\b|\\bwhat do (?:you|u) look like\\b|\\bshow me (?:yourself|you|ur|your)\\b|\\b(?:pic|photo|picture|selfie|video)s? of (?:you|u|yourself)\\b|\\bface ?time\\b|\\bvideo ?(?:call|chat)\\b|\\bcam(?:era)?\\s+on\\b") },
+  { code: "teen:alone", re: R("\\b(?:meet|hang(?: out)?|come|be|go)\\s+(?:up\\s+)?(?:alone|by (?:yourself|urself))\\b|\\bjust (?:the two of us|you and me|us two|me and you)\\b|\\b(?:come|go|get|stop)\\s+(?:over\\s+)?(?:to|back to|by)\\s+(?:my|your|ur)\\s+(?:place|house|home|room|apartment|apt|car|hotel|building)\\b|\\b(?:my|your|ur)\\s+(?:place|house|home|room|apartment|apt|car|hotel|bedroom)\\b|\\bpick (?:you|u) up\\b|\\b(?:give (?:you|u) a ride|drive (?:you|u))\\b|\\b(?:don'?t|dont|no need to|without)\\s+(?:bring(?:ing)?|tell(?:ing)?)\\s+(?:anyone|anybody|friends?|your friends?|ur friends?|parents?)\\b|\\bcome over\\b|\\bsleep ?over\\b") },
+  { code: "teen:location", re: R("\\b(?:your|ur) (?:home |street |exact )?address\\b|\\bwhere (?:exactly )?do (?:you|u) (?:live|stay|sleep)\\b|\\bwhich (?:school|high school|middle school|neighborhood|building|street|block|apartment|floor)\\b|\\bwhat (?:school|high school|middle school|street|building)\\b|\\bwhere do (?:you|u) go to school\\b|\\bwhere (?:are|r) (?:you|u) (?:right )?now\\b|\\b(?:send|share|drop)\\s+(?:me\\s+)?(?:your|ur)\\s+(?:location|pin|address)\\b|\\bwhat (?:time|days?) (?:do (?:you|u) )?(?:get out of|leave|finish) school\\b") },
+  { code: "teen:contact", re: R(`\\b(?:phone|number|digits|cell|email|e-mail|gmail|handle|username|user ?name|tiktok|roblox|minecraft|${APPS})\\b|@[a-z0-9_.]{2,}`) },
+];
+
+const ADULT_NUMBER = "(?:19|[2-9]\\d)";
+const NOT_AN_AGE = "(?!\\s*(?:%|\\$|\\+|/|:|(?:min|mins|minutes|blocks|miles|mi|km|away|stops|floors|hours|hrs|seconds|secs|cm|lbs|kg|k|dollars|bucks|feet|ft|percent|times|days|weeks|months|people|ppl)\\b))";
+const SELF_IS = "(?:i'?m|i am|im)\\s+(?:actually\\s+|really\\s+|literally\\s+|already\\s+|now\\s+|like\\s+|basically\\s+|almost\\s+)?";
+const ADULT_AGE_RULES: RegExp[] = [
+  R(`\\b${SELF_IS}${ADULT_NUMBER}\\b${NOT_AN_AGE}`),
+  R(`\\b${SELF_IS}(?:nineteen|twenty|thirty|forty|fifty|sixty)\\b${NOT_AN_AGE}`),
+  R("\\b(?:i'?m|i am|im)\\s+in\\s+my\\s+(?:[2-6]0'?s|twenties|thirties|forties|fifties|sixties)\\b"),
+  R(`\\bmy age is\\s+${ADULT_NUMBER}\\b`),
+  R(`\\bi (?:just )?turned\\s+${ADULT_NUMBER}\\b`),
+];
+const G = (s: string) => new RegExp(s, "gi");
+const BIRTH_YEAR_RULES: { re: RegExp; year: (digits: string) => number }[] = [
+  { re: G("\\b(?:i was|i'?m|i am|im)\\s+born\\b[^.?!]{0,30}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("(?:^|[.!?,;]\\s*|\\b(?:lol|actually|btw|tbh|fyi|and|but|so|oh)\\s+)born\\b[^.?!]{0,30}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("\\bmy\\s+(?:birthday|bday|b-day|birth ?date|date of birth|dob|birth year)\\b[^.?!]{0,30}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("\\b(?:dob|birth year)\\s*[:=-]?[^.?!]{0,20}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("\\b(?:i was |i'?m |i am |im )?born in\\s+'?(9\\d)\\b"), year: digits => 1900 + Number(digits) },
+];
+
+function adultAgeStated(variants: readonly string[], now: number): boolean {
+  if (variants.some(v => ADULT_AGE_RULES.some(re => re.test(v)))) return true;
+  const today = latestDayKeyOf(now);
+  return variants.some(v => BIRTH_YEAR_RULES.some(({ re, year }) =>
+    [...v.matchAll(re)].some(m => ageOnDay(year(m[1]!) * 10000 + 101, today) > teenFriendMaxAge)));
+}
+
+function teenRelayCodes(text: string, now: number): string[] {
+  const vs = textVariants(text.replace(/[’‘`´]/g, "'"));
+  const codes = TEEN_RELAY_RULES.filter(({ re }) => vs.some(v => re.test(v))).map(({ code }) => code);
+  return adultAgeStated(vs, now) ? [...codes, "teen:adult_age"] : codes;
+}
 
 const DIGIT_WORDS: Record<string, string> = { zero: "0", oh: "0", o: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
 export function spelledPhone(text: string): boolean {
@@ -180,15 +226,22 @@ export const RELAY_WORDING = {
   contact: (name: string, kind: "phone" | "email", value: string) =>
     `${name} asked me to send you their ${kind === "phone" ? "number" : "email"}: ${value}. Say "send them my number" if you want me to send yours back.`,
 };
-const NOTICE: Record<string, string> = {
-  pass: "Sent.",
-  contact: "I don't pass contact details on inside a message. If you want them to have your number, say \"send them my number\" and I'll share it.",
-  rating: "I can't share anything like that, and I don't pass questions about it on.",
-  consent: "I didn't send that. Tell me again that you want me to send it, and I will.",
-  rate: "I'll hold that one for a bit; you've sent a lot in a short time.",
-  block: "I can't pass that on.",
-  hold: "I'm holding that one for a quick check before I pass it on.",
+const PASS_NOTICE = "Sent.";
+const BLOCK_NOTICE: Record<RelayBlockNotice, string> = {
+  NoticePlain: "I didn't send that, so it didn't reach them.",
+  NoticeConsent: "I didn't send that. Tell me again that you want me to send it, and I will.",
+  NoticeRating: "I didn't send that. I can't share anything like that, and I don't pass questions about it on.",
+  NoticeContact: "I didn't send that. I don't pass on contact details, handles, addresses or other apps inside a message.",
+  NoticeRetry: "I couldn't check that message just now, so I didn't send it. Please try again in a few minutes.",
+  NoticeRate: "I didn't send that: you've sent a lot in a short time. Please try again a bit later.",
 };
+
+export function relaySenderNotice(reasons: readonly string[]): string {
+  if (!reasons.length) return PASS_NOTICE;
+  const families = new Set(reasons.map(familyOf));
+  const has = (...f: string[]) => f.some(x => families.has(x));
+  return BLOCK_NOTICE[relayBlockNotice([...families].some(f => !EXPLAINED_FAMILIES.has(f)), has("consent"), has("rating"), [...CONTACT_FAMILIES].some(f => families.has(f)), has("classifier"), has("rate"))];
+}
 
 const normPhone = (v: string) => { const d = v.replace(/[^\d+]/g, ""); return /^\+?\d{10,15}$/.test(d) ? d : null; };
 const EMAIL = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}$/;
@@ -200,7 +253,8 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
   let ageSignal = false;
 
   if (s.id !== item.from || r.id !== item.to || item.from === item.to || !op.participants.includes(item.from) || !op.participants.includes(item.to)) reasons.add("party:not_participant");
-  if (!canBeMatched(s.age) || !canBeMatched(r.age)) reasons.add("minor:party");
+  const teenPair = ctx.teenFriendPair === true;
+  if (!relayKindAllowed(item.kind === "text", canBeMatched(s.age) && canBeMatched(r.age), teenPair)) reasons.add("minor:party");
   if (ctx.blocked) reasons.add("party:blocked");
   if (r.optedOut) reasons.add("optout:recipient");
   if (s.optedOut) reasons.add("optout:sender");
@@ -252,17 +306,18 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
       }
       const c = classifyRelayText(text);
       for (const code of c.codes) {
-        if (code.startsWith("offplatform:") && op.metAt !== undefined && op.metAt <= ctx.now) continue;
+        if (code.startsWith("offplatform:") && op.metAt !== undefined && op.metAt <= ctx.now && !teenPair) continue;
         reasons.add(code);
       }
-      if (c.minorSignal) { reasons.add("minor:signal"); ageSignal = true; }
+      if (teenPair) for (const code of teenRelayCodes(text, ctx.now)) reasons.add(code);
+      if (c.minorSignal) { reasons.add(teenPair && !canBeMatched(s.age) ? "teen:age_talk" : "minor:signal"); ageSignal = true; }
       for (const code of ctx.extraRules?.(text) ?? []) if (/^[a-z_]+:[a-z0-9_]+$/.test(code)) reasons.add(code);
     }
   }
 
   const mine = (ctx.history ?? []).filter(h => h.opportunityId === op.id && h.from === item.from && h.itemId !== item.id);
   if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < L.burst.windowMs).length >= L.burst.n) reasons.add("rate:burst");
-  if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < 86_400_000).length >= L.daily) reasons.add("rate:daily");
+  if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < 86_400_000).length >= (teenPair ? L.teenDaily : L.daily)) reasons.add("rate:daily");
   if (item.kind === "photo" && mine.filter(h => h.kind === "photo" && h.decision === "pass" && item.at - h.at < 86_400_000).length >= L.photosDaily) reasons.add("rate:photos");
   if (item.kind === "contact_share" && mine.filter(h => h.kind === "contact_share" && h.contactShared).length >= L.contactShares) reasons.add("contact_share:already_shared");
 
@@ -270,9 +325,7 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
 }
 
 function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { contactValue: string | null; photos: string[]; text: string; ageSignal: boolean }): RelayResult {
-  const fam = (r: string) => r.split(":")[0]!;
-  const verdict = relayVerdict(reasons.some(r => BLOCK_PREFIX.has(fam(r))), reasons.length > 0);
-  const decision: RelayDecision = verdict === "Block" ? "block" : verdict === "Hold" ? "hold" : "pass";
+  const decision: RelayDecision = relayVerdict(reasons.length > 0) === "Pass" ? "pass" : "block";
   const name = cleanName(ctx.sender.firstName);
   let rendered = "";
   if (decision === "pass") {
@@ -285,11 +338,7 @@ function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { cont
     decision, reasons, photoCount: decision === "pass" ? x.photos.length : 0, contactShared: decision === "pass" && item.kind === "contact_share",
     ageSignal: x.ageSignal, policy: RELAY_POLICY_VERSION,
   };
-  const has = (f: string) => reasons.some(r => fam(r) === f);
-  const senderNotice = decision === "pass" ? NOTICE.pass!
-    : decision === "block" ? (has("consent") ? NOTICE.consent! : NOTICE.block!)
-    : has("rating") ? NOTICE.rating! : has("contact") || has("fishing") ? NOTICE.contact! : reasons.every(r => fam(r) === "rate") ? NOTICE.rate! : NOTICE.hold!;
-  return { decision, reasons, rendered, photos: decision === "pass" ? x.photos : [], record, senderNotice };
+  return { decision, reasons, rendered, photos: decision === "pass" ? x.photos : [], record, senderNotice: relaySenderNotice(reasons) };
 }
 
 export interface RelayClassifierInput {
@@ -298,26 +347,50 @@ export interface RelayClassifierInput {
   context?: readonly string[];
   met?: boolean;
 }
-export interface RelayClassifierOutput { flags: string[]; block?: string[]; source?: "llm" | "clef"; scores?: Record<string, number> }
+export interface RelayClassifierOutput { flags: string[]; block?: string[]; source?: "llm" | "clef"; scores?: Record<string, number>; unavailable?: true }
 export type RelayClassifierHook = (input: RelayClassifierInput) => Promise<RelayClassifierOutput>;
+export const simulatedRelayClassifier: RelayClassifierHook = async () => ({ flags: [], block: [] });
 
-const flagCode = (f: unknown) => String(f).toLowerCase().replace(/[^a-z_]/g, "").slice(0, 24) || "flag";
+const flagCode = (f: string) => f.toLowerCase().replace(/[^a-z_]/g, "").slice(0, 24) || "flag";
+const CLASSIFIER_MINOR_FLAG = "minor_signal";
+const CLASSIFIER_UNAVAILABLE = "classifier:unavailable";
 
-export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { hook?: RelayClassifierHook; failOpen?: boolean; escalateHeld?: boolean } = {}): Promise<RelayResult> {
+interface ClassifierAnswer { flags: string[]; block: string[]; source: "llm" | "clef" }
+function classifierAnswer(x: unknown): ClassifierAnswer | undefined {
+  if (typeof x !== "object" || x === null || Array.isArray(x)) return undefined;
+  const o = x as Record<string, unknown>;
+  const strings = (v: unknown) => (Array.isArray(v) && v.every(s => typeof s === "string") ? (v as string[]) : undefined);
+  const flags = strings(o.flags), block = o.block === undefined ? [] : strings(o.block);
+  if (o.unavailable !== undefined || !flags || !block) return undefined;
+  return { flags, block, source: o.source === "clef" ? "clef" : "llm" };
+}
+
+export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { hook?: RelayClassifierHook } = {}): Promise<RelayResult> {
   const first = relayItem(item, ctx);
   const text = (item.text ?? "").trim();
-  if (!o.hook || !text || first.decision === "block" || (first.decision === "hold" && !o.escalateHeld)) return first;
-  let out: RelayClassifierOutput;
-  try {
-    out = await o.hook({ text, kind: item.kind, context: [...(ctx.thread ?? [])], met: ctx.opportunity.metAt !== undefined && ctx.opportunity.metAt <= ctx.now });
-  } catch { out = { flags: o.failOpen ? [] : ["error"] }; }
-  const src = out?.source === "clef" ? "clef" : "llm";
-  const extra = [...new Set([
-    ...(out?.flags ?? []).map(f => `${src}:${flagCode(f)}`),
-    ...(out?.block ?? []).map(f => `${src}_severe:${flagCode(f)}`),
-  ])];
-  if (!extra.length) return first;
-  return finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal });
+  const teenPair = ctx.teenFriendPair === true;
+  const read = !!o.hook && relayClassifierReads(!!text, first.reasons.some(r => FINAL_FAMILIES.has(familyOf(r))), first.reasons.length > 0, teenPair);
+  let extra: string[] = [];
+  let classifierAgeSignal = false;
+  if (read) {
+    let raw: unknown;
+    try {
+      raw = await o.hook!({ text, kind: item.kind, context: [...(ctx.thread ?? [])], met: !teenPair && ctx.opportunity.metAt !== undefined && ctx.opportunity.metAt <= ctx.now });
+    } catch { raw = undefined; }
+    const answer = classifierAnswer(raw);
+    const flags = (answer?.flags ?? []).map(flagCode), block = (answer?.block ?? []).map(flagCode);
+    const reading = relayClassifierReading(answer !== undefined, flags.length + block.length > 0);
+    if (reading === "ReadingUnavailable") extra = [CLASSIFIER_UNAVAILABLE];
+    else if (reading === "ReadingFlagged") {
+      const src = answer!.source;
+      classifierAgeSignal = [...flags, ...block].includes(CLASSIFIER_MINOR_FLAG);
+      extra = [...new Set([...flags.map(f => `${src}:${f}`), ...block.map(f => `${src}_severe:${f}`)])];
+    }
+  }
+  const cleanPass = read && first.reasons.length === 0 && extra.length === 0;
+  const unclean = teenRelayHeld(teenPair, cleanPass) && first.reasons.length === 0 && extra.length === 0 ? ["teen:unclassified"] : [];
+  if (!extra.length && !unclean.length) return first;
+  return finish(item, ctx, [...new Set([...first.reasons, ...extra, ...unclean])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || classifierAgeSignal });
 }
 
 type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string } | { kind: "none" };

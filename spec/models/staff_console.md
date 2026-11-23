@@ -40,7 +40,7 @@ SD-282 (`inv_declinedMeansDeclined`, `openConsoleDecisions`) is not in `safety`:
 
 The console staff-step proxy (`packages/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action since 2026-11-22 (audit STAFF-models-convention). Before, it was compared by hand only. The action admits a step in real mode with the role of `staffStepAdmitted`, needs a configured service and a named person, and writes the "requested" row first; the shared `consoleAnswer` and `consoleTimeout` give the answer. `staffStepTimeoutTest` and `staffStepRefusedTest` replay it. The held-text routes `/api/held` and `/api/held/:id/photo` also ask `staffStepAdmitted` (ReadHeldRelay, DecideHeldRelay) since 2026-11-22 (STAFF-held-role). Compared by hand with the code on 2026-11-22. It admits a step only in real mode and with `staffStepAdmitted`. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode` holds). A write records its "requested" row before the forwarder sends it to the service, and a failed audit write stops the step (`inv_consoleAuditFirst` holds). Since 2026-11-22 (STAFF-orphan-requested) the step asks for the forwarder first: with no service it answers 503 `read_only` and writes no row, so no "requested" row stays without a result. Staff-step ids `.` and `..` are refused (STAFF-dot-ids). The steps `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are new, admin for all apps. Compared again on 2026-11-22 after the observatory change of the same day. A forward that times out (`isTimeout`) records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504 with `serviceTimeout()`: the console says that the step may have run, which is the fixed form that `step` models, so `inv_consoleSaysServiceDoes` holds for the staff steps. Any other error of the forward records ok false with code `service_unavailable` and answers 503. `packages/observatory/test/staff-steps.integration.test.ts` covers the role check, the named person in `X-Network-Staff-Id` and the refusal of a shared token. `packages/observatory/test/held.test.ts` covers the 504 timeout answer and the audit rows of a staff step and of `ServiceClient.act`; `consoleTimeout` models both.
 
-Compared 2026-11-19 for the matching gate. Audit PER63 replaced the service's registry-only check and the console's own peon list (`PACK_READY`) with one launch-scope decision, [`matchingSwitchAllowed`](../runtimeUnit.md) (`matching-scope.ts` `networkMatchingAllowed`): the service refuses "on" and the tick does not run outside the scope, the real source sends every press to the service, and the overview says "locked" unless the service's `/health` says `matchingAllowed: true`; since 2026-11-22 (peon-r29-2) no service, or a failed `/health`, also reads as locked, and the switch reads from the Network's stored state only (`real-console.test.ts`). The model now has the deployment inputs `production` and `peonLive`, and SD-088 (`inv_tickRunImpliesLaunchScope`) is in `safety`. SD-247, SD-068, SD-246 and SD-282 were checked again in the code and are still open.
+Compared 2026-11-19 for the matching gate. Audit PER63 replaced the service's registry-only check and the console's own peon list (`PACK_READY`) with one launch-scope decision, [`matchingSwitchAllowed`](../runtimeUnit.md) (`matching-scope.ts` `networkMatchingAllowed`): the service refuses "on" and the tick does not run outside the scope, the real source sends every press to the service, and the overview says "locked" unless the service's `/health` says `matchingAllowed: true`; since 2026-11-22 (peon-r29-2) no service, or a failed `/health`, also reads as locked, and the switch reads from the Network's stored state only (`real-console.test.ts`). Compared again on 2026-11-22 after the owner decision of that day, which approved every app: the launch-scope decision and `matching-scope.ts` are removed, the registry row alone decides, and the model no longer has the inputs `production` and `peonLive`; SD-088 is `inv_tickRunImpliesRegistry` in `safety`. SD-247, SD-068, SD-246 and SD-282 were checked again in the code and are still open.
 
 ```quint
 // quint-check: max-steps=14 max-samples=20000 verify-steps=6
@@ -65,8 +65,8 @@ Compared 2026-11-19 for the matching gate. Audit PER63 replaced the service's re
 // vibestack-matching differs (compared 2026-11-21), a `*Code` action outside `step` follows the code and a run
 // test shows the rule fail: SD-247, SD-068, SD-246, SD-466, SD-070, SD-470. SD-288, SD-083, SD-082, SD-285,
 // SD-286, SD-287, SD-281 and SD-279 were fixed on 2026-11-22, and their actions are now one action each. SD-282 (`openConsoleDecisions`) needs a privacy and data-retention decision;
-// real.ts still reads every removed row with a null name as an under-13 decline. SD-088 is closed by the launch-scope decision (audit PER63,
-// spec/runtimeUnit.md matchingSwitchAllowed): its rule is now inv_tickRunImpliesLaunchScope, in `safety`.
+// real.ts still reads every removed row with a null name as an under-13 decline. SD-088 is closed: since the owner decision of
+// 2026-11-22 the registry row alone decides matching (spec/runtimeUnit.md), and inv_tickRunImpliesRegistry is in `safety`.
 // Code locations name functions and routes of vibestack-matching.
 module staff_console {
 
@@ -108,9 +108,9 @@ module staff_console {
     hs: { heldIn: Set[str], toastEvery: bool },
     // console-mode and source cache (server.ts source, setMode and guard).
     md: { realOnly: bool, mode: str, srcState: str -> str, pending: str, ranSaw: str, ranIn: str },
-    // network-matching-gate (spec/runtimeUnit.md matchingSwitchAllowed; matching-scope.ts networkMatchingAllowed;
-    // service.ts setMatching; runtime.ts tick rollout; health.ts appHealth; real.ts serviceMatchingAllowed).
-    mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool, production: bool, peonLive: bool },
+    // network-matching-gate (spec/runtimeUnit.md, the registry row; service.ts setMatching; runtime.ts tick rollout;
+    // health.ts appHealth; real.ts serviceMatchingAllowed).
+    mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool },
     // matching-switch-confirm (admin.tsx Config).
     cf: { armed: bool, armedApp: str, target: bool, dataApp: str, sent: bool, sentApp: str, sentArmedFor: str, sentDataOf: str },
     // auth-prompt (web/store.ts api and setToken).
@@ -131,13 +131,11 @@ module staff_console {
   pure val STAFF = Set("S1", "S2")
   pure val APPS = Set("slop", "peon")
   pure val MODES = Set("game", "real")
-  pure val KINDS = Set("review", "hold", "leak", "relayText")
+  pure val KINDS = Set("review", "hold", "leak", "relayPhoto")
   pure val MEMBER_OF: str -> str = Map("slop" -> "x", "peon" -> "y")
   // Case "sc1" exists in each app and names a different member (network.ts caseEvent: `sc${++this.caseSeq}`, no app prefix).
   pure val CASE_SC1: str -> str = Map("slop" -> "x", "peon" -> "y")
   pure val GRANTS0: Set[Grant] = Set(("S1", "safety", "slop"), ("S1", "reviewer", "slop"), ("S2", "admin", "*"))
-  // spec/runtimeUnit.md appMatchingLocalOnly: friends and peon (this model has peon).
-  pure val LOCAL_ONLY_APPS = Set("peon")
   pure val REVEAL_TICKS = 3   // 15 minutes (server.ts REVEAL_MAX_MINUTES)
   pure val TICKET_TICKS = 1   // 30 s (WS_TICKET_MS)
   pure val PREVIEW_TICKS = 5  // 5 minutes (server.ts "/api/held/:id/photo" and network service.ts, the held photo route)
@@ -160,12 +158,7 @@ module staff_console {
     if (hasNet) netMinor or recordMinor(recordAge) else (recordAge == "none" or recordMinor(recordAge))
 
   // ------------------------------------------------------------------ init
-  // The default start is a production deployment without the founder's peon live decision.
-  action initWith(loginFit: bool, realOnly: bool, startMode: str, skew: int, peonRegistry: bool, recordAge: str): bool =
-    initFull(loginFit, realOnly, startMode, skew, peonRegistry, recordAge, true, false)
-
-  action initFull(loginFit: bool, realOnly: bool, startMode: str, skew: int, peonRegistry: bool, recordAge: str,
-                  production: bool, peonLive: bool): bool = all {
+  action initWith(loginFit: bool, realOnly: bool, startMode: str, skew: int, peonRegistry: bool, recordAge: str): bool = all {
     s' = {
       now: 0,
       grantsDb: GRANTS0, grantsCopy: GRANTS0,
@@ -186,10 +179,8 @@ module staff_console {
         pending: "none", ranSaw: "none", ranIn: "none",
       },
       // Migration 0011 sets platform.networks.matching_enabled true for peon:nyc (observatory.md D35); a
-      // deployment may differ, so the peon row is an input. production (isProduction(env)) and peonLive
-      // (PEON_LIVE_APPROVED=1) are deployment inputs of the launch scope.
-      mg: { registry: Map("slop" -> true, "peon" -> peonRegistry), stored: Map("slop" -> false, "peon" -> false), engineRan: Map("slop" -> false, "peon" -> false),
-            production: production, peonLive: peonLive },
+      // deployment may differ, so the peon row is an input.
+      mg: { registry: Map("slop" -> true, "peon" -> peonRegistry), stored: Map("slop" -> false, "peon" -> false), engineRan: Map("slop" -> false, "peon" -> false) },
       cf: { armed: false, armedApp: "slop", target: false, dataApp: "slop", sent: false, sentApp: "", sentArmedFor: "", sentDataOf: "" },
       cl: { epoch: 0, inflight: Set(), authNeeded: false, valid: Set(0) },
       pv: { skew: skew, tokenUntil: 0, state: "none", refusedAt: 0, loadedBy: "", releasedBy: "" },
@@ -206,9 +197,7 @@ module staff_console {
     nondet skew = Set(0, 1).oneOf()
     nondet peonRegistry = Set(true, false).oneOf()
     nondet recordAge = Set("adult", "minor", "none").oneOf()
-    nondet production = Set(true, false).oneOf()
-    nondet peonLive = Set(true, false).oneOf()
-    initFull(loginFit, realOnly, startMode, skew, peonRegistry, recordAge, production, peonLive)
+    initWith(loginFit, realOnly, startMode, skew, peonRegistry, recordAge)
   }
 
   // ------------------------------------------------------------------ time and grants
@@ -347,7 +336,7 @@ module staff_console {
   }
 
   // The service runs the request. review and hold go through staffAction/audited (service.ts staffAction,
-  // audited and auditedRun); the leak decision (service.ts /queue/leak-review) and a relay text or photo decision (service.ts, the relay photo decision)
+  // audited and auditedRun); the leak decision (service.ts /queue/leak-review) and a relay photo decision (service.ts, the relay photo decision; no relay text waits for staff since owner decision 2026-11-22, D18)
   // now also write their "requested" row first (SD-135 fix 88d4d88). A failed write throws before the action.
   // The service may still run after the console timed out (no idempotency key; observatory.md D14).
   action serviceApply(outcome: str, svcAuditUp: bool): bool = all {
@@ -530,16 +519,13 @@ module staff_console {
   }
 
   // ------------------------------------------------------------------ network-matching-gate
-  // spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope": the registry row, and for a
-  // local-only app in production the founder's live decision. The service builds each runtime's matchingAllowed
-  // with it (matching-scope.ts networkMatchingAllowed) and reports it on /health.
-  pure def matchingSwitchAllowed(registryAllows: bool, app: str, production: bool, liveApproved: bool): bool =
-    registryAllows and (not(LOCAL_ONLY_APPS.contains(app)) or not(production) or liveApproved)
-  pure def launchScope(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool, production: bool, peonLive: bool }, app: str): bool =
-    matchingSwitchAllowed(mg.registry.get(app), app, mg.production, app == "peon" and mg.peonLive)
+  // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran": the registry row alone
+  // (owner decision 2026-11-22). The service builds each runtime's matchingAllowed from it and reports it on /health.
+  pure def launchScope(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): bool =
+    mg.registry.get(app)
 
   // setMatching (service.ts): "on" outside the launch scope is refused (and audited); "off" is always taken.
-  pure def serviceSwitch(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool, production: bool, peonLive: bool }, app: str, on: bool): { registry: str -> bool, stored: str -> bool, engineRan: str -> bool, production: bool, peonLive: bool } =
+  pure def serviceSwitch(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str, on: bool): { registry: str -> bool, stored: str -> bool, engineRan: str -> bool } =
     if (on and not(launchScope(mg, app))) mg else { ...mg, stored: mg.stored.set(app, on) }
 
   // A direct call to the service staff API with a service admin token (another actor; observatory.md D35).
@@ -557,7 +543,7 @@ module staff_console {
   // network is inside its launch scope (real.ts serviceMatchingAllowed, env.matchingLocked), else the stored switch.
   // A missing or failed answer reads as locked (peon-r29-2, fixed 2026-11-22); the model has the service always answer.
   // The console keeps no list of its own in real mode (audit PER63).
-  pure def overviewMatching(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool, production: bool, peonLive: bool }, app: str): str =
+  pure def overviewMatching(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): str =
     if (not(launchScope(mg, app))) "locked" else if (mg.stored.get(app)) "on" else "off"
 
   // Config "Turn on/off" (admin.tsx Config): the generated consoleWorkspace pressMatchingSwitch and
@@ -871,13 +857,6 @@ module staff_console {
   // row allows it.
   val inv_tickRunImpliesRegistry = APPS.forall(a => s.mg.engineRan.get(a) implies s.mg.registry.get(a))
 
-  // tickRunImpliesLaunchScope (was tickRunImpliesAllowedAndStored, SD-088). AGENTS.md decision 4 and
-  // spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope": a production tick runs peon
-  // matching only after the founder's live decision. Before PER63 the service read only the registry row and this
-  // rule was out of `safety`; matching-scope.ts networkMatchingAllowed now closes it, and it is in `safety`.
-  val inv_tickRunImpliesLaunchScope = APPS.forall(a => s.mg.engineRan.get(a) implies
-    (s.mg.registry.get(a) and (not(LOCAL_ONLY_APPS.contains(a)) or not(s.mg.production) or s.mg.peonLive)))
-
   // confirmMatchesApp. gap-console-client.md 2.9: the two-step confirm is given for one app and sends that
   // app's switch, computed from that app's data. Code: admin.tsx Config. Register: SD-246, open on this branch:
   // `switchAppCode` fails it (armedSwitchCarriesTest).
@@ -929,7 +908,6 @@ module staff_console {
     inv_photosOnlyAdults,
     inv_consoleShowsGate,
     inv_tickRunImpliesRegistry,
-    inv_tickRunImpliesLaunchScope,
     inv_releaseBySameStaff,
     inv_terminalAbsorbing,
     inv_feedExact,
@@ -1156,10 +1134,11 @@ module staff_console {
       .then(pressHold("S2"))
       .expect(s.hs.heldIn == APPS and s.hs.toastEvery and inv_successTextMatchesScope)
 
-  // SD-135 (fixed, 88d4d88): a relay text decision with the service audit sink down does not run.
-  run relayTextNeedsServiceRowTest =
+  // SD-135 (fixed, 88d4d88): a relay photo decision with the service audit sink down does not run. Owner decision
+  // 2026-11-22, D18: relayed texts no longer wait for staff, so the relay decision kind is the photo decision only.
+  run relayPhotoNeedsServiceRowTest =
     init0
-      .then(consoleSend("relayText", true))
+      .then(consoleSend("relayPhoto", true))
       .then(serviceApply("commit", false))
       .expect(s.svcEffects.size() == 0 and s.rel.svc == "refused" and inv_auditFirst)
 
@@ -1242,38 +1221,26 @@ module staff_console {
       .then(controlStale)
       .expect(s.md.pending == "none" and s.md.ranSaw == "none" and inv_commandRunsInSeenMode)
 
-  // PER63: in production without the peon live decision a direct service call cannot turn peon on, the tick does
-  // not run it, and the overview says "locked" (SD-088 closed).
-  run peonGateTest =
+  // Owner decision 2026-11-22: peon follows its registry row in every environment: a direct service call turns it
+  // on, the tick runs it, and the overview says "on".
+  run peonRegistryRunsTest =
     init0
-      .then(directServiceSwitch("peon", true))
-      .expect(not(s.mg.stored.get("peon")) and overviewMatching(s.mg, "peon") == "locked" and inv_consoleShowsGate
-              and inv_tickRunImpliesLaunchScope)
-
-  // Outside production (local simulation, development, test) peon follows its registry row: on, then the tick runs.
-  run peonLocalRunsTest =
-    initFull(true, true, "real", 0, true, "adult", false, false)
       .then(directServiceSwitch("peon", true))
       .then(serviceTick("peon"))
       .expect(s.mg.engineRan.get("peon") and overviewMatching(s.mg, "peon") == "on" and inv_consoleShowsGate
-              and inv_tickRunImpliesLaunchScope)
+              and inv_tickRunImpliesRegistry)
 
-  // In production with PEON_LIVE_APPROVED=1 the founder's decision lets peon matching run.
-  run peonLiveRunsTest =
-    initFull(true, true, "real", 0, true, "adult", true, true)
-      .then(directServiceSwitch("peon", true))
-      .then(serviceTick("peon"))
-      .expect(s.mg.engineRan.get("peon") and inv_tickRunImpliesLaunchScope)
-
-  // With the peon registry row false the service refuses peon on everywhere, and the overview says "locked".
+  // With the peon registry row false the service refuses peon on, and the overview says "locked".
   run peonRegistryOffTest =
-    initFull(true, true, "real", 0, false, "adult", false, true)
+    initWith(true, true, "real", 0, false, "adult")
       .then(directServiceSwitch("peon", true))
-      .expect(not(s.mg.stored.get("peon")) and overviewMatching(s.mg, "peon") == "locked" and inv_tickRunImpliesLaunchScope)
+      .expect(not(s.mg.stored.get("peon")) and overviewMatching(s.mg, "peon") == "locked" and inv_consoleShowsGate
+              and inv_tickRunImpliesRegistry)
 
-  // The console sends the press; the service refuses peon on outside the launch scope (setMatching matching_not_allowed).
+  // The console sends the press; the service refuses peon on when the registry row does not allow it
+  // (setMatching matching_not_allowed).
   run consoleRefusesPeonTest =
-    init0
+    initWith(true, true, "real", 0, false, "adult")
       .then(switchApp("peon"))
       .then(configPoll)
       .then(pressSwitch("S2"))

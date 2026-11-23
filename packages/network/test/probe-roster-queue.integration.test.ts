@@ -14,6 +14,7 @@ import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test.skipIf(!pgAvailable).each([
   ["roster unchanged", "proactive"], ["roster changed", "proactive"], ["roster changed", "transactional"],
@@ -27,14 +28,14 @@ test.skipIf(!pgAvailable).each([
     const secret = "synthetic-probe-roster-queue-turn-fixture";
     const people = [{ name: "Ari", e164: "+12125550781" }, { name: "Bren", e164: "+12125550782" }, { name: "Cato", e164: "+12125550783" }];
     const calls: SendRequest[] = [];
-    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550780", clock, liveGate: () => true, log: () => {}, provider: {
+    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550780", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         calls.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
       },
     } });
     const service = new NetworkService({ url, clock, log: () => {}, photoStorage: null, adapter, networks: [{ id: appRuntime }],
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, network: { plans: false, growth: false } });
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, network: { plans: false, growth: false } });
     const turn = async (messageId: string, text: string) => {
       const input: TurnRequest = { app: app.id, channel: "blooio", from: people[0]!.e164, messageId, text, transport: "imessage", receivedAt: clock.now(), to: null };
       const body = JSON.stringify(input);
@@ -56,7 +57,7 @@ test.skipIf(!pgAvailable).each([
       await sql`update network.members set prefs=jsonb_set(coalesce(prefs,'{}'::jsonb),'{categoriesOptIn}','["hobby"]'::jsonb)
         where app_id=${app.id} and id=${first}`;
       const now = clock.now();
-      const fixture = new Mini(members, { app: app.id, review: "human", plans: false, growth: false });
+      const fixture = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
       fixture.clock.set(now);
       await fixture.onboard(first, second, third);
       fixture.propose([first, second], { category: "hobby", objective: "find a climbing partner", alternates: [third] });

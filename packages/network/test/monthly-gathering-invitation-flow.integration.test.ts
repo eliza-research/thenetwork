@@ -25,11 +25,11 @@ test.skipIf(!pgAvailable)("the tick delivers only current staff-approved gatheri
   const notices = () => sent.filter(send => send.idempotencyKey.startsWith(`tn:${monthlyGatheringNoticePrefix}`));
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, notify: false,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     tokens: "admin@ntwrk:ntwrk-admin,reviewer@ntwrk:ntwrk-reviewer",
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }], devMatching: ["ntwrk:nyc"],
     network: { growth: false },
-    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, liveGate: () => true, log: () => {},
+    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {},
       provider: { kind: "sim", async send(request) {
         sent.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };

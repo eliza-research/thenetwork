@@ -30,7 +30,7 @@ Authorize a staff member to create individually attributable invites with city a
 
 ### A membership belongs to a verified, eligible person
 
-Require phone verification, current app consent, age and a valid invite where required. Joining from a new verified number goes through identity linking or staff recovery. Duplicate joins attach to the existing person without exposing other memberships. A banned number cannot join, and an under-13 join creates no membership.
+Require phone verification, current app consent, age and a valid invite where required. Joining from a new verified number goes through identity linking or staff recovery. Duplicate joins attach to the existing person without exposing other memberships. A banned number cannot join, and an under-13 join creates no membership. Ask for the birth date (year, month and day), not only an age, so that the age rises on each birthday by Clock time. The youngest reading wins: a later birth date, or a lower stated age, replaces an older reading, and two readings that disagree are an age conflict that never clears by itself (owner decision 2026-11-22). The looking-for question offers a member aged 13 to 17 friends only; "work" or "dating" from a minor enrolls nothing. A member of slop.date or peon.biz aged 13 to 17 stays a member with solo help and is told once what they get (owner decision 2026-11-22, answer A5).
 
 Models: [generated site enrollment](../siteEnrollment.md), [join and age](../models/join_age.md), [historical browser join](../models/join_flow.md), [identity lifecycle](../models/identity_sagas.md), [phone identity](../models/phone_identity.md), [member age rules](../memberAge.md), [phone verification limits](../otpLimits.md).
 
@@ -146,6 +146,12 @@ Reserve greedy choices in order of non-increasing pair value, never pass a pack 
 
 Models: [global selection](../selectionRun.md), [matching engine](../models/matching_engine.md).
 
+### A friendship introduction with a minor passes the teen age rule
+
+A person aged 13 to 17 gets no date or work proposal. On friends.help (`social` or `hobby`) and in the ntwrk `Friend` lane (`social`), a minor can get a friendship introduction to people aged 13 to 18 whose birth dates are at most 2 calendar years from theirs, from a generator that `teenGenerator` names, in a `one_to_one` or `small_group` shape with every role `peer` or `guest`, with no via and no event anchor. Every person in that roster is teen ready: an exact birth date, no age conflict, no open minor signal, no minor or older-than-stated report and no teen-pool bar; no staff step is needed. Nobody aged 19 or more is in the roster, is a via or introducer, or reads about the minor. Check the rule over the whole roster, alternates and host included, at proposal, approval, each contact, booking and relay, with the meeting day as the latest day. When the rule stops holding, or staff stop teen introductions, close the whole item without naming anybody. Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions also run in the ntwrk `Friend` lane and are on from the start with no staff confirm step, because the owner chose "friends.help and ntwrk" and "On at launch, no extra checks".
+
+Models: [friend introductions with a minor](../friendIntroAge.md), [member age rules](../memberAge.md), [relationship lanes](../matchLane.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [opportunity](../models/opportunity.md).
+
 ## Story F12 — Join a small group
 
 > As a member, I want to join a public activity if enough eligible people accept.
@@ -159,6 +165,10 @@ Models: [reviewed group journey](../reviewedGroupJourney.md), [plan run](../mode
 ### Every pair in a circle fits
 
 Admit a circle only when its size is inside the lane's circle bounds, every pair in it has a pair value at or above the lane's circle floor, and the spread of private standing stays inside the lane's band plus the members' uncertainties.
+
+### A group with a minor is small, fits every pair and meets at an all-ages place
+
+A friends.help group plan, table, crew or circle, or an ntwrk `Friend` circle, can include a minor only when it has 2 to 6 people (participants, alternates and host), every member is aged 13 to 18 with an exact birth date, every minor is within 2 calendar years of every other member, and, on friends.help, the activity and the place carry the all-ages mark. A bar, a private home, alcohol or an adult door policy is never all-ages. A group with a minor gets no organizing reach, no replacement and no fallback; when a member stops passing the rule, the whole group closes with a notice that names nobody. ntwrk plans and gatherings never seat a minor. Changed (owner decision 2026-11-22, answers A2 to A5): small teen groups are new, because the owner chose "Also small teen groups".
 
 Models: [group formation](../groupFormation.md), [reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [candidate pool](../models/candidate_pool.md).
 
@@ -200,7 +210,7 @@ Models: [opportunity](../models/opportunity.md), [review desk](../models/review_
 
 ### Every relay item has consent and a dispatch check
 
-Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
+Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. Forward a photo only when a member selects it and per-item policy allows it. After the receiver accepts it, an automatic image check clears it or staff approve a photo that the check flags or cannot check; the receiver's private link opens only on the receiver's first browser and stays open until the sender takes the photo back or the access ends (owner decision D14 of 2026-11-22). Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. A thread with a minor carries text only: no number and no photo from or to a minor. Teen-pair text that does not pass cleanly, or that asks for secrecy, age, gifts, pictures, a meeting alone, a location or contact details, is held for staff (owner decision 2026-11-22). A teen's own words about age are held, not blocked; a minor signal opens only for an age younger than the record. Announce delivery only when the sender system confirms it.
 
 Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_item.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
 
@@ -278,7 +288,7 @@ Models: [gathering review](../monthlyGathering.md), [invitation review](../month
 
 ### A block takes effect now and a report has an accountable owner
 
-A block stops pair contact across apps and invalidates queued work for the pair. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
+A block stops pair contact across apps and invalidates queued work for the pair. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services. A minor report or an older-than-stated report about a teen-ready member ends their teen readiness at once, bars their phone from the teen pool, closes their teen items and relay threads, and opens a case for each minor who shared a roster or relay thread with them. A stored minor signal, minor report or age conflict keeps the person out of every teen pool until a `safety` or `admin` staff member clears the doubt, and only for an exact teen birth date with no bar and no older-than-stated or lying report. An open report or hold on one app makes the person unready in every teen pool, and a teen pair declined or reported on one app is not proposed on another (owner decision 2026-11-22, answers A2 to A5).
 
 Models: [safety and trust](../models/safety_trust.md), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
 
@@ -318,11 +328,11 @@ Models: [live travel windows](../travelPresence.md), [signed travel journey](../
 
 ## Story F27 — Review before contact
 
-> As a reviewer, I want enough safe context to approve, edit, swap, re-roll or reject a proposal.
+> As a member, I want each introduction checked before anyone hears of it; as a staff member, I want enough safe context to decide an item the review judge holds, and to stop an approved item before its reveal.
 
 ### Review is authorized, current and recorded
 
-Show the app, origin, scrubbed context, reasons, proposed copy, timeline and deadline to the assigned reviewer. Store the decision, reviewer, reason and evidence as audit data. Recheck all participants on approval and dispatch. A materially changed proposal must pass review again. Expiry prevents a late send. Simulated review is confined to the simulation.
+The review judge reads the same facts a staff reviewer saw, as data (app, origin, first names, ages, reasons, proposed copy, place and time, deadline; no phone, member id or last name), and approves, flags or cannot decide; it uses the strict rubric when the roster has a minor. An item the judge does not approve, or cannot judge in time, waits for staff as an exception with the judge's verdict, reason and explanation. Staff approve, edit or re-roll only a held item, reject any open item, and stop an approved item before its reveal. Store the decision, the approver (judge or staff), the reviewer, the reason and evidence as audit data. Recheck all participants on approval and dispatch. A materially changed proposal must pass review again. Expiry prevents a late send. The simulated stand-in judge is confined to the simulation. An item whose final roster holds a minor is judged with the strict rubric; a held teen item shows staff each member's age, apps and account age. Changed (owner decisions D15 to D17 of 2026-11-22): "Everything automated"; no staff reviewer reads an approved introduction, also one with a member aged 13 to 17. Teen introductions are on from the start. One `admin` or `safety` staff member can stop them on every app that offers them, and one `admin` can turn them on again; each step writes an audit row. A stop closes every open item and relay thread with a minor. Changed (owner decision 2026-11-22, answers A2 to A5): the two-admin switch and the safety-role approval are deleted, because the owner chose "On at launch, no extra checks".
 
 Models: [staff review and plan preview](../staffReview.md), [review desk](../models/review_desk.md), [staff console](../models/staff_console.md), [console privacy](../models/console_privacy.md).
 
@@ -581,7 +591,7 @@ Acceptance:
 - The agent drafts for the selected app and hands one link to the person after approval. The person's browser confirms their phone and authorizes the app's connector. The peon.biz skill also supports a prepared text the person sends from Messages. The Peon transport needs separate qualification ([product policies](policies.md#age-identity-and-enrollment)).
 - An agent without a supported signup transport explains its capability limit before collecting a profile. The verification code stays in the person's browser. A prepared text is available only where the app supports that signup path.
 - Read the app facts from the skill's own origin before drafting. Facts for another app stop the flow.
-- The lowest stated age applies. Under 13, the agent stops before it asks for a number. At 13 to 17, the agent tells the person that matching and introductions are for adults 18 and older.
+- The lowest stated age applies. Under 13, the agent stops before it asks for a number. At 13 to 17, the agent tells the person that dates and work matching are for adults 18 and older and offers friends only. On friends.help and ntwrk.party it adds that friendship introductions are only to people aged 13 to 18 born at most 2 years apart, after a person reviews each one. On slop.date and peon.biz it says that friendship introductions under 18 happen on friends.help and ntwrk.party (owner decision 2026-11-22, answers A2 to A5).
 - The agent shows a short draft and the current text consent: recurring texts, variable frequency, message and data rates, STOP and HELP, and links to the text terms, the terms and the privacy policy. Only an explicit approval of this profile and this wording continues. A code, a draft or silence is not approval.
 - The site's authorized signup flow may reuse its live verified browser session. The person enters the number and code on the app's site and controls retries. The agent collects neither credential.
 - An account of another app stops the flow. An existing member is read back, and the agent does not send Join again. An invite-only app without an invitation and an account on hold stop the flow.

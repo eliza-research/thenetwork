@@ -4,7 +4,6 @@
 // tries to post, an adult who never opted in to work matching, four adult candidates, a 15-year-old
 // candidate and a held one. The "database" is the world's rows: a confirmed posting is written to them
 // (onPosting -> postingFacts) and the snapshot makes it a seat (engine peonSeats), as in production.
-// Review is "human": a gate approves items one at a time, so nothing reaches anyone before review.
 // Gates (all blocking):
 //   intake      the text is read back and saved only on the manager's yes; minors and members not
 //               opted in to work cannot post (text and staff path); never from an open turn
@@ -21,6 +20,7 @@ import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.t
 import { runEngine } from "../../packages/engine/src/engine.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
+import { holdEveryItem } from "../../packages/engine/src/reviewJudge.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
 import { appWiring } from "../../packages/network/service/packs.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
@@ -48,7 +48,7 @@ class SeatWorld {
   constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, inlineJudge: holdEveryItem.inline, reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };

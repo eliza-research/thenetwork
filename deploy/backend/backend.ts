@@ -1,5 +1,5 @@
-import { backendBoot, backendBootRefused, backendWebhookServed, databaseLogin, declaredEnvironment, minimumSecretLength, photoRelaySetup, type BackendBoot } from "../../packages/core/src/generated/bootPolicy.ts";
-import { lineAndStaffFacts, lineAndStaffMessages } from "../../packages/network/service/line-staff-boot.ts";
+import { backendBoot, backendBootRefused, backendWebhookServed, databaseLogin, declaredEnvironment, minimumSecretLength, photoStorageSetup, type BackendBoot } from "../../packages/core/src/generated/bootPolicy.ts";
+import { configuredChannel, lineAndStaffFacts, lineAndStaffMessages, workersAiProblem, type ChannelName } from "../../packages/network/service/line-staff-boot.ts";
 import { isBlooioWebhookPath } from "../../packages/network/service/serve.ts";
 import {
   backendAcceptsWork, canStartTimer, initial as lifecycleInitial, step as stepBackendLifecycle,
@@ -8,13 +8,12 @@ import { checkBackendHealth } from "../../packages/core/src/vibe/backendHealthSh
 import { finishBackendShutdown } from "../../packages/core/src/vibe/backendShutdownShell.js";
 import type { HealthStatus } from "../../packages/core/src/generated/backendHealth.ts";
 import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
-import { APPS, appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
-import { isProduction, requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
+import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
+import { isProduction, MODEL_PROVIDER_MISSING, MODEL_PROVIDER_UNKNOWN, modelProviderFacts, requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { isProxyHeader, PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
-import { networkRoutePolicy } from "../../packages/network/service/route-authority.ts";
-import { RELAY_MAX_BODY_BYTES, RELAY_PATH, RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES, RELAY_PHOTO_RESOLVE_PATH } from "../../packages/network/service/relay-endpoint.ts";
+import { RELAY_MAX_BODY_BYTES, RELAY_PATH } from "../../packages/network/service/relay-endpoint.ts";
 import { SUGGESTION_PATH } from "../../packages/network/service/profile-suggestion-endpoint.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
@@ -31,13 +30,12 @@ const HEALTH_FAILURE = {
 } as const satisfies Record<Exclude<HealthStatus, "Ready">, string>;
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
-  RELAY_PHOTO_RESOLVE_PATH, PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath,
+  PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath,
   ...["preview", "decide", "delete", "collect", "consent-context"].map(action => SUGGESTION_PATH + action)]);
 const MAX_INTERNAL_BODY = 256 * 1024;
 const internalCap = (path: string) => {
   if (path === PROFILE_REVIEW_DISCONNECT_PATH || path === PROFILE_REVIEW_WITHDRAWAL_PATH) return 4096;
   if (path === calendarOwnerPath) return CALENDAR_SCHEDULING_MAX_BODY;
-  if (path === RELAY_PHOTO_RESOLVE_PATH) return RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES;
   return path === RELAY_PATH || path.startsWith(SUGGESTION_PATH) ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY;
 };
 
@@ -53,7 +51,7 @@ export interface BackendConfig {
   hostMap: Record<string, AppId>;
   build: string;
   migrateOnBoot: boolean;
-  channel: "dry-run" | "blooio" | "eliza_cloud";
+  channel: ChannelName;
   blooioWebhook: boolean;
   publicEventsUrl?: string;
   shutdownGraceMs: number;
@@ -61,38 +59,14 @@ export interface BackendConfig {
   tickLateMs: number;
   ops: OpsConfig;
   leakLabelKey?: string;
-  photoRelay?: PhotoRelayConfig;
+  photoStorage: boolean;
   warnings: string[];
-}
-
-export interface PhotoRelayConfig { version: string; notice: string; reviewers: string[]; deliveryOrigin: string }
-
-function exactOrigin(value: string, deployed: boolean): boolean {
-  if (!URL.canParse(value)) return false;
-  const url = new URL(value);
-  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
-  return url.origin === value && (url.protocol === "https:" || (!deployed && url.protocol === "http:" && loopback));
-}
-
-function photoRelayConfig(e: Env, deployed: boolean): PhotoRelayConfig | undefined {
-  const version = e.NETWORK_PHOTO_RELAY_NOTICE_VERSION?.trim() ?? "";
-  const notice = e.NETWORK_PHOTO_RELAY_NOTICE?.trim() ?? "";
-  const reviewers = (e.NETWORK_PHOTO_RELAY_REVIEWERS ?? "").split(",").map(r => r.trim()).filter(Boolean);
-  const deliveryOrigin = e.NETWORK_PHOTO_DELIVERY_ORIGIN?.trim() ?? "";
-  const setup = photoRelaySetup(version !== "", notice !== "", notice.includes("{{recipient}}"), reviewers.length > 0,
-    deliveryOrigin !== "", exactOrigin(deliveryOrigin, deployed));
-  switch (setup) {
-    case "PhotoRelayOff": return undefined;
-    case "PhotoRelayOn": return { version, notice, reviewers, deliveryOrigin };
-    case "PhotoRelayIncomplete": throw new Error("photo relay needs NETWORK_PHOTO_RELAY_NOTICE_VERSION, NETWORK_PHOTO_RELAY_NOTICE with {{recipient}}, NETWORK_PHOTO_RELAY_REVIEWERS and an exact https NETWORK_PHOTO_DELIVERY_ORIGIN together, or none of them");
-    default: { const unknownSetup: never = setup; throw new Error(`unknown photo relay setup ${String(unknownSetup)}`); }
-  }
 }
 
 const SECRET_MIN = minimumSecretLength;
 export const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 
-function backendBootMessages(p: BackendBoot, e: Env, otpProblems: string[], devSwitches: string[]): string[] {
+function backendBootMessages(p: BackendBoot, otpProblems: string[], devSwitches: string[], providerUnknown: boolean): string[] {
   const out: string[] = [];
   if (p.devConflict) out.push("a NODE_ENV other than production when PLATFORM_ENV=dev");
   if (p.databaseMissing) out.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
@@ -111,20 +85,22 @@ function backendBootMessages(p: BackendBoot, e: Env, otpProblems: string[], devS
   if (p.sharedLogin) out.push("a MIGRATION_DATABASE_URL that is a different login from the service's NETWORK_DATABASE_URL");
   if (p.leakKeyShort) out.push(`LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
   out.push(...lineAndStaffMessages(p, SECRET_MIN));
-  if (p.reviewInvalid) out.push(`NETWORK_REVIEW_MODE=human (got ${JSON.stringify(e.NETWORK_REVIEW_MODE)})`);
+  if (p.modelProviderMissing) out.push(MODEL_PROVIDER_MISSING);
+  if (providerUnknown) out.push(MODEL_PROVIDER_UNKNOWN);
   if (p.devSwitchSet) out.push(...devSwitches.map(k => `unset ${k} (dev only)`));
   return out;
 }
 
 export function loadConfig(e: Env = process.env, argv: string[] = []): BackendConfig {
   const env = requirePlatformEnv(e);
-  const isolatedRoute = networkRoutePolicy(e);
+  const channel = configuredChannel(e, argv);
   const databaseUrl = e.NETWORK_DATABASE_URL || e.DATABASE_URL;
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
   const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
   const lineStaff = lineAndStaffFacts(e, env === "production");
   const sessionSecret = e.PLATFORM_SESSION_SECRET ?? "";
   const devSwitches = Object.keys(e).filter(k => k.startsWith("PLATFORM_DEV_") && e[k]);
+  const models = modelProviderFacts(e);
   const policy = backendBoot({
     environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), production: isProduction(e), database: Boolean(databaseUrl),
     migrate: migrateOnBoot, migrationUrl: Boolean(e.MIGRATION_DATABASE_URL),
@@ -134,15 +110,19 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     sessionIsHashKey: sessionSecret !== "" && sessionSecret === e.PLATFORM_HASH_KEY,
     leakKeyBytes: new TextEncoder().encode(e.LEAK_LABEL_KEY ?? "").length,
     ...lineStaff, publicEventsLogin: Boolean(e.NETWORK_PUBLIC_EVENTS_DATABASE_URL),
-    review: e.NETWORK_REVIEW_MODE ?? "", reviewSet: e.NETWORK_REVIEW_MODE !== undefined, devSwitch: devSwitches.length > 0,
+    modelProvider: models.modelProvider, devSwitch: devSwitches.length > 0,
   });
   const { deployed } = policy;
   const otpProblems = deployed ? otpConfigProblems(e) : [];
-  if (backendBootRefused(policy) || otpProblems.length) throw new Error(`PLATFORM_ENV=${env} needs ${backendBootMessages(policy, e, otpProblems, devSwitches).join("; ")}`);
+  const workersAi = workersAiProblem(deployed, isProduction(e), e);
+  const photoStorage = photoStorageSetup(deployed, Boolean(e.PHOTO_STORAGE), e.PHOTO_STORAGE === "r2");
+  const photoStorageProblem = photoStorage === "PhotoStorageRefused" ? "PHOTO_STORAGE=r2 (private photo storage) on a deployed backend" : undefined;
+  if (backendBootRefused(policy) || otpProblems.length || workersAi || photoStorageProblem || models.unknown) {
+    throw new Error(`PLATFORM_ENV=${env} needs ${[...backendBootMessages(policy, otpProblems, devSwitches, models.unknown), ...(workersAi ? [workersAi] : []), ...(photoStorageProblem ? [photoStorageProblem] : [])].join("; ")}`);
+  }
   const migrationUrl = e.MIGRATION_DATABASE_URL || (deployed ? undefined : databaseUrl);
   const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
   const blooioWebhook = backendWebhookServed(e.NETWORK_CHANNEL ?? "");
-  const photoRelay = photoRelayConfig(e, deployed);
 
   const warnings: string[] = [];
   const num = (name: string, v: string | undefined, dflt: number) => {
@@ -174,13 +154,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     hostMap[h] = a;
   }
 
-  const blooioAsked = e.NETWORK_CHANNEL === "blooio" && !argv.includes("--dry-run");
-  const cloudAsked = e.NETWORK_CHANNEL === "eliza_cloud" && !argv.includes("--dry-run");
-  const channel = !isolatedRoute && (blooioAsked || cloudAsked) && e.BLOOIO_ALLOW_SEND === "1" && e.NTWRK_LIVE_APPROVED === "1" ? cloudAsked ? "eliza_cloud" : "blooio" : "dry-run";
-  if (blooioAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=blooio without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
-  if (cloudAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=eliza_cloud without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
-  if (channel === "eliza_cloud" && (!e.NETWORK_CLOUD_DELIVERY_ORIGIN || !e.SERVICE_TURN_SECRET || e.SERVICE_TURN_SECRET.length<32 || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("Cloud sends need NETWORK_CLOUD_DELIVERY_ORIGIN, SERVICE_TURN_SECRET and BLOOIO_FROM");
-  if (channel === "blooio" && (!e.BLOOIO_API_KEY || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("live sends need BLOOIO_API_KEY and BLOOIO_FROM");
+  if (channel === "dry-run" && (e.NETWORK_CHANNEL === "blooio" || e.NETWORK_CHANNEL === "eliza_cloud")) {
+    warnings.push(`NETWORK_CHANNEL=${e.NETWORK_CHANNEL} with --dry-run or an isolated route: sends stay dry-run`);
+  }
   if (!lineStaff.staffTokenCount) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (blooioWebhook && !e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
   if (!blooioWebhook && e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is ignored: with NETWORK_CHANNEL=eliza_cloud the Eliza gateway owns the carrier webhook and /webhooks/blooio is not served");
@@ -204,19 +180,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
     ops,
     ...(leakLabelKey ? { leakLabelKey } : {}),
-    ...(photoRelay ? { photoRelay } : {}),
+    photoStorage: photoStorage === "PhotoStorageReady",
     warnings,
   };
-}
-
-export interface LiveSendRow { app: AppId; flags: string[]; queued: "live" | "dry-run"; turnReplies: "sent by the gateway" }
-export function liveSendTable(e: Env, channel: BackendConfig["channel"], allowed: (env: Env, app: AppId) => boolean): LiveSendRow[] {
-  return (Object.keys(APPS) as AppId[]).map(app => ({
-    app,
-    flags: ["NETWORK_CHANNEL", "BLOOIO_ALLOW_SEND", "NTWRK_LIVE_APPROVED", ...(app === "ntwrk" ? [] : [`${app.toUpperCase()}_LIVE_APPROVED`])],
-    queued: channel !== "dry-run" && allowed(e, app) ? "live" : "dry-run",
-    turnReplies: "sent by the gateway",
-  }));
 }
 
 export async function serviceLoginProblem(query: (q: string) => Promise<Record<string, unknown>[]>): Promise<string | undefined> {
@@ -294,6 +260,7 @@ export interface ServiceLike {
   inboxTick(): Promise<void>;
   purge(): Promise<unknown>;
   notifyTick?(): Promise<void>;
+  reviewJudgeTick?(): Promise<void>;
   close(force?: boolean): Promise<void>;
 }
 
@@ -424,12 +391,14 @@ export function createBackend(d: BackendDeps) {
     }));
   };
   const notify = svc.notifyTick;
+  const reviewJudge = svc.reviewJudgeTick;
   const ops = d.ops;
   const publicEvents = d.publicEvents;
   const tickAll = () => Promise.all([
     inboxThenNetworks(),
     serviceTick("retention", () => svc.purge()),
     notify && serviceTick("notify", () => notify.call(svc)),
+    reviewJudge && serviceTick("review_judge", () => reviewJudge.call(svc)),
     ops && serviceTick("ops", () => ops.tick()),
     publicEvents && serviceTick("public_events", publicEvents),
   ]).then(() => undefined);

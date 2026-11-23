@@ -28,7 +28,7 @@ beforeAll(async () => {
   await applySchema(url, { lockTimeout: "5s" });
   service = new NetworkService({
     url, clock, photoStorage: null, instance: "service-entry", log: () => {}, webhookSecret, network: { seed: 1 },
-    env: { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: "synthetic-service-entry-hash-key", CLEF_RATINGS: "off" },
+    env: { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: "synthetic-service-entry-hash-key" },
     networks: [{ id: "friends:nyc", matchingEnabled: false }],
     adapter: () => new DryRunAdapter(() => {}),
   });
@@ -47,7 +47,7 @@ const runMain = async (env: Record<string, string>) => {
       PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", PLATFORM_ENV: "production",
       OTP_PROVIDER: "blooio", BLOOIO_API_KEY: "synthetic-key", BLOOIO_FROM: "+12125550100", TURNSTILE_SECRET_KEY: "synthetic-turnstile",
       PLATFORM_PROXY_SECRET: "p".repeat(40), PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "s".repeat(40),
-      DATABASE_URL: "postgres://x@db.invalid/none", ...env,
+      DATABASE_URL: "postgres://x@db.invalid/none", SURPLUS_API_KEY: "synthetic-surplus-key", ...env,
     },
   });
   const code = await p.exited;
@@ -72,6 +72,16 @@ test("a staging or production main.ts refuses a missing or weak turn secret, mis
   expect(unparsed.code).not.toBe(0);
   expect(unparsed.err).toContain("NETWORK_SERVICE_TOKENS");
   expect(unparsed.err).not.toContain("OBSERVATORY_TOKENS");
+}, 120_000);
+
+// spec/bootPolicy.md, "A deployed entry refuses a partial Workers AI setup, and production needs Workers AI" (owner decision 2026-11-22, D18)
+test("a production main.ts refuses to start without the Workers AI token and account, so the relay never blocks every text without an error at start", async () => {
+  const ready = { SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: staff };
+  for (const env of [{}, { CLOUDFLARE_AI_TOKEN: "synthetic-ai-token" }, { CLOUDFLARE_ACCOUNT_ID: "synthetic-account" }]) {
+    const r = await runMain({ ...ready, ...env });
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("refusing to start (PLATFORM_ENV=production): needs CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID (photo ratings and the relay classifier, which production needs)");
+  }
 }, 120_000);
 
 test("a staging or production main.ts refuses a session secret that is the hash key", async () => {

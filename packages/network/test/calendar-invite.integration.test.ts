@@ -13,6 +13,7 @@ import { bookedReminderKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const calendarJourney = "a signed calendar request downloads the current booking with no participant details";
 const expiredBookingNotice = "an original booking notice cannot send or replay once the meeting starts";
@@ -45,12 +46,12 @@ test.skipIf(!pgAvailable).each([
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null,
     adapter: (_net, runtime) => new BlooioAdapter({ app: runtime.app.id, city: runtime.city, clock, from: "+12125550160",
-      env: {}, log: () => {}, liveGate: () => true, provider: { kind: "sim", send: async request => {
+      env: {}, log: () => {}, provider: { kind: "sim", send: async request => {
         delivered.push(request);
         return { providerMessageId: `calendar-fixture-${delivered.length}`, status: "queued" };
       } },
     }),
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     networks: [{ id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
   });
   const turn = (id: string, text = "calendar invite", from = phones[0]!): TurnRequest => ({ app: "friends", from, messageId: id,
@@ -82,7 +83,7 @@ test.skipIf(!pgAvailable).each([
       members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const rt = service.runtimes.get("friends:nyc")!;
-    const world = new Mini(members, { app: "friends", review: "auto", plans: false, growth: false });
+    const world = new Mini(members, { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
     world.clock.set(clock.now());
     const ids = members.map(member => member.id);
     await world.onboard(...ids);

@@ -109,6 +109,8 @@ module turn_consent {
     member: str -> str, optOut: str -> bool, pendingJoin: str,
     hintLast: str -> int, hintLog: str -> Set[int],
     signals: int -> str, staffHandled: Set[int], ctx: int,
+    /** The saved "pause matching" setting per app, and the confirmation of each agent pause that changed it (via text or inbox). */
+    matchingPaused: str -> bool, pauseNotices: int -> { via: str, textsOff: bool }, pauseChanges: int,
     /** consent_events.named_app of a global STOP, by its ref (migration 0042, SD-318). */
     named: int -> str
   }
@@ -205,7 +207,7 @@ module turn_consent {
     val a = if (wk.phase == 0) routeApp(wd, msg) else wk.app
     if (msg.kind == "Stop") {
       if (wk.phase == 0) {
-        // service.ts stop: keywordEvent (global on the shared line, namedApp = the routed app), recordConsent once per ref,
+        // service.ts stop: keywordEvent (every app on any line, namedApp = the routed app), recordConsent once per ref,
         // turn.consent, turn.confirmation.
         val e = { app: "", state: "out", at: cat, seq: 0, ref: m, src: "stop" }
         val wd1 = addConsent(wd, e)
@@ -392,7 +394,8 @@ module turn_consent {
       workers' = Map(),
       w' = { ledger: ledger0, fence: Set(), seq: 2, member: mem, optOut: Map("A" -> false, "B" -> false), pendingJoin: "",
              hintLast: Map("A" -> -1, "B" -> -1), hintLog: Map("A" -> Set(), "B" -> Set()),
-             signals: Map(), staffHandled: Set(), ctx: 0, named: Map() },
+             signals: Map(), staffHandled: Set(), ctx: 0, named: Map(),
+             matchingPaused: Map("A" -> false, "B" -> false), pauseNotices: Map(), pauseChanges: 0 },
       g' = { echoBad: false, busyKw: false, bannedReply: false, leaveOptIn: false, actedAfterStop: false,
              doneErr: false, replyAfterStop: false, crashes: 0, intents: ledger0, runs: Map(), lastPurge: 0, cutShort: false },
       banned' = isBanned,
@@ -754,10 +757,39 @@ module turn_consent {
   }
 
   /** The agent records an opt_out signal on an open turn (agent-signals.ts recordAgentSignals): it pauses matching in that
-      app at once with the "pause matching" setting, never waits for staff and never changes carrier consent. */
+      app at once with the "pause matching" setting, never waits for staff and never changes carrier consent. When the
+      setting changed, the member gets one confirmation (spec/staffSafetyService.md, "An applied agent pause gives the
+      member one confirmation"): a reply text, or an inbox update when the app's ledger or member row reads opted out.
+      Abstraction: service.ts sharedAction checks the membership before the transaction of the decision, so a STOP can
+      commit between that check and the ledger read of the decision; this action merges them and reads the ledger as it is.
+      Abstraction: pauseNotices records the confirmation that the decision queues, not its delivery. A STOP that commits
+      after this step makes the outbound queue refuse the text (refused_opted_out), so the member then gets no confirmation;
+      pauseConfirmedOnce does not cover that race. The notify digest that can text an unread inbox update after START is
+      outside this model. */
   action applyOptOutSignal(m: int): bool = all {
     rows.keys().contains(m), rows.get(m).st == "done", rows.get(m).resp.kind == "open", not(w.signals.keys().contains(m)),
-    w' = { ...w, signals: w.signals.put(m, "applied") },
+    rows.get(m).resp.app.in(APPS),
+    pauseSignal(m, rows.get(m).resp.app),
+  }
+
+  action pauseSignal(m: int, a: str): bool = {
+    val changed = not(w.matchingPaused.get(a))
+    val textsOff = isOut(w.ledger, a) or w.optOut.get(a)
+    all {
+      w' = { ...w, signals: w.signals.put(m, "applied"), matchingPaused: w.matchingPaused.set(a, true),
+             pauseNotices: if (changed) w.pauseNotices.put(m, { via: if (textsOff) "inbox" else "text", textsOff: textsOff }) else w.pauseNotices,
+             pauseChanges: if (changed) w.pauseChanges + 1 else w.pauseChanges },
+      now' = now, sent' = sent, gw' = gw, rows' = rows, workers' = workers, g' = g, banned' = banned, held' = held,
+    }
+  }
+
+  /** "resume matching" on the shared line (participation-controls.ts saveParticipationControl): only the member of an
+      active membership whose ledger and member row read opted in (member-command.ts memberCommandOwner). The signed turn
+      that carries the command is merged into this one step. */
+  action resumeMatching(a: str): bool = all {
+    a.in(APPS), w.member.get(a) == "active", resolve(w.ledger, a) == "in", not(w.optOut.get(a)), not(banned), not(held),
+    w.matchingPaused.get(a),
+    w' = { ...w, matchingPaused: w.matchingPaused.set(a, false) },
     now' = now, sent' = sent, gw' = gw, rows' = rows, workers' = workers, g' = g, banned' = banned, held' = held,
   }
 
@@ -818,6 +850,7 @@ module turn_consent {
       purge,
       proposeSignal(m),
       applyOptOutSignal(m),
+      resumeMatching(app),
       staffHandle(m),
       contextChange,
       tick(d),
@@ -856,7 +889,7 @@ module turn_consent {
     rows.keys().filter(k => rows.get(k).st == "processing" and rows.get(k).mine and rows.get(k).comp == c).size() <= 1)
 
   /**
-   * stopAllApps. Rule: PRD 40.3 / founder decision 7: on the shared line STOP stops every app. When the newest
+   * stopAllApps. Rule: PRD 40.3 / founder decision 7 / owner decision 2026-11-22: STOP stops every app on any line. When the newest
    * consent intent the person sent is a STOP and it reached the ledger, every app resolves opted_out.
    */
   val stopAllApps: bool = g.intents.forall(i =>
@@ -981,6 +1014,15 @@ module turn_consent {
   /** signalHasExit. Rule: service.ts "they wait for a person in GET /signals": a handled signal leaves the queue. (SD-036: fixed) */
   val signalHasExit: bool = w.staffHandled.forall(s => w.signals.get(s) != "proposed")
 
+  /** pauseConfirmedOnce. Rule: spec/staffSafetyService.md, "An applied agent pause gives the member one confirmation":
+      each change of the setting to paused has exactly one confirmation, and a signal that changes nothing has none. */
+  val pauseConfirmedOnce: bool = w.pauseNotices.keys().size() == w.pauseChanges
+    and w.pauseNotices.keys().forall(k => w.signals.keys().contains(k) and w.signals.get(k) == "applied")
+
+  /** pauseNeverTextedWhenOptedOut. Same rule: a member whose texts are off gets the inbox update and never the text. */
+  val pauseNeverTextedWhenOptedOut: bool = w.pauseNotices.keys().forall(k =>
+    w.pauseNotices.get(k).via == (if (w.pauseNotices.get(k).textsOff) "inbox" else "text"))
+
   val safety: bool = and {
     stopNeverLost,
     stopNeverHeldBack,
@@ -998,6 +1040,8 @@ module turn_consent {
     processingEnds,
     doneTurnAnswered,
     signalHasExit,
+    pauseConfirmedOnce,
+    pauseNeverTextedWhenOptedOut,
     noReplyAfterStop,
   }
 
@@ -1018,6 +1062,12 @@ module turn_consent {
     and workers.keys().exists(r => workers.get(r).msg == k and not(workers.get(r).alive))))
   /** A stop hint goes out. */
   val witness_hint: bool = not(APPS.exists(a => w.hintLog.get(a).size() > 0))
+  /** An agent pause is confirmed by a reply text. */
+  val witness_pauseTexted: bool = not(w.pauseNotices.keys().exists(k => w.pauseNotices.get(k).via == "text"))
+  /** An agent pause after a STOP is confirmed in the inbox. */
+  val witness_pauseInInbox: bool = not(w.pauseNotices.keys().exists(k => w.pauseNotices.get(k).via == "inbox"))
+  /** A resumed member pauses again and gets a second confirmation. */
+  val witness_pauseConfirmedAgain: bool = not(w.pauseChanges >= 2)
   /** A compliance turn is claimed again after its claim was swept or resolved (SD-001 fix): a second run of a message. */
   val witness_reclaim: bool = not(MSGS.exists(m => runsOf(g.runs, m) >= 2))
   /** A STOP runs while an ordinary turn of the sender holds its claim (SD-002 fix). */
@@ -1296,6 +1346,44 @@ module turn_consent {
       .then(proposeSignal(1))
       .then(staffHandle(1))
       .expect(w.signals.get(1) == "decided" and signalHasExit and safety)
+
+  /** agent-signals.integration.test.ts: an opt-out confirms the pause once by a reply text; a repeated signal confirms nothing. */
+  run agentPauseConfirmedOnceTest =
+    initWith("active", "none", false, false)
+      .then(sendText(1, "Chat", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, false)).then(complete(1, false, true))
+      .then(applyOptOutSignal(1))
+      .then(sendText(2, "Chat", "A", "gw"))
+      .then(gwCall(2)).then(work(2, false, false)).then(complete(2, false, true))
+      .then(applyOptOutSignal(2))
+      .expect(and {
+        w.pauseNotices.keys() == Set(1), w.pauseNotices.get(1).via == "text", w.signals.get(2) == "applied",
+        w.pauseChanges == 1, safety,
+      })
+
+  /** agent-signals.integration.test.ts: an opt-out after a STOP is confirmed in the inbox and never by a text. */
+  run agentPauseAfterStopTest =
+    initWith("active", "active", false, false)
+      .then(sendText(1, "Chat", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, false)).then(complete(1, false, true))
+      .then(sendText(2, "Stop", "A", "gw"))
+      .then(gwCall(2))
+      .then(work(2, false, false)).then(work(2, false, false)).then(work(2, false, false)).then(work(2, false, false))
+      .then(complete(2, false, false))
+      .then(applyOptOutSignal(1))
+      .expect(and { w.pauseNotices.get(1).via == "inbox", w.pauseNotices.get(1).textsOff, safety })
+
+  /** agent-signals.integration.test.ts: resume matching undoes the pause, and the next applied pause is confirmed again. */
+  run agentPauseResumedTest =
+    initWith("active", "none", false, false)
+      .then(sendText(1, "Chat", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, false)).then(complete(1, false, true))
+      .then(applyOptOutSignal(1))
+      .then(resumeMatching("A"))
+      .then(sendText(2, "Chat", "A", "gw"))
+      .then(gwCall(2)).then(work(2, false, false)).then(complete(2, false, true))
+      .then(applyOptOutSignal(2))
+      .expect(and { w.pauseChanges == 2, w.pauseNotices.get(2).via == "text", w.matchingPaused.get("A"), safety })
 
   /** SD-073 (fixed): a banned member's text is not handled or answered. */
   run sd073BannedTest =

@@ -6,7 +6,7 @@
 
 ### A review covers this candidate search and these posting terms
 
-Bind each Hire review to the exact active search, the hiring company's verified identity and the posting terms used to prepare the candidate offer. A paused or expired search does not permit contact. Resuming the same search can use a review that is still current and whose opportunity is still open. A replaced or closed search, a changed posting or company, a lost verification, or a current company exclusion prevents contact. A new introduction requires its own review. Company exclusions stay private.
+Bind each Hire review to the exact active search, the hiring company's verified identity and the posting terms used to prepare the candidate offer. A paused or expired search does not permit contact. Resuming the same search can use a review that is still current and whose opportunity is still open. A replaced or closed search, a changed posting or company, a lost verification, or a current company exclusion prevents contact. A new introduction requires its own review: review by the judge, or by staff for an exception. Company exclusions stay private. Changed (owner decision 2026-11-22, D15 to D17): a named staff reviewer approved each Hire introduction; now the review judge approves it, and staff approve only an item that the judge holds.
 
 ```quint
 pure def hireEvidenceCurrent(searchActive: bool, sameSearch: bool, samePosting: bool,

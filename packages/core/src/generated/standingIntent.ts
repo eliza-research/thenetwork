@@ -8,6 +8,10 @@ export type StandingPresencePhase = "IgnorePresence" | "FuturePresence" | "Curre
 
 /** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
 export const learnedIntentDays: number = 60;
+/** Story: Match only on a current standing intent / One renewal question before a searched want lapses (spec/standingIntent.md) */
+export const renewalAskDays: number = 7;
+/** Story: Match only on a current standing intent / One renewal question before a searched want lapses (spec/standingIntent.md) */
+export const renewalRetryMs: number = 86400000;
 
 /** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
 //@ pure
@@ -123,6 +127,40 @@ export function lawUnchangedEvidenceDoesNotRecheck(evidence: string, liveIntents
 //@ pure
 export function standingIntentCandidateInScope(scoped: boolean, matchesIntent: boolean, eventFitsIntent: boolean): boolean {
   return !scoped || matchesIntent || eventFitsIntent;
+}
+
+/** Story: Match only on a current standing intent / One renewal question before a searched want lapses (spec/standingIntent.md) */
+//@ pure
+export function standingRenewalAskDue(live: boolean, searching: boolean, daysLeft: number, askedThisDeadline: boolean, refusedAgoMs: number): boolean {
+  return live && searching && daysLeft > 0 && daysLeft <= renewalAskDays && !askedThisDeadline && (refusedAgoMs < 0 || refusedAgoMs >= renewalRetryMs);
+}
+
+/** Story: Match only on a current standing intent / One renewal question before a searched want lapses (spec/standingIntent.md) */
+//@ pure
+export function lawOneRenewalAskPerDeadline(live: boolean, searching: boolean, daysLeft: number, refusedAgoMs: number): boolean {
+  //@ ensures \result === true
+  return !standingRenewalAskDue(live, searching, daysLeft, true, refusedAgoMs);
+}
+
+/** Story: Match only on a current standing intent / One renewal question before a searched want lapses (spec/standingIntent.md) */
+//@ pure
+export function lawNoRenewalAskEarly(live: boolean, searching: boolean, askedThisDeadline: boolean, refusedAgoMs: number): boolean {
+  //@ ensures \result === true
+  return !standingRenewalAskDue(live, searching, exact_standingIntent(renewalAskDays + 1), askedThisDeadline, refusedAgoMs);
+}
+
+/** Story: Match only on a current standing intent / One renewal question before a searched want lapses (spec/standingIntent.md) */
+//@ pure
+export function lawPausedOrClosedIsNotAsked(searching: boolean, daysLeft: number, askedThisDeadline: boolean, refusedAgoMs: number): boolean {
+  //@ ensures \result === true
+  return !standingRenewalAskDue(false, searching, daysLeft, askedThisDeadline, refusedAgoMs);
+}
+
+/** Story: Match only on a current standing intent / One renewal question before a searched want lapses (spec/standingIntent.md) */
+//@ pure
+export function lawRefusedAskWaitsADay(live: boolean, searching: boolean, daysLeft: number, askedThisDeadline: boolean): boolean {
+  //@ ensures \result === true
+  return !standingRenewalAskDue(live, searching, daysLeft, askedThisDeadline, 0) && !standingRenewalAskDue(live, searching, daysLeft, askedThisDeadline, exact_standingIntent(renewalRetryMs - 1));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

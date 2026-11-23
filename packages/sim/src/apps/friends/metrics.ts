@@ -2,13 +2,15 @@
 // members: true adults who are not adversaries. Definitions are in the results doc.
 import { gini } from "@thenetwork/core";
 export { gini };
-import type { MemberId } from "@thenetwork/core";
-import { canBeMatched } from "@thenetwork/core";
+import { canBeMatched, type AgeSide, type MemberId } from "@thenetwork/core";
+import { ageOnDay } from "../../../../core/src/generated/memberAge.ts";
+import { birthKeysWithinTwoYears, rosterHasMinor, sidesAllowed, teenFriendMaxAge, teenRosterSizeAllowed } from "../../../../core/src/generated/friendIntroAge.ts";
+import { teenFriendCategory } from "../../../../core/src/generated/matchLane.ts";
 import { friendAdversaryKnownAtProposal, friendCountsProbedProposal, friendCountsProposal } from "../../../../core/src/generated/friendsWeek.ts";
 import type { HarmKind } from "./oracle.ts";
-import { friendsStatedOpen, hoodOf, isReal, openGroupOf } from "./persona.ts";
+import { FRIENDS_START_DAY_KEY, friendsStatedOpen, hoodOf, isReal, openGroupOf } from "./persona.ts";
 import { visibleRedFlag, weekTime } from "./snapshot.ts";
-import { pk, type FriendsRunResult } from "./world.ts";
+import { pk, type FlowRecord, type FriendsRunResult, type RosterAge } from "./world.ts";
 
 export interface FriendsMetrics {
   matcher: string; seed: number; weeks: number; members: number; real: number;
@@ -57,9 +59,89 @@ export interface FriendsMetrics {
     opennessViolations: number;
     /** Harm events whose offender showed no visible red flag (cue, unpassed check, hold) when the proposal was made. */
     harmsUndetected: number;
+    teen: TeenSafety;
   };
   selfHangouts: number;
   proposedByOpenness: Record<string, { n: number; share: number }>;
+}
+
+export interface TeenBreaches { adult: number; gap: number; lane: number; unready: number; switchOff: number; group: number; place: number }
+export interface TeenSafety {
+  proposals: TeenBreaches; contacts: TeenBreaches;
+  introductions: number; minorContacts: number; validMeetups: number; introShare: number;
+  teenMeetups: number; teenGroupMeetups: number; groupShare: number;
+  hiddenOutsideRule: number; posersReachingMinor: number; hTeen: number;
+}
+
+const BREACH_KEYS = ["adult", "gap", "lane", "unready", "switchOff", "group", "place"] as const;
+const noBreaches = (): TeenBreaches => ({ adult: 0, gap: 0, lane: 0, unready: 0, switchOff: 0, group: 0, place: 0 });
+
+export function teenBreachesOf(sides: readonly AgeSide[], r: Pick<RosterAge, "minDay" | "maxDay" | "category" | "teenIntros" | "laneOk" | "placeOk">): TeenBreaches {
+  const out = noBreaches();
+  if (!rosterHasMinor([...sides])) return out;
+  const lane = r.category !== undefined && teenFriendCategory("friends", r.category);
+  if (sides.some(s => ageOnDay(s.birthKey, r.maxDay) > teenFriendMaxAge)) out.adult = 1;
+  if (sides.some((m, i) => !m.adult && sides.some((s, j) => j !== i && !birthKeysWithinTwoYears(m.birthKey, s.birthKey)))) out.gap = 1;
+  if (!r.laneOk) out.lane = 1;
+  if (sides.some(s => !s.ready)) out.unready = 1;
+  if (!r.teenIntros) out.switchOff = 1;
+  const pairFails = sides.some((m, i) => sides.some((s, j) => j > i && (!m.adult || !s.adult) && !sidesAllowed(r.teenIntros, lane, r.minDay, r.maxDay, m, s)));
+  if (!teenRosterSizeAllowed(true, sides.length) || (sides.length >= 3 && pairFails)) out.group = 1;
+  if (!r.placeOk) out.place = 1;
+  return out;
+}
+
+const addBreaches = (into: TeenBreaches, b: TeenBreaches) => { for (const k of BREACH_KEYS) into[k] += b[k]; };
+export const breachTotal = (b: TeenBreaches) => BREACH_KEYS.reduce((n, k) => n + b[k], 0);
+
+export function contactSides(f: FlowRecord): AgeSide[] {
+  const byId = new Map(f.roster.map((id, i) => [id, f.sides[i]!]));
+  return f.going.map(id => byId.get(id) ?? { adult: false, ready: false, birthKey: 0 });
+}
+
+function teenSafety(res: FriendsRunResult, proposals: readonly FlowRecord[], good: number): TeenSafety {
+  const { world, flows, meetups } = res;
+  const persona = new Map(world.personas.map(p => [p.id, p]));
+  const prop = noBreaches(), cont = noBreaches();
+  let introductions = 0, minorContacts = 0, validMeetups = 0, hiddenOutsideRule = 0, teenMeetups = 0, teenGroupMeetups = 0;
+  const introduced = new Set<MemberId>(), posers = new Set<MemberId>();
+  for (const f of proposals) {
+    addBreaches(prop, teenBreachesOf(f.sides, f));
+    if (f.ruleOk && f.sides.some(s => !s.adult)) introductions++;
+  }
+  const meetupByKey = new Map(meetups.map(m => [m.key, m]));
+  for (const f of flows) {
+    if (f.going.length < 2) continue;
+    const sides = contactSides(f);
+    addBreaches(cont, teenBreachesOf(sides, f));
+    if (sides.some(s => !s.adult)) {
+      minorContacts++;
+      f.going.forEach((id, i) => { if (!sides[i]!.adult) introduced.add(id); });
+      const m = meetupByKey.get(f.key);
+      if (m && f.stage === "held") {
+        teenMeetups++;
+        if (m.attendees.length >= 3) teenGroupMeetups++;
+        if (Math.min(...m.attendees.map(id => m.enjoy[id]!)) >= good) validMeetups++;
+      }
+    }
+    const lane = f.category !== undefined && teenFriendCategory("friends", f.category);
+    const truth = f.going.map((id, i) => {
+      const h = persona.get(id)!.hidden;
+      return { id, poser: h.poser === true, side: { adult: canBeMatched(ageOnDay(h.trueBirthKey, f.minDay)), ready: sides[i]!.ready, birthKey: h.trueBirthKey } };
+    });
+    for (let i = 0; i < truth.length; i++) for (let j = i + 1; j < truth.length; j++) {
+      const x = truth[i]!, y = truth[j]!;
+      if ((!x.side.adult || !y.side.adult) && !sidesAllowed(f.teenIntros, lane, f.minDay, f.maxDay, x.side, y.side)) hiddenOutsideRule++;
+    }
+    if (truth.some(t => !t.side.adult)) for (const t of truth) if (t.poser) posers.add(t.id);
+  }
+  const statedMinors = world.personas.filter(p => !canBeMatched(ageOnDay(p.stated.birthKey, FRIENDS_START_DAY_KEY)));
+  return {
+    proposals: prop, contacts: cont, introductions, minorContacts, validMeetups,
+    introShare: div(statedMinors.filter(p => introduced.has(p.id)).length, statedMinors.length),
+    teenMeetups, teenGroupMeetups, groupShare: div(teenGroupMeetups, teenMeetups),
+    hiddenOutsideRule, posersReachingMinor: posers.size, hTeen: hiddenOutsideRule + posers.size,
+  };
 }
 
 const div = (a: number, b: number) => (b ? a / b : 0);
@@ -153,10 +235,17 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   };
   // Count distinct pairs. The first contact may predate a hold that was visible at a later contact.
   let adv = 0, hidMinor = 0, decl = 0;
-  const seenC = new Set<string>();
+  const seenC = new Set<string>(), declSeen = new Set<string>();
   const knownContacts = new Set<string>();
   const reach = new Map<MemberId, Set<MemberId>>();
   const byAdvKind: Record<string, number> = {};
+  const flowByKey = new Map(flows.map(f => [f.key, f]));
+  const statedAdultAt = (c: (typeof contacts)[number], id: MemberId) => {
+    const f = flowByKey.get(c.key);
+    const i = f ? f.roster.indexOf(id) : -1;
+    return i >= 0 && f!.sides[i]!.adult;
+  };
+  const teenRuleHeldAt = (c: (typeof contacts)[number]) => flowByKey.get(c.key)?.ruleOk === true;
   for (const c of contacts) {
     for (const [x, y] of [[c.a, c.b], [c.b, c.a]] as const) {
       const px = O.p(x);
@@ -164,9 +253,9 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
       const pair = `${x}>${y}`;
       const adversary = px.hidden.adversary === "age_liar" ? undefined : px.hidden.adversary;
       if (adversary && !knownContacts.has(pair) && known(x, c.day)) knownContacts.add(pair);
+      if (!statedAdultAt(c, x) && !teenRuleHeldAt(c) && !declSeen.has(pair)) { declSeen.add(pair); decl++; }
       if (seenC.has(pair)) continue;
       seenC.add(pair);
-      if (!canBeMatched(px.stated.claimedAge)) decl++;
       if (px.hidden.isMinor) hidMinor++;
       if (adversary) {
         adv++; byAdvKind[adversary] = (byAdvKind[adversary] ?? 0) + 1;
@@ -218,9 +307,19 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
       declaredMinorProposals: proposals.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
       adversaryContacts: adv, knownAdversaryContacts: knownContacts.size, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,
       medianReachPerAdversary: median(advIds.map(id => reach.get(id)?.size ?? 0)) ?? 0, harms, harmsReported: reported, harmsUndetected: undetected,
-      opennessViolations,
+      opennessViolations, teen: teenSafety(res, proposals, P.good),
     },
     selfHangouts: world.selfHangouts, proposedByOpenness,
+  };
+}
+
+export function friendsOutboundLog(res: FriendsRunResult) {
+  return {
+    flows: res.flows.map(f => ({
+      key: f.key, kind: f.kind, invited: f.invited, stage: f.stage, probed: f.probed, yes: f.yes, replied: f.replied,
+      going: f.going, booked: f.booked, attended: f.attended, capDrops: f.capDrops, declaredMinor: f.declaredMinor, meetAt: f.meetAt ?? null,
+    })),
+    contacts: res.contacts,
   };
 }
 

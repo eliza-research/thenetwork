@@ -7,10 +7,12 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { isMinor, parseReply, validAge, type Category } from "@thenetwork/core";
+import { isMinor, parseIsoBirthDate, parseReply, validAge, type Category } from "@thenetwork/core";
+import { ageOnDay, birthKeyUsable } from "../../core/src/generated/memberAge.ts";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
+import { numericDateAmbiguous } from "../../core/src/generated/textEnrollment.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -29,6 +31,7 @@ export interface Classified {
   statedAge?: number;
   /** An age stated in the explicit form ("I am 12 years old", "15 y/o here"), if any. */
   explicitAge?: number;
+  oldestAge?: number;
   /** An age the sender states about someone else ("he's only 15"), for reports. */
   otherAge?: number;
   /**
@@ -149,9 +152,9 @@ export function classify(body: string): Classified {
   if (RX.injection.test(t)) { abuse.push("prompt_injection"); risk += 3; }
   hit(RX.harassment, "harassment", 3);
   if (!abuse.includes("harassment")) hit(RX.sexual, "harassment", 3);
-  const { age, explicit } = agesStated(t);
+  const { age, explicit, oldest } = agesStated(t);
   const minorSignal = minorSignOf(low) || (validAge(age) && isMinor(age));
-  const out: Classified = { kind: "other", abuse, risk, minorSignal, statedAge: age, explicitAge: explicit, tags: [], text: t };
+  const out: Classified = { kind: "other", abuse, risk, minorSignal, statedAge: age, explicitAge: explicit, oldestAge: oldest, tags: [], text: t };
   if (disclosed.length) out.disclosure = disclosed;
   const other = otherAgeStated(t);
   if (other !== undefined) out.otherAge = other;
@@ -357,9 +360,9 @@ function notNowBefore(text: string, at: number): boolean {
  * change the member's age. An age inside a quote that is still open is not theirs; a quote that
  * has closed does not hide the next statement (`he said "hi" I'm 15`).
  */
-export function agesStated(body: string): { age?: number; explicit?: number } {
+export function agesStated(body: string): { age?: number; explicit?: number; oldest?: number } {
   const t = normText(body);
-  const out: { age?: number; explicit?: number } = {};
+  const out: { age?: number; explicit?: number; oldest?: number } = {};
   // Rules that start at the beginning of the text ("age: 15", "15 y/o here", "15f", "f15", "15 here")
   // are read on each sentence. On the whole message they would see only the first sentence.
   for (const s of sentencesOf(t)) {
@@ -369,6 +372,7 @@ export function agesStated(body: string): { age?: number; explicit?: number } {
         const a = age(m);
         if (!Number.isFinite(a)) continue;
         if (out.age === undefined || a < out.age) out.age = a;
+        if (out.oldest === undefined || a > out.oldest) out.oldest = a;
         if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
       }
     }
@@ -377,7 +381,9 @@ export function agesStated(body: string): { age?: number; explicit?: number } {
     const m = rx.exec(t);
     if (!m) continue;
     const a = age(m);
-    if (Number.isFinite(a) && (out.age === undefined || a < out.age)) out.age = a;
+    if (!Number.isFinite(a)) continue;
+    if (out.age === undefined || a < out.age) out.age = a;
+    if (out.oldest === undefined || a > out.oldest) out.oldest = a;
   }
   return out;
 }
@@ -423,6 +429,116 @@ export function ageAnswer(body: string): number | undefined {
   const [w, unit] = m[1]!.split(/[\s-]+/);
   const n = /^\d/.test(w!) ? Number(w) : (TENS[w!] ?? AGE_WORDS[w!]!) + (unit ? AGE_WORDS[unit]! : 0);
   return n > 0 && n < 120 ? n : undefined;
+}
+
+const MONTHS: Record<string, number> = {
+  january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4, may: 5, june: 6, jun: 6, july: 7, jul: 7,
+  august: 8, aug: 8, september: 9, sept: 9, sep: 9, october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
+};
+const MONTH_NAME = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join("|");
+type DateGroups = readonly (string | undefined)[];
+type DateForm = { source: string; numeric: boolean; parts: (g: DateGroups) => [number, number, number] };
+const monthOf = (name: string | undefined) => MONTHS[(name ?? "").toLowerCase()] ?? 0;
+const MONTH_WORDS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DATE_FORMS: DateForm[] = [
+  { source: "(\\d{4})-(\\d{2})-(\\d{2})", numeric: false, parts: g => [Number(g[1]), Number(g[2]), Number(g[3])] },
+  { source: "(\\d{1,2})[/-](\\d{1,2})[/-](\\d{4})", numeric: true, parts: g => [Number(g[3]), Number(g[1]), Number(g[2])] },
+  { source: `(${MONTH_NAME})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})`, numeric: false, parts: g => [Number(g[3]), monthOf(g[1]), Number(g[2])] },
+  { source: `(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_NAME})\\.?,?\\s+(\\d{4})`, numeric: false, parts: g => [Number(g[3]), monthOf(g[2]), Number(g[1])] },
+];
+const bounded = (source: string) => `(?<![\\w/.-])${source}(?![\\w/-]|\\.\\d)`;
+const BIRTH_WORD = "(?:birthday|bday|b-day|birth ?date|date of birth|dob)";
+const SELF_BORN = "(?:i\\s+was|i['’]?m|i\\s+am)\\s+born(?:\\s+on)?";
+const BIRTH_LEAD = `(?:(?:my\\s+)?${BIRTH_WORD}(?:\\s+is)?\\s*[:=-]?|${SELF_BORN}|born(?:\\s+on)?)`;
+const SELF_BIRTH_LEAD = `(?:my\\s+${BIRTH_WORD}(?:\\s+is)?\\s*[:=-]?|${BIRTH_WORD}\\s*[:=]|${SELF_BORN})`;
+const ANSWER_RX = DATE_FORMS.map(form => ({
+  form, rx: new RegExp(`^\\s*(?:(?:hi|hey|hello|yo|ok|okay|sure)[\\s,!.]+)?(?:${BIRTH_LEAD}\\s*)?${bounded(form.source)}\\s*[.!]*\\s*$`, "i"),
+}));
+const STATED_RX = DATE_FORMS.map(form => ({
+  form, rx: new RegExp(`(?:^|[.!?;,]\\s*|\\b(?:and|but|also|btw|actually|fyi|oh|lol|hi|hey|hello|so|well)\\s+)\\s*${SELF_BIRTH_LEAD}\\s*${bounded(form.source)}(?=\\s*(?:$|[.!?;,]|(?:and|but|so|btw|lol|haha|actually|tbh|thanks)\\b))`, "gi"),
+}));
+const FOUND_RX = DATE_FORMS.map(form => ({ form, rx: new RegExp(`(?:${BIRTH_LEAD}\\s*)?${bounded(form.source)}`, "gi") }));
+
+const dateKey = (year: number, month: number, day: number): number | undefined =>
+  parseIsoBirthDate(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+
+function calendarKey(form: DateForm, g: DateGroups): number | undefined {
+  if (form.numeric && numericDateAmbiguous(Number(g[1]), Number(g[2]))) return undefined;
+  const [year, month, day] = form.parts(g);
+  return dateKey(year, month, day);
+}
+
+const usableKey = (key: number | undefined, dayKey: number): number | undefined =>
+  key !== undefined && birthKeyUsable(key, dayKey) ? key : undefined;
+
+export type UnclearBirthDate = { monthFirst: string; dayFirst: string };
+
+function unclearOf(form: DateForm, g: DateGroups, dayKey: number): UnclearBirthDate | undefined {
+  const first = Number(g[1]), second = Number(g[2]), year = Number(g[3]);
+  if (!form.numeric || !numericDateAmbiguous(first, second)) return undefined;
+  if (usableKey(dateKey(year, first, second), dayKey) === undefined || usableKey(dateKey(year, second, first), dayKey) === undefined) return undefined;
+  return { monthFirst: `${MONTH_WORDS[first - 1]} ${second}, ${year}`, dayFirst: `${MONTH_WORDS[second - 1]} ${first}, ${year}` };
+}
+
+export function unclearBirthDateAnswer(body: string, dayKey: number): UnclearBirthDate | undefined {
+  const t = normText(body);
+  for (const { form, rx } of ANSWER_RX) {
+    const m = rx.exec(t);
+    if (m) return unclearOf(form, m, dayKey);
+  }
+  return undefined;
+}
+
+export function birthDateAnswer(body: string, dayKey: number): number | undefined {
+  const t = normText(body);
+  for (const { form, rx } of ANSWER_RX) {
+    const m = rx.exec(t);
+    if (m) return usableKey(calendarKey(form, m), dayKey);
+  }
+  return undefined;
+}
+
+export function birthDateStated(body: string, dayKey: number): number | undefined {
+  const t = normText(body);
+  let latest: number | undefined;
+  for (const { form, rx } of STATED_RX) {
+    for (const m of t.matchAll(rx)) {
+      if (quoteStillOpen(t.slice(0, m.index))) continue;
+      const key = usableKey(calendarKey(form, m), dayKey);
+      if (key !== undefined && (latest === undefined || key > latest)) latest = key;
+    }
+  }
+  return latest;
+}
+
+const DATE_GAP = "\u0000";
+const DATE_GAP_RX = /[ \t]*[,;]?[ \t]*\u0000(?:[ \t]*[,;]?[ \t]*\u0000)*[ \t]*[,;]?[ \t]*/g;
+
+function closeDateGaps(text: string): string {
+  return text.replace(DATE_GAP_RX, (gap: string, at: number, whole: string) => {
+    const before = whole.slice(0, at), after = whole.slice(at + gap.length);
+    if (before === "" || /[\r\n]$/.test(before) || after === "" || /^[\r\n]/.test(after)) return "";
+    return /[,;]/.test(gap) ? ", " : " ";
+  });
+}
+
+export function birthDateIn(text: string, dayKey: number): { birthDate?: number; birthAge?: number; unclear?: UnclearBirthDate; rest: string } {
+  const seen: { latest?: number; unclear?: UnclearBirthDate; found: boolean } = { found: false };
+  let marked = text;
+  for (const { form, rx } of FOUND_RX) {
+    marked = marked.replace(rx, (whole: string, first: string, second: string, third: string) => {
+      const groups: DateGroups = [whole, first, second, third];
+      const key = usableKey(calendarKey(form, groups), dayKey);
+      if (key !== undefined && (seen.latest === undefined || key > seen.latest)) seen.latest = key;
+      seen.unclear ??= unclearOf(form, groups, dayKey);
+      seen.found = true;
+      return DATE_GAP;
+    });
+  }
+  if (!seen.found) return { rest: text };
+  const rest = closeDateGaps(marked);
+  if (seen.latest === undefined) return { ...(seen.unclear ? { unclear: seen.unclear } : {}), rest };
+  return { birthDate: seen.latest, birthAge: ageOnDay(seen.latest, dayKey), rest };
 }
 
 // ------------------------------------------------------------------ what a member tells us (offline)

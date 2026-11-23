@@ -120,7 +120,7 @@ pure def sometimesInviteRefusalRecordsAge(joining: TextJoin): bool =
 
 ### Confirm age before creating a member
 
-Combine the new reply with the same app's pending fields. When an age is present, record it at once on the number's age floor and on the person, if any, before any other step, so that a missing name, an unsupported home or an expired pending join never loses it. Then apply the existing lowest-age rule before asking for name or home. When no age is present and the number's recorded lowest age is under this app's join age, decline kindly and drop the pending join. Otherwise ask for age, or request a corrected home when the answer supplied an unsupported one. A failed age, stated or recorded, also declines and drops the pending join. Name and a supported or omitted home are needed before writing the membership. Changed on 2026-11-21 (audit JA-1, JA-2 and JA-7): before, an age sent without a name was kept only on the pending join, which expires after a day, and an allowed age sent with an unsupported home was not kept at all, so a later older age joined a minor as an adult; a number with a recorded age under 13 that sent no age stored a pending join and was asked its age again.
+Combine the new reply with the same app's pending fields. When an age is present, record it at once on the number's age floor and on the person, if any, before any other step, so that a missing name, an unsupported home or an expired pending join never loses it. Then apply the existing lowest-age rule before asking for name or home. When no age is present and the number's recorded lowest age is under this app's join age, decline kindly and drop the pending join. Otherwise ask for age, or request a corrected home when the answer supplied an unsupported one. A failed age, stated or recorded, also declines and drops the pending join. Name and a supported or omitted home are needed before writing the membership. Changed on 2026-11-21 (audit JA-1, JA-2 and JA-7): before, an age sent without a name was kept only on the pending join, which expires after a day, and an allowed age sent with an unsupported home was not kept at all, so a later older age joined a minor as an adult; a number with a recorded age under 13 that sent no age stored a pending join and was asked its age again. Changed (owner decision 2026-11-22): the question now asks for the birthday (month, day and year), an answer can be a birthday or an age, a birthday counts as the age it gives on the earliest civil date on Earth now, and the pending join keeps the birthday; the owner wants the birth date so that the age rises on each birthday.
 
 ```quint
 type JoinAnswerFacts = { hasAge: bool, hasName: bool, invalidHome: bool, floorRefused: bool }
@@ -235,7 +235,7 @@ pure def sometimesAsksWhatTheyWant(joining: TextJoin): bool = joining.phase == J
 
 ### A current Network member's answer controls other-app enrollment
 
-Handle an eligible answer to the pending question only if it names a running app other than The Network. Recheck the person, Network membership and ban before acting. Process each named app separately. Slop requires adult eligibility in this path even if an underage member could join it directly. An existing membership can be acknowledged. Otherwise enforce that app's join age before writing the app membership and its own consent.
+Handle an eligible answer to the pending question only if it names a running app other than The Network. Recheck the person, Network membership and ban before acting. Process each named app separately. Slop and peon require adult eligibility in this path even if an underage member could join them directly, so a member under 18 is enrolled only in friends.help. An existing membership can be acknowledged. Otherwise enforce that app's join age before writing the app membership and its own consent. Changed (owner decision 2026-11-22, answers A2 to A5): before, a member under 18 could enroll in peon.biz from this answer; the owner chose "Friends only" for a minor, so the question offers a minor friends only and the answer enrolls a minor in no work or dating app.
 
 ```quint
 type OtherAppOutcome = SkipOtherApp | KeepOtherApp | CreateOtherApp
@@ -244,11 +244,14 @@ pure def shouldReadLookingFor(hasKeyword: bool, profileRead: bool, isNetwork: bo
 pure def namedOtherApp(appName: str, running: bool): bool = appName != "ntwrk" and running
 pure def networkEnrollmentAllowed(hasPerson: bool, hasNetworkMembership: bool, banned: bool): bool =
   hasPerson and hasNetworkMembership and not(banned)
-pure def otherAppAllowed(appName: str, adult: bool): bool = appName != "slop" or adult
+pure def otherAppAllowed(appName: str, adult: bool): bool = adult or (appName != "slop" and appName != "peon")
 pure def otherAppEnrollment(existingMember: bool, ageEligible: bool): OtherAppOutcome =
   if (existingMember) KeepOtherApp else if (ageEligible) CreateOtherApp else SkipOtherApp
 pure def lawSlopEnrollmentRequiresAdult(adult: bool): bool =
   otherAppAllowed("slop", adult) implies adult
+pure val appNameValues = Set("ntwrk", "slop", "friends", "peon")
+pure def lawMinorEnrollsOnlyInFriendApps(appName: str): bool =
+  otherAppAllowed(appName, false) implies (appName != "slop" and appName != "peon")
 ```
 
 ### A first-contact notice cannot substitute for enrollment
@@ -272,4 +275,203 @@ pure def lawMemberOrBannedGetsNoNotice(signedTurn: bool, nonMember: bool, banned
     joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
   (not(nonMember) or banned or not(signedTurn)) implies
     not(firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed))
+```
+
+## Story: Tell a teen what the text line does with their age
+
+> As a person aged 13 to 17 who texts the line, I want my birthday to set my age, and I want to know which introductions I can get.
+
+The person minor signal follows `minorSignalOpens` of the [friend introduction age rule](friendIntroAge.md) directly, and the network minor signal of a member that the record already knows as a minor follows the same rule: a statement that agrees with the record, or a cue such as school words, opens neither. Changed (owner decision 2026-11-22, review): the text line had its own copy of that rule; it now calls the friend introduction rule, and a teen who states their true age stays teen ready. Changed (owner decision 2026-11-22, answers A2 to A5): a teen with an exact birth date is teen ready with no staff step, so the network minor signal of a minor whose own join answer says they are a minor also opens only by this rule; before, the line opened that signal for every new minor, which made each of them unready.
+
+### A birthday is kept only for a person who can join
+
+A birthday answer gives the age on the earliest civil date on Earth now. The shell records the exact birth date only when that age is at least 13. A birthday that gives an age under 13 is recorded as a typed age only, so the birth date of a person who is refused is never stored. New rule (owner decision 2026-11-22): before, the line asked only for an age; the owner wants to ask for the birthday so that the age rises on each birthday.
+
+```quint
+import memberAge as Age from "./memberAge"
+
+pure def birthdayRecorded(birthKey: int, minDay: int): bool = Age::joinableAge(Age::ageOnDay(birthKey, minDay))
+
+pure val birthKeyValues = Set(19900101, 20100315, 20131122, 20131123, 20261122)
+pure val minDayValues = Set(20261121, 20261122, 20271122)
+
+pure def lawUnderThirteenBirthdayIsNotRecorded(birthKey: int, minDay: int): bool =
+  (Age::ageOnDay(birthKey, minDay) < Age::minMemberAge) implies not(birthdayRecorded(birthKey, minDay))
+
+pure def lawThirteenBirthdayIsRecorded(minDay: int): bool =
+  birthdayRecorded(minDay - 13 * Age::dayKeyYear, minDay)
+```
+
+### A typed age rises only on the anniversary of the day it was stated
+
+A typed age is aged from the day it was stated: it rises by one year on each anniversary of that day, never earlier, so the stored age is never older than the statement allows. The network replaces its stored typed age only with a lower age than this aged value. New rule (owner decision 2026-11-22): the owner wants ages that rise with time, and a typed age has no birthday, so it rises on the anniversary of the statement. Changed (owner decision 2026-11-22, review): this rule had shared a heading with the birthday rule; it now has its own heading, because each heading holds one rule.
+
+```quint
+pure val selfAgeValues = Set(-1, 0, 12, 13, 16, 17, 18, 19, 24)
+pure val statedDayValues = Set(20241122, 20261122)
+
+pure def statedAgeNow(selfAge: int, statedDay: int, minDay: int): int =
+  Age::ageOnDay(Age::statedAgeUpper(selfAge, statedDay), minDay)
+
+pure def lawStatedAgeNeverFallsBelowTheStatement(selfAge: int, statedDay: int, minDay: int): bool =
+  (selfAge >= 0 and minDay >= statedDay) implies statedAgeNow(selfAge, statedDay, minDay) >= selfAge
+```
+
+### A numeric birthday is read only when its month is clear
+
+A numeric birthday with the year last ("3/15/2010") is read month first. When its first two numbers are both 1 to 12 and differ ("01/12/2009"), the month is not clear: the line stores no birth date from it. When it is the answer to the birthday question or a join answer, and both readings are possible birth dates, the line asks which of the two dates it is, with the months as words. Equal numbers ("1/1/2009") and a second number above 12 ("3/15/2010") are clear. New rule (owner decision 2026-11-22, review): a day-first answer such as 01/12/2009 (1 December 2009) was stored as 12 January 2009, so a teen read as 18 eleven months early and got adult matching on every app.
+
+```quint
+pure val firstNumberValues = Set(0, 1, 3, 12, 13, 15, 31)
+pure val secondNumberValues = Set(0, 1, 3, 12, 13, 15, 31)
+
+pure def numericDateAmbiguous(firstNumber: int, secondNumber: int): bool =
+  firstNumber >= 1 and firstNumber <= 12 and secondNumber >= 1 and secondNumber <= 12 and firstNumber != secondNumber
+
+pure def lawSameNumbersAreClear(firstNumber: int): bool =
+  not(numericDateAmbiguous(firstNumber, firstNumber))
+
+pure def lawDayAfterTwelveIsClear(firstNumber: int, secondNumber: int): bool =
+  (secondNumber > 12) implies not(numericDateAmbiguous(firstNumber, secondNumber))
+
+pure def lawSwappedNumbersAreAlsoAmbiguous(firstNumber: int, secondNumber: int): bool =
+  numericDateAmbiguous(firstNumber, secondNumber) == numericDateAmbiguous(secondNumber, firstNumber)
+
+pure def lawJanuaryTwelfthIsAmbiguous(firstNumber: int): bool =
+  (firstNumber == 1) implies numericDateAmbiguous(firstNumber, 12)
+```
+
+### A join answer keeps its birthday only when nothing else in it contradicts it
+
+A join answer can hold a birthday and a typed age. When it holds a typed age, the line keeps the birthday only when the typed age and the age that the birthday gives differ by at most one year. When it holds no typed age, the line keeps the birthday only when no other number is left in the answer. Otherwise the date is probably not the birthday ("Sam, 29, moved here 3/15/2024" or "Sam, moved here 3/15/2024, 29"), and the line keeps no birth date from the answer. New rule (owner decision 2026-11-22, review): any past date in a join answer counted as the birthday, so a date of a move gave an age of 2, an under-13 decline and a phone age floor of 2 that cannot be undone.
+
+```quint
+pure val typedAgeValues = Set(2, 12, 13, 15, 16, 17, 29)
+pure val birthAgeValues = Set(2, 12, 14, 15, 16, 17, 29)
+
+pure def joinBirthDateKept(hasTypedAge: bool, typedAge: int, birthAge: int, otherNumber: bool): bool =
+  if (hasTypedAge) (typedAge - birthAge <= 1 and birthAge - typedAge <= 1) else not(otherNumber)
+
+pure def lawBirthdayAloneIsKept(typedAge: int, birthAge: int): bool =
+  joinBirthDateKept(false, typedAge, birthAge, false)
+
+pure def lawBirthdayBesideAnotherNumberIsDropped(typedAge: int, birthAge: int): bool =
+  not(joinBirthDateKept(false, typedAge, birthAge, true))
+
+pure def lawAgreeingTypedAgeKeepsTheBirthday(typedAge: int, otherNumber: bool): bool =
+  joinBirthDateKept(true, typedAge, typedAge, otherNumber) and joinBirthDateKept(true, typedAge, typedAge + 1, otherNumber)
+
+pure def lawFarTypedAgeDropsTheBirthday(typedAge: int, birthAge: int, otherNumber: bool): bool =
+  (typedAge - birthAge > 1 or birthAge - typedAge > 1) implies not(joinBirthDateKept(true, typedAge, birthAge, otherNumber))
+```
+
+### A join answer keeps a contradicted typed age only when it is under 13
+
+When a typed age and a birthday in one join answer differ by more than one year, the line also drops the typed age, so the answer has no age and the line asks again. A typed age under 13 is kept, so a child who states their age is still declined. New rule (owner decision 2026-11-22, review): with the birthday dropped, keeping the typed age would make a person older than the date they sent; asking again is the safe answer.
+
+```quint
+pure def joinTypedAgeKept(hasBirthAge: bool, typedAge: int, birthAge: int): bool =
+  not(hasBirthAge) or joinBirthDateKept(true, typedAge, birthAge, true) or not(Age::joinableAge(typedAge))
+
+pure def lawTypedAgeAloneIsKept(typedAge: int, birthAge: int): bool =
+  joinTypedAgeKept(false, typedAge, birthAge)
+
+pure def lawTypedChildAgeIsKept(hasBirthAge: bool, birthAge: int): bool =
+  joinTypedAgeKept(hasBirthAge, 12, birthAge)
+
+pure def lawFarJoinableTypedAgeIsDropped(typedAge: int): bool =
+  Age::joinableAge(typedAge) implies not(joinTypedAgeKept(true, typedAge, typedAge + 2))
+```
+
+### An older age from a teen with a birth date is a contradiction
+
+A member whose record has an exact birth date that gives 13 to 18 on every day now contradicts it when they state an age about themselves that is 19 or more, or that is more than one year above the age that the birth date gives on the latest civil date on Earth now. This applies in any form the line reads as their own age, on any message, open turns included, and also to a birth date stated in the same message. The shell then calls the network's older-than-stated step once per member, which bars the phone from the teen pool and closes the member's teen items. A typed age alone, a birth date that gives 19 or more, and an age at most one year above the birth-date age are no contradiction. New rule (owner decision 2026-11-22): the owner allowed friend introductions between teens, so an adult who typed a teen birth date must lose that access when they say their real age. Changed (owner decision 2026-11-22, review): before, only an age of 19 or more was a contradiction, so a 16-year-old record that said "I'm 18" stayed teen ready; one year above is still allowed because a teen who rounds up to the next age is honest.
+
+```quint
+import friendIntroAge as FriendAge from "./friendIntroAge"
+
+pure val maxDayValues = Set(20261122, 20261123, 20271122)
+
+pure def teenBirthDateContradicted(birthExact: bool, birthKey: int, minDay: int, maxDay: int, selfAge: int): bool =
+  birthExact and FriendAge::teenPartnerAge(birthKey, minDay, maxDay)
+    and (selfAge > FriendAge::teenFriendMaxAge or selfAge > Age::ageOnDay(birthKey, maxDay) + 1)
+
+pure def lawAdultStatementContradictsATeenBirthDate(selfAge: int): bool =
+  (selfAge > FriendAge::teenFriendMaxAge) implies teenBirthDateContradicted(true, 20100315, 20261122, 20261122, selfAge)
+
+pure def lawTwoYearsOlderContradictsATeenBirthDate(selfAge: int): bool =
+  (selfAge >= 18) implies teenBirthDateContradicted(true, 20100315, 20261122, 20261122, selfAge)
+
+pure def lawOneYearOlderIsNoContradiction(birthExact: bool): bool =
+  not(teenBirthDateContradicted(birthExact, 20100315, 20261122, 20261122, 17))
+
+pure def lawCloseTeenStatementIsNoContradiction(birthExact: bool, birthKey: int, minDay: int, maxDay: int, selfAge: int): bool =
+  (selfAge <= FriendAge::teenFriendMaxAge and selfAge <= Age::ageOnDay(birthKey, maxDay) + 1)
+    implies not(teenBirthDateContradicted(birthExact, birthKey, minDay, maxDay, selfAge))
+
+pure def lawTypedAgeIsNoContradiction(birthKey: int, minDay: int, maxDay: int, selfAge: int): bool =
+  not(teenBirthDateContradicted(false, birthKey, minDay, maxDay, selfAge))
+```
+
+### A minor hears which introductions the app makes
+
+A member under 18 hears one notice when the line learns that they are under 18, and the welcome of a member who joins under 18 says the same thing. On slop.date the notice says that slop.date matches nobody under 18 for dates; on peon.biz it says that peon.biz matches nobody under 18 for work and that the agent still helps them itself; both say that friendship introductions under 18 happen on friends.help and ntwrk.party. slop.date and peon.biz always give their own notice, also to a member with a stored doubt about their age. On friends.help and ntwrk.party, a member with a stored doubt about their age (an open minor signal, a minor report, an age conflict or a bar) hears the single-player notice, which promises no friendship introductions. On friends.help and ntwrk.party, while staff have not stopped teen introductions, a teen-ready member hears that they are introduced only for friendship, to people aged 13 to 18 born within 2 years of them, and that a person checks every introduction; a member with no exact birth date also hears that a birthday lets the line look for friends close to their age. In every other case the member hears the single-player notice of today. New rule (owner decision 2026-11-22): the owner said that a teen on slop.date "need[s] to know that it won't match them on dates, it will only connect them for friendships". Changed (owner decision 2026-11-22, review): before, a teen who joined slop.date by text heard only the single-player welcome, so the slop sentence reached only a member who became a minor after joining. Changed (owner decision 2026-11-22, answers A2 to A5): before, only friends.help offered teen introductions, a staff check confirmed each teen, peon.biz gave the single-player notice, and a member with a stored doubt could hear the birthday sentence; now ntwrk.party also offers them (A2), a person reviews each introduction with no extra staff check (A3), peon.biz says what it does for a minor (A5), and on friends.help and ntwrk.party copy never promises friends to a member whose age is in doubt. Changed (owner decision 2026-11-22, review): the text said that a member with a stored doubt hears the single-player notice on every app, but slop.date and peon.biz give their own notice first; the text now says so.
+
+```quint
+import matchLane as Lane from "./matchLane"
+
+type MinorNotice = MinorSinglePlayerNotice | MinorBirthdayNotice | MinorTeenFriendNotice | MinorSlopNotice | MinorPeonNotice
+
+pure val appValues = Set("ntwrk", "slop", "friends", "peon")
+
+pure def minorNoticeFor(app: str, teenIntros: bool, teenReady: bool, birthExact: bool, doubtStored: bool): MinorNotice =
+  if (app == "slop") MinorSlopNotice
+  else if (app == "peon") MinorPeonNotice
+  else if (doubtStored) MinorSinglePlayerNotice
+  else if (Lane::teenFriendApp(app) and teenIntros and teenReady) MinorTeenFriendNotice
+  else if (Lane::teenFriendApp(app) and teenIntros and not(birthExact)) MinorBirthdayNotice
+  else MinorSinglePlayerNotice
+
+pure def lawSlopMinorHearsNoDates(teenIntros: bool, teenReady: bool, birthExact: bool, doubtStored: bool): bool =
+  minorNoticeFor("slop", teenIntros, teenReady, birthExact, doubtStored) == MinorSlopNotice
+
+pure def lawPeonMinorHearsNoWork(teenIntros: bool, teenReady: bool, birthExact: bool, doubtStored: bool): bool =
+  minorNoticeFor("peon", teenIntros, teenReady, birthExact, doubtStored) == MinorPeonNotice
+
+pure def lawSwitchOffKeepsTheMinorNotice(app: str, teenReady: bool, birthExact: bool, doubtStored: bool): bool =
+  (app != "slop" and app != "peon") implies minorNoticeFor(app, false, teenReady, birthExact, doubtStored) == MinorSinglePlayerNotice
+
+pure def lawNoFriendPromiseWithDoubt(app: str, teenIntros: bool, teenReady: bool, birthExact: bool): bool =
+  minorNoticeFor(app, teenIntros, teenReady, birthExact, true) != MinorBirthdayNotice
+    and minorNoticeFor(app, teenIntros, teenReady, birthExact, true) != MinorTeenFriendNotice
+
+pure def lawTeenFriendNoticeNeedsAReadyTeen(app: str, teenIntros: bool, teenReady: bool, birthExact: bool, doubtStored: bool): bool =
+  (minorNoticeFor(app, teenIntros, teenReady, birthExact, doubtStored) == MinorTeenFriendNotice) implies
+    (Lane::teenFriendApp(app) and teenIntros and teenReady and not(doubtStored))
+```
+
+### A minor on slop.date or peon.biz hears once what they get
+
+A member who is under 18 on slop.date or peon.biz stays a member and gets help from the agent alone. The line tells such a member once what they get: the welcome of a new minor member says it, and a member who is already in hears it with their next message after the line knows they are under 18. The line keeps the time it told them and never tells them again. An adult hears no such notice, and a member of friends.help or ntwrk.party hears the notice of the rule above instead. When the line tells them with a message that it would otherwise leave to the shared agent, the notice is the answer to that message and the turn is handled, because a turn that goes to the shared agent cannot carry a reply from the line. Changed (owner decision 2026-11-22, review): before, such a turn came back with only the notice and the reason that the member context was unavailable, so the reason was wrong. New rule (owner decision 2026-11-22, answers A2 to A5): the owner chose "Friends only" for a minor and said that an existing member aged 13 to 17 of peon.biz or slop.date stays a member with solo help and is told once what they get.
+
+```quint
+pure def soloTeenApp(app: str): bool = app == "slop" or app == "peon"
+
+pure def minorScopeNoticeDue(minorNow: bool, soloApp: bool, alreadyTold: bool): bool =
+  minorNow and soloApp and not(alreadyTold)
+
+pure def lawScopeNoticeOnce(minorNow: bool, soloApp: bool): bool =
+  not(minorScopeNoticeDue(minorNow, soloApp, true))
+
+pure def lawAdultHearsNoScopeNotice(soloApp: bool, alreadyTold: bool): bool =
+  not(minorScopeNoticeDue(false, soloApp, alreadyTold))
+
+pure def scopeNoticeTurnOpens(turnOpen: bool, toldThisTurn: bool): bool =
+  turnOpen and not(toldThisTurn)
+
+pure def lawScopeNoticeAnswersTheTurn(turnOpen: bool): bool =
+  not(scopeNoticeTurnOpens(turnOpen, true))
+
+pure def lawFriendAppsAreNotSolo(app: str): bool =
+  Lane::teenFriendApp(app) implies not(soloTeenApp(app))
 ```

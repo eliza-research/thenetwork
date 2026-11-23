@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { BIAS_WINDOW_MS } from "../service/bias.ts";
 import { DryRunAdapter } from "../service/channel.ts";
@@ -52,7 +53,7 @@ describe.skipIf(!pgAvailable)("weekly bias monitor: dates by meeting time (Netwo
     const make = () => new NetworkService({
       url: URL_, clock, instance: "bias-window", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
       tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
-      adapter: () => new DryRunAdapter(() => {}),
+      adapter: () => new DryRunAdapter(() => {}), reviewJudge: holdEveryItem.judge,
     });
     let s = svc = make();
     await s.start();

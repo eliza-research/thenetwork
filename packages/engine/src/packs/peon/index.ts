@@ -60,7 +60,7 @@ export const peonPack: AppPack = {
   id: "peon",
   version: PEON_PACK_VERSION,
   ontology: {
-    lanes: [{ id: "professional", adultOnly: true }],
+    lanes: [{ id: "professional", minors: "never" }],
     // Hiring has no contributor budget and no warm graph (a referral path is future work).
     contributorRoles: new Set(),
     warmEdges: new Set(),

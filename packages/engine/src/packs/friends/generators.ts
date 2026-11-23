@@ -11,7 +11,7 @@
 //                       passes the one-to-one rules (rules.ts group_first)
 import type { MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
-import { memberReason, pairReason } from "../../filters.ts";
+import { isMinor, memberReason, pairReason } from "../../filters.ts";
 import { circleCandidate, pairCandidate, searchFor, type GenCtx } from "../../genkit.ts";
 import type { Circle } from "../../match/circles.ts";
 import type { MatchProfile } from "../../match/profile.ts";
@@ -74,7 +74,7 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
     const mutual = (a: MemberId, b: MemberId) => positiveAbout(ctx, a, b, r.id) && positiveAbout(ctx, b, a, r.id);
     // Attendees with a mutual "see again" with at least one other attendee.
     const ids = r.participants.filter(a => r.participants.some(b => b !== a && mutual(a, b)));
-    const ok = ids.filter(id => !memberReason(w, id, { category: "social", role: "peer", format: ids.length >= 3 ? "small_group" : "one_to_one", timeSensitive: false })).slice(0, 6);
+    const ok = ids.filter(id => !isMinor(w, id) && !memberReason(w, id, { category: "social", role: "peer", format: ids.length >= 3 ? "small_group" : "one_to_one", timeSensitive: false })).slice(0, 6);
     if (ok.length < 2) continue;
     const k = [...ok].sort().join(",");
     if (seen.has(k)) continue;

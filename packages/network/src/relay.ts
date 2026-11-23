@@ -1,20 +1,17 @@
 import type { MemberId, Owned } from "@thenetwork/core";
-import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
+import { initial as initialRelay, step as stepRelay, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import { relaySevereBlockCaseEvent, relayStartsMinorPolicy, relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
-import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
-  relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
+  relayGuard, relayItemAsync, relaySenderNotice, RELAY_LIMITS, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
 } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 
-const HOUR = 3_600_000, DAY = 24 * HOUR;
 export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
-const VERDICT = { block: "Block", hold: "Hold", pass: "Pass" } as const satisfies Record<RelayResult["decision"], RelayVerdict>;
+const VERDICT = { block: "Block", pass: "Pass" } as const satisfies Record<RelayResult["decision"], RelayVerdict>;
 const SEVERE_REASON_FAMILIES = new Set(["harass_severe", "llm_severe", "clef_severe"]);
-const CLASSIFIER_REASON_FAMILIES = new Set(["llm", "clef", "llm_severe", "clef_severe"]);
 const DELIVERY_RESULT = { sent: "Delivered", deferred: "Queued", refused: "Refused" } as const satisfies Record<ReturnType<RelayHost["send"]>, DeliveryResult>;
 
 export interface RelayMember {
@@ -42,23 +39,14 @@ export interface RelayHost {
   blocked(a: MemberId, b: MemberId): boolean;
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   ratesPhotos: boolean;
-  reviewWindowMs: number;
-  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
-  minorSignal(id: MemberId): void;
+  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string }): "sent" | "deferred" | "refused";
+  minorSignal(id: MemberId, saysYounger: boolean): void;
+  saysYounger?(id: MemberId, text: string): boolean;
   severeBlock(id: MemberId): void;
+  teenPair?(matchId: string): boolean;
 }
 
-export interface RelayHeld {
-  itemId: string; matchId: string; app: string; kind: RelayItem["kind"]; from: MemberId; to: MemberId; at: number;
-  reasons: string[];
-  text?: string;
-  textHidden?: "minor";
-  photoIds?: string[];
-  status: "held" | "released" | "rejected" | "expired";
-  decidedBy?: string; decidedAt?: number;
-}
-export type RelayHeldItem = RelayHeld & { deadline: number };
-export interface RelayHoldExpired { itemId: string; matchId: string; from: MemberId; notice: string }
+export type RelayAskKind = Exclude<RelayItem["kind"], "photo">;
 export interface RelayTargetResult { choice: RelayTargetChoice; match?: RelayMatch }
 export interface RelayThreadState { id: string; app: string; members: [MemberId, MemberId]; openedAt: number; messages: RelayThreadMessage[] }
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
@@ -69,40 +57,40 @@ export function withdrawsSwap(text: string): boolean {
   return /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
     && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/.test(t);
 }
-export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
-export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
+export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; swaps: RelaySwap[] }
+export const emptyRelayState = (): RelayState => ({ threads: [], log: [], swaps: [] });
 
 export interface RelayAsk {
   itemId: string;
   from: MemberId;
-  kind: RelayItem["kind"];
+  kind: RelayAskKind;
   text?: string;
-  photoIds?: string[];
   matchId?: string;
 }
 export interface RelayOutcome {
-  itemId: string; decision: "sent" | "held" | "refused" | "unnamed"; reason: string; replayed?: boolean;
+  itemId: string; decision: "sent" | "waiting" | "refused" | "unnamed"; reason: string; replayed?: boolean;
   delivered?: boolean;
 }
 export interface RelayCallOptions {
   hook?: RelayClassifierHook;
   contactOf?: (id: MemberId) => string | undefined;
-  photos?: { ids: string[]; showConsent: boolean; approved?: ApprovedRelayPhoto[] };
   canonical?: ReadonlyMap<MemberId, RelayCanonical>;
 }
-export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean }
+export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean; teenReady?: boolean; birthKey?: number }
 
 const NOTICE = {
   whichMatch: "You have more than one match, so I didn't send that. Send it again and say who it's for.",
   matchClosed: "That match is closed, so I can't pass anything on to them.",
-  holdExpired: "I couldn't check what you asked me to pass on to your match in time, so I didn't send it. You can send it again.",
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
   swapWait: "I'll share your number as soon as they say they want to swap numbers too.",
   swapAlready: "I already asked them; I'll share your number if they want to swap too.",
-  photoOff: "I can't send photos to a match yet.",
+  textOnly: "I can only pass on messages for this match, not numbers or photos.",
   undelivered: "I couldn't pass that on right now.",
+  swapFailed: "I can't swap numbers right now.",
   late: "I'll pass that on when it's a reasonable hour for them.",
 };
+const SEND_REFUSED = "send:refused";
+const undeliveredNotice = (kind: RelayItem["kind"]) => (kind === "contact_share" ? NOTICE.swapFailed : NOTICE.undelivered);
 const swapAsk = (name: string) => `${name} would like to swap numbers with you. If you'd like that too, say "send them my number" in the next 15 minutes and I'll share both.`;
 const SHARED_NUMBER = (name: string) => `${name || "They"} shared their number.`;
 
@@ -115,7 +103,7 @@ export class RelayDesk {
   exportState(): RelayState { return JSON.parse(JSON.stringify(this.s)) as RelayState; }
   importState(s: RelayState | undefined) {
     const x = s ? (JSON.parse(JSON.stringify(s)) as RelayState) : emptyRelayState();
-    this.s = { threads: x.threads ?? [], log: x.log ?? [], held: x.held ?? [], swaps: x.swaps ?? [] };
+    this.s = { threads: x.threads ?? [], log: x.log ?? [], swaps: x.swaps ?? [] };
   }
 
   liveMatches(from: MemberId): RelayMatch[] {
@@ -138,37 +126,33 @@ export class RelayDesk {
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: choice === "RelayNamedNotLive" ? NOTICE.matchClosed : NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
     const now = this.host.now();
+    if (ask.kind !== "text" && this.host.teenPair?.(match.id) === true) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.textOnly };
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
-    const item: RelayItem = ask.kind === "photo"
-      ? { id: ask.itemId, kind: "photo", from: ask.from, to, at: now, photoIds: [...new Set(ask.photoIds ?? [])], ...(ask.text?.trim() ? { text: ask.text.trim() } : {}),
-          consent: { kind: "photo", by: ask.from, itemId: ask.itemId, at: now, photoIds: [...new Set(ask.photoIds ?? [])] } }
-      : { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text: (ask.text ?? "").trim() };
-    const res = await this.decide(item, match, o);
-    const out = this.apply(res, match, item, o);
-    if (ask.kind === "photo" && res.reasons.includes("photo:no_consent")) return { ...out, reason: NOTICE.photoOff };
-    return out;
+    const item: RelayItem = { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text: (ask.text ?? "").trim() };
+    return this.apply(await this.decide(item, match, o), match, item);
   }
 
-  private async decide(item: RelayItem, match: RelayMatch, o: RelayCallOptions, at = item.at): Promise<RelayResult> {
-    const ctx = this.context(item, match, o, at);
-    return o.hook ? relayItemAsync(item, ctx, { hook: o.hook }) : relayItem(item, ctx);
+  private async decide(item: RelayItem, match: RelayMatch, o: RelayCallOptions): Promise<RelayResult> {
+    const ctx = this.context(item, match, o);
+    return relayItemAsync(item, ctx, o.hook ? { hook: o.hook } : {});
   }
 
-  private context(item: RelayItem, match: RelayMatch, o: RelayCallOptions, now: number): RelayContext {
+  private context(item: RelayItem, match: RelayMatch, o: RelayCallOptions): RelayContext {
     const party = (id: MemberId): RelayParty => {
       const m = this.host.member(id), c = o.canonical?.get(id);
       const strict = o.canonical !== undefined;
       return {
         id, firstName: m?.firstName ?? "", age: strict && !c?.adult ? undefined : m?.age,
         optedOut: (m ? m.optedOut : true) || (strict && (!c || c.optedOut)), held: (m?.held ?? false) || (strict && (!c || c.held)),
-        ...(id === item.from && o.photos ? { photoIds: o.photos.ids, photoConsent: o.photos.showConsent } : {}),
       };
     };
     const thread = this.thread(match.id);
     const mine = (thread?.messages ?? []).filter(x => x.from === item.from && x.kind === "text").map(x => bodyOf(x.rendered)).filter((x): x is string => !!x).slice(-3);
     const facts = this.host.privateFacts();
+    const teenPair = item.kind === "text" && this.host.teenPair?.(match.id) === true && (o.canonical === undefined || match.participants.every(p => o.canonical?.get(p)?.teenReady === true));
     return {
-      now,
+      ...(teenPair ? { teenFriendPair: true } : {}),
+      now: item.at,
       opportunity: { id: match.id, app: this.host.app, participants: match.participants, acceptedBy: match.acceptedBy, status: match.status, ...(match.metAt !== undefined ? { metAt: match.metAt } : {}) },
       sender: party(item.from), recipient: party(item.to),
       blocked: this.host.blocked(item.from, item.to),
@@ -176,39 +160,34 @@ export class RelayDesk {
       recentTexts: mine,
       thread: (thread?.messages ?? []).map(x => x.rendered).filter((x): x is string => !!x).slice(-4),
       guard: relayGuard({ forbidden: facts.forbidden, facts: facts.forbidden.filter(f => (typeof f === "string" ? f : f.text).trim().split(/\s+/).length >= 2), canaries: facts.canaries }),
-      ...(this.host.ratesPhotos ? { extraRules: (t: string) => (appearanceLeak(t) ? ["rating:appearance"] : []) } : {}),
+      ...(this.host.ratesPhotos || teenPair ? { extraRules: (t: string) => [
+        ...(this.host.ratesPhotos && appearanceLeak(t) ? ["rating:appearance"] : []),
+        ...(teenPair && this.host.saysYounger?.(item.from, t) === true ? ["teen:age_talk"] : []),
+      ] } : {}),
     };
   }
 
-  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): RelayOutcome {
-    const ageSignal = res.record.ageSignal || res.reasons.some(r => { const [family, code] = r.split(":"); return CLASSIFIER_REASON_FAMILIES.has(family!) && code === "minor_signal"; });
-    this.log({ ...res.record, ageSignal });
-    if (relayStartsMinorPolicy(ageSignal, this.host.member(item.from)?.markedMinor ?? false)) this.host.minorSignal(item.from);
+  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string): RelayOutcome {
+    const ageSignal = res.record.ageSignal;
+    this.log(res.record);
+    const saysYounger = item.kind === "text" && item.text !== undefined && this.host.saysYounger?.(item.from, item.text) === true;
+    if (relayStartsMinorPolicy(ageSignal || saysYounger, this.host.member(item.from)?.markedMinor ?? false)) this.host.minorSignal(item.from, saysYounger);
     if (relaySevereBlockCaseEvent(VERDICT[res.decision], res.reasons.some(r => SEVERE_REASON_FAMILIES.has(r.split(":")[0]!)))) this.host.severeBlock(item.from);
-    const decision = stepRelay(initialRelay, {
-      type: "recordVerdict", verdict: VERDICT[res.decision],
-      rateOnly: res.decision === "hold" && res.reasons.every(r => r.startsWith("rate:") || r === "rate"),
-      hasText: !!item.text, ageSignal,
-    });
-    if (decision.phase === "Blocked") return { itemId: item.id, decision: "refused", reason: res.senderNotice };
-    if (decision.phase === "Held") this.s.held.push({
-      itemId: item.id, matchId: match.id, app: this.host.app, kind: item.kind, from: item.from, to: item.to, at: item.at, reasons: res.reasons, status: "held",
-      ...(decision.retainsText ? { text: item.text } : {}), ...(item.photoIds?.length ? { photoIds: [...item.photoIds] } : {}),
-    });
-    if (decision.phase !== "ReadyToSend") return { itemId: item.id, decision: "held", reason: res.senderNotice };
+    const decision = stepRelay(initialRelay, { type: "recordVerdict", verdict: VERDICT[res.decision] });
+    if (decision.phase !== "ReadyToSend") return { itemId: item.id, decision: "refused", reason: res.senderNotice };
 
-    const sent = this.deliver(res, match, item, o, contact);
-    const delivery = stepRelay(decision, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent], policyPermits: res.decision === "pass" });
-    if (delivery.phase === "SendRefused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered }; }
+    const sent = this.deliver(res, match, item, contact);
+    const delivery = stepRelay(decision, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent] });
+    if (delivery.phase === "SendRefused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: undeliveredNotice(item.kind) }; }
     return { itemId: item.id, decision: "sent", reason: delivery.phase === "Deferred" ? NOTICE.late : res.senderNotice };
   }
 
   private undelivered(r: RelayRecord) {
-    this.log({ ...r, decision: "block", contactShared: false, reasons: [...new Set([...r.reasons, "send:refused"])].sort() });
+    this.log({ ...r, decision: "block", contactShared: false, reasons: [...new Set([...r.reasons, SEND_REFUSED])].sort() });
   }
 
-  private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): "sent" | "deferred" | "refused" {
-    const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}), ...(res.photos?.length ? { photoIds: res.photos, approvedPhotos: o.photos?.approved } : {}) });
+  private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string): "sent" | "deferred" | "refused" {
+    const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}) });
     if (sent === "refused") return sent;
     const t = this.openThread(match);
     const msg = threadMessage(res);
@@ -224,31 +203,31 @@ export class RelayDesk {
     if (!mineValue) return { itemId: ask.itemId, decision: "refused", reason: "I can't share your number right now." };
     const theirs = this.s.swaps.find(x => x.matchId === match.id && x.from === to && x.to === ask.from);
     if (!theirs) {
-      if (this.s.swaps.some(x => x.matchId === match.id && x.from === ask.from)) return { itemId: ask.itemId, decision: "held", reason: NOTICE.swapAlready };
+      if (this.s.swaps.some(x => x.matchId === match.id && x.from === ask.from)) return { itemId: ask.itemId, decision: "waiting", reason: NOTICE.swapAlready };
       const probe = await this.decide(this.share(ask.itemId, ask.from, to, now, mineValue), match, o);
-      if (probe.decision !== "pass") return this.apply(probe, match, this.share(ask.itemId, ask.from, to, now, mineValue), o);
+      if (probe.decision !== "pass") return this.apply(probe, match, this.share(ask.itemId, ask.from, to, now, mineValue));
       this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
       const name = this.host.member(ask.from)?.firstName ?? "Your match";
       this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask` });
-      return { itemId: ask.itemId, decision: "held", reason: NOTICE.swapWait };
+      return { itemId: ask.itemId, decision: "waiting", reason: NOTICE.swapWait };
     }
     const theirValue = o.contactOf?.(to);
-    if (!theirValue) return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
+    if (!theirValue) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.swapFailed };
     this.s.swaps = this.s.swaps.filter(x => x !== theirs);
     const theirItem = this.share(theirs.itemId, to, ask.from, now, theirValue, theirs.at), myItem = this.share(ask.itemId, ask.from, to, now, mineValue);
     const theirRes = await this.decide(theirItem, match, o), myRes = await this.decide(myItem, match, o);
     if (theirRes.decision === "pass" && myRes.decision === "pass") {
-      const first = this.apply(theirRes, match, theirItem, o, theirValue);
+      const first = this.apply(theirRes, match, theirItem, theirValue);
       if (first.decision !== "sent") {
         this.undelivered(myRes.record);
-        return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
+        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.swapFailed };
       }
-      return this.apply(myRes, match, myItem, o, mineValue);
+      return this.apply(myRes, match, myItem, mineValue);
     }
-    if (theirRes.decision !== "pass") this.apply(theirRes, match, theirItem, o);
-    if (myRes.decision !== "pass") return this.apply(myRes, match, myItem, o);
+    if (theirRes.decision !== "pass") this.apply(theirRes, match, theirItem);
+    if (myRes.decision !== "pass") return this.apply(myRes, match, myItem);
     this.undelivered(myRes.record);
-    return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
+    return { itemId: ask.itemId, decision: "refused", reason: NOTICE.swapFailed };
   }
 
   cancelSwaps(from: MemberId): number {
@@ -263,8 +242,8 @@ export class RelayDesk {
 
   private prior(itemId: string): Omit<RelayOutcome, "replayed"> | undefined {
     const r = this.s.log.find(x => x.itemId === itemId);
-    if (r) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
-    if (this.s.swaps.some(x => x.itemId === itemId)) return { itemId, decision: "held", reason: NOTICE.swapWait };
+    if (r) return { itemId, decision: r.decision === "pass" ? "sent" : "refused", delivered: r.decision === "pass", reason: r.reasons.includes(SEND_REFUSED) ? undeliveredNotice(r.kind) : relaySenderNotice(r.decision === "pass" ? [] : r.reasons) };
+    if (this.s.swaps.some(x => x.itemId === itemId)) return { itemId, decision: "waiting", reason: NOTICE.swapWait };
     return undefined;
   }
 
@@ -278,66 +257,6 @@ export class RelayDesk {
     let t = this.thread(m.id);
     if (!t) { t = { id: m.id, app: this.host.app, members: [...m.participants] as [MemberId, MemberId], openedAt: this.host.now(), messages: [] }; this.s.threads.push(t); }
     return t;
-  }
-
-  held(): RelayHeldItem[] { return this.s.held.filter(h => h.status === "held").map(h => ({ ...h, reasons: [...h.reasons], deadline: this.deadline(h) })); }
-  private deadline(h: RelayHeld): number { return h.at + this.host.reviewWindowMs; }
-
-  release(itemId: string, actor: string, o: RelayCallOptions = {}): { ok: true; delivered: boolean } | { ok: false; reason: string } {
-    const h = this.s.held.find(x => x.itemId === itemId && x.status === "held");
-    if (!h) return { ok: false, reason: "not_held" };
-    const decided = () => this.decideHold(h, actor, true);
-    const match = this.liveMatches(h.from).find(m => m.id === h.matchId);
-    const item: RelayItem | undefined = h.kind === "photo"
-      ? { id: h.itemId, kind: "photo", from: h.from, to: h.to, at: h.at, photoIds: h.photoIds ?? [], ...(h.text ? { text: h.text } : {}), consent: { kind: "photo", by: h.from, itemId: h.itemId, at: h.at, photoIds: h.photoIds ?? [] } }
-      : h.kind === "text" && h.text ? { id: h.itemId, kind: "text", from: h.from, to: h.to, at: h.at, text: h.text } : undefined;
-    if (!match || !item) { decided(); return { ok: true, delivered: false }; }
-    const again = relayItem(item, this.context(item, match, o, h.at));
-    const first = (this.host.member(h.from)?.firstName ?? "").trim().split(/\s+/)[0] || "Your match";
-    const rendered = again.decision === "pass" ? again.rendered : again.decision === "hold" && item.kind === "text" ? RELAY_WORDING.text(first, item.text!) : "";
-    const released = decided();
-    if (!rendered) return { ok: true, delivered: false };
-    const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };
-    const sent = this.deliver(res, match, item, o);
-    const result = stepRelay(released, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent], policyPermits: rendered !== "" });
-    const delivered = result.phase === "Sent" || result.phase === "Deferred";
-    if (delivered) this.log(res.record);
-    return { ok: true, delivered };
-  }
-
-  reject(itemId: string, actor: string): { ok: true } | { ok: false; reason: string } {
-    const h = this.s.held.find(x => x.itemId === itemId && x.status === "held");
-    if (!h) return { ok: false, reason: "not_held" };
-    this.decideHold(h, actor, false);
-    const r = this.s.log.find(x => x.itemId === itemId);
-    if (r) this.log({ ...r, reasons: [...new Set([...r.reasons, "staff:rejected"])].sort() });
-    return { ok: true };
-  }
-
-  private decideHold(h: RelayHeld, actor: string, released: boolean) {
-    const result = stepRelay({ ...storedHold, retainsText: !!h.text }, { type: "reviewHold", released });
-    h.status = result.phase === "Released" ? "released" : "rejected";
-    h.decidedBy = actor;
-    h.decidedAt = this.host.now();
-    if (!result.retainsText) delete h.text;
-    return result;
-  }
-
-  expireHolds(now: number): RelayHoldExpired[] {
-    const out: RelayHoldExpired[] = [];
-    for (const h of this.s.held) {
-      if (h.status !== "held") continue;
-      const result = stepRelay({ ...storedHold, retainsText: !!h.text }, { type: "expireHold", now, deadline: this.deadline(h) });
-      if (result.phase !== "Expired") continue;
-      h.status = "expired";
-      h.decidedBy = "system:expired";
-      h.decidedAt = now;
-      if (!result.retainsText) delete h.text;
-      const r = this.s.log.find(x => x.itemId === h.itemId);
-      if (r) this.log({ ...r, reasons: [...new Set([...r.reasons, "review:expired"])].sort() });
-      out.push({ itemId: h.itemId, matchId: h.matchId, from: h.from, notice: NOTICE.holdExpired });
-    }
-    return out;
   }
 
   records(): RelayRecord[] { return this.s.log.map(r => ({ ...r, reasons: [...r.reasons] })); }
@@ -354,12 +273,7 @@ export class RelayDesk {
   threads(): RelayThreadState[] { return this.exportState().threads; }
 
   forget(id: MemberId) {
-    for (const h of this.s.held) if ((h.from === id || h.to === id) && h.status === "held") this.decideHold(h, "system:forget", false);
     this.s.swaps = this.s.swaps.filter(x => x.from !== id && x.to !== id);
     for (const t of this.s.threads) if (t.members.includes(id)) t.messages = [];
-  }
-
-  prune(now: number) {
-    this.s.held = this.s.held.filter(h => h.status === "held" || now - (h.decidedAt ?? h.at) < 30 * DAY);
   }
 }

@@ -5,7 +5,7 @@
 import { writePath } from "../../core/src/runtime/files.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { DAY, HOUR, MINUTE, SimClock, type MemberId, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
 import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core";
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
 import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } from "./agent/policy.ts";
@@ -36,6 +36,7 @@ export interface WorldOptions {
   personas: Persona[];
   days: number;
   network: NetworkUnderTest;
+  app?: AppId;
   /** Optional matching engine; called nightly per city, proposals handed to network.submitProposal. */
   engine?: Engine;
   agent?: PersonaAgent;
@@ -97,6 +98,7 @@ export interface WorldResult {
 
 export const DEFAULT_START = Date.UTC(2026, 9, 5, 7); // Mon Oct 5 2026, 00:00 in SF
 const REPO_ROOT = resolve(import.meta.dirname, "../../..");
+const statedBirthOf = (p: Persona): { birthKey?: number } => (p.public.birthKey !== undefined ? { birthKey: p.public.birthKey } : {});
 
 export class World {
   readonly clock: SimClock;
@@ -305,6 +307,7 @@ export class World {
       id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
       joinDay: Math.floor((joinAt - this.start) / DAY), trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),
       canary: p.hidden.privateDisclosure?.canary, privateFact: p.hidden.privateDisclosure?.fact, romanceOptIn: p.hidden.romance.optIn,
+      ...statedBirthOf(p),
     } });
     this.scheduler.at(joinAt, "join", { personaId: p.id });
   }
@@ -354,7 +357,7 @@ export class World {
     s.on<{ day: number }>("day", ev => { this.opts.onDay?.(ev.data.day); });
 
     this.rec({ type: "run_start", runId: this.runId, seed: this.opts.seed, start: this.start, config: {
-      days, personas: this.opts.personas.length, network: network.name, engine: this.opts.engine?.name ?? null,
+      days, personas: this.opts.personas.length, network: network.name, app: this.opts.app ?? null, engine: this.opts.engine?.name ?? null,
       agent: this.agent.mode, mode: this.opts.mode ?? "discrete", tickMinutes: this.opts.tickMinutes ?? 60,
     } });
     for (const p of this.opts.personas) {
@@ -362,6 +365,7 @@ export class World {
         id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
         joinDay: p.joinDay, trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),
         canary: p.hidden.privateDisclosure?.canary, privateFact: p.hidden.privateDisclosure?.fact, romanceOptIn: p.hidden.romance.optIn,
+        ...statedBirthOf(p),
       } });
     }
 

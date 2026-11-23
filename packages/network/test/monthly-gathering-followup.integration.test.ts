@@ -4,6 +4,7 @@ import type { SendRequest } from "../../blooio/src/types.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
+import { holdEveryItem, SIM_REVIEW_JUDGE, simulatedServiceJudge } from "../../engine/src/reviewJudge.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
@@ -15,8 +16,8 @@ import { gatheringRepeatOppPrefix, gatheringRepeatProbeKey } from "../src/networ
 import type { GatheringRepeatSource, NetworkState } from "../src/network.ts";
 
 // spec/monthlyGatheringFollowup.md, "Confirm attendance and choose whom to meet again"
-test.skipIf(!pgAvailable)("signed gathering attendance and private follow-up preserve exact, current, bilateral consent", async () => {
-  const url = await migratedDb("monthly_gathering_followup");
+test.skipIf(!pgAvailable).each(["staff", "judge"] as const)("signed gathering attendance and private follow-up preserve exact, current, bilateral consent (%s approval)", async approval => {
+  const url = await migratedDb(`monthly_gathering_followup_${approval}`);
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, 16, 17));
   const secret = "synthetic-monthly-gathering-followup-secret";
@@ -25,10 +26,10 @@ test.skipIf(!pgAvailable)("signed gathering attendance and private follow-up pre
   const app = APPS.ntwrk, key = { id, revision: 1 };
   const sent: SendRequest[] = [];
   const createService = () => new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: approval === "staff" ? holdEveryItem.judge : simulatedServiceJudge({ exceptions: false }),
     tokens: "admin@ntwrk:gathering-staff", network: { growth: false, plans: false },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }, { id: "friends:nyc", matchingEnabled: false }],
-    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {}, liveGate: () => true,
+    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {},
       provider: { kind: "sim", async send(request) {
         sent.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };
@@ -162,16 +163,26 @@ test.skipIf(!pgAvailable)("signed gathering attendance and private follow-up pre
     expect((await staff("/matching", { on: true })).status).toBe(200);
     const rt = service.runtimeFor("ntwrk")!;
     const repeatSends = () => sent.filter(message => message.idempotencyKey.startsWith(`tn:${gatheringRepeatOppPrefix}`));
+    const adapter = rt.adapter as BlooioAdapter;
+    if (approval === "judge") await adapter.lineSafety("review", "fixture");
     await service.tick();
     const reviewItems = await (await staff("/review")).json();
     const reviews = reviewItems.items.filter((item: { oppId: string }) => item.oppId.startsWith(gatheringRepeatOppPrefix));
-    expect(reviews).toHaveLength(1);
     expect(repeatSends()).toHaveLength(0);
-    const { oppId, revision } = reviews[0]!;
-    const adapter = rt.adapter as BlooioAdapter;
-    await adapter.lineSafety("review", "fixture");
-    const approval = await staff(`/review/${oppId}`, { decision: "approve", revision });
-    expect(await approval.json()).toMatchObject({ ok: true });
+    const repeats = (await rt.pg.load())?.opps.filter(opp => opp.id.startsWith(gatheringRepeatOppPrefix)) ?? [];
+    expect(repeats).toHaveLength(1);
+    const oppId = repeats[0]!.id;
+    if (approval === "staff") {
+      expect(reviews.map((item: { oppId: string }) => item.oppId)).toEqual([oppId]);
+      await adapter.lineSafety("review", "fixture");
+      const decision = await staff(`/review/${oppId}`, { decision: "approve", revision: reviews[0]!.revision });
+      expect(await decision.json()).toMatchObject({ ok: true });
+      expect(repeats[0]!.review?.approver).toBeUndefined();
+      expect((await rt.pg.load())?.opps.find(opp => opp.id === oppId)?.review).toMatchObject({ decision: "approve", approver: "staff", reviewer: expect.any(String) });
+    } else {
+      expect(reviews).toEqual([]);
+      expect(repeats[0]!.review).toMatchObject({ decision: "approve", approver: "judge", reviewer: SIM_REVIEW_JUDGE });
+    }
     const awaitProgress = async (ready: () => boolean | Promise<boolean>) => {
       for (let slot = 0; slot < 22 && !await ready(); slot++) {
         clock.advance(HOUR);

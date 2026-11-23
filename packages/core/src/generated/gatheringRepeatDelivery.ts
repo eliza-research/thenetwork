@@ -5,8 +5,8 @@
 
 /** Story: Receive a reviewed second-encounter proposal safely / A probe or initial reveal must match the reviewed opportunity and current source (spec/gatheringRepeatDelivery.md) */
 //@ pure
-export function gatheringRepeatContactAllowed(rollout: boolean, exactPair: boolean, humanApproved: boolean, expectedLifecycle: boolean, exactMessage: boolean, sourceCurrent: boolean): boolean {
-  return rollout && exactPair && humanApproved && expectedLifecycle && exactMessage && sourceCurrent;
+export function gatheringRepeatContactAllowed(rollout: boolean, exactPair: boolean, approved: boolean, expectedLifecycle: boolean, exactMessage: boolean, sourceCurrent: boolean): boolean {
+  return rollout && exactPair && approved && expectedLifecycle && exactMessage && sourceCurrent;
 }
 
 /** Story: Receive a reviewed second-encounter proposal safely / A probe or initial reveal must match the reviewed opportunity and current source (spec/gatheringRepeatDelivery.md) */
@@ -18,7 +18,7 @@ export function lawGatheringRepeatContactNeedsReview(rollout: boolean, exactPair
 
 /** Story: Receive a reviewed second-encounter proposal safely / A probe or initial reveal must match the reviewed opportunity and current source (spec/gatheringRepeatDelivery.md) */
 //@ pure
-export function lawGatheringRepeatContactNeedsCurrentSource(rollout: boolean, exactPair: boolean, humanApproved: boolean, expectedLifecycle: boolean, exactMessage: boolean): boolean {
+export function lawGatheringRepeatContactNeedsCurrentSource(rollout: boolean, exactPair: boolean, approved: boolean, expectedLifecycle: boolean, exactMessage: boolean): boolean {
   //@ ensures \result === true
-  return !gatheringRepeatContactAllowed(rollout, exactPair, humanApproved, expectedLifecycle, exactMessage, false);
+  return !gatheringRepeatContactAllowed(rollout, exactPair, approved, expectedLifecycle, exactMessage, false);
 }

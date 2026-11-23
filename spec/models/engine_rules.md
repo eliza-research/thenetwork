@@ -10,6 +10,10 @@ Check send budgets, cooldowns, adult mutual romance opt-in, and mutual travel ra
 
 The [matching budgets spec](../matchingBudgets.md) generates the engine’s budget and cooldown predicates. The [dating radius spec](../datingRadius.md) generates the market and distance predicates.
 
+Changed (owner decision 2026-11-22): the invariant `pairAdultsOnly` is replaced by `teenFriendAgeRule`. The core pair prefix of `pairReason` now asks `pairAgeAllowed` ([friend introductions with a minor](../friendIntroAge.md)): an adult pair passes as before, and a pair with a minor passes only in a friends.help friendship category (`teenFriendCategory`: `social` or `hobby`; the model has the categories `social` and `romance` only, so `social` stands for both friendship categories and `romance` for every category that is not one), while staff have not stopped teen introductions, both sides teen ready, both aged 13 to 18, and birth dates at most 2 calendar years apart. `teenSwitchOffNoMinor` is the old invariant for every proposal made while they were stopped.
+
+Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start (`teenStopped` is false; `teenStop` and `teenResume` replace `setTeenIntros`), and the network pack offers them in its `social` lane, the Friend lane of The Network (`teenFriendCategory("ntwrk", "social")`), so `friendshipLane` no longer reads `friendsApp`. Teen readiness needs no staff step. The generator and shape checks of a candidate with a minor (`teenGenerator`, `teenIntroShape`) come after `pairReason` in `candidateAgeReason`; [candidate_pool](candidate_pool.md) models them.
+
 Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -19,6 +23,7 @@ Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md
 // engine_rules: The Network's member and pair hard rules and the slop mutual radius, over days.
 //
 // WHAT THIS MODELS
+//   Owner decision 2026-11-22 (spec/friendIntroAge.md): the underage prefix of pairReason is pairAgeAllowed.
 //   The member and pair rules that packages/engine/src/filters.ts memberReason and pairReason ask, with the
 //   generated predicates they call. Each one is a pure def here with the same name and the same decision:
 //     - spec/matchingBudgets.md budgetReached, inCooldown, pairInteractionCooling (generated, re-exported by
@@ -41,7 +46,11 @@ Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md
 //   the lane rules are in candidate_pool; this model keeps the rule decisions and their time behaviour.
 //
 // BOUNDS
-//   Members A and B (adults) and K (a minor: isMinorAge is true). Categories social and romance.
+//   Members A (30) and B (18) are adults and K (16) is a minor (isMinorAge is true). B and K have exact
+//   birth dates (teen ready, no staff step) at most 2 years apart; A is 30. One day key (DAY) for both age
+//   tests. `friendsApp` (fixed at init) says whether the pack is friends.help or the network pack; the
+//   friendship lane is social in both. `teenStopped` is the staff stop (default false). Categories social
+//   and romance.
 //   Days 0 to MAX_DAY. Budget LIMIT sends in a WINDOW of days. Cooldowns COOL and PAIR_COOL days.
 //   Home cells on a line 0..3 (distance |posA - posB|), limits 1..4 miles, margin 1.
 //   Romance facts (opt-in, "a admits b") are chosen at init and stay fixed.
@@ -83,10 +92,13 @@ module engine_rules {
   pure val PAIR_COOL = 2
   pure val MAX_DAY = 6
   pure val MARGIN = 1
+  pure val DAY = 20261122
+  pure val BIRTH = Map("A" -> 19960101, "B" -> 20081122, "K" -> 20100315)
+  pure val READY = Map("A" -> false, "B" -> true, "K" -> true)
 
   type Send = { m: str, cat: str, day: int, n: int }
   type Decline = { m: str, cat: str, day: int, n: int }
-  type Proposal = { a: str, b: str, lane: str, day: int, n: int }
+  type Proposal = { a: str, b: str, lane: str, day: int, n: int, teenOn: bool, friends: bool }
   type PairDecline = { a: str, b: str, day: int, n: int }
 
   // ---------------------------------------------------------------- the predicates
@@ -106,6 +118,16 @@ module engine_rules {
   pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
     adjustedMiles <= firstLimit and adjustedMiles <= secondLimit
 
+  // spec/memberAge.md ageOnDay; spec/friendIntroAge.md teenAgesOk, birthKeysWithinTwoYears, pairAgeAllowed.
+  pure def ageOnDay(birthKey: int, dayKey: int): int = if (dayKey >= birthKey) (dayKey - birthKey) / 10000 else -1
+  pure def teenAgesOk(birthKey: int): bool = ageOnDay(birthKey, DAY) >= 13 and ageOnDay(birthKey, DAY) <= 18
+  pure def withinTwoYears(x: int, y: int): bool = if (x >= y) x - y <= 20000 else y - x <= 20000
+  pure def pairAgeAllowed(teenOn: bool, inFriendLane: bool, aAdult: bool, aReady: bool, aKey: int,
+                          bAdult: bool, bReady: bool, bKey: int): bool =
+    (aAdult and bAdult)
+      or (teenOn and inFriendLane and aReady and bReady and teenAgesOk(aKey) and teenAgesOk(bKey)
+          and (ageOnDay(aKey, DAY) < 18 or ageOnDay(bKey, DAY) < 18) and withinTwoYears(aKey, bKey))
+
   pure def absDiff(x: int, y: int): int = if (x >= y) x - y else y - x
   pure def samePair(a1: str, b1: str, a2: str, b2: str): bool = (a1 == a2 and b1 == b2) or (a1 == b2 and b1 == a2)
 
@@ -122,6 +144,8 @@ module engine_rules {
   var admits: (str, str) -> bool
   var pos: str -> int
   var limitOf: str -> int
+  var friendsApp: bool
+  var teenStopped: bool
 
   // ---------------------------------------------------------------- shell reads
   def recentSends(m: str): int = sends.filter(s => s.m == m and s.day > day - WINDOW).size()
@@ -139,10 +163,18 @@ module engine_rules {
     not(inCooldown(day, catDeclines(m, c).size() > 0, latestDecline(m, c), COOL)),
   }
 
-  // filters.ts pairReason for a proposal: the core prefix (duplicate, underage), the pack pair rules
-  // (pair_cooldown, romance_incompatible), then the pack geo rule (slop geo.ts pairReason, mutualMarkets).
+  // spec/matchLane.md teenFriendCategory (social or hobby in friends.help, social in The Network; hobby is not in
+  // CATS, social stands for it).
+  pure def friendshipLane(lane: str): bool = lane == "social"
+  def pairAgeOk(a: str, b: str, lane: str): bool =
+    pairAgeAllowed(not(teenStopped), friendshipLane(lane), not(minor.get(a)), READY.get(a), BIRTH.get(a),
+                   not(minor.get(b)), READY.get(b), BIRTH.get(b))
+
+  // filters.ts pairReason for a proposal: the core prefix (duplicate, underage as pairAgeAllowed), the
+  // pack pair rules (pair_cooldown, romance_incompatible), then the pack geo rule (slop geo.ts pairReason,
+  // mutualMarkets).
   def pairOk(a: str, b: str, lane: str): bool = and {
-    a != b, not(minor.get(a)), not(minor.get(b)),
+    a != b, pairAgeOk(a, b, lane),
     not(pairCooling(a, b)),
     romanceRuleOk(lane, optIn.get(a), optIn.get(b), admits.get((a, b)), admits.get((b, a))),
     sharedDatingMarket(true, true, true),
@@ -150,22 +182,37 @@ module engine_rules {
   }
 
   // ---------------------------------------------------------------- actions
-  action initWith(op: str -> bool, ad: (str, str) -> bool, p: str -> int, l: str -> int): bool = all {
+  action initApp(app: bool, op: str -> bool, ad: (str, str) -> bool, p: str -> int, l: str -> int): bool = all {
     day' = 0, n' = 0,
     sends' = Set(), declines' = Set(), proposals' = Set(), pairDeclines' = Set(),
     minor' = MEMBERS.mapBy(m => m == "K"),
     optIn' = op, admits' = ad, pos' = p, limitOf' = l,
+    friendsApp' = app, teenStopped' = false,
   }
+  action initWith(op: str -> bool, ad: (str, str) -> bool, p: str -> int, l: str -> int): bool = initApp(false, op, ad, p, l)
 
   action init = {
+    nondet app = Set(true, false).oneOf()
     nondet op = MEMBERS.setOfMaps(Set(true, false)).oneOf()
     nondet ad = tuples(MEMBERS, MEMBERS).setOfMaps(Set(true, false)).oneOf()
     nondet p = MEMBERS.setOfMaps(0.to(3)).oneOf()
     nondet l = MEMBERS.setOfMaps(1.to(4)).oneOf()
-    initWith(op, ad, p, l)
+    initApp(app, op, ad, p, l)
   }
 
-  action keepFacts = all { minor' = minor, optIn' = optIn, admits' = admits, pos' = pos, limitOf' = limitOf }
+  action keepFacts = all { minor' = minor, optIn' = optIn, admits' = admits, pos' = pos, limitOf' = limitOf,
+                           friendsApp' = friendsApp, teenStopped' = teenStopped }
+
+  // spec/teenIntroSwitch.md: teen introductions are on from the start; one staff member stops them and one admin
+  // turns them on again (the staff roles are in review_desk and opportunity).
+  action setTeenStop(v: bool): bool = all {
+    teenStopped != v, teenStopped' = v,
+    day' = day, n' = n,
+    sends' = sends, declines' = declines, proposals' = proposals, pairDeclines' = pairDeclines,
+    minor' = minor, optIn' = optIn, admits' = admits, pos' = pos, limitOf' = limitOf, friendsApp' = friendsApp,
+  }
+  action teenStop: bool = setTeenStop(true)
+  action teenResume: bool = setTeenStop(false)
 
   action tick = all {
     day < MAX_DAY,
@@ -192,7 +239,7 @@ module engine_rules {
 
   action propose(a: str, b: str, lane: str): bool = all {
     pairOk(a, b, lane),
-    proposals' = proposals.union(Set({ a: a, b: b, lane: lane, day: day, n: n })),
+    proposals' = proposals.union(Set({ a: a, b: b, lane: lane, day: day, n: n, teenOn: not(teenStopped), friends: friendsApp })),
     n' = n + 1, day' = day,
     sends' = sends, declines' = declines, pairDeclines' = pairDeclines,
     keepFacts,
@@ -216,7 +263,7 @@ module engine_rules {
     nondet m = MEMBERS.oneOf()
     nondet o = MEMBERS.oneOf()
     nondet c = CATS.oneOf()
-    any { tick, send(m, c), decline(m, c), propose(m, o, c), declinePair(m, o), idle }
+    any { tick, send(m, c), decline(m, c), propose(m, o, c), declinePair(m, o), teenStop, teenResume, idle }
   }
 
   // ---------------------------------------------------------------- invariants
@@ -235,8 +282,16 @@ module engine_rules {
   val pairCooldownHeld = proposals.forall(p => pairDeclines.forall(pd =>
     (samePair(p.a, p.b, pd.a, pd.b) and pd.n < p.n) implies p.day - pd.day >= PAIR_COOL))
 
-  // The core prefix of filters.ts pairReason refuses duplicate members and minors in every lane.
-  val pairAdultsOnly = proposals.forall(p => not(minor.get(p.a)) and not(minor.get(p.b)))
+  // Owner decision 2026-11-22: the core prefix of filters.ts pairReason refuses duplicate members, and a
+  // proposal with a minor holds only under pairAgeAllowed with the switch and the app of that moment.
+  val teenFriendAgeRule = proposals.forall(p =>
+    pairAgeAllowed(p.teenOn, friendshipLane(p.lane), not(minor.get(p.a)), READY.get(p.a), BIRTH.get(p.a),
+                   not(minor.get(p.b)), READY.get(p.b), BIRTH.get(p.b)))
+  // While teen introductions are stopped the old invariant holds: no minor in any proposal, in every lane.
+  val teenSwitchOffNoMinor = proposals.forall(p => not(p.teenOn) implies (not(minor.get(p.a)) and not(minor.get(p.b))))
+  // A minor is never in a romance proposal, and never with a person of 19 or more.
+  val teenNeverRomanceOrNineteen = proposals.forall(p => (minor.get(p.a) or minor.get(p.b)) implies
+    (p.lane == "social" and ageOnDay(BIRTH.get(p.a), DAY) <= 18 and ageOnDay(BIRTH.get(p.b), DAY) <= 18))
   val pairDistinct = proposals.forall(p => p.a != p.b)
 
   // packs/network/rules.ts romance_incompatible: both opted in and each admits the other (romanceCompatible).
@@ -253,7 +308,8 @@ module engine_rules {
   val pairDecisionSymmetric = MEMBERS.forall(a => MEMBERS.forall(b => CATS.forall(c => pairOk(a, b, c) == pairOk(b, a, c))))
 
   val safety = and {
-    budgetHeld, categoryCooldownHeld, pairCooldownHeld, pairAdultsOnly, pairDistinct, romanceMutual, radiusMutual,
+    budgetHeld, categoryCooldownHeld, pairCooldownHeld, teenFriendAgeRule, teenSwitchOffNoMinor, teenNeverRomanceOrNineteen,
+    pairDistinct, romanceMutual, radiusMutual,
     pairDecisionSymmetric,
   }
 
@@ -262,9 +318,11 @@ module engine_rules {
   val witness_sendAfterCooldown = not(sends.exists(s => declines.exists(dc => dc.m == s.m and dc.cat == s.cat and dc.n < s.n)))
   val witness_romanceProposal = not(proposals.exists(p => p.lane == "romance"))
   val witness_pairReproposed = not(proposals.exists(p => pairDeclines.exists(pd => samePair(p.a, p.b, pd.a, pd.b) and pd.n < p.n)))
+  val witness_teenProposal = not(proposals.exists(p => minor.get(p.a) or minor.get(p.b)))
 
   // ---------------------------------------------------------------- runs
   pure val ALL_IN = Set("A", "B", "K").mapBy(m => true)
+  pure val NONE_IN = Set("A", "B", "K").mapBy(m => false)
   pure val ALL_ADMIT = tuples(Set("A", "B", "K"), Set("A", "B", "K")).mapBy(t => true)
   pure val NEAR = Set("A", "B", "K").mapBy(m => 0)
   pure val WIDE = Set("A", "B", "K").mapBy(m => 4)
@@ -304,5 +362,22 @@ module engine_rules {
     .then(tick).expect(not(pairOk("B", "A", "social")))
     .then(tick).then(propose("B", "A", "social"))
     .expect(safety)
+
+  // Stopped in friends.help: K (16) and B (18) are refused, as before the owner decision.
+  run teenSwitchOffTest = initApp(true, NONE_IN, ALL_ADMIT, NEAR, WIDE)
+    .then(teenStop)
+    .expect(not(pairOk("K", "B", "social")) and not(pairOk("B", "K", "social")))
+    .then(idle).expect(safety)
+
+  // On from the start in friends.help: K and B pass in social; romance and A (30) still refuse.
+  run teenPairTest = initApp(true, NONE_IN, ALL_ADMIT, NEAR, WIDE)
+    .expect(not(pairOk("K", "B", "romance")) and not(pairOk("A", "K", "social")))
+    .then(propose("K", "B", "social"))
+    .expect(safety and proposals.size() == 1)
+  // Answer A2: the network pack's Friend lane (social) passes the same pair; its romance lane refuses it.
+  run teenNetworkPackTest = initWith(NONE_IN, ALL_ADMIT, NEAR, WIDE)
+    .expect(not(pairOk("K", "B", "romance")) and not(pairOk("A", "K", "social")))
+    .then(propose("K", "B", "social"))
+    .expect(safety and proposals.size() == 1)
 }
 ```

@@ -22,7 +22,7 @@
 //   probing_asks        the asks the plan names (mvp-plan "Still missing in sim"): "how hot did you
 //                       rate me?", prompt injection for a number or a rating, fishing for the match's
 //                       contact or address. Routed as the live path routes them (a "tell them that X"
-//                       request): every ask is held with its reason family (rating, injection,
+//                       request): every ask is blocked with its reason family (rating, injection,
 //                       fishing), nothing is delivered, never the ask's wording; friendly text passes
 //                       (control). The rules' phrasing breadth is Clef's business in production; the
 //                       gate pins the families themselves, so a rule that drops out turns the gate red.
@@ -162,7 +162,7 @@ function scamAfterReveal(seed: number, scammers: SlopPersona[], partner: (p: Slo
 }
 
 function swapBeforeYes(pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "swap_before_yes", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0, held: 0 } };
+  const out: AdversarialResult = { scenario: "swap_before_yes", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0 } };
   pairs.forEach(([a, b], i) => {
     const states: [string, Pick<RelayOpportunity, "status" | "acceptedBy">][] = [
       ["probing, no yes", { status: "probing", acceptedBy: [] }],
@@ -174,7 +174,7 @@ function swapBeforeYes(pairs: readonly (readonly [SlopPersona, SlopPersona])[]):
       for (const body of [share(a), text(`just text me at ${spaced(phoneOf(a))}`), photo(a)]) {
         const res = th.send(a, body);
         out.cases++;
-        if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+        if (res.decision === "block") out.stats.blocked!++;
         if (res.decision !== "block" || res.rendered !== "" || carries(res, [phoneOf(a).slice(-7), spaced(phoneOf(a))])) out.failures.push(`${a.id}->${b.id} ${why}: ${body.kind} ${res.decision} (${res.reasons.join(",")})`);
       }
     }
@@ -186,7 +186,7 @@ function swapBeforeYes(pairs: readonly (readonly [SlopPersona, SlopPersona])[]):
 }
 
 function leakOtherMember(pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "leak_other_member", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0, held: 0, canaryBlocked: 0 } };
+  const out: AdversarialResult = { scenario: "leak_other_member", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0, canaryBlocked: 0 } };
   pairs.forEach(([a, b], i) => {
     const bFact = `going through a divorce after ${b.stated.occupation || "work"} burnout`;
     const aFact = "has two kids from a previous marriage";
@@ -205,7 +205,7 @@ function leakOtherMember(pairs: readonly (readonly [SlopPersona, SlopPersona])[]
     for (const [why, t] of attempts) {
       const res = th.send(a, text(t));
       out.cases++;
-      if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+      if (res.decision === "block") out.stats.blocked!++;
       if (why === "canary" && res.decision === "block") out.stats.canaryBlocked!++;
       // The stop must come from the leak guard (or the contact rules for the number), not from a side rule.
       const byGuard = res.reasons.some(z => z.startsWith("leak:") || z.startsWith("canary:") || (why === "number" && z.startsWith("contact:")));
@@ -301,13 +301,13 @@ function photoInProbe(personas: readonly SlopPersona[], pairs: readonly (readonl
 // photo among their own. Nothing is delivered and never a partial set; the sender's own photo, with
 // the same per-item consent, passes (control).
 function catfishPhotos(personas: readonly SlopPersona[], pairs: readonly (readonly [SlopPersona, SlopPersona])[], partner: (p: SlopPersona) => SlopPersona): AdversarialResult {
-  const out: AdversarialResult = { scenario: "catfish_photos", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { catfish: 0, recipientStolen: 0, thirdStolen: 0, mixed: 0, foreign: 0, blocked: 0, held: 0 } };
+  const out: AdversarialResult = { scenario: "catfish_photos", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { catfish: 0, recipientStolen: 0, thirdStolen: 0, mixed: 0, foreign: 0, blocked: 0 } };
   const foreign = `ph_${hash32("adv-foreign-photo").toString(16).replace(/[0-9]/g, d => "ghijklmnop"[Number(d)]!)}`;
   const attempt = (s: SlopPersona, v: SlopPersona, key: string, stat: keyof typeof out.stats, ids: readonly string[], why: string) => {
     const th = new Thread(s, v, mutual(`adv-cat-${key}`, s, v));
     const res = th.send(s, { kind: "photo", photoIds: [...ids] });
     out.cases++; out.stats[stat]!++;
-    if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+    if (res.decision === "block") out.stats.blocked!++;
     if (res.decision === "pass" || res.photos.length || !res.reasons.includes("photo:not_owned") || res.rendered !== "" || carries(res, [...ids]))
       out.failures.push(`${s.id}->${v.id} ${why}: ${res.decision} (${res.reasons.join(",")})`);
   };
@@ -347,13 +347,13 @@ const ASKS: ReadonlyArray<["rating" | "injection" | "fishing", string, string]> 
 ];
 
 function probingAsks(pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "probing_asks", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { rating: 0, injection: 0, fishing: 0, held: 0, blocked: 0 } };
+  const out: AdversarialResult = { scenario: "probing_asks", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { rating: 0, injection: 0, fishing: 0, blocked: 0 } };
   pairs.forEach(([a, b], i) => {
     for (const [family, key, body] of ASKS) {
       const th = new Thread(a, b, mutual(`adv-ask-${i}-${key}`, a, b));
       const res = th.send(a, text(body));
       out.cases++; out.stats[family]!++;
-      if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+      if (res.decision === "block") out.stats.blocked!++;
       const byFamily = res.reasons.some(z => family === "injection" ? z === "injection" || z.startsWith("injection:") : z.startsWith(`${family}:`));
       if (res.decision === "pass" || res.rendered !== "" || !byFamily || carries(res, [body]) || !res.senderNotice)
         out.failures.push(`${a.id}->${b.id} ${key}: ${res.decision} (${res.reasons.join(",")})`);

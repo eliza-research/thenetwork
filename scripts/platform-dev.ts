@@ -28,6 +28,7 @@ import { DevConsoleProvider } from "../packages/platform/src/otp.ts";
 import { isProduction } from "../packages/platform/src/env.ts";
 import { createServiceMcp } from "../packages/network/service/serve.ts";
 import { NetworkService } from "../packages/network/service/service.ts";
+import { simulatedRelayClassifier } from "../packages/engine/src/relay.ts";
 import { SITES } from "../sites/sites.ts";
 
 const REPO = resolve(import.meta.dirname, "..");
@@ -50,7 +51,7 @@ async function main() {
   // Member photos in a local folder (runs/photos, git-ignored) unless set otherwise.
   process.env.PHOTO_STORAGE ??= "local";
   if (process.env.PLATFORM_ENV !== "dev") throw new Error(`platform:dev needs PLATFORM_ENV=dev (got ${process.env.PLATFORM_ENV})`);
-  for (const f of ["BLOOIO_ALLOW_SEND", "NTWRK_LIVE_APPROVED", "NETWORK_CHANNEL"]) if (process.env[f]) console.warn(`${f} is set: ignored here, platform:dev never sends (dry-run adapter)`);
+  if (process.env.NETWORK_CHANNEL) console.warn("NETWORK_CHANNEL is set: ignored here, platform:dev never sends (dry-run adapter)");
   delete process.env.NETWORK_CHANNEL;
   const url = process.env.NETWORK_DATABASE_URL ?? DEV_PG_URL;
   if (!/@(localhost|127\.0\.0\.1):54339\//.test(url)) throw new Error(`platform:dev uses the local dev Postgres on port 54339 only, not ${url.replace(/\/\/[^@]*@/, "//")}`);
@@ -84,10 +85,12 @@ async function main() {
     // The visitor IP comes only from the signed router headers (the backend checks them first). The host map
     // is the platform's dev map, so a browser Origin of http://127.0.0.1:5102 counts as slop's own site.
     publicApi: { otp: new DevConsoleProvider(), ipOf },
+    relayClassifier: simulatedRelayClassifier,
     log: s => log.info(s),
   });
   await svc.start();
-  for (const rt of svc.runtimes.values()) console.log(`network ${rt.id}: sends dry-run, review "human", matching ${rt.matchingAllowed ? "allowed (admin switch)" : "not allowed (registry row or launch scope)"}`);
+  console.log("relay classifier: simulated (clears every text the rules pass; dev only)");
+  for (const rt of svc.runtimes.values()) console.log(`network ${rt.id}: sends dry-run, review "human", matching ${rt.matchingAllowed ? "allowed (admin switch)" : "not allowed (registry row)"}`);
   if (!process.env.NETWORK_SERVICE_TOKENS) console.log(`staff tokens (dev only): ${tokens}`);
 
   const devOrigins = Object.fromEntries(SITES.map(s => [s.app, `http://${HOST}:${s.port}`]));

@@ -78,11 +78,11 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
         values ('ntwrk', 'ntwrk:nyc', 'age-view-report-fixture', ${P.a})`;
     });
     expect(await as("network_observatory_slop", tx => tx`select * from platform.matching_ages_slop order by member_id`)).toEqual({ v: [
-      { app_id: "slop", member_id: "s1", age: 15, banned: false, staff_held: true, report_held: false, minor_signal_at: null },
-      { app_id: "slop", member_id: "s3", age: 41, banned: true, staff_held: false, report_held: false, minor_signal_at: null },
+      { app_id: "slop", member_id: "s1", age: 15, banned: false, staff_held: true, report_held: false, minor_signal_at: null, birth_date: null, birth_lower: null, birth_upper: null, birth_youngest: null, floor_birth_lower: null, floor_birth_upper: null, floor_birth_youngest: null, teen_pool_barred: false },
+      { app_id: "slop", member_id: "s3", age: 41, banned: true, staff_held: false, report_held: false, minor_signal_at: null, birth_date: null, birth_lower: null, birth_upper: null, birth_youngest: null, floor_birth_lower: null, floor_birth_upper: null, floor_birth_youngest: null, teen_pool_barred: false },
     ] });
     expect(await as("network_observatory", tx => tx`select * from platform.matching_ages_ntwrk where member_id = 'n1'`)).toEqual({ v: [
-      { app_id: "ntwrk", member_id: "n1", age: 15, banned: false, staff_held: false, report_held: true, minor_signal_at: null },
+      { app_id: "ntwrk", member_id: "n1", age: 15, banned: false, staff_held: false, report_held: true, minor_signal_at: null, birth_date: null, birth_lower: null, birth_upper: null, birth_youngest: null, floor_birth_lower: null, floor_birth_upper: null, floor_birth_youngest: null, teen_pool_barred: false },
     ] });
     for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_cross_app"]) {
       expect(await as(role, tx => tx`select * from platform.matching_ages_slop`)).toEqual(denied);
@@ -97,6 +97,15 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
         (tx: SQL) => tx`select * from platform.report_safety_carryovers`,
         (tx: SQL) => tx`select * from platform.person_minor_signals`,
       ]) expect(await as(role, q)).toEqual(denied);
+    }
+  }, T);
+
+  test("teen pools: the cross-app teen hold and pair-avoid tables exist, the teen age confirmation table is gone, and no console role reads them", async () => {
+    const [t] = await sql`select to_regclass('platform.teen_pool_holds') is not null as holds, to_regclass('platform.teen_pair_avoid') is not null as avoid,
+      to_regclass('platform.teen_age_confirmations') is null as confirmations_gone`;
+    expect(t).toEqual({ holds: true, avoid: true, confirmations_gone: true });
+    for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_slop", "network_observatory_peon", "network_observatory_cross_app"]) {
+      for (const rel of ["platform.teen_pool_holds", "platform.teen_pair_avoid"]) expect([role, rel, await as(role, tx => tx.unsafe(`select 1 from ${rel}`))]).toEqual([role, rel, denied]);
     }
   }, T);
 

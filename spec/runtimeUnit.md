@@ -96,32 +96,9 @@ pure def lawStaleRunNeverCommits(sameKey: bool, sameConfig: bool, sameSharedEvid
     implies not(preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), named, changed))
 ```
 
-### Matching runs for an app only inside its launch scope
-
-A network may run matching, and an admin may turn its matching switch on, only when its registry row (`platform.networks.matching_enabled`) allows it. Friends and peon have a narrower launch scope ([product specification](product/README.md)): their matching runs in local simulation, development and test environments, and in production only after the founder's separate live decision for that app (`<APP>_LIVE_APPROVED=1`). The Network and slop follow their registry row. The service and the admin console read this one decision: the console shows the value that the service reports and does not keep its own list. Changed (audit PER63): before, the service read only the registry row, which allows peon, and the console locked peon in every environment, so the two disagreed and production could match peon without the live decision.
-
-```quint
-pure def appMatchingLocalOnly(app: str): bool = app == "friends" or app == "peon"
-
-pure def matchingSwitchAllowed(registryAllows: bool, app: str, production: bool, liveApproved: bool): bool =
-  registryAllows and (not(appMatchingLocalOnly(app)) or not(production) or liveApproved)
-
-pure def lawRegistryOffNeverAllowsMatching(app: str, production: bool, liveApproved: bool): bool =
-  not(matchingSwitchAllowed(false, app, production, liveApproved))
-
-pure def lawLocalOnlyAppNeedsLiveDecisionInProduction(registryAllows: bool, app: str): bool =
-  appMatchingLocalOnly(app) implies not(matchingSwitchAllowed(registryAllows, app, true, false))
-
-pure def lawLocalOnlyAppMatchesOutsideProduction(app: str, liveApproved: bool): bool =
-  matchingSwitchAllowed(true, app, false, liveApproved)
-
-pure def lawPilotAppFollowsRegistry(registryAllows: bool, app: str, production: bool, liveApproved: bool): bool =
-  not(appMatchingLocalOnly(app)) implies matchingSwitchAllowed(registryAllows, app, production, liveApproved) == registryAllows
-```
-
 ### Runtime follow-up depends on the adapter and whether the tick ran
 
-The registry can disable matching in loaded state. At startup, an adapter with a durable queue recovers waiting work and loads the network before draining. Other adapters repair the current notification projection. Only a tick that ran invokes its configured follow-up hook or repairs projections for an adapter without a durable queue.
+The registry row (`platform.networks.matching_enabled`) alone decides whether a network may run matching, and an admin may turn its matching switch on only when that row allows it. The registry can disable matching in loaded state. Changed (owner decision 2026-11-22): friends and peon no longer need a separate live decision (`<APP>_LIVE_APPROVED=1`) before they match in production, because the owner approved every app; the launch-scope rule that kept them local only is removed, and the service and the admin console read the registry row. At startup, an adapter with a durable queue recovers waiting work and loads the network before draining. Other adapters repair the current notification projection. Only a tick that ran invokes its configured follow-up hook or repairs projections for an adapter without a durable queue.
 
 ```quint
 pure def matchingDisabledByRegistry(matchingAllowed: bool): bool = not(matchingAllowed)

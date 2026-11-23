@@ -3,13 +3,14 @@ import { DAY, HOUR, type InitialInviteReceipt } from "@thenetwork/core";
 import { probeResponseMs } from "../../core/src/generated/probeDispatch.ts";
 import type { plans } from "@thenetwork/engine";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test.each(["delayed_receipt", "not_sent"] as const)("terminal probe and plan expiries count once with %s", async outcome => {
   const ids = ["a", "b", "c", "d"];
   const w = new Mini(ids.map(id => ({
     id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
     skills: ["belaying"], wants: [{ objective: "find a climbing partner", category: "hobby" as const }],
-  })), { review: "human", plans: false });
+  })), { inlineJudge: holdEveryItem.inline, plans: false });
   const receipts = new Map<string, InitialInviteReceipt>();
   let heldPlan: { id: string; at: number } | undefined;
   const connect = () => {

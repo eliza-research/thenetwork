@@ -27,12 +27,6 @@ export function inv(current: LineConsent): boolean {
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
-export function stopCoversEveryApp(explicitAll: boolean, sharedLine: boolean, dedicatedLineGlobal: boolean): boolean {
-  return explicitAll || sharedLine || dedicatedLineGlobal;
-}
-
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-//@ pure
 export function canTextStop(s: LineConsent): boolean {
   return true;
 }

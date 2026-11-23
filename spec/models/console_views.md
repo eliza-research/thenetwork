@@ -486,7 +486,8 @@ module console_views {
 
   // ================================================================ invariants
   // Rule: AGENTS.md "Platform decisions" item 9 and founder 2026-10-09 item 5 (photos and ratings are
-  // for adults only), AGENTS.md "Age policy" (minors are never connected). Slice report B1.
+  // for adults only), AGENTS.md "Age policy" (photos and ratings are never for a minor, also in a teen
+  // friendship item). Slice report B1.
   // LemmaScript: photoView, `ensures g.minor ==> \result === "hide"` and
   // `ensures \result === "gallery" ==> photoAllowed(g) && loaded`, `\result === "form" ==> photoAllowed(g)`.
   // A minor or a person that the store does not know never sees a gallery or a photo form.
@@ -526,7 +527,8 @@ module console_views {
     tabVisible(want, caps) implies shownTab == want,
   }
 
-  // Rule: AGENTS.md "Age policy" (minors are never matched or connected); PRD 28.3 game is staff only.
+  // Rule: AGENTS.md "Age policy" (the staff game proposes adults only; a minor is connected only through a teen
+  // friendship item under teenFriendAgeRule, which the game never makes); PRD 28.3 game is staff only.
   // A proposal never includes a minor or a person that the store does not know. proposeCode (main.tsx Tray)
   // breaks it; unknownPickTest shows the two gates.
   val canPropose_noMinor: bool = proposals.foldl(true, (ok, pr) => ok and not(pr.bad))

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
@@ -24,6 +25,10 @@ export const PHOTO_TEXT = {
   deleted: (n: number) => (n === 1 ? "I deleted your photo and the private rating made from it." : `I deleted your ${n} photos and the private rating made from them.`),
   noneToDelete: "You have no photos with me.",
 } as const;
+
+function photoBatchOf(ref: string): string {
+  return createHash("sha256").update(`photo-batch:${ref}`).digest("hex").slice(0, 32);
+}
 
 export function photoAddRequest(text: string): boolean {
   return /^\s*(?:add|upload)\s+(?:my\s+|a\s+|some\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
@@ -79,11 +84,12 @@ export class PhotoIntake {
     }
     let stored = 0;
     const no: PhotoRefusal[] = [];
+    const batch = photoBatchOf(ref);
     for (const url of mediaUrls.slice(0, PHOTO_MAX_PER_MESSAGE)) {
       const bytes = await this.d.fetchMedia(url, PHOTO_MAX_BYTES).catch(e => { this.d.log?.(`[photos] attachment fetch failed: ${(e as Error).message}`); return undefined; });
       if (bytes === "too_large") { no.push("too_large"); continue; }
       if (!bytes) { no.push("not_found"); continue; }
-      const r = await this.d.photos.upload(who.person.id, PHOTO_APP, bytes, PHOTO_CONSENT.version);
+      const r = await this.d.photos.upload(who.person.id, PHOTO_APP, bytes, PHOTO_CONSENT.version, undefined, batch);
       if (r.ok) stored++; else no.push(r.reason);
     }
     const text = stored ? PHOTO_TEXT.stored(stored) : no.includes("too_many") ? PHOTO_TEXT.tooMany : PHOTO_TEXT.badPhoto;

@@ -8,7 +8,6 @@ import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
 import { migrate } from "../../packages/observatory/db/migrate.ts";
-import { liveSendAllowed } from "../../packages/network/service/channel.ts";
 import { SimClock } from "../../packages/core/src/clock.ts";
 import { createPublicEventRefresh } from "./public-events.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
@@ -17,7 +16,7 @@ import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/prof
 import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFreeBusy.ts";
 import { RELAY_PHOTO_RESOLVE_PATH } from "../../packages/core/src/svc/contract.ts";
 import {
-  BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, liveSendTable, loadConfig, normalizeEdge, PROXY_HEADERS,
+  BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
 } from "./backend.ts";
 import type { BackendBoot } from "../../packages/core/src/generated/bootPolicy.ts";
@@ -29,14 +28,15 @@ const DEPLOYED = {
   PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/x", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: SECRET,
   TURNSTILE_SECRET_KEY: "fake", TURNSTILE_SITE_KEY: "fake-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
   SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/x",
-  PLATFORM_SESSION_SECRET: "e".repeat(40),
+  PLATFORM_SESSION_SECRET: "e".repeat(40), PHOTO_STORAGE: "r2", CLOUDFLARE_AI_TOKEN: "synthetic-ai-token", CLOUDFLARE_ACCOUNT_ID: "synthetic-account",
+  SURPLUS_API_KEY: "synthetic-surplus-key",
 };
 
 describe("config", () => {
   test("isolated signed route cannot enable direct Blooio or proactive Cloud sends", () => {
     const policy = JSON.stringify({authority:{version:1,routeId:"qa",generation:"g1",audience:"network-qa",realmId:"qa"},admitUntil:1000,drainUntil:2000});
     for (const NETWORK_CHANNEL of ["blooio", "eliza_cloud"]) {
-      const c = loadConfig({...DEPLOYED,NETWORK_ROUTE_AUTHORITY_POLICY:policy,NETWORK_CHANNEL,BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1",BLOOIO_API_KEY:"synthetic",BLOOIO_FROM:"+12125550142"});
+      const c = loadConfig({...DEPLOYED,NETWORK_ROUTE_AUTHORITY_POLICY:policy,NETWORK_CHANNEL,BLOOIO_API_KEY:"synthetic",BLOOIO_FROM:"+12125550142",NETWORK_CLOUD_DELIVERY_ORIGIN:"https://cloud.example.test"});
       expect(c.channel).toBe("dry-run");
     }
     expect(() => loadConfig({...DEPLOYED,PLATFORM_ENV:"production",NETWORK_ROUTE_AUTHORITY_POLICY:policy})).toThrow(/staging/);
@@ -125,7 +125,7 @@ describe("config", () => {
       staffTokenShort: [{ NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)},reviewer@slop:${"r".repeat(31)}` }, /every NETWORK_SERVICE_TOKENS token/],
       publicEventsLoginMissing: [{ NETWORK_PUBLIC_EVENTS_DATABASE_URL: undefined }, /NETWORK_PUBLIC_EVENTS_DATABASE_URL/],
       turnSecretReused: [{ SERVICE_TURN_SECRET: "a".repeat(40) }, /not also a NETWORK_SERVICE_TOKENS token/],
-      reviewInvalid: [{ NETWORK_REVIEW_MODE: "auto" }, /NETWORK_REVIEW_MODE=human \(got "auto"\)/],
+      modelProviderMissing: [{ SURPLUS_API_KEY: undefined, OPENAI_API_KEY: undefined }, /JUDGE_PROVIDER and RECOMMENDER_PROVIDER need an API key \(SURPLUS_API_KEY or OPENAI_API_KEY\)/],
       devSwitchSet: [{ PLATFORM_DEV_CONSOLE_OTP: "1" }, /unset PLATFORM_DEV_CONSOLE_OTP \(dev only\)/],
     };
     for (const environment of ["staging", "production"]) {
@@ -135,7 +135,10 @@ describe("config", () => {
         expect(() => loadConfig({ ...ready, ...change }), `${environment} ${field}`).toThrow(message);
       }
     }
-    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", NETWORK_REVIEW_MODE: "auto", PLATFORM_DEV_CONSOLE_OTP: "1" }).env).toBe("dev");
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", PLATFORM_DEV_CONSOLE_OTP: "1" }).env).toBe("dev");
+    expect(() => loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", JUDGE_PROVIDER: "elsewhere" })).toThrow(/JUDGE_PROVIDER\/RECOMMENDER_PROVIDER names an unknown provider/);
+    expect(() => loadConfig({ ...DEPLOYED, RECOMMENDER_PROVIDER: "openai" })).toThrow(/need an API key/);
+    expect(loadConfig({ ...DEPLOYED, SURPLUS_API_KEY: undefined, OPENAI_API_KEY: "synthetic-openai-key", JUDGE_PROVIDER: "openai" }).env).toBe("staging");
     expect(() => createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: "staging" }, hashKey: "h".repeat(40), turnstile: { verify: async () => true },
       otp: { name: "fixture", send: async () => ({ code: "123456" }) } })).toThrow(/PLATFORM_SESSION_SECRET/);
     for (const environment of ["staging", "production"]) {
@@ -146,60 +149,34 @@ describe("config", () => {
       otp: { name: "fixture", send: async () => ({ code: "123456" }) } })).not.toThrow();
   });
 
-  // spec/bootPolicy.md, "The combined backend turns photo relay on only with a complete photo relay setup"
-  test("photo relay is configured from all four variables together, and a partial setup stops the boot", () => {
+  // spec/bootPolicy.md, "A deployed backend keeps photos in private storage"
+  test("a deployed backend needs private photo storage, and the four photo relay variables no longer exist", () => {
+    for (const PHOTO_STORAGE of [undefined, "", "local", "R2"]) {
+      expect(() => loadConfig({ ...DEPLOYED, PHOTO_STORAGE }), String(PHOTO_STORAGE)).toThrow("PHOTO_STORAGE=r2 (private photo storage) on a deployed backend");
+    }
+    expect(loadConfig(DEPLOYED).photoStorage).toBe(true);
     const relay = {
       NETWORK_PHOTO_RELAY_NOTICE_VERSION: "photo-notice-v1", NETWORK_PHOTO_RELAY_NOTICE: "Send this photo to {{recipient}} after a safety review.",
-      NETWORK_PHOTO_RELAY_REVIEWERS: "token:safety#0123abcd, safety-lead@example.test", NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test",
+      NETWORK_PHOTO_RELAY_REVIEWERS: "token:safety#0123abcd", NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test",
     };
-    expect(loadConfig(DEPLOYED).photoRelay).toBeUndefined();
-    expect(loadConfig({ ...DEPLOYED, ...relay }).photoRelay).toEqual({
-      version: "photo-notice-v1", notice: "Send this photo to {{recipient}} after a safety review.",
-      reviewers: ["token:safety#0123abcd", "safety-lead@example.test"], deliveryOrigin: "https://backend.example.test",
-    });
-    for (const k of Object.keys(relay)) expect(() => loadConfig({ ...DEPLOYED, ...relay, [k]: undefined }), k).toThrow(/photo relay needs/);
-    expect(() => loadConfig({ ...DEPLOYED, NETWORK_PHOTO_DELIVERY_ORIGIN: relay.NETWORK_PHOTO_DELIVERY_ORIGIN })).toThrow(/photo relay needs/);
-    for (const change of [
-      { NETWORK_PHOTO_RELAY_NOTICE: "Send this photo after a safety review." },
-      { NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test/photos" },
-      { NETWORK_PHOTO_DELIVERY_ORIGIN: "http://backend.example.test" },
-      { NETWORK_PHOTO_DELIVERY_ORIGIN: "http://127.0.0.1:8790" },
-      { NETWORK_PHOTO_RELAY_REVIEWERS: " , " },
-    ]) expect(() => loadConfig({ ...DEPLOYED, ...relay, ...change }), JSON.stringify(change)).toThrow(/photo relay needs/);
-    const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", ...relay, NETWORK_PHOTO_DELIVERY_ORIGIN: "http://127.0.0.1:8790" });
-    expect(dev.photoRelay?.deliveryOrigin).toBe("http://127.0.0.1:8790");
+    const withOld = loadConfig({ ...DEPLOYED, ...relay });
+    expect(withOld.photoStorage).toBe(true);
+    expect(Object.keys(withOld)).not.toContain("photoRelay");
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_PHOTO_DELIVERY_ORIGIN: "http://backend.example.test" })).not.toThrow();
+    const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" });
+    expect(dev.photoStorage).toBe(false);
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", PHOTO_STORAGE: "local" }).photoStorage).toBe(true);
   });
 
   // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
   test("with NETWORK_CHANNEL=eliza_cloud the backend does not own the carrier webhook (audit SHA43)", () => {
     expect(loadConfig(DEPLOYED).blooioWebhook).toBe(true);
-    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "blooio" }).blooioWebhook).toBe(true);
-    const cloud = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", BLOOIO_WEBHOOK_SECRET: "w".repeat(40) });
-    // Off whether or not the live flags make Cloud sends live: the gateway owns inbound either way.
-    expect([cloud.channel, cloud.blooioWebhook]).toEqual(["dry-run", false]);
+    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+12125550100" }).blooioWebhook).toBe(true);
+    const cloud = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+12125550100", BLOOIO_WEBHOOK_SECRET: "w".repeat(40) });
+    expect([cloud.channel, cloud.blooioWebhook]).toEqual(["eliza_cloud", false]);
+    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+12125550100" }, ["--dry-run"]).blooioWebhook).toBe(false);
     expect(cloud.warnings.join(" ")).toMatch(/BLOOIO_WEBHOOK_SECRET is ignored/);
     expect(cloud.warnings.join(" ")).not.toMatch(/BLOOIO_WEBHOOK_SECRET is not set/);
-  });
-
-  // docs/deploy.md section 6, the live-send table (audit PER34, SHA41: founder decisions, behavior unchanged and pinned)
-  test("the live-send table: which flag makes which app's queued sends live; signed-turn replies are never gated by a backend flag", () => {
-    const table = (e: Record<string, string | undefined>) => {
-      const c = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", BLOOIO_FROM: "+12125550100", ...e });
-      return Object.fromEntries(liveSendTable({ ...DEPLOYED, ...e }, c.channel, liveSendAllowed).map(r => [r.app, `${r.queued}|${r.turnReplies}`]));
-    };
-    const row = (ntwrk: string, slop: string, friends: string, peon: string) =>
-      ({ ntwrk: `${ntwrk}|sent by the gateway`, slop: `${slop}|sent by the gateway`, friends: `${friends}|sent by the gateway`, peon: `${peon}|sent by the gateway` });
-    const NETWORK_CLOUD_DELIVERY_ORIGIN = "https://cloud.example.test";
-    expect(table({})).toEqual(row("dry-run", "dry-run", "dry-run", "dry-run"));
-    expect(table({ BLOOIO_ALLOW_SEND: "1", SLOP_LIVE_APPROVED: "1", FRIENDS_LIVE_APPROVED: "1", PEON_LIVE_APPROVED: "1" })).toEqual(row("dry-run", "dry-run", "dry-run", "dry-run"));
-    // NTWRK_LIVE_APPROVED is the global approval: slop cannot go live without it, and with it ntwrk is live too.
-    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" })).toEqual(row("live", "dry-run", "dry-run", "dry-run"));
-    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", SLOP_LIVE_APPROVED: "1" })).toEqual(row("live", "live", "dry-run", "dry-run"));
-    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", SLOP_LIVE_APPROVED: "1", FRIENDS_LIVE_APPROVED: "1", PEON_LIVE_APPROVED: "1" })).toEqual(row("live", "live", "live", "live"));
-    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", SLOP_LIVE_APPROVED: "1" }).slop).toBe("live|sent by the gateway");
-    // --dry-run wins over every flag.
-    const c = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_FROM: "+12125550100", BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, ["--dry-run"]);
-    expect(liveSendTable({ ...DEPLOYED, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, c.channel, liveSendAllowed).map(r => r.queued)).toEqual(["dry-run", "dry-run", "dry-run", "dry-run"]);
   });
 
   test("the staff API never shares the public port", () => {
@@ -208,17 +185,54 @@ describe("config", () => {
     expect(() => loadConfig({ ...DEPLOYED, PORT: "http" })).toThrow(/PORT/);
   });
 
-  test("sends stay dry-run unless every global live flag is set", () => {
-    const base = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" };
+  // spec/bootPolicy.md, "The configured channel alone decides whether a send is real" (owner decision 2026-11-22)
+  test("the configured channel alone decides real sends for every app; a channel without its credentials does not start", () => {
+    const blooio = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" };
+    const cloud = { ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+15550100" };
     expect(loadConfig(DEPLOYED).channel).toBe("dry-run");
-    expect(loadConfig(base).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "true", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, ["--dry-run"]).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("blooio");
-    expect(loadConfig(base).warnings.join(" ")).toMatch(/stay dry-run/);
-    expect(() => loadConfig({ ...base, BLOOIO_API_KEY: undefined, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" })).toThrow(/BLOOIO_API_KEY/);
+    expect(loadConfig({ ...DEPLOYED, BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100", BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
+    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "Blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" }).channel).toBe("dry-run");
+    expect(loadConfig(blooio).channel).toBe("blooio");
+    expect(loadConfig({ ...blooio, BLOOIO_ALLOW_SEND: "0", NTWRK_LIVE_APPROVED: "0" }).channel).toBe("blooio");
+    expect(loadConfig(cloud).channel).toBe("eliza_cloud");
+    expect(loadConfig(blooio, ["--dry-run"]).channel).toBe("dry-run");
+    expect(loadConfig(blooio, ["--dry-run"]).warnings.join(" ")).toMatch(/stay dry-run/);
+    expect(loadConfig(cloud, ["--dry-run"]).channel).toBe("dry-run");
+    expect(() => loadConfig({ ...blooio, BLOOIO_API_KEY: undefined })).toThrow(/BLOOIO_API_KEY/);
+    expect(() => loadConfig({ ...blooio, BLOOIO_FROM: undefined })).toThrow(/BLOOIO_FROM/);
+    expect(() => loadConfig({ ...cloud, NETWORK_CLOUD_DELIVERY_ORIGIN: undefined })).toThrow(/NETWORK_CLOUD_DELIVERY_ORIGIN/);
+    expect(() => loadConfig({ ...cloud, BLOOIO_FROM: undefined })).toThrow(/BLOOIO_FROM/);
+    expect(() => loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", NETWORK_CHANNEL: "blooio" })).toThrow(/BLOOIO_API_KEY/);
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" }).channel).toBe("dry-run");
+  });
+
+  // owner decision 2026-11-22, "Live from first deploy"
+  test("the production start command has no dry-run option: eliza_cloud owns inbound and every queued send is real from the first deploy", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const toml = await readFile(new URL("./railway.toml", import.meta.url), "utf8");
+    const dockerfile = await readFile(new URL("./Dockerfile", import.meta.url), "utf8");
+    const start = /^startCommand = "(.+)"$/m.exec(toml)?.[1];
+    const cmd = JSON.parse(/^CMD (\[.+\])$/m.exec(dockerfile)?.[1] ?? "null") as string[] | null;
+    expect(start).toBe("node --import tsx deploy/backend/server.ts");
+    expect(cmd).toEqual(start!.split(" "));
+    expect(toml).not.toMatch(/^startCommand = ".*--dry-run/m);
+    const c = loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+15550100" }, start!.split(" "));
+    expect([c.channel, c.blooioWebhook]).toEqual(["eliza_cloud", false]);
+    expect(c.warnings.join(" ")).not.toMatch(/stay dry-run/);
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" }, start!.split(" ")).channel).toBe("dry-run");
+  });
+
+  // spec/bootPolicy.md, "A deployed entry refuses a partial Workers AI setup, and production needs Workers AI" (owner decisions 2026-11-22, D18)
+  test("a deployed backend refuses a Workers AI token without its account, and production refuses a start without Workers AI", () => {
+    expect(() => loadConfig({ ...DEPLOYED, CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/CLOUDFLARE_ACCOUNT_ID/);
+    expect(loadConfig({ ...DEPLOYED }).channel).toBe("dry-run");
+    expect(loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined }).channel).toBe("dry-run");
+    expect(loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined, CLOUDFLARE_ACCOUNT_ID: undefined }).channel).toBe("dry-run");
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", CLOUDFLARE_AI_TOKEN: "t" }).channel).toBe("dry-run");
+    expect(loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production" }).channel).toBe("dry-run");
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_AI_TOKEN: undefined })).toThrow(/CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_AI_TOKEN: undefined, CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/relay classifier/);
   });
 
   test("extra hosts are for staging only and must name a known app", () => {
@@ -396,10 +410,10 @@ describe("routing", () => {
     expect((await b.staffFetch(new Request("http://10.0.0.2:4848/review"))).status).toBe(200);
   });
 
-  test("the Eliza gateway's signed routes reach the service on the public port, /internal/relay and the relay-photo resolve included (both were 404), each under its own body cap", async () => {
+  test("the Eliza gateway's signed routes reach the service on the public port, /internal/relay included (it was 404), each under its own body cap, and the removed relay-photo resolve answers 404", async () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
-    for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay", RELAY_PHOTO_RESOLVE_PATH,
+    for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
       "/internal/profile-suggestions/preview", "/internal/profile-suggestions/decide", "/internal/profile-suggestions/delete", "/internal/profile-suggestions/collect", "/internal/profile-suggestions/consent-context",
       PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath]) {
       const r = await b.publicFetch(new Request(`http://api.example.test${p}`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
@@ -414,9 +428,10 @@ describe("routing", () => {
       method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) },
     }));
     expect(oversizedCalendar.status).toBe(413);
-    // Eliza Cloud resolves one approved photo descriptor; its cap is 16 KiB (relay-endpoint.ts RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES).
-    const oversizedResolve = await b.publicFetch(new Request(`http://api.example.test${RELAY_PHOTO_RESOLVE_PATH}`, { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }));
-    expect(oversizedResolve.status).toBe(413);
+    for (const body of ["{}", "x".repeat(17 * 1024)]) {
+      const resolve = await b.publicFetch(new Request(`http://api.example.test${RELAY_PHOTO_RESOLVE_PATH}`, { method: "POST", body, headers: { "content-length": String(body.length), "content-type": "application/json" } }));
+      expect([resolve.status, (await resolve.json()).error]).toEqual([404, "not_found"]);
+    }
     expect(calls.length).toBe(n);
     // The same size is fine on the turn route (256 KiB).
     expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(200);
@@ -654,9 +669,8 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     const eventsUrl = Object.assign(new URL(url), { username: `${role}_events` }).toString();
     const env: Record<string, string> = {
       ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, NETWORK_PUBLIC_EVENTS_DATABASE_URL: eventsUrl, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
-      PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
-      NETWORK_PHOTO_RELAY_NOTICE_VERSION: "boot-photo-notice-v1", NETWORK_PHOTO_RELAY_NOTICE: "Send this photo to {{recipient}} after a safety review.",
-      NETWORK_PHOTO_RELAY_REVIEWERS: "token:safety#0123abcd", NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test",
+      PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "",
+      R2_ENDPOINT: "https://r2.example.test", R2_BUCKET: "boot-photos", R2_ACCESS_KEY_ID: "fixture", R2_SECRET_ACCESS_KEY: "fixture",
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
@@ -700,11 +714,11 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
     expect(logs).toMatch(/"msg":"shutdown complete".*"clean":true/);
     expect(logs).toMatch(/"sends":"dry-run"/);
-    expect(logs).not.toMatch(/"sends":"live"/);
-    // The live-send table is in the boot log (docs/deploy.md section 6), and the signup connector is on.
-    expect(logs).toMatch(/"msg":"live sends".*"inbound":"backend webhook".*"ntwrk: queued dry-run, turn replies sent by the gateway"/);
+    expect(logs).not.toMatch(/"sends":"(blooio|eliza_cloud)"/);
+    expect(logs).toMatch(/"msg":"sends".*"channel":"dry-run".*"inbound":"backend webhook".*"turnReplies":"sent by the gateway"/);
     expect(logs).toMatch(/"msg":"mcp".*"enabled":true/);
-    expect(logs).toMatch(/"msg":"photo relay".*"enabled":true.*"version":"boot-photo-notice-v1".*"reviewers":1/);
+    expect(logs).toMatch(/"msg":"photo relay".*"enabled":true/);
+    expect(logs).not.toMatch(/"msg":"photo relay".*"version"/);
   }, 30_000);
 });
 

@@ -56,7 +56,7 @@ beforeAll(async () => {
   obs = await createServer({
     port: 0, development: false, token: TOK.legacy, tokens: `admin:${TOK.admin},reviewer:${TOK.reviewer},safety:${TOK.safety},analyst:${TOK.analyst}`,
     audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") },
-    game: { seed: 1, review: "human", pushMs: 3_600_000, tickMs: 3_600_000 },
+    game: { seed: 1, judge: "hold-every-item", pushMs: 3_600_000, tickMs: 3_600_000 },
   });
   base = obs.url;
   expect((await control(TOK.admin, { type: "step", ms: DAY })).status).toBe(200);
@@ -97,7 +97,8 @@ describe("staff roles, audit and PII reveal", () => {
 
   test("per-command and per-route role checks on the server", async () => {
     const s = (await (await as(TOK.analyst, "/api/state")).json()) as ObsState;
-    const item = s.opportunities.find(o => o.state === "IN_REVIEW")!;
+    const item = s.opportunities.find(o => o.state === "IN_REVIEW" && o.review?.exceptionReason)!;
+    expect(item).toBeDefined();
     const inReview = item.participants[0]!;
     const busy = new Set(s.opportunities.filter(o => o.state === "IN_REVIEW").flatMap(o => o.participants));
     const other = s.members.find(m => m.joined && !busy.has(m.id))!.id;
@@ -114,7 +115,7 @@ describe("staff roles, audit and PII reveal", () => {
     expect(await code(TOK.reviewer, `/api/member/${inReview}`)).toBe(200);
     expect(await code(TOK.reviewer, `/api/member/${other}`)).toBe(403);
     expect(await code(TOK.reviewer, "/api/control", { type: "matching", on: false })).toBe(403);
-    expect(await code(TOK.reviewer, "/api/control", { type: "review_mode", mode: "auto" })).toBe(403);
+    expect(await code(TOK.reviewer, "/api/control", { type: "review_mode", mode: "auto" })).toBe(400);
     expect(await code(TOK.reviewer, "/api/control", { type: "reset" })).toBe(403);
     expect(await code(TOK.reviewer, "/api/config")).toBe(403);
     expect(await code(TOK.reviewer, "/api/reveal", { memberId: inReview, reason: "checking a report" })).toBe(403);
@@ -249,7 +250,10 @@ describe("staff roles, audit and PII reveal", () => {
     expect((await control(TOK.safety, { type: "lens", on: false })).status).toBe(200);
     expect((await state(TOK.safety)).truth).toBeUndefined();
     // Opportunity detail: the analyst never gets a member's words; safety (who may open any member) does.
-    expect((await control(TOK.admin, { type: "review_mode", mode: "auto" })).status).toBe(200);
+    for (const o of (await state(TOK.analyst)).opportunities.filter(x => x.state === "IN_REVIEW" && x.review?.exceptionReason)) {
+      const decided = await control(TOK.reviewer, { type: "review", oppId: o.id, decision: "approve" });
+      expect([o.id, decided.status]).toEqual([o.id, 200]);
+    }
     expect((await control(TOK.admin, { type: "step", ms: 2 * DAY })).status).toBe(200);
     let checked = 0;
     for (const o of (await state(TOK.analyst)).opportunities) {
@@ -258,7 +262,7 @@ describe("staff roles, audit and PII reveal", () => {
       if (!saf.length) continue;
       // A reviewer may open only members in an open review item: past items show the length, not the words.
       const rev = await read(TOK.reviewer);
-      const open = new Set((await state(TOK.analyst)).opportunities.filter(x => x.state === "IN_REVIEW").flatMap(x => x.participants));
+      const open = new Set((await state(TOK.analyst)).opportunities.filter(x => x.state === "IN_REVIEW" && x.review?.exceptionReason).flatMap(x => x.participants));
       const hidden = rev.messages.filter(m => m.direction === "inbound" && !m.system && !open.has(m.memberId));
       expect(hidden.map(m => m.body)).toEqual(hidden.map(() => HIDDEN_MESSAGE));
       // The analyst gets the opportunity's shape only: no messages, no names (audit observatory-18).
@@ -347,7 +351,7 @@ describe("SSO and the production switch", () => {
     // spec/consoleMemberView.md, "Serving revealed details requires current staff authority"
     const url = await testDb();
     const sql = new SQL(url);
-    const game = new GameSource({ seed: 1, review: "human", tickMs: 3_600_000, pushMs: 3_600_000 });
+    const game = new GameSource({ seed: 1, judge: "hold-every-item", tickMs: 3_600_000, pushMs: 3_600_000 });
     let startAudit!: () => void, finishAudit!: () => void;
     const auditStarted = new Promise<void>(resolve => { startAudit = resolve; });
     const auditCanFinish = new Promise<void>(resolve => { finishAudit = resolve; });
@@ -416,7 +420,7 @@ describe("SSO and the production switch", () => {
       const st = (await (await fetch(prod.url + "/api/state", { headers: h })).json()) as ObsState;
       expect(st.env).toMatchObject({ mode: "real", realOnly: true });
       expect((await fetch(prod.url + "/api/mode", { method: "POST", headers: h, body: JSON.stringify({ mode: "game" }) })).status).toBe(403);
-      for (const type of ["play", "step", "propose", "reset", "review_mode", "god"]) {
+      for (const type of ["play", "step", "propose", "reset", "god"]) {
         const r = await fetch(prod.url + "/api/control", { method: "POST", headers: h, body: JSON.stringify({ type, ms: 1 }) });
         expect([type, r.status, (await r.json()).code]).toEqual([type, 403, "real_only"]);
       }
@@ -424,6 +428,25 @@ describe("SSO and the production switch", () => {
       expect((await fetch(prod.url + "/api/lab/run", { method: "POST", headers: h, body: JSON.stringify({ arms: ["consent"], seeds: [1], days: 1 }) })).status).toBe(403);
       await expect(prod.source("game")).rejects.toThrow("OBSERVATORY_REAL_ONLY");
     } finally { await prod.stop(); }
+  }, T);
+
+  test("real mode: the judged reviews and the stop of an approved review are open to reviewer, safety and admin only (D15 to D17)", async () => {
+    const real = await createServer({ port: 0, development: false, realOnly: true, platformEnv: "dev",
+      tokens: `admin:${TOK.admin},reviewer:${TOK.reviewer},safety:${TOK.safety},analyst:${TOK.analyst}`,
+      audit: { dir: join(dir, "audit-judged") }, lab: { dir: join(dir, "lab-judged") }, real: { url: undefined, pollMs: 3_600_000 } });
+    try {
+      const call = (tok: string, path: string, body?: unknown) => fetch(real.url + path, {
+        method: body ? "POST" : "GET", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const steps: [string, unknown?][] = [["/api/staff/review/judged?app=ntwrk&since=0"], ["/api/staff/review/judged/opp-1/0?app=ntwrk"], ["/api/staff/review/opp-1/stop?app=ntwrk", { revision: 0 }]];
+      for (const [path, body] of steps) {
+        const refused = await call(TOK.analyst, path, body);
+        expect([path, refused.status, (await refused.json()).code]).toEqual([path, 403, "forbidden"]);
+        for (const tok of [TOK.reviewer, TOK.safety, TOK.admin]) {
+          const admitted = await call(tok, path, body);
+          expect([path, admitted.status, (await admitted.json()).code]).toEqual([path, 503, "read_only"]);
+        }
+      }
+    } finally { await real.stop(); }
   }, T);
 });
 
@@ -521,7 +544,7 @@ const within = <X>(p: Promise<X>, ms: number) => Promise.race([p, sleep(ms, unde
 describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
   test("OBS-04: after a switch to real mode an engineer's socket is closed (4403) and gets no member; an admin's stays", async () => {
     const eng = long("eng-socket"), adm = long("adm-socket");
-    const srv = await createServer({ port: 0, development: false, tokens: `engineer:${eng},admin:${adm}`, audit: { dir: join(dir, "audit-ws") }, lab: { dir: join(dir, "lab-ws") }, game: { seed: 1, review: "auto", pushMs: 50, tickMs: 3_600_000 }, real: { url: undefined, pollMs: 3_600_000, pushMs: 50, service: false } });
+    const srv = await createServer({ port: 0, development: false, tokens: `engineer:${eng},admin:${adm}`, audit: { dir: join(dir, "audit-ws") }, lab: { dir: join(dir, "lab-ws") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 }, real: { url: undefined, pollMs: 3_600_000, pushMs: 50, service: false } });
     try {
       const wsUrl = `${srv.url.replace("http", "ws")}/ws`;
       const e = openSocket(wsUrl, { authorization: `Bearer ${eng}` }), a = openSocket(wsUrl, { authorization: `Bearer ${adm}` });

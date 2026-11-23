@@ -35,21 +35,21 @@ pure def lawProductionDisallowsDev(platform: str, node: str): bool =
   not(devShortcuts(platform, "production")) and not(devShortcuts("production", node))
 ```
 
-### Both entries apply one rule to the session secret, the review setting and the dev-only switches
+### Both entries apply one rule to the session secret, the model provider and the dev-only switches
 
-Both entries, `main.ts` and the combined backend, refuse a dev declaration combined with production in every environment. In staging and production both entries need a session secret with the secret character limit that is not the hash key, refuse a supplied review setting other than human, and refuse a set dev-only switch (`PLATFORM_DEV_*`). Changed (review): this rule is new and both entries take these decisions from it, because before it `main.ts` let the session secret be the hash key, so website sessions and the Cloud cookie seal used the phone-hash key, while the combined backend refused that value.
+Both entries, `main.ts` and the combined backend, refuse a dev declaration combined with production in every environment. In staging and production both entries need a session secret with the secret character limit that is not the hash key, need an API key for the judge provider and the recommender provider (`JUDGE_PROVIDER` and `RECOMMENDER_PROVIDER`, default Surplus), and refuse a set dev-only switch (`PLATFORM_DEV_*`). The entries read the key facts with `providerKeyPresent`; a provider name that is not known is a startup problem in every environment. Changed (review): this rule is new and both entries take these decisions from it, because before it `main.ts` let the session secret be the hash key, so website sessions and the Cloud cookie seal used the phone-hash key, while the combined backend refused that value. Changed (owner decision 2026-11-22, D15 to D17): the review setting was removed with human review; a deployed start needs a key for the judge and recommender providers, because the review judge decides every introduction and the engine judge is always on.
 
 ```quint
 pure val minimumSecretLength: int = 32
 
 type SharedBootFacts = {
   environment: Environment, production: bool, sessionLength: int, sessionIsHashKey: bool,
-  review: str, reviewSet: bool, devSwitch: bool
+  modelProvider: bool, devSwitch: bool
 }
 
 type SharedBoot = {
   deployed: bool, devConflict: bool, sessionMissing: bool, sessionShort: bool, sessionReused: bool,
-  reviewInvalid: bool, devSwitchSet: bool
+  modelProviderMissing: bool, devSwitchSet: bool
 }
 
 pure def sharedBoot(facts: SharedBootFacts): SharedBoot = {
@@ -60,36 +60,36 @@ pure def sharedBoot(facts: SharedBootFacts): SharedBoot = {
     sessionMissing: deployed and facts.sessionLength == 0,
     sessionShort: deployed and facts.sessionLength < minimumSecretLength,
     sessionReused: deployed and facts.sessionIsHashKey,
-    reviewInvalid: deployed and facts.reviewSet and facts.review != "human",
+    modelProviderMissing: deployed and not(facts.modelProvider),
     devSwitchSet: deployed and facts.devSwitch
   }
 }
 
 pure def sharedBootRefused(s: SharedBoot): bool =
-  s.devConflict or s.sessionMissing or s.sessionShort or s.sessionReused or s.reviewInvalid or s.devSwitchSet
+  s.devConflict or s.sessionMissing or s.sessionShort or s.sessionReused or s.modelProviderMissing or s.devSwitchSet
 ```
 
-### The network service entry checks provider, review, storage and secret configuration
+### The network service entry checks provider, model provider, storage and secret configuration
 
-`main.ts` requires a declared environment. Staging and production require a Turnstile secret, the service database, and the proxy and hash secrets with the secret character limit. The session secret, the review setting, the dev conflict and the dev-only switches come from the shared rule above. `main.ts` refuses exactly when `networkBootRefused` is true or the OTP adapter reports a problem. Changed (review): the session secret must not be the hash key, and the dev-only switch decision moved from the entry into this rule, because the shared rule now owns both for both entries.
+`main.ts` requires a declared environment. Staging and production require a Turnstile secret, the service database, and the proxy and hash secrets with the secret character limit. The session secret, the model provider key, the dev conflict and the dev-only switches come from the shared rule above. `main.ts` refuses exactly when `networkBootRefused` is true or the OTP adapter reports a problem. Changed (review): the session secret must not be the hash key, and the dev-only switch decision moved from the entry into this rule, because the shared rule now owns both for both entries. Changed (owner decision 2026-11-22, D15 to D17): the review setting fact is replaced by the model provider fact, because human review was removed and a deployed service without a model key would hold every introduction for staff.
 
 ```quint
 type NetworkBootFacts = {
   environment: Environment, production: bool, turnstile: bool, database: bool,
   proxyLength: int, hashLength: int, sessionLength: int, sessionIsHashKey: bool,
-  review: str, reviewSet: bool, devSwitch: bool
+  modelProvider: bool, devSwitch: bool
 }
 
 type NetworkBoot = {
   environmentMissing: bool, devConflict: bool, checkDeployed: bool, turnstileMissing: bool,
   databaseMissing: bool, proxyShort: bool, hashShort: bool, sessionShort: bool, sessionReused: bool,
-  reviewInvalid: bool, devSwitchSet: bool
+  modelProviderMissing: bool, devSwitchSet: bool
 }
 
 pure def networkBoot(facts: NetworkBootFacts): NetworkBoot = {
   val shared = sharedBoot({
     environment: facts.environment, production: facts.production, sessionLength: facts.sessionLength,
-    sessionIsHashKey: facts.sessionIsHashKey, review: facts.review, reviewSet: facts.reviewSet, devSwitch: facts.devSwitch
+    sessionIsHashKey: facts.sessionIsHashKey, modelProvider: facts.modelProvider, devSwitch: facts.devSwitch
   })
   {
     environmentMissing: facts.environment == Undeclared,
@@ -101,19 +101,19 @@ pure def networkBoot(facts: NetworkBootFacts): NetworkBoot = {
     hashShort: shared.deployed and facts.hashLength < minimumSecretLength,
     sessionShort: shared.sessionShort,
     sessionReused: shared.sessionReused,
-    reviewInvalid: shared.reviewInvalid,
+    modelProviderMissing: shared.modelProviderMissing,
     devSwitchSet: shared.devSwitchSet
   }
 }
 
 pure def networkBootRefused(boot: NetworkBoot): bool =
   boot.environmentMissing or boot.devConflict or boot.turnstileMissing or boot.databaseMissing or boot.proxyShort or
-    boot.hashShort or boot.sessionShort or boot.sessionReused or boot.reviewInvalid or boot.devSwitchSet
+    boot.hashShort or boot.sessionShort or boot.sessionReused or boot.modelProviderMissing or boot.devSwitchSet
 
 pure def readyNetworkFacts(environment: Environment): NetworkBootFacts = {
   environment: environment, production: environment == Production, turnstile: true, database: true,
   proxyLength: minimumSecretLength, hashLength: minimumSecretLength, sessionLength: minimumSecretLength,
-  sessionIsHashKey: false, review: "human", reviewSet: false, devSwitch: false
+  sessionIsHashKey: false, modelProvider: true, devSwitch: false
 }
 
 pure def lawDeployedServiceHasOwnSessionSecret(environment: Environment, sessionLength: int, sessionIsHashKey: bool): bool =
@@ -124,6 +124,9 @@ pure def lawDeployedServiceHasOwnSessionSecret(environment: Environment, session
 
 pure def lawReadyServiceStarts(environment: Environment): bool =
   environment != Undeclared implies not(networkBootRefused(networkBoot(readyNetworkFacts(environment))))
+
+pure def lawDeployedBootNeedsModelProvider(environment: Environment): bool =
+  deployedEnvironment(environment) implies networkBootRefused(networkBoot({ ...readyNetworkFacts(environment), modelProvider: false }))
 ```
 
 ### Both entries refuse a deployment whose shared line or staff API could not work
@@ -156,14 +159,14 @@ pure def lawDeployedEntryHasLineAndStaffSecrets(environment: Environment, turnSe
 
 ### The combined backend entry checks its own database, provider and secret configuration
 
-The combined backend needs a database in every environment. It refuses a dev declaration combined with production in every environment. Staging and production also need proxy configuration, a Turnstile secret and a Turnstile site key, a hash key, a session secret, a leak-label key, the Eliza turn secret, at least one staff token, and the public event catalog's ingest login. A supplied proxy secret must meet the character limit in every environment. The deployed hash key, session secret, turn secret and every staff token have the same character limit. The deployed session secret must not be the hash key. The leak-label key limit is in UTF-8 bytes. In staging and production a supplied review setting must be human, and no dev-only switch (`PLATFORM_DEV_*`) may be set. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL. Changed: a deployed backend now also refuses to start without the Turnstile site key, the turn secret or a strong staff token, because without them the agent signup connector, the shared line and every staff review answered errors while health stayed green; it also needs the ingest login, because the scheduled catalog refresh runs as that login. The turn secret and staff token checks are the shared rule above. Changed (review): those four checks now come from the shared rule, so `main.ts` and the combined backend refuse the same secrets. Changed: the combined backend now also needs its own session secret, refuses dev that says production, a review setting other than human and a dev-only switch, because before this change the backend kept website sessions under the hash key with no log line and started where `main.ts` and the [service start model](models/boot_config.md) refuse. Changed (review): those decisions now come from the shared session, review and dev-switch rule above, so the two entries cannot drift apart; the combined backend refuses exactly when `backendBootRefused` is true or the OTP adapter reports a problem, and `main.ts` refuses exactly when `networkBootRefused` or `lineAndStaffRefused` is true or the OTP adapter reports a problem.
+The combined backend needs a database in every environment. It refuses a dev declaration combined with production in every environment. Staging and production also need proxy configuration, a Turnstile secret and a Turnstile site key, a hash key, a session secret, a leak-label key, the Eliza turn secret, at least one staff token, and the public event catalog's ingest login. A supplied proxy secret must meet the character limit in every environment. The deployed hash key, session secret, turn secret and every staff token have the same character limit. The deployed session secret must not be the hash key. The leak-label key limit is in UTF-8 bytes. In staging and production the judge and recommender providers need an API key, and no dev-only switch (`PLATFORM_DEV_*`) may be set. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL. Changed: a deployed backend now also refuses to start without the Turnstile site key, the turn secret or a strong staff token, because without them the agent signup connector, the shared line and every staff review answered errors while health stayed green; it also needs the ingest login, because the scheduled catalog refresh runs as that login. The turn secret and staff token checks are the shared rule above. Changed (review): those four checks now come from the shared rule, so `main.ts` and the combined backend refuse the same secrets. Changed: the combined backend now also needs its own session secret, refuses dev that says production, a review setting other than human and a dev-only switch, because before this change the backend kept website sessions under the hash key with no log line and started where `main.ts` and the [service start model](models/boot_config.md) refuse. Changed (review): those decisions now come from the shared session, review and dev-switch rule above, so the two entries cannot drift apart; the combined backend refuses exactly when `backendBootRefused` is true or the OTP adapter reports a problem, and `main.ts` refuses exactly when `networkBootRefused` or `lineAndStaffRefused` is true or the OTP adapter reports a problem. Changed (owner decision 2026-11-22, D15 to D17): the review setting fact is replaced by the model provider fact of the shared rule, because human review was removed and the review judge and the engine judge need a model key.
 
 ```quint
 type BackendBootFacts = {
   environment: Environment, production: bool, database: bool, migrate: bool, migrationUrl: bool, sameLoginUrl: bool,
   turnstile: bool, turnstileSite: bool, proxyLength: int, hashLength: int, sessionLength: int, sessionIsHashKey: bool,
   leakKeyBytes: int, turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int, publicEventsLogin: bool,
-  turnSecretIsStaffToken: bool, review: str, reviewSet: bool, devSwitch: bool
+  turnSecretIsStaffToken: bool, modelProvider: bool, devSwitch: bool
 }
 
 type BackendBoot = {
@@ -171,13 +174,13 @@ type BackendBoot = {
   hashMissing: bool, proxyShort: bool, hashShort: bool, sessionMissing: bool, sessionShort: bool, sessionReused: bool,
   leakKeyShort: bool, migrationMissing: bool, sharedLogin: bool,
   turnSecretShort: bool, staffTokensMissing: bool, staffTokenShort: bool, publicEventsLoginMissing: bool,
-  turnSecretReused: bool, reviewInvalid: bool, devSwitchSet: bool
+  turnSecretReused: bool, modelProviderMissing: bool, devSwitchSet: bool
 }
 
 pure def backendBoot(facts: BackendBootFacts): BackendBoot = {
   val shared = sharedBoot({
     environment: facts.environment, production: facts.production, sessionLength: facts.sessionLength,
-    sessionIsHashKey: facts.sessionIsHashKey, review: facts.review, reviewSet: facts.reviewSet, devSwitch: facts.devSwitch
+    sessionIsHashKey: facts.sessionIsHashKey, modelProvider: facts.modelProvider, devSwitch: facts.devSwitch
   })
   val deployed = shared.deployed
   val secrets = lineAndStaffProblems(deployed, facts.turnSecretLength, facts.staffTokenCount, facts.shortestStaffTokenLength, facts.turnSecretIsStaffToken)
@@ -202,7 +205,7 @@ pure def backendBoot(facts: BackendBootFacts): BackendBoot = {
     staffTokenShort: secrets.staffTokenShort,
     publicEventsLoginMissing: deployed and not(facts.publicEventsLogin),
     turnSecretReused: secrets.turnSecretReused,
-    reviewInvalid: shared.reviewInvalid,
+    modelProviderMissing: shared.modelProviderMissing,
     devSwitchSet: shared.devSwitchSet
   }
 }
@@ -212,7 +215,7 @@ pure def backendBootRefused(boot: BackendBoot): bool =
     boot.hashMissing or boot.proxyShort or boot.hashShort or boot.sessionMissing or boot.sessionShort or boot.sessionReused or
     boot.leakKeyShort or boot.migrationMissing or boot.sharedLogin or
     boot.turnSecretShort or boot.staffTokensMissing or boot.staffTokenShort or boot.publicEventsLoginMissing or
-    boot.turnSecretReused or boot.reviewInvalid or boot.devSwitchSet
+    boot.turnSecretReused or boot.modelProviderMissing or boot.devSwitchSet
 
 pure val sessionLengthValues = Set(0, minimumSecretLength - 1, minimumSecretLength)
 
@@ -221,7 +224,7 @@ pure def readyBackendFacts(environment: Environment): BackendBootFacts = {
   sameLoginUrl: false, turnstile: true, turnstileSite: true, proxyLength: minimumSecretLength, hashLength: minimumSecretLength,
   sessionLength: minimumSecretLength, sessionIsHashKey: false, leakKeyBytes: minimumSecretLength,
   turnSecretLength: minimumSecretLength, staffTokenCount: 1, shortestStaffTokenLength: minimumSecretLength,
-  publicEventsLogin: true, turnSecretIsStaffToken: false, review: "human", reviewSet: false, devSwitch: false
+  publicEventsLogin: true, turnSecretIsStaffToken: false, modelProvider: true, devSwitch: false
 }
 
 pure def lawDeployedBackendServesSignupLineAndStaff(environment: Environment, turnstileSite: bool, turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int): bool =
@@ -242,15 +245,15 @@ pure def lawBackendRefusesDevThatSaysProduction(database: bool): bool =
   val ready = readyBackendFacts(Dev)
   backendBootRefused(backendBoot({ ...ready, production: true, database: database }))
 
-pure def lawEntriesShareSessionDecision(environment: Environment, sessionLength: int, sessionIsHashKey: bool, reviewSet: bool, devSwitch: bool): bool =
+pure def lawEntriesShareSessionDecision(environment: Environment, sessionLength: int, sessionIsHashKey: bool, modelProvider: bool, devSwitch: bool): bool =
   val readyNetwork = readyNetworkFacts(environment)
   val readyBackend = readyBackendFacts(environment)
   val network = networkBoot({ ...readyNetwork, sessionLength: sessionLength, sessionIsHashKey: sessionIsHashKey,
-    review: "manual", reviewSet: reviewSet, devSwitch: devSwitch })
+    modelProvider: modelProvider, devSwitch: devSwitch })
   val backend = backendBoot({ ...readyBackend, sessionLength: sessionLength, sessionIsHashKey: sessionIsHashKey,
-    review: "manual", reviewSet: reviewSet, devSwitch: devSwitch })
+    modelProvider: modelProvider, devSwitch: devSwitch })
   network.sessionShort == backend.sessionShort and network.sessionReused == backend.sessionReused and
-    network.reviewInvalid == backend.reviewInvalid and network.devSwitchSet == backend.devSwitchSet and
+    network.modelProviderMissing == backend.modelProviderMissing and network.devSwitchSet == backend.devSwitchSet and
     network.devConflict == backend.devConflict
 
 pure def lawReadyBackendStarts(environment: Environment): bool =
@@ -258,25 +261,27 @@ pure def lawReadyBackendStarts(environment: Environment): bool =
   environment != Undeclared implies not(backendBootRefused(backendBoot(ready)))
 ```
 
-### The combined backend turns photo relay on only with a complete photo relay setup
+### A deployed backend keeps photos in private storage
 
-The photo relay setup has four parts: the notice version, the notice text with the `{{recipient}}` placeholder, at least one designated safety reviewer, and the exact origin of the photo delivery links. All four parts with a valid notice and origin turn photo relay on. No part keeps photo relay off, and every photo request of a member gets the refusal. Any other setup refuses to start. Changed: this rule is new, because the deployed backend gave the service no relay policy and no delivery origin, so no operator could turn photo relay on after approval. The founder approves the notice text and the reviewers before an operator sets them.
+A deployed backend (staging or production) starts only with private R2 photo storage (`PHOTO_STORAGE=r2`). It refuses to start without it, because photos, the photo pages and the photo relay would then be off with no error. A dev backend may run with local storage or with no photo storage; with none, every photo request gets the refusal. A partial R2 setup is refused where the storage is read. Changed (owner decision 2026-11-22): this rule replaces the photo relay setup rule, because the owner turned photo relay on with no switch; the notice is now in the code, the reviewers are the staff `safety` role and the photo pages use the app's own domain, so the four photo relay variables are removed and only the storage remains to check.
 
 ```quint
-type PhotoRelaySetup = PhotoRelayOff | PhotoRelayOn | PhotoRelayIncomplete
+type PhotoStorageSetup = PhotoStorageReady | PhotoStorageOff | PhotoStorageRefused
 
-pure def photoRelaySetup(versionSet: bool, noticeSet: bool, noticeNamesRecipient: bool, reviewersSet: bool, originSet: bool, originValid: bool): PhotoRelaySetup =
-  if (not(versionSet) and not(noticeSet) and not(reviewersSet) and not(originSet)) PhotoRelayOff
-  else if (versionSet and noticeSet and noticeNamesRecipient and reviewersSet and originSet and originValid) PhotoRelayOn
-  else PhotoRelayIncomplete
+pure def photoStorageSetup(deployed: bool, storageSet: bool, storageIsR2: bool): PhotoStorageSetup =
+  if (storageIsR2) PhotoStorageReady
+  else if (deployed) PhotoStorageRefused
+  else if (storageSet) PhotoStorageReady
+  else PhotoStorageOff
 
-pure def lawPhotoRelayOnNeedsEveryPart(versionSet: bool, noticeSet: bool, noticeNamesRecipient: bool, reviewersSet: bool, originSet: bool, originValid: bool): bool =
-  photoRelaySetup(versionSet, noticeSet, noticeNamesRecipient, reviewersSet, originSet, originValid) == PhotoRelayOn implies
-    (versionSet and noticeSet and noticeNamesRecipient and reviewersSet and originSet and originValid)
+pure def lawDeployedNeedsPrivatePhotoStorage(storageSet: bool, storageIsR2: bool): bool =
+  (photoStorageSetup(true, storageSet, storageIsR2) == PhotoStorageReady) iff storageIsR2
 
-pure def lawPartialPhotoRelaySetupRefused(noticeNamesRecipient: bool, originValid: bool): bool =
-  photoRelaySetup(true, false, noticeNamesRecipient, true, true, originValid) == PhotoRelayIncomplete and
-    photoRelaySetup(false, false, noticeNamesRecipient, false, true, originValid) == PhotoRelayIncomplete
+pure def lawDeployedNeverRunsWithoutPhotos(storageSet: bool, storageIsR2: bool): bool =
+  photoStorageSetup(true, storageSet, storageIsR2) != PhotoStorageOff
+
+pure def lawDevMayRunWithoutPhotos(deployed: bool): bool =
+  not(deployed) implies photoStorageSetup(deployed, false, false) == PhotoStorageOff
 ```
 
 ### Exactly one system answers the carrier's inbound messages
@@ -293,6 +298,56 @@ pure def backendWebhookServed(channelSetting: str): bool = carrierInboundOwner(c
 
 pure def lawGatewayClosesBackendWebhook(channelSetting: str): bool =
   carrierInboundOwner(channelSetting) == ElizaGateway implies not(backendWebhookServed(channelSetting))
+```
+
+### The configured channel alone decides whether a send is real
+
+Both entries, `main.ts` and the combined backend, take the send channel from the channel setting (`NETWORK_CHANNEL`). The value `blooio` sends through the Blooio adapter and the value `eliza_cloud` sends through Eliza Cloud, for every app. Any other value, an absent value, the `--dry-run` start option and an isolated staging route keep every send a dry run, so a machine without a configured channel never texts a person. A real channel needs its credentials in every environment: the Blooio channel needs the Blooio key and the sending line, and the Eliza Cloud channel needs the Cloud delivery origin, the sending line and a turn secret with the secret character limit. An entry refuses to start with a real channel that does not have all of its credentials. Replies to a signed turn are sent by the Eliza gateway and no backend setting gates them. Changed (owner decision 2026-11-22): this rule is new and the live approvals `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED` and `<APP>_LIVE_APPROVED` are removed, because the owner approved every app and asked to remove unnecessary flags; before, a configured channel stayed a dry run until those approvals were set, and each app other than The Network needed its own approval for its queued sends.
+
+```quint
+type SendChannel = DryRunChannel | BlooioChannel | ElizaCloudChannel
+
+pure def sendChannel(channelSetting: str, dryRunRequested: bool, isolatedRoute: bool): SendChannel =
+  if (dryRunRequested or isolatedRoute) DryRunChannel
+  else if (channelSetting == "blooio") BlooioChannel
+  else if (channelSetting == "eliza_cloud") ElizaCloudChannel
+  else DryRunChannel
+
+pure def channelCredentialsMissing(channel: SendChannel, blooioKey: bool, senderLine: bool, cloudOrigin: bool, turnSecretLength: int): bool =
+  if (channel == BlooioChannel) not(blooioKey) or not(senderLine)
+  else if (channel == ElizaCloudChannel) not(cloudOrigin) or not(senderLine) or turnSecretLength < minimumSecretLength
+  else false
+
+pure val channelSettingValues = Set("", "blooio", "eliza_cloud", "dry-run", "Blooio")
+
+pure def lawUnconfiguredChannelNeverSends(dryRunRequested: bool, isolatedRoute: bool): bool =
+  sendChannel("", dryRunRequested, isolatedRoute) == DryRunChannel
+
+pure def lawDryRunRequestAndIsolatedRouteNeverSend(channelSetting: str, dryRunRequested: bool, isolatedRoute: bool): bool =
+  (dryRunRequested or isolatedRoute) implies sendChannel(channelSetting, dryRunRequested, isolatedRoute) == DryRunChannel
+
+pure def lawRealChannelHasCredentials(channelSetting: str, blooioKey: bool, senderLine: bool, cloudOrigin: bool, turnSecretLength: int): bool =
+  val channel = sendChannel(channelSetting, false, false)
+  (channel != DryRunChannel and not(channelCredentialsMissing(channel, blooioKey, senderLine, cloudOrigin, turnSecretLength))) implies
+    (senderLine and (if (channel == BlooioChannel) blooioKey else (cloudOrigin and turnSecretLength >= minimumSecretLength)))
+```
+
+### A deployed entry refuses a partial Workers AI setup, and production needs Workers AI
+
+Photo ratings and the relay classifier use Workers AI. They are on when the Workers AI token and the Cloudflare account are both set. In staging and production both entries refuse to start with the token but without the account, because ratings and the classifier would then be off with no error. The account alone is not a partial setup, because deploy tools also use it. In production both entries also refuse to start without the token or without the account. Staging and dev may start without both; the relay classifier then cannot run, so each relayed text that the rules pass is blocked with the notice to try again, and the simulator, the local dev start (`platform:dev`) and the tests give the service a classifier that is named as simulated. Changed (owner decision 2026-11-22, D18, refix): staging and dev without both ran the relay on its rules alone, so a text that no classifier read reached the other person; now a missing classifier blocks the text in every environment. Changed (owner decision 2026-11-22): this rule is new and the ratings switch `CLEF_RATINGS` is removed, because the owner asked to remove unnecessary flags; ratings were already on by default, and now the credentials alone turn them on. Changed (owner decision 2026-11-22, D18): production now needs both credentials, because the relay classifier decides alone and a classifier that cannot run blocks every relayed text; a production start without them made every relayed text wait for staff, and it would now block every relayed text with no error at start. Changed (owner decision D14 of 2026-11-22, "automatic check"): the photo relay check also uses Workers AI, the account of the photo rater; without it every relayed photo would wait for staff, so the same production requirement covers it.
+
+```quint
+pure def workersAiSetupMissing(deployed: bool, production: bool, tokenSet: bool, accountSet: bool): bool =
+  (deployed and tokenSet and not(accountSet)) or (production and not(tokenSet and accountSet))
+
+pure def lawDeployedWorkersAiTokenHasAccount(production: bool, tokenSet: bool, accountSet: bool): bool =
+  not(workersAiSetupMissing(true, production, tokenSet, accountSet)) implies (not(tokenSet) or accountSet)
+
+pure def lawProductionStartsOnlyWithWorkersAi(tokenSet: bool, accountSet: bool): bool =
+  not(workersAiSetupMissing(true, true, tokenSet, accountSet)) implies (tokenSet and accountSet)
+
+pure def lawStagingAndDevMayStartWithoutWorkersAi(deployed: bool): bool =
+  not(workersAiSetupMissing(deployed, false, false, false))
 ```
 
 ### A deployed service login must be a restricted database role

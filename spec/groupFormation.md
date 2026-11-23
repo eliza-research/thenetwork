@@ -8,7 +8,7 @@ The [candidate pool model](models/candidate_pool.md) follows groups into the Net
 
 ### Only eligible adults enter the group search
 
-A forced participant who fails the adult check makes the whole request ineligible. Other candidates who fail it stay outside the search. The Network applies the same check to each invitee and host of a plan at the moment it submits the plan for review, whoever built it: a plan with one who is not an adult then is not submitted. The planner's view of the members can be older than the member records. Changed 2026-11-17 (age safety review): the Network now checks each invitee and host again at submit, because the planner's view can be older than the records. The circle builder grows a partial group only by a candidate outside it that has a pair value at or above the circle pair floor with each of its members, and `circleCoherent` decides whether the grown circle is admitted. This changed 2026-11-22: the rule had an `extensionAllowed` predicate that no code called, so it was removed and the rule now names the check that the builder makes.
+A forced participant who fails the adult check makes the whole request ineligible. Other candidates who fail it stay outside the search. The Network applies the same check to each invitee and host of a plan at the moment it submits the plan for review, whoever built it: a plan with one who is not an adult then is not submitted. The planner's view of the members can be older than the member records. Changed 2026-11-17 (age safety review): the Network now checks each invitee and host again at submit, because the planner's view can be older than the records. The circle builder grows a partial group only by a candidate outside it that has a pair value at or above the circle pair floor with each of its members, and `circleCoherent` decides whether the grown circle is admitted. This changed 2026-11-22: the rule had an `extensionAllowed` predicate that no code called, so it was removed and the rule now names the check that the builder makes. The shell gives `forcedEligible` and `ageEligible` as true for an adult, or, on friends.help only, when the roster passes the teen group rule and the teen size rule of the [friend introduction age rule](friendIntroAge.md). A group of adults never takes a minor, and the engine group composer (`composeGroup`) admits adults only. Changed (owner decision 2026-11-22, answers A2 to A5): the parameter of `poolEligible` was `adult`; the owner allowed small teen groups on friends.help, so a teen roster that passes the teen rule enters the search, and every other roster with a minor stays outside it.
 
 ```quint
 type FormationPhase = AwaitingPool | Forming | PrimaryChosen | RankingAlternates | Finished
@@ -30,7 +30,7 @@ pure def canStartSearch(g: Formation, forcedEligible: bool): bool = g.phase == A
 pure def startSearch(g: Formation, forcedEligible: bool, hostRequired: bool): Formation =
   { ...g, phase: Forming, hostRequired: hostRequired }
 
-pure def poolEligible(adult: bool): bool = adult
+pure def poolEligible(ageEligible: bool): bool = ageEligible
 ```
 
 ### A primary group has a common place and meets its requirements

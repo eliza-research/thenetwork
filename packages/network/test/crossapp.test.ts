@@ -23,6 +23,7 @@ import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const T = 600_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -198,7 +199,7 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const sends: SendRequest[] = [];
-    const friends = new BlooioAdapter({ app: FR, from: "+12125550099", clock, liveGate: () => true, log: () => {}, provider: {
+    const friends = new BlooioAdapter({ app: FR, from: "+12125550099", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         sends.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -214,7 +215,7 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
       const ids = await seed(svc);
       for (const who of ["a", "b"]) for (const text of ONBOARD) await say(svc, clock, "ntwrk", who, text);
       const w = new Mini(PEOPLE.filter(p => p.apps.includes(FR)).map(p => ({ id: ids[p.key]![FR]!, name: p.name,
-        age: 30, area: "Greenpoint", interests: p.interests[FR] })), { app: FR, review: "human", plans: false, growth: false });
+        age: 30, area: "Greenpoint", interests: p.interests[FR] })), { app: FR, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
       const affected = [ids.b![FR]!, ids.a![FR]!];
       const unaffected = [ids.c![FR]!, ids.e![FR]!];
       await w.onboard(...affected, ...unaffected);

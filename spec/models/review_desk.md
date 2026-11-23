@@ -18,7 +18,13 @@ Compared again 2026-11-21 (audit COV08): `review.tsx` (`ReviewQueue`, `onKey`, `
 
 Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`ReviewQueue`, `onKey`) does not ignore key-repeat events. A held `a` approves the selected card. When the accepted answer moves the selection, the next repeat event approves the next card. `repeatNeverDecides` states the rule.
 
+Changed (owner decision 2026-11-22, D15 to D17): human review is removed. The [automated review](../automatedReview.md) decides every item on the server. An arrived item waits for the review judge (`AwaitingJudge`). The judge approves it (`judgeApprove`, approver `judge`; a roster with a minor is read with the strict rubric, `teenRosterIsJudgedStrictly`), or holds it for staff (`judgeHold`: a flag, an unsure reply or a judge that cannot run), or gives no judgment in time (`judgeOverdue`, the network tick holds it while matching is on), or answers for an old revision (`judgeStale`, nothing changes). A judge approval whose gates fail closes the item (`invalidated`). The page queue shows only held items (`HeldForStaff`). Staff approve, edit or re-roll only a held item; an approve of any other item is refused (`not_held_for_staff`); staff reject any open item. A re-roll puts the new revision back to the judge. A staff member stops an approved item before its reveal (`stopApproved`); the code refuses only a stop with no reviewer (`reviewer_required`), so the model guard is `who != NO_REVIEWER` (changed 2026-11-23 after review: the earlier guard `STAFF.contains(who)` was stricter than `ConsentNetwork.stopApproved` and was drift). The approve needs a named staff member (`reviewer_required` for none, `reviewer_reserved` for the judge's own name, `JUDGE_REVIEWER`). `teenReviewerNamed`, `teenApprovalNamesAPerson` and the simulated reviewer (`AUTO_REVIEWER`) are deleted. New invariants: `heldItemNeedsStaff` (an item held at a revision is approved at that revision only by staff, and staff approve only a held revision) and `noContactWithoutApprover` (a probe goes out only after an approval that names its approver and was not stopped).
+
 Changed 2026-11-22 (audit STAFF-models-convention): this model now uses the convention of [staff_console](staff_console.md). Before, the code action was in `step` and the rule was outside `safety`, so `safety` did not check the intended design. The intended `keyPress` in `step` ignores a repeat event, and `repeatNeverDecides` is in `safety`. `keyPressCode` (one `keyPressBy(code, ...)` body) follows the code and is outside `step`: `heldKeyDecidesTest` shows the rule fail after it, and `heldKeyIgnoredTest` shows the intended handler. The fix is a web change (frontend agent).
+
+Changed (owner decision 2026-11-22): the server side has the teen friendship rules of [friend introductions with a minor](../friendIntroAge.md) and [the teen introduction stop](../teenIntroSwitch.md). The server approves an item with a minor only while teen introductions are not stopped and only when the roster passes `teenFriendAgeRule` (here an oracle set of allowed teen pairs; the rule itself is in the [opportunity](opportunity.md) and [candidate pool](candidate_pool.md) models). `teenSwitchOffNoMinor` is the earlier rule for the stopped case. Open web drift (another session owns the page): `approveBlock` in `review.tsx` still blocks every known minor, so the desk page never sends an approve for a teen item; a reviewer approves it through the server route (`otherReviewerOf`). The page must show the `teen` review details and let a reviewer approve.
+
+Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start. The stored stop (`teenStop`, [teen introduction stop](../teenIntroSwitch.md) `teenIntrosStoredOn`) is the state `teenStopped`, false at the start. One `admin` or `safety` staff member stops them (`teenStop`), and one `admin` turns them on again (`teenResume`); each step writes an audit row. A stop expires every item in review with a minor. The two-admin step, its decision reference and window, the staff confirm step and the safety-role approval are deleted, because the owner chose "On at launch, no extra checks". Readiness is derived: a person with an exact birth date and no doubt is teen ready (`teenReadyOf`); this model has no doubt, and the [opportunity](opportunity.md) and [oauth_mcp](oauth_mcp.md) models cover a readiness loss. This model has one network and pairs only; one stop call acts on every network that offers teen introductions, and the [opportunity](opportunity.md) model has the groups that close as a whole.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -44,6 +50,11 @@ Changed 2026-11-22 (audit STAFF-models-convention): this model now uses the conv
 //     a decision that the server applied.
 //   - The server decision (ConsentNetwork.decide and reviewBlock in packages/network/src/network.ts, served
 //     by POST /review/:oppId in packages/network/service/service.ts, which refuses a body without a revision).
+//     Automated review (owner decision 2026-11-22, D15 to D17; spec/automatedReview.md): the server phase of
+//     an item is AwaitingJudge, HeldForStaff, Decided or Stopped. The review judge is an environment
+//     (judgeApprove, judgeHold, judgeOverdue, judgeStale: ConsentNetwork.recordJudgment and the tick's
+//     holdUnjudged); staff decide only held items (not_held_for_staff) and may reject any open item; staff
+//     stop an approved item before its reveal (stopApproved). The page queue shows the held items only.
 //   - The matching switch (Config in packages/observatory/web/admin.tsx, the workspace controller of
 //     spec/consoleWorkspace.md) for two admins. The first press asks; the confirm press sends
 //     `on: !c.matchingEnabled` from the same fetched config. A reload of the config drops the asked state
@@ -67,12 +78,14 @@ Changed 2026-11-22 (audit STAFF-models-convention): this model now uses the conv
 //     that decision. Here it is part of the nondeterministic environment of approveBlock (not modelled).
 //   - The opportunity panel (panels.tsx) mounts its own ReviewActions with its own controller. Not modelled.
 //   - Errors and toasts, the score disclosure, the app and sign-in scope of a response, popovers.
-//   - The launch scope of the matching switch (spec/runtimeUnit.md matchingSwitchAllowed, setMatching refuses
-//     "on" outside it). This model's network is inside its scope; staff_console models the refusal.
+//   - The registry gate of the matching switch (spec/runtimeUnit.md, setMatching refuses "on" when the registry
+//     row does not allow matching). This model's network is allowed; staff_console models the refusal.
 //   - The approval re-check after approve (approvalCheck, review_invalidated) and edit leak checks
 //     (editBlock). The model keeps decision "approve" with the version it was approved at.
-//   - The server refusals note_required (the page asks for the note first), staff_review_required and
-//     gathering_repeat_fixed_pair (monthly gathering repeats, not in this queue). Compared 2026-11-21.
+//   - The server refusals note_required (the page asks for the note first) and gathering_repeat_fixed_pair
+//     (monthly gathering repeats, not in this queue). Compared 2026-11-21.
+//   - The judge packet, its hash, the call limits and the claim of the judge worker (spec/automatedReview.md
+//     proves judgeCallDecision and judgeClaimDecision). Here a judgment is one atomic step.
 module review_desk {
 
   // ---------------------------------------------------------------- constants
@@ -80,8 +93,24 @@ module review_desk {
   pure val MAX_T = 8
   pure val REASONS = 2
   pure val CAN_ACT = true
-  pure val PAIRS = Set([1, 2], [2, 1], [1, 3], [2, 4])
+  pure val PAIRS = Set([1, 2], [2, 1], [1, 3], [2, 4], [5, 6], [1, 5], [3, 5])
   pure val ADMINS = Set(1, 2)
+  // Staff ids (not people): 1 and 2 are admins (admin 1 also has the safety role), 3 is a safety staff member,
+  // 4 is a reviewer in the normal role; the page's reviewer is 4. NO_REVIEWER: a decision with no reviewer
+  // (reviewer_required); JUDGE_REVIEWER: the judge's own reviewer name (reviewer_reserved). Neither is staff.
+  pure val STAFF = Set(1, 2, 3, 4)
+  pure val SAFETY = Set(1, 3)
+  pure val PAGE_STAFF = 4
+  pure val NO_REVIEWER = 0
+  pure val JUDGE_REVIEWER = 9
+  pure val REVIEWERS = STAFF.union(Set(NO_REVIEWER, JUDGE_REVIEWER))
+  // The judge wait limit (judgeWaitLimitMs) in ticks.
+  pure val JUDGE_WAIT = 1
+  // People 5 (16) and 6 (17) are born within 2 years: the one roster that teenFriendAgeRule allows while teen
+  // introductions are not stopped (an oracle for groupAgeAllowed).
+  pure val TEEN_PAIRS = Set([5, 6], [6, 5])
+  // People with an exact birth date on record (person 3 has only a typed age).
+  pure val BIRTH_EXACT = Set(5, 6)
 
   // ---------------------------------------------------------------- generated controller (spec/staffReview.md)
   // ReviewMode: "IdleReview" | "RejectReview" | "EditReview" | "RerollReview". A card key {id: 0} is "".
@@ -119,7 +148,9 @@ module review_desk {
   pure val PEOPLE: int -> Person = Map(
     1 -> { minor: false, declined: false },
     2 -> { minor: false, declined: false },
-    3 -> { minor: true, declined: false })
+    3 -> { minor: true, declined: false },
+    5 -> { minor: true, declined: false },
+    6 -> { minor: true, declined: false })
 
   // approveBlock in review.tsx: read-only, plan preview (not modelled), a known minor, a declined
   // participant, matching off. The page does not check the deadline and does not block a person it does
@@ -132,10 +163,16 @@ module review_desk {
     else "idle"
 
   // ---------------------------------------------------------------- environment and shell types
-  // decision: "pending" | "approve" | "reject" | "expired". A re-roll with no alternate closes the
-  // item with decision "pending" and inReview false.
-  type SrvItem = { arrived: bool, inReview: bool, decision: str, deadline: int, version: int,
-                   parts: List[int], decidedAt: int, approvedVersion: int }
+  // phase: "AwaitingJudge" | "HeldForStaff" | "Decided" | "Stopped". decision: "pending" | "approve" |
+  // "reject" | "expired" | "invalidated" | "stopped". A re-roll with no alternate and a close leave
+  // decision "pending" with phase "Decided". approver: "none" | "judge" | "staff". waitFrom: the start of
+  // the judge wait (queuedAt, or judgeWaitFrom after a re-roll). heldVersion: the revision the judge held
+  // (-1 for none). rubricMinor: the judge read the roster with the strict rubric. contacted: a probe went
+  // out; revealed: the reveal went out. teenOnAtApproval is a ghost.
+  type SrvItem = { arrived: bool, phase: str, decision: str, deadline: int, version: int,
+                   parts: List[int], decidedAt: int, approvedVersion: int, waitFrom: int,
+                   approver: str, heldVersion: int, rubricMinor: bool, teenOnAtApproval: bool,
+                   contacted: bool, revealed: bool }
   type ViewItem = { known: bool, inReview: bool, deadline: int, version: int, parts: List[int] }
   type Drafts = { key: Key, changed: bool }
   // The queue component (one mount). inst counts mounts; the old instance is unmounted.
@@ -157,6 +194,9 @@ module review_desk {
     // ghost: the answers that moved the selection, with whether the queue owned them.
     moves: Set[{ rid: int, owned: bool }],
     admins: int -> Admin, mflight: Set[MReq], msent: Set[MReq], nextMid: int,
+    // The stored teen stop (spec/teenIntroSwitch.md teenIntrosStoredOn): teenStopped is "the key teenStop is
+    // present". teenAudit: the audit rows of the stop and resume steps, in order.
+    teenStopped: bool, teenAudit: List[{ by: int, on: bool }],
     // ghost counters for witnesses
     repeats: int, lateElsewhere: int, oldAnswers: int, raceDrops: int,
   }
@@ -164,8 +204,10 @@ module review_desk {
   var s: State
 
   // ---------------------------------------------------------------- shell helpers
+  pure def reviewOpen(it: SrvItem): bool = it.phase == "AwaitingJudge" or it.phase == "HeldForStaff"
+  // reviewQueue(): the page lists only the items the judge held for staff.
   pure def viewOf(it: SrvItem): ViewItem =
-    { known: it.arrived, inReview: it.inReview, deadline: it.deadline, version: it.version, parts: it.parts }
+    { known: it.arrived, inReview: it.phase == "HeldForStaff", deadline: it.deadline, version: it.version, parts: it.parts }
 
   // reviewPending: the items in review, sorted by deadline, then id.
   pure def pendingOf(m: int -> ViewItem): List[int] =
@@ -218,8 +260,10 @@ module review_desk {
                sent: st.sent.union(Set(r)), nextRid: st.nextRid + 1 }
 
   // ---------------------------------------------------------------- init
-  pure val NO_ITEM: SrvItem = { arrived: false, inReview: false, decision: "pending", deadline: 0, version: 0,
-                                parts: [], decidedAt: -1, approvedVersion: -1 }
+  pure val NO_ITEM: SrvItem = { arrived: false, phase: "Decided", decision: "pending", deadline: 0, version: 0,
+                                parts: [], decidedAt: -1, approvedVersion: -1, waitFrom: 0,
+                                approver: "none", heldVersion: -1, rubricMinor: false, teenOnAtApproval: false,
+                                contacted: false, revealed: false }
   pure val NO_VIEW: ViewItem = { known: false, inReview: false, deadline: 0, version: 0, parts: [] }
 
   action init = { nondet on = Set(true, false).oneOf() initWith(on) }
@@ -234,6 +278,7 @@ module review_desk {
       moves: Set(),
       admins: ADMINS.mapBy(_ => { asking: false, armedAt: 0, cfg: on, asked: false }),
       mflight: Set(), msent: Set(), nextMid: 1,
+      teenStopped: false, teenAudit: [],
       repeats: 0, lateElsewhere: 0, oldAnswers: 0, raceDrops: 0,
     },
   }
@@ -241,9 +286,11 @@ module review_desk {
   // ---------------------------------------------------------------- environment actions
   action tick = all { s.now < MAX_T, s' = { ...s, now: s.now + 1 } }
 
+  // The proposal path refuses a roster with a minor while teen introductions are stopped (participant_minor).
   action arriveItem(id: int, d: int, pair: List[int]): bool = all {
     not(s.srv.get(id).arrived),
-    s' = { ...s, srv: s.srv.set(id, { ...NO_ITEM, arrived: true, inReview: true, deadline: s.now + d, parts: pair }) },
+    not(hasMinor(pair)) or not(s.teenStopped),
+    s' = { ...s, srv: s.srv.set(id, { ...NO_ITEM, arrived: true, phase: "AwaitingJudge", deadline: s.now + d, waitFrom: s.now, parts: pair }) },
   }
   action arrive = {
     nondet id = ITEMS.filter(i => not(s.srv.get(i).arrived)).oneOf()
@@ -252,29 +299,104 @@ module review_desk {
     arriveItem(id, d, pair)
   }
 
-  // The server tick (advance) expires an item at or after its deadline. The tick can come late.
+  // The server tick (advance, canExpireReview) expires an open item at or after its deadline: awaiting the
+  // judge or held for staff. The tick can come late.
   action serverExpire = {
-    nondet id = ITEMS.filter(i => s.srv.get(i).inReview and s.now >= s.srv.get(i).deadline).oneOf()
-    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), inReview: false, decision: "expired" }) }
+    nondet id = ITEMS.filter(i => reviewOpen(s.srv.get(i)) and s.now >= s.srv.get(i).deadline).oneOf()
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "Decided", decision: "expired" }) }
   }
 
-  // Another reviewer decides or re-rolls an item (through the same server rules, before the deadline).
+  // The review judge (spec/automatedReview.md recordJudgment): a judgment for the open revision, before the
+  // deadline, while matching is on (matching_paused refuses it). An approval whose gates fail (reviewBlock
+  // and approvalCheck: a minor outside the rule, a declined or unknown person) closes the item
+  // (review_invalidated). A roster with a minor is read with the strict rubric (reviewRubric).
+  action judgeApproveOf(id: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    s.now < s.srv.get(id).deadline,
+    s.matchingOn,
+    val it = s.srv.get(id)
+    s' = { ...s, srv: s.srv.set(id,
+      if (partsOk(it.parts, not(s.teenStopped)))
+        { ...it, phase: "Decided", decision: "approve", decidedAt: s.now, approvedVersion: it.version, approver: "judge",
+          rubricMinor: hasMinor(it.parts), teenOnAtApproval: not(s.teenStopped) }
+      else { ...it, phase: "Decided", decision: "invalidated", decidedAt: s.now }) },
+  }
+  // A flag, an unsure reply or a judge that cannot run (no provider, a limit, a model error): held for staff.
+  action judgeHoldOf(id: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    s.now < s.srv.get(id).deadline,
+    s.matchingOn,
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "HeldForStaff", heldVersion: s.srv.get(id).version }) },
+  }
+  // holdUnjudged in the network tick: no judgment within the wait limit while matching is on (judge_overdue).
+  action judgeOverdueOf(id: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    s.matchingOn,
+    s.now - s.srv.get(id).waitFrom >= JUDGE_WAIT,
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "HeldForStaff", heldVersion: s.srv.get(id).version }) },
+  }
+  // A judgment for another revision or another packet (judgment_stale, judgment_stale_packet) changes nothing.
+  action judgeStaleOf(id: int, ver: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    ver != s.srv.get(id).version,
+    s' = s,
+  }
+  action judge = {
+    nondet id = ITEMS.filter(i => s.srv.get(i).phase == "AwaitingJudge").oneOf()
+    nondet ver = Set(0, 1, 2).oneOf()
+    any { judgeApproveOf(id), judgeHoldOf(id), judgeOverdueOf(id), judgeStaleOf(id, ver) }
+  }
+
+  // The send path after an approval: the first probe, then the reveal (begin, startProbes, the reveal).
+  action probeOf(id: int): bool = all {
+    s.srv.get(id).decision == "approve", not(s.srv.get(id).contacted),
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), contacted: true }) },
+  }
+  action revealOf(id: int): bool = all {
+    s.srv.get(id).decision == "approve", s.srv.get(id).contacted, not(s.srv.get(id).revealed),
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), revealed: true }) },
+  }
+  action send = {
+    nondet id = ITEMS.filter(i => s.srv.get(i).decision == "approve").oneOf()
+    any { probeOf(id), revealOf(id) }
+  }
+
+  // Staff stop an approved item before its reveal (stopApproved, canStopApproved).
+  action stopApprovedOf(id: int, who: int): bool = all {
+    who != NO_REVIEWER,
+    s.srv.get(id).decision == "approve", s.srv.get(id).approver != "none", not(s.srv.get(id).revealed),
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "Stopped", decision: "stopped" }) },
+  }
+  action stopApproved = {
+    nondet id = ITEMS.filter(i => s.srv.get(i).decision == "approve").oneOf()
+    nondet who = REVIEWERS.oneOf()
+    stopApprovedOf(id, who)
+  }
+
+  // Another staff member decides or re-rolls an item through the same server rules, before the deadline:
+  // a named staff member (reviewer_required, reviewer_reserved); approve and re-roll only a held item
+  // (not_held_for_staff); reject any open item. "close" is a server close (closeUnjudgeable, a gate).
   action otherReviewer = {
-    nondet id = ITEMS.filter(i => s.srv.get(i).inReview).oneOf()
+    nondet id = ITEMS.filter(i => reviewOpen(s.srv.get(i))).oneOf()
     nondet what = Set("approve", "reject", "reroll", "close").oneOf()
     nondet pair = PAIRS.oneOf()
-    otherReviewerOf(id, what, pair)
+    nondet who = REVIEWERS.oneOf()
+    otherReviewerOf(id, what, pair, who)
   }
-  action otherReviewerOf(id: int, what: str, pair: List[int]): bool = all {
-    s.srv.get(id).inReview,
+  action otherReviewerOf(id: int, what: str, pair: List[int], who: int): bool = all {
+    reviewOpen(s.srv.get(id)),
     s.now < s.srv.get(id).deadline,
-    what == "approve" implies (partsOk(s.srv.get(id).parts) and s.matchingOn),
+    what != "close" implies STAFF.contains(who),
+    (what == "approve" or what == "reroll") implies s.srv.get(id).phase == "HeldForStaff",
+    what == "approve" implies serverApproveOk(s.srv.get(id).parts, not(s.teenStopped), s.matchingOn),
+    what == "reroll" implies (not(hasMinor(pair)) or not(s.teenStopped)),
     val it = s.srv.get(id)
     val it2 =
-      if (what == "reroll") { ...it, deadline: s.now + 3, version: it.version + 1, parts: pair }
-      else if (what == "close") { ...it, inReview: false }
-      else if (what == "approve") { ...it, inReview: false, decision: what, decidedAt: s.now, approvedVersion: it.version }
-      else { ...it, inReview: false, decision: what, decidedAt: s.now }
+      if (what == "reroll") { ...it, phase: "AwaitingJudge", deadline: s.now + 3, version: it.version + 1, parts: pair, waitFrom: s.now }
+      else if (what == "close") { ...it, phase: "Decided" }
+      else if (what == "approve") { ...it, phase: "Decided", decision: what, decidedAt: s.now, approvedVersion: it.version,
+                                    approver: "staff", teenOnAtApproval: not(s.teenStopped) }
+      else { ...it, phase: "Decided", decision: what, decidedAt: s.now }
     s' = { ...s, srv: s.srv.set(id, it2) },
   }
 
@@ -286,13 +408,22 @@ module review_desk {
   action push = { nondet id = ITEMS.filter(i => s.srv.get(i).arrived).oneOf() pushItem(id) }
   action pushMatching = s' = render({ ...s, viewMatchingOn: s.matchingOn })
 
-  // reviewBlock: a participant who is a minor, declined or unknown refuses approve and edit.
-  pure def partsOk(parts: List[int]): bool =
-    parts.foldl(true, (b, i) => b and PEOPLE.keys().contains(i) and not(PEOPLE.get(i).minor) and not(PEOPLE.get(i).declined))
+  // reviewBlock: a participant who is declined or unknown refuses approve and edit. A roster with a minor passes
+  // only while teen introductions are not stopped and the roster passes teenFriendAgeRule (owner decision 2026-11-22).
+  pure def hasMinor(parts: List[int]): bool =
+    parts.foldl(false, (b, i) => b or (PEOPLE.keys().contains(i) and PEOPLE.get(i).minor))
+  // spec/friendIntroAge.md teenReady, derived: an exact birth date and no doubt (this model has no doubt).
+  pure def teenReadyOf(p: int): bool = BIRTH_EXACT.contains(p)
+  pure def partsOk(parts: List[int], teenOn: bool): bool =
+    parts.foldl(true, (b, i) => b and PEOPLE.keys().contains(i) and not(PEOPLE.get(i).declined))
+      and (not(hasMinor(parts)) or (teenOn and TEEN_PAIRS.contains(parts) and parts.foldl(true, (b, i) => b and teenReadyOf(i))))
+  pure def serverApproveOk(parts: List[int], teenOn: bool, matchingOn: bool): bool =
+    partsOk(parts, teenOn) and matchingOn
 
   // ConsentNetwork.decide in one unit of work. In order: not in review; at or past the deadline the item
   // expires now (advance) and the decision is refused (review_expired); another revision is refused
-  // (review_stale); reviewBlock refuses approve and edit for a minor, declined or unknown participant
+  // (review_stale); approve, edit and re-roll of an item that is not held for staff are refused
+  // (not_held_for_staff); reviewBlock refuses approve and edit for a minor, declined or unknown participant
   // and while matching is off. `lost`: the answer that reaches the page says "failed", whether or not
   // the server applied it.
   action serverApply = {
@@ -307,18 +438,20 @@ module review_desk {
     s.inflight.exists(x => x.rid == rid),
     val r = s.inflight.filter(x => x.rid == rid).getOnlyElement()
     val it = s.srv.get(r.id)
-    val late = it.inReview and s.now >= it.deadline
-    val accept = it.inReview and not(late) and r.version == it.version and
-      (r.kind == "reject" or r.kind == "reroll" or (partsOk(it.parts) and s.matchingOn))
+    val late = reviewOpen(it) and s.now >= it.deadline
+    val accept = reviewOpen(it) and not(late) and r.version == it.version and
+      (r.kind == "reject" or (it.phase == "HeldForStaff" and
+        (r.kind == "reroll" or serverApproveOk(it.parts, not(s.teenStopped), s.matchingOn))))
     val doIt = accept and (not(lost) or applied)
     val it2 =
-      if (late) { ...it, inReview: false, decision: "expired" }
+      if (late) { ...it, phase: "Decided", decision: "expired" }
       else if (not(doIt)) it
       else if (r.kind == "reroll")
-        if (alt) { ...it, deadline: s.now + 3, version: it.version + 1, parts: pair }
-        else { ...it, inReview: false }
-      else if (r.kind == "reject") { ...it, inReview: false, decision: "reject", decidedAt: s.now }
-      else { ...it, inReview: false, decision: "approve", decidedAt: s.now, approvedVersion: r.version }
+        if (alt and (not(hasMinor(pair)) or not(s.teenStopped))) { ...it, phase: "AwaitingJudge", deadline: s.now + 3, version: it.version + 1, parts: pair, waitFrom: s.now }
+        else { ...it, phase: "Decided" }
+      else if (r.kind == "reject") { ...it, phase: "Decided", decision: "reject", decidedAt: s.now }
+      else { ...it, phase: "Decided", decision: "approve", decidedAt: s.now, approvedVersion: r.version,
+             approver: "staff", teenOnAtApproval: not(s.teenStopped) }
     s' = { ...s,
       srv: s.srv.set(r.id, it2),
       inflight: s.inflight.exclude(Set(r)),
@@ -486,10 +619,32 @@ module review_desk {
     s' = { ...s, matchingOn: m.on, mflight: s.mflight.exclude(Set(m)) },
   }
 
+  // ---------------------------------------------------------------- the teen stop (server, POST /teen-intros)
+  // spec/teenIntroSwitch.md: teen introductions are on from the start. One admin or safety staff member stops
+  // them: every open item with a minor (awaiting the judge or held) expires unsent. One admin turns them on
+  // again (the key is deleted).
+  // Each step writes one audit row. Abstraction: the model takes a stop only while on and a resume only while
+  // stopped, so that the audit list stays short.
+  action teenStop(a: int): bool = all {
+    ADMINS.union(SAFETY).contains(a), not(s.teenStopped),
+    s' = { ...s, teenStopped: true, teenAudit: s.teenAudit.append({ by: a, on: false }),
+           srv: ITEMS.mapBy(i => if (reviewOpen(s.srv.get(i)) and hasMinor(s.srv.get(i).parts))
+                                   { ...s.srv.get(i), phase: "Decided", decision: "expired" }
+                                 else s.srv.get(i)) },
+  }
+  action teenResume(a: int): bool = all {
+    ADMINS.contains(a), s.teenStopped,
+    s' = { ...s, teenStopped: false, teenAudit: s.teenAudit.append({ by: a, on: true }) },
+  }
+  action teenStep = {
+    nondet a = STAFF.oneOf()
+    any { teenStop(a), teenResume(a) }
+  }
+
   action step = any {
-    tick, arrive, serverExpire, otherReviewer, push, pushMatching, serverApply,
+    tick, arrive, serverExpire, judge, send, stopApproved, otherReviewer, push, pushMatching, serverApply,
     deliver, keyPress, selectCard, focusLink, clickButton, clickToggle, typeDraft, typeNote, remount,
-    adminPress, adminTimeout, adminReload, serverMatching,
+    adminPress, adminTimeout, adminReload, serverMatching, teenStep,
   }
 
   // ---------------------------------------------------------------- invariants
@@ -504,8 +659,7 @@ module review_desk {
     s.br.note == NOKEY or s.br.note == s.br.ctl.cardKey,
   }
 
-  // Rule: AGENTS.md "Every proactive proposal ... must go through human review". Each decision goes to
-  // the card on view, with the key and revision that the controller held for it.
+  // Each staff decision goes to the card on view, with the key and revision that the controller held for it.
   val decisionOnlyToVisibleCard = s.sent.forall(r => r.id == r.sel and r.key == { id: r.id, ver: r.version })
 
   // spec/staffReview.md "An old response cannot clear or move a newer selection": an answer moves the
@@ -539,10 +693,43 @@ module review_desk {
     s.sent.forall(r => (r.kind == "approve" or r.kind == "edit") implies
       ((r.kind == "edit") iff (r.modeBefore == "EditReview" and r.draftsBefore.key == r.key and r.draftsBefore.changed)))
 
+  // Owner decision 2026-11-22 (spec/friendIntroAge.md teenFriendAgeRule): an approved roster with a minor was
+  // approved while teen introductions were on, the roster passes the rule, and every person in it is teen ready
+  // (an exact birth date and no doubt).
+  val teenFriendAgeRule = ITEMS.forall(i => (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)) implies
+    (s.srv.get(i).teenOnAtApproval and TEEN_PAIRS.contains(s.srv.get(i).parts)
+      and s.srv.get(i).parts.foldl(true, (b, p) => b and teenReadyOf(p))))
+  // While teen introductions are stopped no item with a minor is approved, and no item with a minor is in review:
+  // the stop expires each one, and the proposal path and the re-roll add none while they are stopped.
+  val teenSwitchOffNoMinor = and {
+    ITEMS.forall(i => (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)) implies s.srv.get(i).teenOnAtApproval),
+    s.teenStopped implies ITEMS.forall(i => not(reviewOpen(s.srv.get(i)) and hasMinor(s.srv.get(i).parts))),
+  }
+  // spec/teenIntroSwitch.md lawTeenRosterIsJudgedStrictly: the judge reads a roster with a minor with the strict rubric.
+  val teenRosterIsJudgedStrictly = ITEMS.forall(i =>
+    (s.srv.get(i).approver == "judge" and hasMinor(s.srv.get(i).parts)) implies s.srv.get(i).rubricMinor)
+  // spec/automatedReview.md stepHeldItemNeedsStaff: a revision the judge held is approved only by staff, and staff
+  // approve only a revision the judge held (canStaffDecide).
+  pure def heldNeedsStaffOf(it: SrvItem): bool =
+    (it.approvedVersion >= 0 and it.approver != "none") implies ((it.heldVersion == it.approvedVersion) iff (it.approver == "staff"))
+  val heldItemNeedsStaff = ITEMS.forall(i => heldNeedsStaffOf(s.srv.get(i)))
+  // spec/automatedReview.md alwaysApprovalNamesApprover and contactApproved: a probe or a reveal goes out only
+  // after an approval that names its approver; a stopped item sends no reveal after the stop.
+  pure def contactHasApproverOf(it: SrvItem): bool = and {
+    (it.contacted or it.revealed) implies (it.approver != "none" and it.approvedVersion >= 0),
+    (it.decision == "approve" or it.decision == "stopped") iff (it.approver != "none" and it.approvedVersion >= 0),
+    it.revealed implies it.contacted,
+  }
+  val noContactWithoutApprover = ITEMS.forall(i => contactHasApproverOf(s.srv.get(i)))
+  // Only an admin resumes; an admin or a safety staff member stops.
+  val teenAuditByStaffRole = s.teenAudit.foldl(true, (b, r) => b and (if (r.on) ADMINS.contains(r.by) else ADMINS.union(SAFETY).contains(r.by)))
+
   val safety = and {
     requiredNoteBelongsToRejection, ctlBoundToSelection, decisionOnlyToVisibleCard, oldResponseNeverMovesSelection,
     approveOnlyWhenUnblocked, serverApproveBeforeDeadline, approveMatchesSeenPeople, confirmSendsAskedDirection,
     draftsBoundToItem, approveCarriesOwnDrafts, repeatNeverDecides,
+    teenFriendAgeRule, teenSwitchOffNoMinor, teenRosterIsJudgedStrictly, teenAuditByStaffRole,
+    heldItemNeedsStaff, noContactWithoutApprover,
   }
 
   // A key-repeat event never sends a decision. keyPressCode (review.tsx onKey) breaks it: heldKeyDecidesTest.
@@ -561,11 +748,17 @@ module review_desk {
   val witness_flipSent = s.msent.size() == 0
   val witness_flipRaceDropped = s.raceDrops == 0
   val witness_noteNeeded = not(s.br.ctl.noteNeeded)
+  val witness_teenApproved = not(ITEMS.exists(i => s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)))
+  val witness_judgeApproved = not(ITEMS.exists(i => s.srv.get(i).approver == "judge"))
+  val witness_staffApprovedHeld = not(ITEMS.exists(i => s.srv.get(i).approver == "staff"))
+  val witness_heldExpired = not(ITEMS.exists(i => s.srv.get(i).heldVersion >= 0 and s.srv.get(i).decision == "expired"))
+  val witness_stopped = not(ITEMS.exists(i => s.srv.get(i).decision == "stopped"))
 
   // ---------------------------------------------------------------- replayed traces
-  // Three items with the same deadline, so the queue order is 1, 2, 3.
+  // Three items with the same deadline, each held for staff by the judge, so the queue order is 1, 2, 3.
   action threeItems = initWith(true)
     .then(arriveItem(1, 4, [1, 2])).then(arriveItem(2, 4, [1, 2])).then(arriveItem(3, 4, [2, 1]))
+    .then(judgeHoldOf(1)).then(judgeHoldOf(2)).then(judgeHoldOf(3))
     .then(pushItem(1)).then(pushItem(2)).then(pushItem(3))
 
   // The head card is bound on render; the first press on it approves it (the page has no "chosen" step).
@@ -581,10 +774,13 @@ module review_desk {
     .then(all { assert(s.sent.forall(r => r.kind == "approve" and r.id == 2 and r.editsFrom == NOKEY)
                        and s.br.drafts == NODRAFT), s' = s })
 
-  // A re-roll by another reviewer changes the revision of the card on view: the draft starts again.
+  // A re-roll by another reviewer changes the revision of the card on view: the item goes back to the judge,
+  // leaves the queue, and comes back at the new revision when the judge holds it again. The draft starts again.
   run rerollClearsDraftTest = threeItems.then(selectCardOf(1))
     .then(keyPressOf("e", 0, false)).then(typeDraft)
-    .then(otherReviewerOf(1, "reroll", [2, 1])).then(pushItem(1))
+    .then(otherReviewerOf(1, "reroll", [2, 1], 4)).then(pushItem(1))
+    .then(all { assert(s.br.sel == 2 and s.srv.get(1).phase == "AwaitingJudge"), s' = s })
+    .then(judgeHoldOf(1)).then(pushItem(1))
     .then(all { assert(s.br.ctl.cardKey == { id: 1, ver: 1 } and s.br.ctl.mode == "IdleReview" and s.br.drafts == NODRAFT), s' = s })
 
   // The late answer for 1 arrives after the reviewer selected 3: the card stays on 3.
@@ -641,5 +837,84 @@ module review_desk {
     .then(deliverAns(1))
     .then(keyPressOf("a", 0, true))
     .then(all { assert(repeatNeverDecides and s.repeats == 1 and not(s.sent.exists(r => r.id == 2))), s' = s })
+
+  // Owner decisions 2026-11-22 (A2 to A5, D15 to D17). Teen introductions are on from the start; the judge
+  // approves a teen pair with the strict rubric and no staff member reads it.
+  action teenOnItem = initWith(true).then(arriveItem(1, 4, [5, 6]))
+  run teenJudgeApprovesTest = teenOnItem
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "approve" and s.srv.get(1).approver == "judge" and s.srv.get(1).rubricMinor and safety), s' = s })
+  // Staff cannot approve an item that waits for the judge (not_held_for_staff).
+  run staffApproveAwaitingTest = teenOnItem.then(otherReviewerOf(1, "approve", [5, 6], 4)).fail()
+  // Staff may reject an item that waits for the judge; a later judgment finds it decided.
+  run staffRejectAwaitingTest = teenOnItem
+    .then(otherReviewerOf(1, "reject", [5, 6], 4))
+    .then(all { assert(s.srv.get(1).decision == "reject" and safety), s' = s })
+  run judgeAfterRejectTest = teenOnItem.then(otherReviewerOf(1, "reject", [5, 6], 4)).then(judgeApproveOf(1)).fail()
+  // A held item needs a named staff member: none and the judge's own name are refused.
+  action heldTeenItem = teenOnItem.then(judgeHoldOf(1))
+  run heldNoReviewerTest = heldTeenItem.then(otherReviewerOf(1, "approve", [5, 6], NO_REVIEWER)).fail()
+  run heldJudgeNameTest = heldTeenItem.then(otherReviewerOf(1, "approve", [5, 6], JUDGE_REVIEWER)).fail()
+  // The judge does not decide a held item again; staff approve it.
+  run heldNeedsStaffTest = heldTeenItem.then(judgeApproveOf(1)).fail()
+  run heldStaffApprovesTest = heldTeenItem
+    .then(otherReviewerOf(1, "approve", [5, 6], 4))
+    .then(all { assert(s.srv.get(1).approver == "staff" and s.srv.get(1).heldVersion == 0 and safety), s' = s })
+  // A held item that nobody decides expires at its deadline, unsent.
+  run heldExpiresTest = heldTeenItem
+    .then(tick).then(tick).then(tick).then(tick).then(serverExpire)
+    .then(all { assert(s.srv.get(1).decision == "expired" and not(s.srv.get(1).contacted) and safety), s' = s })
+  // No judgment within the wait limit: the tick holds the item while matching is on, never while it is paused.
+  run judgeOverdueTest = teenOnItem.then(tick).then(judgeOverdueOf(1))
+    .then(all { assert(s.srv.get(1).phase == "HeldForStaff" and safety), s' = s })
+  run judgeOverduePausedTest = initWith(false).then(arriveItem(1, 4, [1, 2])).then(tick).then(judgeOverdueOf(1)).fail()
+  // A judgment for another revision changes nothing.
+  run judgeStaleTest = teenOnItem.then(judgeStaleOf(1, 1))
+    .then(all { assert(s.srv.get(1).phase == "AwaitingJudge" and safety), s' = s })
+  // The judge approves an adult pair.
+  run adultJudgeApprovesTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2]))
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "approve" and not(s.srv.get(1).rubricMinor) and safety), s' = s })
+  // A minor with an adult never passes: the judge's approval closes the item (review_invalidated).
+  run teenAdultPairTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 5]))
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "invalidated" and safety), s' = s })
+  // A minor without an exact birth date is not teen ready: the pair is not approved.
+  run teenUnreadyTest = initWith(true)
+    .then(arriveItem(1, 4, [3, 5]))
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "invalidated" and safety), s' = s })
+  // Staff stop an approved item after its first probe and before its reveal; nothing more goes out.
+  run stopBeforeRevealTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1))
+    .then(stopApprovedOf(1, 4))
+    .then(all { assert(s.srv.get(1).decision == "stopped" and safety), s' = s })
+  run stoppedNoRevealTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1))
+    .then(stopApprovedOf(1, 4)).then(revealOf(1)).fail()
+  // After the reveal the item cannot be stopped (not_stoppable).
+  run revealedNotStoppableTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1)).then(revealOf(1))
+    .then(stopApprovedOf(1, 4)).fail()
+  // A stop with no reviewer is refused (reviewer_required).
+  run stopNoReviewerTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1))
+    .then(stopApprovedOf(1, NO_REVIEWER)).fail()
+  // While teen introductions are stopped, a teen pair does not enter review.
+  run teenStoppedTest = initWith(true).then(teenStop(3)).then(arriveItem(1, 4, [5, 6])).fail()
+  // A reviewer without the admin or safety role cannot stop; a safety staff member cannot resume.
+  run teenStopNeedsRoleTest = initWith(true).then(teenStop(4)).fail()
+  run teenResumeNeedsAdminTest = initWith(true).then(teenStop(3)).then(teenResume(3)).fail()
+  // One admin resumes: a teen pair enters review again, and each step wrote one audit row.
+  run teenResumeTest = initWith(true)
+    .then(teenStop(3)).then(teenResume(1))
+    .then(arriveItem(1, 4, [5, 6]))
+    .then(all { assert(not(s.teenStopped) and s.teenAudit == [{ by: 3, on: false }, { by: 1, on: true }] and safety), s' = s })
+  // The stop expires the teen item that waits for the judge.
+  run teenStopExpiresTest = teenOnItem
+    .then(teenStop(3))
+    .then(all { assert(s.srv.get(1).decision == "expired" and not(reviewOpen(s.srv.get(1))) and safety), s' = s })
 }
 ```
