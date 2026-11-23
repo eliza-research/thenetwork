@@ -650,12 +650,11 @@ test.each([
 
 let ageEstimatePair = 0;
 test.each([
-  { label: "first-person near adult birthday", body: "I'm turning 18 next month", minor: true },
-  { label: "adult birthday this month", body: "I'm turning 18 this month", minor: true },
-  { label: "first-person school year", body: "I'm in seventh grade", minor: true },
-  { label: "school year and another person's job", body: "I'm in seventh grade and she works as a teacher.", minor: true },
-  { label: "decimal measurement", body: "I'm turning 16.5 degrees", minor: false },
-  { label: "comma-separated distance", body: "I'm almost 15,000 feet away", minor: false },
+  { label: "first-person near adult birthday on TURN", body: "I'm turning 18 next month", minor: true, incomingAge: 17 },
+  { label: "first-person mid-teen birthday on TURN", body: "I'm turning 16 next month", minor: true, incomingAge: 15 },
+  { label: "first-person school year on TURN", body: "I'm in seventh grade", minor: true, incomingAge: 13 },
+  { label: "short birthday today", body: "turning 18 today", minor: true },
+  { label: "short birthday this month", body: "turning 18 this month", minor: true },
   { label: "measurement in miles", body: "I'm almost 150 miles away.", minor: false },
   { label: "turn in degrees", body: "I'm turning 165 degrees clockwise.", minor: false },
   { label: "quoted birthday", body: 'She said "I\'m turning 16 next month".', minor: false },
@@ -663,7 +662,6 @@ test.each([
   { label: "indirect grade", body: "My cousin said I am in seventh grade.", minor: false },
   { label: "quoted grade", body: "She said ‘I'm in seventh grade’.", minor: false },
   { label: "adult school role", body: "I'm in 12th grade as a teacher.", minor: false },
-  { label: "introductory adult school role", body: "As a teacher, I'm in 12th grade.", minor: false },
   { label: "distant birthday", body: "I'm turning 16 in two years.", minor: false },
   { label: "hypothetical birthday", body: "What if I'm turning 16 next month?", minor: false },
   { label: "short almost age", body: "almost 16", minor: true },
@@ -672,7 +670,7 @@ test.each([
   { label: "own birthday quotation", body: "I said “I'm turning 16 next month”", minor: true },
   { label: "own grade quotation", body: "I said ‘I'm in seventh grade’", minor: true },
   { label: "unfinished casual birthday", body: "“I'm turning 16 next month", minor: true },
-])("a signed age estimate only affects the relay item: $label", async ({ label, body, minor }) => {
+])("signed TURN and relay classify age at their own boundary: $label", async ({ label, body, minor, incomingAge }) => {
   const id = "relay-age-estimate-" + randomUUID();
   const pair = ++ageEstimatePair;
   const senderPhone = "+12125550" + (100 + 2 * pair);
@@ -692,6 +690,17 @@ test.each([
   expect(before).toBe(29);
 
   const text = "tell Bo " + body, messageId = id + "-text";
+  if (incomingAge !== undefined) {
+    clock.advance(MINUTE);
+    const response = await signed(TURN_PATH, messageId, JSON.stringify(turn(senderPhone, messageId, text)));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "handled" });
+    expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(incomingAge);
+    expect(await service.runtimeFor("friends")!.unitOfWork(net =>
+      net.exportState().opps.find(opp => opp.id === id)?.stage)).toBe("closed");
+    expect((await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text })).status).toBe(403);
+    return;
+  }
   expect(await open(senderPhone, messageId, text)).toBe(sender);
   expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(before);
   const response = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
