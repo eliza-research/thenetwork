@@ -189,7 +189,7 @@ const sharesQueued = async () => (await sql`select id from network.messages wher
 const pendingNumberSwaps = () => service.runtimeFor("friends")!.unitOfWork(net => net.exportState().relay?.swaps ?? []);
 let swapMatchTemplate: NetworkState["opps"][number] | undefined;
 
-async function startNumberSwap(id: string, who: "ari" | "bo") {
+async function resetSwapMatch(id: string) {
   await service.runtimeFor("friends")!.unitOfWork(net => {
     const state = net.exportState();
     swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
@@ -199,10 +199,35 @@ async function startNumberSwap(id: string, who: "ari" | "bo") {
     if (state.relay) state.relay.swaps = [];
     net.importState(state);
   });
+}
+
+async function startNumberSwap(id: string, who: "ari" | "bo") {
+  await resetSwapMatch(id);
   const recipient = who === "ari" ? "Bo" : "Ari";
   expect(await (await post(await ask(who, id + "-first", "send " + recipient + " my number"))).json())
     .toMatchObject({ decision: "hold", delivered: false });
 }
+
+test.each([
+  "Give him my number if he asks.",
+  "Give Ari my number if Ari asks.",
+  "Give him my number unless he objects.",
+  "Give him my number if it's okay with him.",
+  "Give him my number if you can, after he asks.",
+])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
+  const id = "conditional-swap-" + randomUUID();
+  await resetSwapMatch(id);
+  const before = await sharesQueued();
+  const conditional = await post(await ask("bo", id + "-conditional", text));
+  expect(conditional.status).toBe(200);
+  const requested = await conditional.json();
+  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
+  const counterpart = await post(await ask("ari", id + "-counterpart", "Send Bo my number."));
+  expect(counterpart.status).toBe(200);
+  expect({ requested, pending, counterpart: await counterpart.json(), newShares: await sharesQueued() - before })
+    .toMatchObject({ requested: { decision: "none", delivered: false }, pending: 0,
+      counterpart: { decision: "hold", delivered: false }, newShares: 0 });
+}, 60_000);
 
 test.each([
   "I would not give Ari my number",
@@ -390,6 +415,10 @@ test.each([
   { text: "Send him my number. Ana says, scratch that.", shares: true },
   { text: "Send him my photo, Ana said. Please send him my number.", shares: true },
   { text: "Send them my number, she already asked.", shares: true },
+  { text: "Send them my number if you can.", shares: true },
+  { text: "Give him my number if it's okay.", shares: true },
+  { text: "Send him my number. If he asks where dinner is, the address is on the invite.", shares: true },
+  { text: "Send him my number, and if he asks about parking, tell him it's free.", shares: true },
   { text: "Send him my number. Don't send my photo. Or my number.", shares: false },
   { text: "Don't send my photo. My number neither. Send him my number.", shares: false },
   { text: "Send him my number. Don't send my photo. Same goes for my cell.", shares: false },
