@@ -132,9 +132,11 @@ jobs:
         shell: bash
         env:
           TOOLS: ${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}
+          ACTION_TOOLS: ${{ hashFiles('tools/vibestack/vibestack/action.ts', 'tools/vibestack/vibestack/run.ts', 'tools/vibestack/vibestack/simulator.ts') }}
           RESTORE: ${{ (github.event_name == 'workflow_dispatch' && !inputs.cold_formal_cache) || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
         run: |
-          printf '%s\n' "restore=$RESTORE" "complete=formal-full-complete-v2-$TOOLS-" \
+          printf '%s\n' "restore=$RESTORE" "complete=formal-full-complete-v3-$TOOLS-$ACTION_TOOLS-" \
+            "previous=formal-full-complete-v3-$TOOLS-" "complete_v2=formal-full-complete-v2-$TOOLS-" \
             "checkpoint=formal-full-checkpoint-v2-$TOOLS-" "legacy=formal-full-actions-v1-$TOOLS-" >> "$GITHUB_OUTPUT"
       - &formal-retry
         name: Restore a previous attempt of this full check
@@ -158,20 +160,32 @@ jobs:
           lookup-only: ${{ github.job == 'generation' }}
           key: ${{ steps.formal-keys.outputs.complete }}${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ${{ steps.formal-keys.outputs.complete }}
-      - &formal-checkpoint
-        name: Restore checkpoint or legacy formal actions
-        id: formal-checkpoint
+      - &formal-previous
+        name: Restore reusable actions from an earlier full check
+        id: formal-previous
         if: steps.formal-keys.outputs.restore == 'true' && !steps.formal-retry.outputs.cache-matched-key && !steps.formal-complete.outputs.cache-matched-key
+        continue-on-error: ${{ github.job == 'generation' }}
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .spec-cache/formal
-          lookup-only: ${{ github.job == 'generation' }}
+          key: ${{ steps.formal-keys.outputs.complete }}${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ steps.formal-keys.outputs.previous }}
+            ${{ steps.formal-keys.outputs.complete_v2 }}
+      - &formal-checkpoint
+        name: Restore checkpoint or legacy formal actions
+        id: formal-checkpoint
+        if: steps.formal-keys.outputs.restore == 'true' && !steps.formal-retry.outputs.cache-matched-key && !steps.formal-complete.outputs.cache-matched-key && !steps.formal-previous.outputs.cache-matched-key
+        continue-on-error: ${{ github.job == 'generation' }}
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .spec-cache/formal
           key: ${{ steps.formal-keys.outputs.checkpoint }}${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ steps.formal-keys.outputs.checkpoint }}
             ${{ steps.formal-keys.outputs.legacy }}
       - name: Restore generation actions when no full-check archive exists
-        if: steps.formal-keys.outputs.restore == 'true' && !steps.formal-retry.outputs.cache-matched-key && !steps.formal-complete.outputs.cache-matched-key && !steps.formal-checkpoint.outputs.cache-matched-key
+        if: steps.formal-keys.outputs.restore == 'true' && !steps.formal-retry.outputs.cache-matched-key && !steps.formal-complete.outputs.cache-matched-key && !steps.formal-previous.outputs.cache-matched-key && !steps.formal-checkpoint.outputs.cache-matched-key
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .spec-cache/formal
@@ -184,7 +198,7 @@ jobs:
         env:
           ENABLED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
           COLD: ${{ github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache }}
-          MATCHED: ${{ steps.formal-retry.outputs.cache-matched-key || steps.formal-complete.outputs.cache-matched-key || steps.formal-checkpoint.outputs.cache-matched-key }}
+          MATCHED: ${{ steps.formal-retry.outputs.cache-matched-key || steps.formal-complete.outputs.cache-matched-key }}
         run: |
           if [[ "$ENABLED" == true && ( "$COLD" == true || -z "$MATCHED" ) ]]; then
             echo 'enabled=true' >> "$GITHUB_OUTPUT"
@@ -205,7 +219,7 @@ jobs:
         if: steps.shards.outputs.enabled == 'true'
         shell: bash
         run: |
-          if ! timeout --kill-after=15s 12m node scripts/precompute-formal-shard.ts 1 2; then
+          if ! timeout --kill-after=15s 16m node scripts/precompute-formal-shard.ts 1 2; then
             echo '::warning::Local precompute did not complete. The full check will decide the verdict.'
           fi
       - name: Wait briefly for the generation runner's matching formal receipts
@@ -296,7 +310,6 @@ jobs:
       - *formal-keys
       - *formal-retry
       - *formal-complete
-      - *formal-checkpoint
       - *select-formal-shards
       - name: Restore generated model actions
         if: github.event_name != 'workflow_dispatch' || !inputs.cold_formal_cache
@@ -320,6 +333,8 @@ jobs:
         with:
           path: .spec-cache/formal
           key: ${{ steps.generation-cache.outputs.cache-primary-key }}
+      - *formal-previous
+      - *formal-checkpoint
       - name: Install the pinned Quint Rust evaluator for cold precompute
         id: peer-evaluator
         if: steps.shards.outputs.enabled == 'true'
@@ -334,10 +349,18 @@ jobs:
         if: steps.peer-evaluator.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 16
+        env:
+          SEEDED: ${{ steps.formal-previous.outputs.cache-matched-key || steps.formal-checkpoint.outputs.cache-matched-key }}
         shell: bash
         run: |
+          baseline=()
+          if [[ -n "$SEEDED" ]]; then
+            before="$RUNNER_TEMP/formal-peer-before"
+            find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' > "$before"
+            baseline=("$before")
+          fi
           node scripts/precompute-formal-shard.ts 2 2
-          python3 scripts/formal-shard-artifacts.py stage "$RUNNER_TEMP/formal-shard"
+          python3 scripts/formal-shard-artifacts.py stage "$RUNNER_TEMP/formal-shard" "${baseline[@]}"
       - name: Upload formal actions for this attempt
         id: peer-upload
         if: steps.peer-bundle.outcome == 'success'
