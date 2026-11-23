@@ -705,8 +705,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.length).toBe(1);
   });
 
-  test("multi-city network_id isolation and legacy null-network backfill (requires 0072)", async ctx => {
-    if (!(await schemaHas0072(a))) return void ctx.skip();
+  test("multi-city network_id isolation and legacy null-network backfill", async () => {
     const { calls, provider } = recorder();
     const nyc = queue(a, provider, { app: "friends", network: "friends:nyc" });
     const sf = queue(a, provider, { app: "friends", network: "friends:sf" });
@@ -726,8 +725,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.map(c => c.idempotencyKey).sort()).toEqual(["tn:net-legacy-null", "tn:net-nyc-1", "tn:net-sf-1"]);
   });
 
-  test("safety outbound kind bypasses quiet hours, streak and line caps while consent, line safety, recipient cap and leak guard hold (requires 0072)", async ctx => {
-    if (!(await schemaHas0072(a))) return void ctx.skip();
+  test("safety outbound kind bypasses quiet hours, streak and line caps while consent, line safety, recipient cap and leak guard hold", async () => {
     const quietLocal = new SimClock(Date.UTC(2026, 9, 9, 7)); // 03:00 in NY (quiet)
     const { calls, provider } = recorder();
     const memberId = "safety-member-1", to = "+12125558100";
@@ -750,7 +748,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
 
     // Line safety pauses "safety" notices; clearing restores line.
     await qBypass.enqueue(a, [{ id: "safety-pause-check", memberId, to, kind: "safety", text: "Second notice.", timeZone: NY }]);
-    await qBypass.setLineSafety("pause", "safety.state_changed");
+    await qBypass.setLineSafety("reply_only", "safety.state_changed");
     try {
       await qBypass.drain();
       expect(await qBypass.statusOf("safety-pause-check")).toBe("retry_scheduled");
@@ -764,12 +762,12 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
       perRecipientPerHour: 1,
       checks: checks({
         optedOut: row => row.id === "safety-optout",
-        leaks: () => ({ forbidden: ["secret club"] }),
+        leaks: () => ({ forbidden: ["secret orchid garden party"] }),
       }),
     });
     await qGuards.enqueue(a, [
       { id: "safety-optout", memberId, to: "+12125558101", kind: "safety", text: "Notice.", timeZone: NY },
-      { id: "safety-leak", memberId, to: "+12125558102", kind: "safety", text: "About secret club.", timeZone: NY },
+      { id: "safety-leak", memberId, to: "+12125558102", kind: "safety", text: "About secret orchid garden party.", timeZone: NY },
       { id: "safety-rcap", memberId, to, kind: "safety", text: "Hits hourly cap.", timeZone: NY },
     ]);
     await qGuards.drain();
@@ -778,12 +776,3 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(await qGuards.statusOf("safety-rcap")).toBe("retry_scheduled");
   });
 });
-
-async function schemaHas0072(sql: SQL): Promise<boolean> {
-  const [col] = await sql`select 1 from information_schema.columns
-    where table_schema = 'platform' and table_name = 'outbound' and column_name = 'network_id'`;
-  const [chk] = await sql`select pg_get_constraintdef(c.oid) as def from pg_constraint c
-    join pg_class t on t.oid = c.conrelid join pg_namespace n on n.oid = t.relnamespace
-    where n.nspname = 'platform' and t.relname = 'outbound' and c.conname = 'outbound_kind_check'`;
-  return Boolean(col) && typeof chk?.def === "string" && chk.def.includes("'safety'");
-}
