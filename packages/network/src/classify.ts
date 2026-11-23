@@ -269,6 +269,7 @@ const SELF_CURRENT_AGE = `\\b${ME}\\s+${AGE_CURRENT_ADVERB}${SAME}`;
 const STATED_AGE = `(?:${SELF_CURRENT_AGE}|${AGE_STATED_BIRTHDAY})`;
 const NOT_UPCOMING_AGE = `(?!${AGE_BIRTHDAY_AFTER_AGE}|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
 const PART_CLAUSE_END = new RegExp(`^(?:${AGE_END}|${AGE_AND_CLAUSE})`);
+const NO_AGE_PART = `(?!${AGE_PART})`;
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : AGE_WORDS[value] ?? NaN;
 
 const AGE_RX: AgeRule[] = [
@@ -281,9 +282,9 @@ const AGE_RX: AgeRule[] = [
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(\\d{1,2})${NOT_UPCOMING_AGE}\\s*${YEARS_OLD}(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b))`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(${AGE_PART})`), age: m => ageNumber(m[1] ?? ""), reading: "part" },
-  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}${AGE_AND_CLAUSE}`), age: m => ageNumber(m[1] ?? ""), reading: "conjunction" },
-  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}${AGE_END}`), age: m => ageNumber(m[1] ?? "") },
-  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NO_AGE_PART}${NOT_UPCOMING_AGE}${AGE_AND_CLAUSE}`), age: m => ageNumber(m[1] ?? ""), reading: "conjunction" },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NO_AGE_PART}${NOT_UPCOMING_AGE}${AGE_END}`), age: m => ageNumber(m[1] ?? "") },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NO_AGE_PART}${NOT_UPCOMING_AGE}${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
   { rx: new RegExp(`${SELF_CURRENT_AGE}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => teenOrAdult(precedingBirthdayAge(ageNumber(m[1] ?? ""))), estimated: true },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.

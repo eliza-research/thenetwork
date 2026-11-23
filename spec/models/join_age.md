@@ -12,6 +12,8 @@ The [shared-line enrollment spec](../textEnrollment.md) generates app routing, t
 
 The [near-birthday rule](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) supplies the parser's age estimate. This model uses 17 as the minor representative for a near eighteenth birthday, and retains the same adult and minimum-age boundaries.
 
+The [fractional age and conjunction rule](../memberAge.md#a-half-age-needs-age-wording-to-confirm-an-under-13-refusal) supplies the current age and its explicit flag. The model takes these fields as input. A signed-turn regression checks how the readers produce the fields.
+
 Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -1111,6 +1113,15 @@ module join_age {
       .then(receive(M_AM12, "friends")).then(unitStep).then(flushStep).then(flushForgetStep).then(doneStep(true))
       .expect(g.last.outcome == "declined" and not(db.pendJoin.has) and db.mstate.get("friends") == "removed"
         and not(g.declineOpen) and under13StoresNothingStrict and safety)
+
+  // A loose fractional age restricts matching without erasing the membership.
+  // Age wording confirms the same age and permits refusal.
+  run fractionalAgeRequiresExplicitWordingTest =
+    init.then(webJoinOk("friends", 17))
+      .then(receive(M_AM12.with("explicit", false), "friends")).then(unitStep).then(flushStep).then(doneStep(true))
+      .expect(db.floor == 13 and db.mstate.get("friends") == "active" and not(matchable(db, "friends")) and safety)
+      .then(receive(M_AM12, "friends")).then(unitStep).then(flushStep).then(flushForgetStep).then(doneStep(true))
+      .expect(db.floor == 12 and db.mstate.get("friends") == "removed" and under13StoresNothingStrict and safety)
 
   // Q-join_age-4: the saved age survives the crash and the next recovery finishes both apps.
   run q4DeclineStepFailsTest =

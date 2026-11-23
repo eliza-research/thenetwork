@@ -164,6 +164,7 @@ const BARE_YEARS = "y(?:ears?|rs?)\\b(?!\\s+(?:and|in|into|sober|clean|ago|of)\\
 const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b(?!\\s+(?:the\\s+)?(?:queue|line)\\b)|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 const YEARS_OLD = "(?:y(?:ears?|rs?)[\\s-]+old|y\\/?o|years of age)(?![a-z])";
 const PART_CLAUSE_END = new RegExp(`^(?:(?=\\s*(?:$|[,!?:)]))|${AGE_AND_CLAUSE})`);
+const NO_AGE_PART = `(?!${AGE_PART})`;
 const LOOSE_END = `(?=\\s+(?:${AGE_LOOSE_TAIL}))`;
 const SELF_CURRENT_AGE = `\\b${ME}\\s+${AGE_CURRENT_ADVERB}(?:(?:only|just|literally|barely|like|about)\\s+)?`;
 const SELF_AGE = `(?:${SELF_CURRENT_AGE}|${AGE_STATED_BIRTHDAY})(\\d{1,2}${AGE_NUMBER_END}|${NUM_WORD_RX}\\b(?!-(?:one|two|three|four|five|six|seven|eight|nine)\\b))`;
@@ -184,9 +185,9 @@ function selfLetterAge(text: string, match: RegExpExecArray): boolean {
 const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean; reading?: "part" | "conjunction" }[] = [
   { rx: new RegExp(`${SELF_AGE}(?!')(${AGE_PART})`), age: m => readNumericPhrase(m[1] ?? ""), strict: true, reading: "part" },
   { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}[\\s-]*${YEARS_OLD}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
-  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!')${AGE_AND_CLAUSE}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true, reading: "conjunction" },
-  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!'|\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
-  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?:${LOOSE_END}|(?=\\s*${BARE_YEARS}))`), age: m => {
+  { rx: new RegExp(`${SELF_AGE}${NO_AGE_PART}${NOT_UPCOMING_AGE}(?!')${AGE_AND_CLAUSE}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true, reading: "conjunction" },
+  { rx: new RegExp(`${SELF_AGE}${NO_AGE_PART}${NOT_UPCOMING_AGE}(?!'|\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`${SELF_AGE}${NO_AGE_PART}${NOT_UPCOMING_AGE}(?:${LOOSE_END}|(?=\\s*${BARE_YEARS}))`), age: m => {
     const age = readNumericPhrase(m[1] ?? "");
     return canJoin(age) ? age : NaN;
   }, strict: true },

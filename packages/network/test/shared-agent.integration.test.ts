@@ -1300,7 +1300,8 @@ test("a signed current half-age requires explicit age wording before removing a 
     const [member] = await sql`select state from platform.memberships where person_id=${person.id} and app_id='friends'`;
     return { floor, state: member?.state };
   };
-  for (const [i, text] of ["I'm 3 and I am undefeated", "I'm 12.5 miles away", "I'm 12.5 y.o., in two years"].entries()) {
+  for (const [i, text] of ["I'm 3 and I am undefeated", "I'm 12.5 miles away", "I'm 12.5 y.o., in two years",
+    "I'm 16 and a quarter years old tomorrow"].entries()) {
     clock.advance(MINUTE);
     expect((await post(turn(`signed-half-age-negative-${i}`, phone, text, "friends"))).status).toBe(200);
     expect(await current()).toEqual({ floor: 17, state: "active" });
