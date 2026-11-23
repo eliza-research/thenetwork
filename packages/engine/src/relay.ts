@@ -567,20 +567,20 @@ const INDEPENDENT_RENEWAL_STATUS = /^(?:(?:i am|we are) (?:running late|at (?:wo
 const UNRESOLVED_RENEWAL_PAYLOAD = /\b(?:it|this|that|either|both|instead|ask(?:ing)?|confirm(?:ing)?|wait(?:ing)?|delay(?:ing)?|get back to you|transfer|decid(?:e|ed|ing)|(?:re)?think(?:ing)?|reconsider(?:ing)?|not ready|maybe|perhaps|doubts?|hesitant|torn|conflicted|on the fence|recipient|destination|permission|approval|consent|private)\b/u;
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
-const PRIVATE_CONDITION_MARKER = String.raw`if|when(?:ever)?|every\s+time|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const FLEXIBLE_PRIVATE_TIMING = String.raw`whenever|any\s*time`;
+const RECURRING_PRIVATE_CONDITION = String.raw`${FLEXIBLE_PRIVATE_TIMING}|(?:(?:each\s+and\s+)?every(?:\s+single)?|each)\s+time`;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
 const TRAILING_PRIVATE_CONDITION = new RegExp(
   String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b.*)$`,
   "iu",
 );
-const POLITE_PRIVATE_CONDITION =
-  /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|(?:when(?:ever)?|every\s+time)\s+you\s+(?:can|get a chance|have a chance))\b|^whenever(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)|you(?:'re| are)\s+ready))?\b/iu;
-const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
-const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
-const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
-const PRIVATE_RESPONSE_FOLLOWUP = new RegExp(
-  String.raw`^(?:whenever|every\s+time)\s+${OTHER}\s+(?:repl(?:y|ies)|responds?)\s*,\s*(?:please\s+)?tell me(?:\s+how it went)?\s*$`,
+const POLITE_PRIVATE_CONDITION = new RegExp(
+  String.raw`^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|(?:when|${RECURRING_PRIVATE_CONDITION})\s+you\s+(?:can|get a chance|have a chance))\b|^(?:${FLEXIBLE_PRIVATE_TIMING})(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)|you(?:'re| are)\s+ready))?\b`,
   "iu",
 );
+const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
+const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
+const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?(?:let me know|tell me(?:\s+how it went)?)\s*$/iu;
 const INDEPENDENT_WHEN_QUESTION = /^when(?:ever)?\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
 const PRIVATE_CONDITION_ITEM_NAME = new RegExp(String.raw`\b(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})\b`, "u");
 const INCOMPLETE_CONDITION_ACTION = new RegExp(
@@ -660,7 +660,6 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   }
   const polite = POLITE_PRIVATE_CONDITION.exec(condition);
   if (polite && PRIVATE_RELAY_COURTESY.test(condition.slice(polite[0].length))) return false;
-  if (detached && PRIVATE_RESPONSE_FOLLOWUP.test(condition)) return false;
   if (detached || /^\s*,\s*and\b/i.test(clause)) {
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
     if (main && (TEXT_REQ.test(main)
@@ -755,7 +754,8 @@ function privateCourtesy(sentence: string): boolean {
 
 function independentRenewalFollowup(sentence: string): boolean {
   const words = sentence.trim().toLowerCase();
-  if (privateCourtesy(words) || PRIVATE_RESPONSE_FOLLOWUP.test(words)) return true;
+  const followup = PRIVATE_CONDITION_MAIN.exec(words)?.[1];
+  if (privateCourtesy(words) || (followup !== undefined && PRIVATE_CONDITION_FOLLOWUP.test(followup))) return true;
   const envelope = /^(?:please\s+)?(?:tell|let)\b/u.test(words) ? TEXT_REQ.exec(words) : null;
   const body = envelope?.at(-1) ?? words;
   const statement = body.replace(/^i'm\b/u, "i am").replace(/^we're\b/u, "we are").replace(/^(i|we)'ve\b/u, "$1 have");
