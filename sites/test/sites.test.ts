@@ -375,7 +375,7 @@ test("staging builds keep the served entry, skills and signed router on configur
   } finally { await server?.stop(true); await backend.stop(true); }
 });
 
-test("a local or test MCP_URL moves the ntwrk.party connector endpoints that the skills name", () => {
+test("a local or test MCP_URL moves the ntwrk.party connector endpoints and the agent access page that the skills name", () => {
   const env = { MCP_URL: "https://{domain}.dev.example.test/mcp", BACKEND_ORIGIN: "https://api.dev.example.test" };
   for (const site of SITES) {
     const source = readFileSync(join(SKILLS_DIR, site.skill, "SKILL.md"), "utf8");
@@ -387,6 +387,9 @@ test("a local or test MCP_URL moves the ntwrk.party connector endpoints that the
     expect(local, site.domain).not.toContain("https://ntwrk.party/mcp");
     expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}`);
     expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}/openai`);
+    expect(production, site.domain).toContain("https://ntwrk.party/oauth/consents");
+    expect(local, site.domain).not.toContain("https://ntwrk.party/oauth");
+    expect(local, site.domain).toContain("https://ntwrk.party.dev.example.test/oauth/consents");
   }
 });
 

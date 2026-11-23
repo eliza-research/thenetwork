@@ -3,7 +3,8 @@
 // (packages/platform/src/apps.ts) when it has the app, so the server and the sites cannot drift.
 import { APPS as PLATFORM_APPS, PAGES_PROJECT, SUPPORT_EMAIL } from "@thenetwork/platform";
 import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, type AppId as McpAppId } from "../../core/src/types.ts";
-import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appOffered, hostBindsApp } from "../../core/src/generated/connectorTools.ts";
+import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appListed, appOffered, hostBindsApp } from "../../core/src/generated/connectorTools.ts";
+import { appEndpointPath, appOpenAiEndpointPath } from "../../core/src/generated/agentEntry.ts";
 
 export { MCP_APP_IDS, isMcpAppId, type McpAppId };
 
@@ -31,6 +32,9 @@ export interface McpApp {
   openai: boolean;
 }
 
+export const DATING_AGE_RULE = "Dating and work matching are for adults 18 or older only. Nobody under 18 is ever matched on dates or for work.";
+export const WORK_AGE_RULE = "Work matching is for adults 18 or older only. Nobody under 18 is ever matched for work.";
+
 function app(id: McpAppId, name: string, domain: string, what: string, keyword: string | null, extra: { adultsOnly?: string[]; smsTerms?: boolean }): McpApp {
   const p = PLATFORM_APPS[id];
   const site = `https://${domain}`;
@@ -38,7 +42,7 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
     id, name, domain, what, keyword,
     joinMode: p.joinMode,
     ages: { join: p.minJoinAge, match: p.minMatchAge },
-    adultsOnly: ["Today, matching and introductions to other people are for adults 18 or older only, and nobody under 18 is introduced to anyone.", "Dating and work matching are for adults 18 or older only. Nobody under 18 is ever matched on dates or for work.", "If introductions ever open to people under 18, they are friendship introductions only, with people within 2 years of their own age.", ...(extra.adultsOnly ?? [])],
+    adultsOnly: ["Today, matching and introductions to other people are for adults 18 or older only, and nobody under 18 is introduced to anyone.", DATING_AGE_RULE, "If introductions ever open to people under 18, they are friendship introductions only, with people within 2 years of their own age.", ...(extra.adultsOnly ?? [])],
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,
       smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`,
@@ -60,9 +64,9 @@ export function defaultApps(): Record<McpAppId, McpApp> {
   };
 }
 
-/** The apps a surface may name, in registry order. */
-export const appsOn = (apps: Record<McpAppId, McpApp>, surface: Surface): McpApp[] =>
-  MCP_APP_IDS.map(id => apps[id]).filter(a => a && appOffered(connectorSurface[surface], connectorApp[a.id]));
+/** The apps that a connection to one app's endpoint on a surface may name, in registry order (spec/connectorTools.md:16). */
+export const appsOn = (apps: Record<McpAppId, McpApp>, surface: Surface, host: McpAppId): McpApp[] =>
+  MCP_APP_IDS.map(id => apps[id]).filter(a => a && appListed(connectorSurface[surface], connectorApp[host], connectorApp[a.id]));
 
 /** The default Host header map: each domain, its www name and its Pages name. Dev ports are added by the caller. */
 export function defaultHostMap(apps: Record<McpAppId, McpApp>): Record<string, McpAppId> {
@@ -82,7 +86,8 @@ export const devHostMap = (): Record<string, McpAppId> =>
 
 export function mcpPath(host: McpAppId, app: McpAppId, surface: Surface): string | undefined {
   if (!hostBindsApp(connectorApp[host], connectorApp[app])) return undefined;
-  return `${app === host ? "/mcp" : `/mcp/${app}`}${surface === "openai" ? "/openai" : ""}`;
+  const key = app === host ? connectorApp.ntwrk : connectorApp[app];
+  return surface === "openai" ? appOpenAiEndpointPath(key) : appEndpointPath(key);
 }
 
 export function appAtPath(host: McpAppId, path: string): { app: McpAppId; surface: Surface } | undefined {

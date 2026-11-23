@@ -113,6 +113,13 @@ export function lawEveryListedSkillHasAnEndpoint(plugin: Plugin, app: brandIdent
   return pluginListsSkill(plugin, app) === (endpointPath(pluginEndpoint(plugin, app), app) !== "");
 }
 
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function lawOpenAiPluginNeverUsesTheSlopEndpoint(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return endpointPath(pluginEndpoint("OpenAiPlugin", app), app) !== appOpenAiEndpointPath("Slop");
+}
+
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function skillFor(app: brandIdentity_AppKey): string {

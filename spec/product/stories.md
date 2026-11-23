@@ -599,7 +599,7 @@ See the [browser phone confirmation and connector handoff](../agentPhoneHandoff.
 
 Acceptance:
 
-- ntwrk.party serves the connector of every app: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app. ChatGPT and Codex use the OpenAI surface, with `/openai` added. Each surface offers each app, slop.date included. The slop.date site keeps no OpenAI surface of its own.
+- ntwrk.party serves the connector of every app: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app. ChatGPT and Codex use the OpenAI surface, with `/openai` added. Each surface serves the endpoint of each app, slop.date included. On the OpenAI surface, only the slop.date endpoint names slop.date: the endpoint of another app, which the OpenAI plugin uses, never lists slop.date or dating. The slop.date site keeps no OpenAI surface of its own.
 - A grant covers only the app of its endpoint path. A token for one app is refused at the endpoint of another app.
 - `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
 - `read_profile` needs explicit profile read permission and a current active membership for the same app. It returns only safe saved fields and makes no profile change.

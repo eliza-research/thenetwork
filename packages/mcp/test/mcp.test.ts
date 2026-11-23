@@ -115,7 +115,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
   });
 });
 
-describe("surface=openai offers every app", () => {
+describe("surface=openai serves every app endpoint", () => {
   test("the OpenAI surface respects an app's registry opt-out on both connector paths", async () => {
     // spec/connectorTools.md, "A connection binds to one host on one surface"
     const apps = defaultApps();
@@ -127,21 +127,39 @@ describe("surface=openai offers every app", () => {
     expect((await rpc(setup({ apps }), `${host}/mcp`, "tools/list")).res.status).toBe(200);
   });
 
-  test("tools/list, app_info and start_signup offer slop on the OpenAI surface; slop.date's own site keeps no OpenAI endpoint", async () => {
+  test("the OpenAI plugin server names no slop or dating; only the slop endpoint of the OpenAI surface offers slop; slop.date's own site keeps no OpenAI endpoint", async () => {
     const env = setup();
     const l = await rpc(env, OPENAI, "tools/list");
-    const tools = l.body!.result.tools;
-    expect(tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "slop", "peon", "friends"]);
+    expect(l.body!.result.tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "peon", "friends"]);
+    expect(l.text).not.toMatch(/slop|dating/i);
+    expect((await rpc(env, OPENAI, "server/discover")).text).not.toMatch(/slop|dating/i);
     const all = await call(env, OPENAI, "app_info");
-    expect(all.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
+    expect(all.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "peon", "friends"]);
+    expect(all.text).not.toMatch(/slop|dating/i);
     for (const [name, args] of [["app_info", { app: "slop" }], ["start_signup", { app: "slop" }]] as const) {
       const r = await call(env, OPENAI, name, args);
+      expect(r.body!.result.isError).toBe(true);
+      expect(r.text).not.toMatch(/slop\.date|dating|matchmaker/i);
+      const none = await call(env, OPENAI, name, { app: "zzzz" });
+      expect(r.body!.result.content).toEqual(none.body!.result.content);
+    }
+    for (const app of ["peon", "friends"]) {
+      const other = await rpc(env, `${origin("ntwrk.party")}/mcp/${app}/openai`, "tools/list");
+      expect(other.res.status).toBe(200);
+      expect(other.text).not.toMatch(/slop|dating/i);
+    }
+    const SLOP_OPENAI = `${origin("ntwrk.party")}/mcp/slop/openai`;
+    const slop = await rpc(env, SLOP_OPENAI, "tools/list");
+    expect(slop.res.status).toBe(200);
+    expect(slop.body!.result.tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "slop", "peon", "friends"]);
+    for (const [name, args] of [["app_info", { app: "slop" }], ["start_signup", { app: "slop" }]] as const) {
+      const r = await call(env, SLOP_OPENAI, name, args);
       expect(r.body!.result.isError).toBe(false);
       expect(r.body!.result.structuredContent).toMatchObject(name === "app_info" ? { id: "slop" } : { app: "slop" });
     }
-    expect((await call(env, OPENAI, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
+    expect((await call(env, SLOP_OPENAI, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
     expect((await rpc(env, `${origin("slop.date")}/mcp/openai`, "tools/list")).res.status).toBe(404);
-    expect((await rpc(env, `${origin("ntwrk.party")}/mcp/slop/openai`, "tools/list")).res.status).toBe(200);
+    expect((await call(env, NTWRK, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
   });
 
   test("a public tool answers that an app is not available when the agent names an app that is not in the registry", async () => {
@@ -163,7 +181,9 @@ describe("surface=openai offers every app", () => {
     const c = await connect(env, "ntwrk.party", PHONE_A, { register: chatgpt, redirectUri: chatgpt.redirect_uris[0] });
     // Its token is for /mcp/openai only.
     expect((await rpc(env, NTWRK, "tools/list", {}, { token: c.token.access_token })).res.status).toBe(401);
-    expect((await rpc(env, OPENAI, "tools/list", {}, { token: c.token.access_token })).res.status).toBe(200);
+    const l = await rpc(env, OPENAI, "tools/list", {}, { token: c.token.access_token });
+    expect(l.res.status).toBe(200);
+    expect(l.text).not.toMatch(/slop/i);
   });
 
   test("on the OpenAI surface a missing sign-in comes back in the tool result (mcp/www_authenticate)", async () => {

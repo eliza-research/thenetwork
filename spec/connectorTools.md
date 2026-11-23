@@ -2,7 +2,7 @@
 
 Each app has its own MCP connector. The ntwrk.party host serves the connector of every app, each app at its own path, and each app site also serves the connector of its own app. A connection covers one app (the host app). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
 
-The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, `hostBindsApp` and `siteOffersOpenAi` for the app paths of each host, `grantServesApp` for the app of a token, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
+The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, `appListed` for the apps that one connection names, `hostBindsApp` and `siteOffersOpenAi` for the app paths of each host, `grantServesApp` for the app of a token, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
 
 - The connection. The shell finds the host from the request host and the surface from the path (`connect`). The OAuth pages make the grant (`authorize`, [connector browser authorization](oauthBrowserAuthorization.md)). For each request, the shell makes one connection from the access token: connected with a token, anonymous without one, and with the profile write scope only when the token holds it.
 - The approved profile. The agent reads the profile back and gets the person's approval before it calls `submit_profile` (`approveProfile`). The server cannot see this approval. The shell keeps a grant-bound keyed receipt for each exact profile ([profile submission](mcpProfileSubmission.md)) so retries do not repeat intake.
@@ -13,9 +13,11 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 
 > As a person who connected my agent to an app, I want the agent to see only the tools that fit my app and my status, so that it can check my status, send my approved profile once and read my own updates without seeing my phone number or code.
 
-### Each surface offers every app, slop.date included
+### Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date
 
-There are two surfaces. The full surface, at the app endpoint (`/mcp` or `/mcp/<app>`), offers every app. The OpenAI surface, at the same endpoint with `/openai` added (for example `/mcp/openai` or `/mcp/slop/openai`), serves ChatGPT and Codex clients. It also offers every app, slop.date included, so that a person can sign up for each app in ChatGPT. The ntwrk.party host serves the OpenAI surface of each app. The slop.date site keeps no OpenAI surface of its own (see the next rule). The OpenAI plugin keeps its own list of skills ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
+There are two surfaces. The full surface, at the app endpoint (`/mcp` or `/mcp/<app>`), offers every app. The OpenAI surface, at the same endpoint with `/openai` added (for example `/mcp/openai` or `/mcp/slop/openai`), serves ChatGPT and Codex clients. It serves the endpoint of every app, slop.date included, so that a person can sign up for each app in ChatGPT. The ntwrk.party host serves the OpenAI surface of each app. The slop.date site keeps no OpenAI surface of its own (see the next rule).
+
+The OpenAI plugin is for people aged 13 to 17 too, and its one MCP server is the OpenAI endpoint of The Network ([agent entry](agentEntry.md)). So on the OpenAI surface, a connection to the endpoint of another app never lists slop.date as an app choice: the app list, the app argument of each tool, the public facts and their text do not name slop.date or dating. A public tool that names slop.date there answers that the app is not available. Only a connection to the slop.date endpoint of the OpenAI surface, `/mcp/slop/openai`, lists slop.date. The person adds that endpoint as a connector from the slop.date skill. Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
 
 The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. A connection to a disabled OpenAI host is not available. The full surface applies the ordinary host rule. The shell refuses a request to a host that is not available before it lists or calls a tool, so the tool list of an available host uses the ordinary host rule.
 
@@ -40,6 +42,14 @@ pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
 
 pure def lawOpenAiOffersEveryApp(app: AppId): bool =
   appOffered(OpenAiSurface, app) and hostServes(OpenAiSurface, app) and toolListed(app, OpenAiSurface, AppInfoTool)
+
+pure def appListed(surface: Surface, host: AppId, app: AppId): bool =
+  appOffered(surface, app) and (surface == FullSurface or app != Slop or host == Slop)
+
+pure def lawOpenAiListsSlopOnlyAtItsOwnEndpoint(host: AppId): bool =
+  appListed(OpenAiSurface, host, Slop) iff host == Slop
+
+pure def lawFullSurfaceListsEveryApp(host: AppId, app: AppId): bool = appListed(FullSurface, host, app)
 
 pure def lawFullSurfaceOffersEveryApp(app: AppId): bool = appOffered(FullSurface, app)
 
@@ -149,7 +159,7 @@ pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
 
 ### A connection binds to one host on one surface, and the person connects it in the browser
 
-The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the surface does not offer it or when the agent names an app that is not in the app registry. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
+The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the connection does not list it or when the agent names an app that is not in the app registry. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
 
 ```quint
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
@@ -197,10 +207,13 @@ pure def canCallPublicTool(c: Connection, tool: ToolName): bool =
   (c.phase == Anonymous or c.phase == Connected) and scopeFor(tool) == NoScope
 
 pure def callPublicTool(c: Connection, tool: ToolName, app: AppId, appRegistered: bool): Connection =
-  { ...c, lastResult: if (appRegistered and appOffered(c.surface, app)) PublicFacts else AppNotAvailable }
+  { ...c, lastResult: if (appRegistered and appListed(c.surface, c.host, app)) PublicFacts else AppNotAvailable }
 
 pure def lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): bool =
   callPublicTool(c, tool, app, false).lastResult == AppNotAvailable
+
+pure def lawOpenAiPluginServerNeverNamesSlop(c: Connection, tool: ToolName): bool =
+  (c.surface == OpenAiSurface and c.host != Slop) implies callPublicTool(c, tool, Slop, true).lastResult == AppNotAvailable
 
 pure def canCallWithoutAccess(c: Connection, tool: ToolName): bool =
   bound(c) and toolListed(c.host, c.surface, tool) and

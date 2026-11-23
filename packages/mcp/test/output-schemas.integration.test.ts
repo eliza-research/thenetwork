@@ -39,7 +39,7 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
     };
     // Both app_info variants, nullable keyword/legal links, and every listed public app.
     const all = await invoke("app_info");
-    expect(all.apps.length).toBe(4);
+    expect(all.apps.map((a: { id: string }) => a.id)).toEqual(surface === "openai" ? ["ntwrk", "peon", "friends"] : ["ntwrk", "slop", "peon", "friends"]);
     for (const item of all.apps) {
       await invoke("app_info", { app: item.id });
       await invoke("start_signup", { app: item.id });

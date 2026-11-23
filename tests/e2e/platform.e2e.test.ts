@@ -535,14 +535,14 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(info.join.how).toContain("Use a forwarded invitation in the app's browser");
       expect(info.join.how).toContain("connector authorization");
       expect(info.join.how).not.toContain("The agent asks what they are looking for");
-      const signup = (app: AppId) => rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
+      const signup = (app: AppId) => rpc(st, "ntwrk", app === "slop" ? "/mcp/slop/openai" : "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
       const invite = toolData(await signup("ntwrk"));
       expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/SKILL.md" });
       expect(invite.instructions_for_person).toContain("Use a forwarded invitation in the app's browser");
       expect(invite.instructions_for_person).toContain("connector authorization");
       expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
       for (const app of ["slop", "peon", "friends"] as const) {
-        const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app } }));
+        const info = toolData(await rpc(st, "ntwrk", app === "slop" ? "/mcp/slop/openai" : "/mcp/openai", "tools/call", { name: "app_info", arguments: { app } }));
         expect(info.join.how).toContain(`texts "${app}" as their first message`);
         const open = toolData(await signup(app));
         expect(open).toMatchObject({ app, join_mode: "open" });
@@ -551,6 +551,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect((await st.site(app, path)).status).toBe(200);
         expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code on that page");
       }
+      expect((await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app: "slop" } })).body!.result.isError).toBe(true);
       expect((await sql`select count(*)::int as n from oauth.grants`)[0]!.n).toBe(0);
     }, T);
 
@@ -653,7 +654,8 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         for (const app of ["ntwrk", "friends"] as const) expect((await rpc(pilot, app, "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list", {}, token)).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
-        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })).apps.map((a: { id: string }) => a.id)).toContain("slop");
+        expect(JSON.stringify(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })))).not.toMatch(/slop|dating/i);
+        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: {} })).apps.map((a: { id: string }) => a.id)).toContain("slop");
         expect((await (await pilot.site("ntwrk", "/.well-known/oauth-protected-resource/mcp/slop/openai")).json()).resource).toBe(`${pilot.sites.ntwrk.origin}/mcp/slop/openai`);
         expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
         const client = (await pilot.mcp.store.getClient(c.client.client_id))!;
@@ -796,7 +798,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list")).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
         const publicApps = toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
-        expect(publicApps.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
+        expect(JSON.stringify(publicApps)).not.toMatch(/slop|dating/i);
         const phone = newPhone();
         const browser = new Browser();
         expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
@@ -1002,9 +1004,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(tm.age).toBe(15);
     }, T);
 
-    test("the OpenAI surface offers slop at ntwrk.party, and slop.date answers 404 at its own /mcp/openai", async () => {
+    test("the OpenAI plugin server names no slop, the slop endpoint of the OpenAI surface at ntwrk.party offers slop, and slop.date answers 404 at its own /mcp/openai", async () => {
       const list = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
-      expect(list.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
+      expect(list.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "peon", "friends"]);
+      expect(JSON.stringify(list)).not.toMatch(/slop|dating/i);
       const hub = toolData(await rpc(st, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: { app: "slop" } }));
       expect(hub.id).toBe("slop");
       const full = toolData(await rpc(st, "ntwrk", "/mcp", "tools/call", { name: "app_info", arguments: {} }));

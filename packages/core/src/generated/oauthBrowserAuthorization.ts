@@ -5,6 +5,8 @@
 export type BrowserPhase = "BrowserStarting" | "BrowserExpired" | "CheckingClient" | "BrowserBound" | "ShowingPhone" | "HandingOffToCloud" | "StartingOtp" | "ShowingCode" | "VerifyingOtp" | "RetryingOtp" | "CheckingIdentity" | "ShowingConsent" | "IdentityDenied" | "CheckingConsentOwner" | "CheckingCloudGrant" | "ConsentReady" | "ConsentDeclined" | "OwnerChanged" | "CloudDenied" | "SessionRetry" | "AlreadyVerified";
 /** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 export interface BrowserFlow { phase: BrowserPhase; explicitlyApproved: boolean }
+/** Story: Approve access in the browser after proving my phone / Each app on a shared host keeps its own browser cookies (spec/oauthBrowserAuthorization.md) */
+export type BrowserCookieScope = "HostAppCookie" | "HostedAppCookie";
 /** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md) */
 export type EntrySession = "SignedIn" | "SignedOut" | "SessionUnavailable";
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
@@ -69,6 +71,26 @@ export function readBrowserClient(flow: BrowserFlow, clientExists: boolean): Bro
   //@ ensures (inv(flow) && canReadBrowserClient(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
   //@ ensures (inv(flow) && canReadBrowserClient(flow)) ==> stepReadyFollowsAuthority(flow, "readBrowserClient", \result)
   return { ...flow, phase: clientExists ? "BrowserBound" : "BrowserExpired" };
+}
+
+/** Story: Approve access in the browser after proving my phone / Each app on a shared host keeps its own browser cookies (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserCookieScope(hostApp: string, app: string): BrowserCookieScope {
+  return hostApp === app ? "HostAppCookie" : "HostedAppCookie";
+}
+
+/** Story: Approve access in the browser after proving my phone / Each app on a shared host keeps its own browser cookies (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawOnlyTheHostAppUsesTheHostCookie(hostApp: string, app: string, other: string): boolean {
+  //@ ensures \result === true
+  return !(app !== other) || !(browserCookieScope(hostApp, app) === "HostAppCookie" && browserCookieScope(hostApp, other) === "HostAppCookie");
+}
+
+/** Story: Approve access in the browser after proving my phone / Each app on a shared host keeps its own browser cookies (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawAnAppOnItsOwnHostKeepsTheHostCookie(app: string): boolean {
+  //@ ensures \result === true
+  return browserCookieScope(app, app) === "HostAppCookie";
 }
 
 /** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md) */
