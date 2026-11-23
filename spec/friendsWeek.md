@@ -136,6 +136,29 @@ pure val alternatesValues = Set(List(), List("three"), List("one"))
 pure def sometimesPublishesAPlan(s: FriendsRun): bool = s.phase == WeekComplete and not(newPlanAlternateCanRemain(s, "one"))
 ```
 
+### A standby has no initial invitation and holds one bench place
+
+At publication, collect initial invitees from crew sessions, crew offers,
+repeats, new plans, and activity partner plans. An open table contacts its
+extra candidates with its initial invitees. Keep those invitations. For repeat
+benches and closed-table benches, keep a standby only if the member has no
+initial invitation or earlier standby place. Check repeat benches first, then
+closed-table benches, in planning order. The activity partner allowance stays
+separate from initial group invitations.
+
+```quint
+pure def friendStandbyCanRemain(hasInitialInvitation: bool, hasStandbyPlace: bool): bool =
+  not(hasInitialInvitation or hasStandbyPlace)
+
+pure def lawFriendStandbyHasNoOtherSeat(hasInitialInvitation: bool, hasStandbyPlace: bool): bool =
+  friendStandbyCanRemain(hasInitialInvitation, hasStandbyPlace) implies
+  not(hasInitialInvitation) and not(hasStandbyPlace)
+
+pure def lawFriendUnassignedStandbyCanRemain(hasInitialInvitation: bool, hasStandbyPlace: bool): bool =
+  (not(hasInitialInvitation) and not(hasStandbyPlace)) implies
+  friendStandbyCanRemain(hasInitialInvitation, hasStandbyPlace)
+```
+
 ### An unsuccessful starting member leaves the rest of the table candidates available
 
 Try the bounded candidate pool in its existing priority order. A table must reach the minimum number of mutually compatible candidates, pass the venue, travel, and circle checks, and reserve its seats. If the table fails any of these checks, try the next starting member in the same pool. Stop when one table reserves its seats or the pool has no starting member left.
