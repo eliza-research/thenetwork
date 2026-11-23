@@ -315,3 +315,10 @@
 {"text":"Yesterday I told her “I’m 17.”","teen":false}
 {"text":"Yesterday I told her “Mara said ‘I’m underage.’”","teen":false}
 {"text":"Yesterday I read a draft: “I’m underage.”","teen":false}
+{"text":"ugh \"so tired. i'm 15","teen":true}
+{"text":"I love \"the office. i'm 15","teen":true}
+{"text":"ive said \"i'm underage\"","teen":true}
+{"text":"i literally said \"i have a math test tomorrow\"","teen":true}
+{"text":"i'd asked \"can i go to prom\"","teen":true}
+{"text":"me and my friend said \"i have homework\"","teen":true}
+{"text":"`i have homework` lol","teen":true}

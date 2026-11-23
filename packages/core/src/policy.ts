@@ -100,23 +100,33 @@ export function quoteStillOpen(prefix: string): boolean {
 
 /** Check the exact evidence span in the normalized message, across sentence boundaries. */
 export function unquotedOwnAgeEvidence(text: string, start: number, end: number): boolean {
-  return ownAgeEvidenceAllowed(quoteInSpan(text, start, end) !== undefined);
+  const quote = quoteInSpan(text, start, end);
+  if (quote === undefined) return ownAgeEvidenceAllowed(false);
+  return ownAgeEvidenceAllowed(!unfinishedCasualAside(text, quote));
 }
 
-const OWN_QUOTE = /^\s*(?:(?:yesterday|today|earlier|last night|this morning)\s*,?\s+)?(?:(?:i|we)\s+(?:(?:just|already)\s+)?(?:said|told|texted|wrote|replied|posted|messaged)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?|i(?:'m| am)\s+quoting myself)\s*[:,]?\s*$/;
+const OWN_QUOTE = /^\s*(?:(?:yesterday|today|earlier|last night|this morning)\s*,?\s+)?(?:(?:i|we)(?:'ve|ve|'d|d)?\s+(?:(?:just|already|literally|basically|actually|honestly)\s+)?(?:said|told|texted|wrote|replied|posted|messaged|asked)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?|(?:me and my [a-z]+|my [a-z]+ and (?:me|i))\s+(?:(?:just|already|literally)\s+)?(?:said|told|texted|wrote|replied|posted|messaged|asked)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?|i(?:'m| am)\s+quoting myself)\s*[:,]?\s*$/;
 const SPEECH_FRAME = /(?:\b(?:say|said|says|tell|told|tells|text|texted|texts|message|messaged|write|wrote|writes|quote|quoted|reply|replied|asked|asks|posted|read|reads|whispered|was like|is like)\b[^.!?;\n]*|\b(?:one|an?|the|this|that|your)\s+(?:line|draft|dialogue|script|example|excerpt|lyrics?)\s*[:,]?\s*)$/;
 const LEADING_ELISION = /^(?:cause|cos|coz|cuz|bout|round|kay|nother|em|sup|til|till|tis|twas)\b/;
 const beforeQuote = (text: string, at: number, start = 0): string => text.slice(start, at).split(/[.!?;\n]/).at(-1)!;
 
-/** A repeat of the sender's own disclosure or an unfinished casual aside can still be a youth cue. */
+/** A repeat of the sender's own disclosure, a bare quote with no introducer, or an unfinished casual aside can still be a youth cue. */
 export function ownYouthCue(text: string, start: number, end: number): boolean {
   const quote = quoteInSpan(text, start, end);
   if (!quote) return ownYouthCueAllowed(false, false, false);
   const before = beforeQuote(text, quote.at);
+  const speakerBefore = quote.innerAt === undefined ? before : beforeQuote(text, quote.innerAt, quote.at + 1);
   const ownAttribution = OWN_QUOTE.test(before)
-    && (quote.innerAt === undefined || OWN_QUOTE.test(beforeQuote(text, quote.innerAt, quote.at + 1)));
-  const unfinishedCasual = quote.innerAt === undefined && !SPEECH_FRAME.test(before) && !hasClosingQuote(text, quote);
-  return ownYouthCueAllowed(true, ownAttribution, unfinishedCasual);
+    && (quote.innerAt === undefined || OWN_QUOTE.test(speakerBefore));
+  const bareQuote = !SPEECH_FRAME.test(speakerBefore);
+  const unfinishedCasual = unfinishedCasualAside(text, quote);
+  return ownYouthCueAllowed(true, ownAttribution || bareQuote, unfinishedCasual);
+}
+
+/** An unclosed quote with no speech frame before it is a casual aside, not another speaker's words. */
+function unfinishedCasualAside(text: string, quote: Quote): boolean {
+  if (quote.innerAt !== undefined) return false;
+  return !SPEECH_FRAME.test(beforeQuote(text, quote.at)) && !hasClosingQuote(text, quote);
 }
 
 type Quote = { at: number; mark: "'" | '"'; innerAt?: number };
