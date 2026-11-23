@@ -1,6 +1,6 @@
 // The real platform (people store, OTP service, accounts, sessions) with a fake OTP provider that
 // keeps the codes it would have texted. No network, no real phone numbers (555-01xx only).
-import { Accounts, APPS, type AppInfo, MemoryPeopleStore, type OtpProvider, OtpService, SessionService } from "@thenetwork/platform";
+import { Accounts, APPS, type AppInfo, createPublicApi, MemoryPeopleStore, type OtpProvider, OtpService, SessionService } from "@thenetwork/platform";
 import { createMcpHandler, type McpHandlerOptions } from "../src/handler.ts";
 import { platformHooks, type PlatformParts } from "../src/hooks.ts";
 import type { McpAppId } from "../src/apps.ts";
@@ -22,19 +22,24 @@ export const PHONE_A = "+12125550142";
 export const PHONE_B = "+12125550143";
 export const HASH_KEY = "test-hash-key";
 
-export function setup(o: Partial<McpHandlerOptions> & { store?: OAuthStore; submitProfile?: PlatformParts["submitProfile"]; updates?: PlatformParts["updates"]; assistantLinked?: PlatformParts["assistantLinked"]; authenticatedSiteSession?: PlatformParts["authenticatedSiteSession"] } = {}) {
+export function setup(o: Partial<McpHandlerOptions> & { store?: OAuthStore; submitProfile?: PlatformParts["submitProfile"]; updates?: PlatformParts["updates"]; assistantLinked?: PlatformParts["assistantLinked"]; authenticatedSiteSession?: PlatformParts["authenticatedSiteSession"]; productionSessionCookies?: boolean } = {}) {
   const clock = { t: Date.UTC(2026, 9, 8, 12, 0, 0) };
   const now = () => clock.t;
   const people = new MemoryPeopleStore();
   const provider = new FakeOtp();
-  const otp = new OtpService(people, provider, { hashKey: HASH_KEY, now });
+  const sessionSecret = "test-session-secret";
+  const productionApi = o.productionSessionCookies ? createPublicApi({
+    env: { PLATFORM_ENV: "production" }, store: people, otp: provider, turnstile: { verify: async () => true },
+    hashKey: HASH_KEY, sessionSecret, now,
+  }) : undefined;
+  const otp = productionApi?.otp ?? new OtpService(people, provider, { hashKey: HASH_KEY, now });
   const appOf = (id: McpAppId) => (APPS as Record<string, AppInfo | undefined>)[id];
-  const accounts = new Accounts(people, { hashKey: HASH_KEY, now, apps: id => (APPS as Record<string, AppInfo>)[id]! });
-  const sessions = new SessionService(people, { secret: "test-session-secret", phoneHash: e164 => accounts.phoneHash(e164), now });
+  const accounts = productionApi?.accounts ?? new Accounts(people, { hashKey: HASH_KEY, now, apps: id => (APPS as Record<string, AppInfo>)[id]! });
+  const sessions = productionApi?.sessions ?? new SessionService(people, { secret: sessionSecret, phoneHash: e164 => accounts.phoneHash(e164), now });
   const logs: string[] = [];
   const store = o.store ?? new MemoryOAuthStore();
   const handler = createMcpHandler({
-    platform: platformHooks({ store: people, otp, accounts, sessions, app: appOf, cookieName: id => `sid_${id}`, ...(o.submitProfile ? { submitProfile: o.submitProfile } : {}), ...(o.updates ? { updates: o.updates } : {}), ...(o.assistantLinked ? { assistantLinked: o.assistantLinked } : {}), authenticatedSiteSession: o.authenticatedSiteSession }),
+    platform: platformHooks({ store: people, otp, accounts, sessions, app: appOf, cookieName: productionApi ? undefined : id => `sid_${id}`, ...(o.submitProfile ? { submitProfile: o.submitProfile } : {}), ...(o.updates ? { updates: o.updates } : {}), ...(o.assistantLinked ? { assistantLinked: o.assistantLinked } : {}), authenticatedSiteSession: o.authenticatedSiteSession ?? productionApi?.authenticatedSiteSession }),
     store, now, minOtpStartMs: 0, log: s => logs.push(s), ...o,
   });
   const fetch = async (req: Request) => (await handler.fetch(req)) ?? new Response("not mine", { status: 418 });

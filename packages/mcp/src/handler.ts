@@ -545,7 +545,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   async function readAuthorizationSession(c: Ctx) {
-    try { return await o.platform.session?.(c.app.id, c.req); }
+    try { return await o.platform.session?.(c.app.id, c.req, c.host.id); }
     catch { return "unavailable" as const; }
   }
 
@@ -845,14 +845,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const verified = { ...r, e164, personId: who.personId, step: "consent" as const };
         if (!await store.advanceAuthRequest(r, verified, now)) return expired();
         const res = await verifiedConsentPage(c, verified, client, { e164, personId: who.personId });
-        const site = o.platform.createSession ? await o.platform.createSession(c.app.id, { e164, personId: who.personId }) : undefined;
+        const site = await o.platform.createSession?.(c.app.id, { e164, personId: who.personId }, c.host.id);
         if (site) res.headers.append("set-cookie", site);
         return res;
       });
     }
 
     if (action.phase === "CheckingConsentOwner" && r.e164) {
-      const current = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
+      const current = await o.platform.session?.(c.app.id, c.req, c.host.id);
       const owner = current === "unavailable" ? undefined : await o.platform.login(r.e164);
       const checked = stepBrowser(action, {
         type: "readConsentOwner",
@@ -1425,7 +1425,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   async function signupDraft(c: Ctx, discard: boolean, body: Record<string, unknown> | undefined): Promise<Response> {
     if (!signupDraftAppEnabled(c.app.id)) return json(404, { error: "not_found" });
-    const who = await o.platform.session?.(c.app.id, c.req);
+    const who = await o.platform.session?.(c.app.id, c.req, c.host.id);
     if(who==="unavailable")return temporarilyUnavailable();
     if (!who) return json(401, { error: "sign_in_required" });
     const key = o.platform.phoneKey(who.e164);

@@ -182,7 +182,7 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
     const c = await connect(env, HUB, PHONE_B, { scope: "membership:read profile:write", resource: endpoint("friends") });
     const saved = await call(env, endpoint("friends"), "prepare_signup", { firstName: "Ari", homeCity: "sf" }, { token: c.token.access_token });
     expect(saved.body!.result.structuredContent).toMatchObject({ prepared: true });
-    const friends = `sid_friends=${(await env.sessions.create("friends", PHONE_B, null)).token}`;
+    const friends = cookieJar(c.flow.siteCookie).header();
     const q = new URLSearchParams({
       response_type: "code", client_id: c.client.client_id, redirect_uri: RETURN, code_challenge: CHALLENGE,
       code_challenge_method: "S256", state: "st-draft", scope: "membership:read profile:write", resource: endpoint("friends"),
@@ -205,13 +205,15 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
   });
 
   test("/oauth/consents on ntwrk.party lists and removes the grants of every app, each labeled with its app; an app site lists only its own", async () => {
-    const env = setup();
+    // spec/connectedAssistants.md, "The page lists live grants only for a signed-in session"
+    // spec/webSession.md, "Only a live token on the requested app can authenticate"
+    const env = setup({ productionSessionCookies: true });
     await addMember(env, PHONE_A, [{ app: "slop", state: "active" }, { app: "friends", state: "active" }]);
     const slop = await connect(env, HUB, PHONE_A, { resource: endpoint("slop") });
-    const friends = await connect(env, HUB, PHONE_A, { resource: endpoint("friends") });
-    const jar = cookieJar(slop.flow.siteCookie, friends.flow.siteCookie);
-    for (const name of ["sid_slop", "sid_friends"]) expect(jar.jar.has(name), name).toBe(true);
-    const cookie = [...jar.jar].filter(([k]) => k.startsWith("sid_")).map(([k, v]) => `${k}=${v}`).join("; ");
+    const hubBrowser = cookieJar(slop.flow.siteCookie);
+    const friends = await connect(env, HUB, PHONE_A, { resource: endpoint("friends"), cookie: hubBrowser.header() });
+    hubBrowser.take(friends.flow.siteCookie);
+    const cookie = hubBrowser.header();
     const names = defaultApps();
     const page = (path = "", host = HUB, cookies = cookie) => env.fetch(new Request(`${origin(host)}/oauth/consents${path}`, { headers: { cookie: cookies } }));
     const listed = await page();
@@ -219,7 +221,20 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
     expect(listed.status, html.slice(0, 300)).toBe(200);
     expect(html).toContain(`Test Assistant (${names.slop.name})`);
     expect(html).toContain(`Test Assistant (${names.friends.name})`);
-    const site = await (await page("", "friends.help", cookie)).text();
+    for (const [app, connection] of [["slop", slop], ["friends", friends]] as const) {
+      const options = connection.flow.siteCookie?.split(", ").find(header => header.startsWith(`__Host-mcp_sid_${app}=`))?.split("; ").slice(1) ?? [];
+      expect(options, app).toEqual(expect.arrayContaining(["Path=/", "HttpOnly", "SameSite=Lax", "Secure"]));
+      expect(options.some(option => option.startsWith("Domain=")), app).toBe(false);
+    }
+    const friendsSession = hubBrowser.jar.get("__Host-mcp_sid_friends");
+    expect(friendsSession).toBeTruthy();
+    expect((await page("", HUB, `__Host-mcp_sid_slop=${friendsSession}`)).status).toBe(401);
+    expect((await page("", "friends.help", cookie)).status).toBe(401);
+    const directFriends = await connect(env, "friends.help", PHONE_A);
+    const directCookie = cookieJar(directFriends.flow.siteCookie).header();
+    expect(directCookie).toMatch(/^__Host-sid=/);
+    expect((await page("", HUB, directCookie)).status).toBe(401);
+    const site = await (await page("", "friends.help", directCookie)).text();
     expect(site).toContain("Test Assistant");
     expect(site).not.toContain(`(${names.friends.name})`);
     expect(site).not.toContain(`(${names.slop.name})`);
@@ -240,12 +255,17 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
     expect((await env.store.auditRows()).filter(r => r.kind === "consent_revoked").map(r => [r.grantId, r.app])).toEqual([[slopGrant!.id, "slop"]]);
     expect((await call(env, endpoint("slop"), "check_status", {}, { token: slop.token.access_token })).res.status).toBe(401);
     expect((await call(env, endpoint("friends"), "check_status", {}, { token: friends.token.access_token })).res.status).toBe(200);
-    const friendsOnly = cookie.split("; ").filter(p => p.startsWith("sid_friends=")).join("");
-    const slopAgain = await connect(env, HUB, PHONE_A, { resource: endpoint("slop") });
+    const friendsOnly = `__Host-mcp_sid_friends=${friendsSession}`;
+    const codesSent = env.provider.sent.length;
+    const slopAgain = await connect(env, HUB, PHONE_A, { resource: endpoint("slop"), cookie });
+    expect(env.provider.sent).toHaveLength(codesSent);
     const [live] = await env.store.grantsFor(key, "slop", env.clock.t);
+    const seeNewProof = await (await page(`?remove=${encodeURIComponent(live!.id)}`)).text();
+    const currentProof = /name="confirmation" value="([^"]+)"/.exec(seeNewProof)?.[1];
+    expect(currentProof).toBeTruthy();
     const refused = await env.fetch(new Request(`${origin(HUB)}/oauth/consents/revoke`, {
       method: "POST", headers: { cookie: friendsOnly, origin: origin(HUB), "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant: live!.id, confirmation: proof! }),
+      body: new URLSearchParams({ grant: live!.id, confirmation: currentProof! }),
     }));
     expect(await refused.text()).not.toContain("Access removed.");
     expect(await env.store.getGrant(live!.id)).toMatchObject({ revokedAt: null });
