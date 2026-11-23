@@ -51,6 +51,38 @@ test("friends: weekly standbys do not duplicate initial invitations", () => {
   expect(withRepeat.repeats).toMatchObject([{ invited: ["a", "b", "c"], alternates: [] }]);
 });
 
+// spec/friendsWeek.md, "A standby has no initial invitation and holds one bench place"
+test("friends: two closed tables share at most one standby reservation for a member", () => {
+  const venue = PLAN_VENUES.find(candidate => candidate.activities.includes("coffee_crawl"));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const firstGroup = ["a0", "a1", "a2", "a3", "a4", "a5"];
+  const secondGroup = ["b0", "b1", "b2", "b3", "b4", "b5"];
+  const standby = "z";
+  const ids = [...firstGroup, ...secondGroup, standby];
+  const mini = new Mini(ids.map(id => ({ id, name: id, age: 30, area: venue.area, interests: ["coffee", "climbing"] })));
+  for (const id of ids) mini.facets.push({
+    id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
+    scope: "agent_private", provenance: "said", confidence: 1,
+  });
+  const edges = firstGroup.flatMap(from => secondGroup.map(to => ({
+    from, to, type: "blocked" as const, strength: 1, explicit: true, createdAt: START - DAY,
+  })));
+  const world = new World({ ...mini.ctx().snapshot(), edges }, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+  const start = Date.UTC(2026, 9, 10, 16);
+  const windows = [{ start, end: start + 5 * HOUR }];
+  const evidence = new Map<MemberId, plans.PlanEvidence>(ids.map(id => [id, {
+    memberId: id, tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY },
+  }]));
+  const week = planFriendsWeek(world, { now: START, tz: TZ, evidence, venues: [venue], crews: [], outcomes: [], offered: [] }, {
+    ...DEFAULT_FRIENDS_POLICY, crews: false, spreadNew: true, openTable: false, partnerIntros: 0,
+  }, FRIENDS_PLANS);
+
+  expect(week.plans.map(({ invited, alternates }) => ({ invited, alternates }))).toEqual([
+    { invited: firstGroup, alternates: [standby] },
+    { invited: secondGroup, alternates: [] },
+  ]);
+});
+
 test("friends: a fitting triangle survives an unavailable or isolated seat candidate", () => {
   // spec/friendsWeek.md and spec/groupFormation.md: circles form among the members a table can seat.
   // d pairs best with a and b, so the triangle a-b-d is the strongest; c and d have a block between
