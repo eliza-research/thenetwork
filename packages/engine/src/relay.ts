@@ -549,7 +549,23 @@ const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
 );
 const LATE_PRIVATE_STOP_LEAD = new RegExp(String.raw`^[,\s–—]*${RELAY_MARKED_STOP}[,;:\s–—]+`, "u");
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
-const RENEW_PRIVATE_END = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
+const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const TRAILING_PRIVATE_CONDITION = new RegExp(
+  String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b.*)$`,
+  "iu",
+);
+const POLITE_PRIVATE_CONDITION =
+  /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when\s+you\s+(?:can|get a chance|have a chance))\b/iu;
+const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
+const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
+const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
+const INDEPENDENT_WHEN_QUESTION = /^when\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
+const PRIVATE_CONDITION_ITEM_NAME = new RegExp(String.raw`\b(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})\b`, "u");
+const INCOMPLETE_CONDITION_ACTION = new RegExp(
+  String.raw`\b(?:(?:do|handle|take care of)(?:\s+(?:it|that|this))?|(?:${TRANSFER}|show|tell)|tell\s+${OTHER}\s+(?:it|that|this))(?:\s+(?:now|then|myself))?\s*$`,
+  "u",
+);
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -601,6 +617,43 @@ function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean
   return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
 }
 
+function privateClauseIsConditional(clause: string, source: string, detached: boolean): boolean {
+  const qualifier = TRAILING_PRIVATE_CONDITION.exec(clause);
+  if (!qualifier) return false;
+  if (clause !== source) return true;
+  let condition = qualifier[2]!.trimEnd();
+  if (qualifier[1]) {
+    if (!condition.endsWith(")")) return true;
+    condition = condition.slice(0, -1).trimEnd();
+  }
+  const polite = POLITE_PRIVATE_CONDITION.exec(condition);
+  if (polite && PRIVATE_RELAY_COURTESY.test(condition.slice(polite[0].length))) return false;
+  if (detached || /^\s*,\s*and\b/i.test(clause)) {
+    const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
+    if (main && (TEXT_REQ.test(main)
+      || (detached && (PRIVATE_CONDITION_STATEMENT.test(main) || PRIVATE_CONDITION_FOLLOWUP.test(main))))) {
+      const words = main.toLowerCase();
+      return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
+        || INCOMPLETE_CONDITION_ACTION.test(words)
+        || (PRIVATE_CONDITION_ITEM_NAME.test(words) && (PRIVATE_RELAY_ACTION.test(words) || /\btell\b/u.test(words)));
+    }
+  }
+  return true;
+}
+
+function conditionsPrivateRequest(text: string, source: string, request: RegExpMatchArray): boolean {
+  const start = request.index! + request[0].length;
+  const clause = text.slice(start).split(RELAY_SENTENCE, 1)[0]!;
+  if (privateClauseIsConditional(clause, source.slice(start, start + clause.length), false)) return true;
+  const boundary = /^[.!?;…\n]+\s*/u.exec(text.slice(start + clause.length));
+  if (!boundary) return false;
+  const adjacentStart = start + clause.length + boundary[0].length;
+  const remaining = text.slice(adjacentStart);
+  const adjacent = remaining.split(RELAY_SENTENCE, 1)[0]!;
+  if (remaining[adjacent.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(adjacent)) return false;
+  return privateClauseIsConditional(adjacent, source.slice(adjacentStart, adjacentStart + adjacent.length), true);
+}
+
 function retractsPrivateSentence(sentence: string, source: string, request: RegExpMatchArray): boolean {
   if (LATE_PRIVATE_RETRACTION.test(sentence) || LATE_PRIVATE_STOP_LEAD.test(sentence)) return true;
   const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence);
@@ -616,7 +669,7 @@ function retractsPrivateSentence(sentence: string, source: string, request: RegE
     return item === "it" || item === requestedItem;
   });
   return !renewal || !DIRECT_RELAY_LEAD.test(rest.slice(0, renewal.index!))
-    || !RENEW_PRIVATE_END.test(rest.slice(renewal.index! + renewal[0].length));
+    || !PRIVATE_RELAY_COURTESY.test(rest.slice(renewal.index! + renewal[0].length));
 }
 
 function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
@@ -668,7 +721,9 @@ export function parseRelayRequest(text: string): RelayRequest {
   if (privateRequest) {
     const low = spoken.toLowerCase();
     const clauses = relayClauses(low);
-    const hedged = HEDGE.test(low) || uncertainPrivateTransfer(clauses) || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
+    const hedged = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
+      || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest)
+      || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos])
