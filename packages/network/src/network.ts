@@ -79,7 +79,7 @@ import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
-import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
+import { clarifiedProbeTimeReading, probeClarificationMayAsk, probeNeedsExplicitTimeChoice, weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
 import { engineQuestionDeliveryPrefix } from "../../core/src/generated/engineAsks.ts";
 import { weeklyCheckinEvidence, weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
@@ -447,7 +447,7 @@ interface MemberState {
   /** What the member's next message probably answers. `ask` names an engine question (EngineResult.asks). */
   awaiting?: {
     kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting";
-    oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean;
+    oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean; timeChoice?: boolean;
     probeReceiptId?: string; probeInboundCount?: number; crewOfferReceiptId?: string; engineQuestionDeliveryId?: string;
     bookedCheckIn?: { meetingAt: number; revision: number };
   };
@@ -1233,7 +1233,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           m.awaiting = undefined;
           return this.onPlanProbeAnswer(m, po, reply.answer === "yes", body, reply.picks);
         }
-        if (this.clarify(m, aw, c, "Which of the offered times work for you? Reply with the letters or the times.")) return;
+        if (this.clarify(m, aw, c, copy.probeTimeClarify)) return;
         return "open" as const;
       }
       const yn0 = po.replacementFor ? consentOf(body).answer : this.yesNoOf(body);
@@ -1268,7 +1268,16 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!gatheringRepeatMayAnswer(true, this.memberReply && !msg.reaction, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)) return "open" as const;
       }
       const parsedAnswer = parseProbeReply(body, options);
-      let r = gathering ? parsedAnswer : mergeConsent(parsedAnswer, this.understood, options);
+      // spec/probeReply.md, "An unresolved offered time needs a time choice"
+      const legacyClarified = aw.clarified === true && aw.timeChoice === undefined;
+      const timeChoice = probeNeedsExplicitTimeChoice(options.length > 0, aw.timeChoice === true, legacyClarified, false);
+      const explicit = timeChoice && parsedAnswer.answer === "yes" && parsedAnswer.keys.length > 0
+        ? parseProbeReply(body, options, "clarified") : undefined;
+      const timeReading = clarifiedProbeTimeReading(timeChoice, parsedAnswer.answer, parsedAnswer.keys.length,
+        explicit?.answer === "yes" ? explicit.keys.length : 0);
+      let r = gathering || timeChoice ? parsedAnswer : mergeConsent(parsedAnswer, this.understood, options);
+      if (timeReading === "UseExplicitProbeTimes") r = explicit!;
+      if (timeReading === "AwaitExplicitProbeTimes") r = { answer: "unclear", keys: [], why: "slot" };
       // spec/probeReply.md, "A short acknowledgement must immediately follow its own probe"
       if (o && r.answer !== "unclear" && ACK_ONLY.test(body.trim())) {
         const key = gathering ? gatheringRepeatProbeKey(o.id, m.id, o.timeRetry?.includes(m.id)) : probeReplyReceiptKey(o.id, m.id, aw);
@@ -1281,7 +1290,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
       if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys); }
-      if (this.clarify(m, aw, c)) return;
+      const askForTimes = probeNeedsExplicitTimeChoice(options.length > 0, aw.timeChoice === true, legacyClarified, r.why === "slot");
+      if (askForTimes ? this.clarify(m, aw, c, copy.probeTimeClarify, true) : this.clarify(m, aw, c)) return;
     }
     if (!mcp && this.weeklyOptIn(m, body)) return;
     if (aw?.kind === "crew" && aw.crewId) {
@@ -1563,9 +1573,11 @@ export class ConsentNetwork implements NetworkUnderTest {
    * once more, plainly. Nothing is booked or revealed on it. False when the message is something
    * else (a request, a cancel) or we already asked again for this probe.
    */
-  private clarify(m: MemberState, aw: NonNullable<MemberState["awaiting"]>, c: Classified, text = copy.probeClarify): boolean {
-    if (["people_request", "plans_request", "cancel", "invite_friend", "feedback_like", "block", "report"].includes(c.kind) || aw.clarified) return false;
+  private clarify(m: MemberState, aw: NonNullable<MemberState["awaiting"]>, c: Classified, text = copy.probeClarify, timeChoice = false): boolean {
+    if (["people_request", "plans_request", "cancel", "invite_friend", "feedback_like", "block", "report"].includes(c.kind)
+      || !probeClarificationMayAsk(timeChoice, aw.clarified === true, aw.timeChoice === true)) return false;
     aw.clarified = true;
+    if (aw.kind === "probe") aw.timeChoice = timeChoice;
     this.ctx.log("probe_unclear", { oppId: aw.oppId ?? null, memberId: m.id });
     this.send(m, text, { type: "question", proactive: false }, "reply");
     return true;

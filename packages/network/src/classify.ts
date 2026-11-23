@@ -10,7 +10,7 @@
 import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, normalizeFractionalAgeInitialism, parseReply, quoteStillOpen, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { mayRetryCounter, pickedTimes } from "../../core/src/generated/probeReply.ts";
+import { clarifiedBroadTimeChoiceAllowed, mayRetryCounter, pickedTimes } from "../../core/src/generated/probeReply.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -783,6 +783,7 @@ const TRAILING_BOTH_DAY_PAIR = new RegExp(
   "dgu",
 );
 const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
+const EXPLICIT_PAIR_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:either|both) of (?:them|those|these)(?: (?:times|options|slots))?(?: (?:works?|will work)(?: for me)?)?[.!\s]*$/;
 const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
 const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
 const EXPLICIT_KEY_CLAUSE = /(^\s*|[,;.!\n]\s*|\b(?:and|or)\s+)([abc])\s+(?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please)\b/g;
@@ -887,7 +888,9 @@ interface ProbeReply {
   explicitTimeSelection?: true;
 }
 
-export function parseProbeReply(body: string, options: readonly TimeOption[] = [], explicitTimesOnly = false): ProbeReply {
+export function parseProbeReply(body: string, options: readonly TimeOption[] = [], mode: boolean | "clarified" = false): ProbeReply {
+  const explicitTimesOnly = mode !== false;
+  const clarifiedTimes = mode === "clarified";
   const t = normText(body);
   const c = consentScan(body);
   if (!options.length || c.answer === "counter") {
@@ -899,12 +902,14 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
+  const memberChoiceAt = (at: number) => !clarifiedTimes || probeChoiceAuthored(t.slice(0, at));
   const refuse = (keys: readonly string[], clause?: string) => {
     for (const key of keys) neg.add(key);
     if (clause !== undefined) refusedClauses.add(clause);
   };
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number) => {
+    if (!memberChoiceAt(i)) return;
     const cl = clauseAt(t, i, len);
     if (negatedAt(t, i, len)) return refuse(keys, cl);
     pickedClauses.add(cl);
@@ -935,6 +940,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   ];
   let ordinalMissing = false;
   for (const [re, i] of ordinals) for (const m of t.matchAll(re)) {
+    if (!memberChoiceAt(m.index!)) continue;
     const option = options[i];
     if (option) mark([option.key], m.index!, m[0].length);
     else ordinalMissing = true;
@@ -945,7 +951,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const clock = [...o.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
     return { key: o.key, day: o.label.split(" ")[0], minute: clock ? clockMinute(clock) : undefined };
   });
-  for (const m of timeMentions(t, !explicitTimesOnly)) {
+  for (const m of timeMentions(t, !explicitTimesOnly || clarifiedTimes)) {
+    if (!memberChoiceAt(m.at)) continue;
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
       && (!m.part || o.minute !== undefined && partOf(o.minute) === m.part)).map(o => o.key);
     const exclusion = NAMED_EXCLUSION.test(t.slice(0, m.at));
@@ -963,6 +970,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Weekends work best" names the weekend: it picks the offered Saturday and Sunday options, and with
   // none offered it names a time the probe did not offer (asked again, never booked).
   for (const m of t.matchAll(/\bweekends?\b/g)) {
+    if (!memberChoiceAt(m.index!)) continue;
     const weekend = offered.filter(o => o.day === "Saturday" || o.day === "Sunday").map(o => o.key);
     if (negatedAt(t, m.index!, m[0].length)) refuse(weekend, clauseAt(t, m.index!, m[0].length));
     else if (weekend.length) mark(weekend, m.index!, m[0].length);
@@ -973,7 +981,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
   if (!residue && !/\?/.test(t)) for (const k of pos) strong.add(k);
-  const picked = all.filter(k => pos.has(k) && (!explicitTimesOnly || !neg.has(k)));
+  const named = all.filter(k => pos.has(k));
+  const picked = explicitTimesOnly ? named.filter(k => !neg.has(k)) : named;
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
   const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
@@ -985,8 +994,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
     if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
   }
-  const strongAll = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t);
-  const weakCues = explicitTimesOnly || strongAll ? [] : [...t.matchAll(ALL_WEAK)];
+  const strongAll = explicitTimesOnly ? EXPLICIT_ALL.exec(t) ?? (clarifiedTimes ? EXPLICIT_PAIR_ALL.exec(t) : null) : ALL.exec(t);
+  const weakCues = (explicitTimesOnly && !clarifiedTimes) || strongAll ? [] : [...t.matchAll(ALL_WEAK)].filter(cue => memberChoiceAt(cue.index!));
   const weakAt = weakCues[0];
   const weakRefusal = weakCues.some(cue => refusedClauses.has(clauseAt(t, cue.index!, cue[0].length)));
   const oneSlot = /(?:\bbut\s+|,\s*)not\s+both[.!\s]*$/.exec(t);
@@ -1009,7 +1018,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       const rest = t.slice(cue.index! + cue[0].length).split(BOTH_TIME_BOUNDARY, 1)[0]!;
       return BOTH_TIME_TAIL.test(rest) && !/\b(?:we|you|they)\s+$/.test(t.slice(0, cue.index!));
     });
-    if (namesPair && picked.length < 2) return { ...unclear, why: "slot" };
+    if (namesPair && named.length < 2) return { ...unclear, why: "slot" };
     const chosen = picked.filter(key => !neg.has(key));
     return chosen.length ? explicitYes(pickedTimes(chosen, open)) : { ...unclear, why: "slot" };
   }
@@ -1021,6 +1030,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const allAt = strongAll ?? weakAt;
   if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
+    if (clarifiedTimes && !clarifiedBroadTimeChoiceAllowed(strongAll !== null,
+      /\b(?:both|either)\b/.test(strongAll?.[0] ?? ""), open.length)) {
+      return { ...unclear, why: "slot" };
+    }
     return open.length ? explicitYes(open) : { ...unclear, why: "slot" };
   }
   if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
