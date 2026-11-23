@@ -232,6 +232,23 @@ test.each([
   "Don't send it to them",
   "Don't send it please",
   "Please don't send it to them yet",
+  "Don't send it anymore",
+  "Don't send it any more",
+  "Don't send it now",
+  "Don't send it after all",
+  "Don't share it with them anymore",
+  "I don't want you to send it anymore",
+  "Never send it",
+  "Don't send them it",
+  "Don't send them anything",
+  "Don't you dare send it",
+  "Ana says, send it now. Don't send it anymore.",
+  "Ana says, send it now, but I don't want you to send it anymore.",
+  "I say, don't send it now",
+  "As I said, don't send it now",
+  "Ana says, if you need to, send it now. Don't send it anymore.",
+  "Ana says, if it's urgent, send it now; Don't send it anymore.",
+  "Ana says, “don't send it now.” Don't send it anymore",
 ])("the signed turn withdraws a pending swap after %s", async (text) => {
   const id = "withdrawn-swap-" + randomUUID();
   const before = await sharesQueued();
@@ -323,5 +340,34 @@ test("an independent direct sentence can finish a signed number swap", async () 
   await startNumberSwap(id, "ari");
   const text = "Tell Ana to send him my number. Please send Ari my number.";
   expect(await (await post(await ask("bo", id + "-direct", text))).json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
+  "Don't forget to send it",
+  "Don't hesitate, send it now",
+  "I can't wait anymore",
+  "Don't send it to my old email anymore",
+  "Never forget to send it",
+  "Don't you dare forget to send it",
+  "Don't send them anything else",
+  "Never send them the invoice",
+  "Ari said “don't send it anymore.”",
+  "Ana says, don't send it now",
+  "Mary Jane told me, don't send it any more",
+  "Well, Ana says, don't send it yet",
+  "Ana says, if it's not urgent, don't send it now",
+  "Ana says, don't send my number",
+])("the signed turn keeps a pending swap after a go-ahead or unrelated wording: %s", async text => {
+  const id = "unrelated-withdrawal-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "bo");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+
+  await open(phones.bo, id + "-followup", text);
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(original);
+  expect(await (await post(await ask("ari", id + "-second", "send Bo my number"))).json())
+    .toMatchObject({ decision: "pass", delivered: false });
   expect(await sharesQueued()).toBe(before + 2);
 }, 60_000);
