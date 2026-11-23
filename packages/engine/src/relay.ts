@@ -531,13 +531,20 @@ const CONTINUES_PRIVATE_REFUSAL = new RegExp(
 const RELAY_SHORT_RETRACTION = "no|wait|cancel|(?:hold|hang) on";
 const RELAY_EXPLICIT_RETRACTION = "scratch that|cancel that|take that back|never ?mind|nvm|i(?:'ve| have)? changed my mind|forget it|keep it private";
 const RELAY_LATE_DOUBT = "maybe|hmm|idk|(?:i(?:'m| am) )?(?:not ready|reconsidering)|on second thought|let me think|ugh actually";
-const RELAY_RETRACTION_OPENER = "actually|wait|sorry|lol|ok(?:ay)?|oh|ugh";
-const RELAY_UNPUNCTUATED_DOUBT = String.raw`on second thought[,;:\s–—]+|let me think(?:\s+(?:about|over|on|through)\s+(?:it|this|that))?(?:\s+(?:first|more|again|a bit))?\s*(?:[,;:–—]\s*|$)`;
+const RELAY_UNPUNCTUATED_DOUBT =
+  String.raw`(?:let me think(?:\s+(?:(?:about|on|over|through)\s+(?:it|this|that)|it over))?(?:\s+(?:first|more|again|a bit))?`
+  + String.raw`|on second thought\s+(?:no|i(?:'ll|\s+(?:should|will))\s+wait)|hmm\s+idk)\s*(?:[,;:–—]\s*|$)`;
+const COLLOQUIAL_RETRACTION = /^[,\s–—]*(?:lol|ok(?:ay)?|oh|ugh)[,\s]+(?:never ?mind|nvm|wait\s*[,–—]\s*no)\b(\s*[,;:–—]\s*|\s*)/iu;
+const COLLOQUIAL_RETRACTION_REASON = /^(?:i|we|he|she|they)\b/iu;
+const COLLOQUIAL_RETRACTION_ITEM = new RegExp(
+  String.raw`^(?:(?:my|the|this|that|these)\s+)?(?:(?<contact>${CONTACT_RELAY_NAME})|${PHOTO_RELAY_NAME})\b\s*(?:[,;:–—]|$)`,
+  "iu",
+);
 const RELAY_STOP_SYMBOL = String.raw`[❌❎🚫🛑👎][\p{M}\p{Emoji_Modifier}]*`;
 const RELAY_ITEM_SYMBOL = String.raw`[📞📸][\p{M}]*`;
 const RELAY_MARKED_STOP = String.raw`(?:${RELAY_STOP_SYMBOL}(?:\s*${RELAY_ITEM_SYMBOL})?|${RELAY_ITEM_SYMBOL}\s*${RELAY_STOP_SYMBOL})`;
 const LATE_PRIVATE_RETRACTION = new RegExp(
-  String.raw`^[,\s–—]*(?:(?:${RELAY_RETRACTION_OPENER})[,\s]+)?(?:${RELAY_SHORT_RETRACTION}|${RELAY_EXPLICIT_RETRACTION}|${RELAY_LATE_DOUBT}|` +
+  String.raw`^[,\s–—]*(?:(?:actually|wait|sorry)[,\s]+)?(?:${RELAY_SHORT_RETRACTION}|${RELAY_EXPLICIT_RETRACTION}|${RELAY_LATE_DOUBT}|` +
   String.raw`(?:${RELAY_MARKED_STOP}\s*)+)` +
   String.raw`(?:[,\s]+(?:please|pls|thanks|sorry))?\s*$`,
   "iu",
@@ -545,7 +552,7 @@ const LATE_PRIVATE_RETRACTION = new RegExp(
 const LATE_ORPHAN_QUESTION = /[.!;…\n][ \t]*\?{2,}[ \t]*(?=$|[.!;…\n])/u;
 // Short cues need punctuation to mark a retraction. "Wait in the lobby" is a different request.
 const LATE_PRIVATE_RETRACTION_LEAD = new RegExp(
-  String.raw`^[,\s–—]*(?:and\s+)?(?:(?:${RELAY_RETRACTION_OPENER})[,\s]+)?(?:(?:${RELAY_SHORT_RETRACTION}|${RELAY_LATE_DOUBT})\s*[,;:–—]\s*|` +
+  String.raw`^[,\s–—]*(?:and\s+)?(?:(?:actually|wait|sorry)[,\s]+)?(?:(?:${RELAY_SHORT_RETRACTION}|${RELAY_LATE_DOUBT})\s*[,;:–—]\s*|` +
   String.raw`(?:${RELAY_EXPLICIT_RETRACTION})[,;:\s–—]+|${RELAY_UNPUNCTUATED_DOUBT})`,
   "iu",
 );
@@ -558,11 +565,11 @@ const TRAILING_PRIVATE_CONDITION = new RegExp(
   "iu",
 );
 const POLITE_PRIVATE_CONDITION =
-  /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when(?:ever)?\s+you\s+(?:can|get a chance|have a chance))\b|^whenever(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)))?/iu;
+  /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when(?:ever)?\s+you\s+(?:can|get a chance|have a chance))\b|^whenever(?:\s+(?:works|is\s+(?:fine|good|ok(?:ay)?)|you(?:'re| are)\s+ready))?\b/iu;
 const PRIVATE_CONDITION_MAIN = new RegExp(String.raw`^(?:only\s+)?(?:${PRIVATE_CONDITION_MARKER})\b[^,]+,\s*(\S.*)$`, "iu");
 const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
-const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
-const INDEPENDENT_WHEN_QUESTION = /^when\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
+const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?(?:let me know|tell me(?:\s+how it went)?)\s*$/iu;
+const INDEPENDENT_WHEN_QUESTION = /^when(?:ever)?\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
 const PRIVATE_CONDITION_ITEM_NAME = new RegExp(String.raw`\b(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})\b`, "u");
 const INCOMPLETE_CONDITION_ACTION = new RegExp(
   String.raw`\b(?:(?:do|handle|take care of)(?:\s+(?:it|that|this))?|(?:${TRANSFER}|show|tell)|tell\s+${OTHER}\s+(?:it|that|this))(?:\s+(?:now|then|myself))?\s*$`,
@@ -656,13 +663,23 @@ function conditionsPrivateRequest(text: string, source: string, request: RegExpM
   return privateClauseIsConditional(adjacent, source.slice(adjacentStart, adjacentStart + adjacent.length), true);
 }
 
-function retractsPrivateSentence(sentence: string, source: string, request: RegExpMatchArray): boolean {
+function colloquialRetractionLead(sentence: string, contact: boolean): string | undefined {
+  const match = COLLOQUIAL_RETRACTION.exec(sentence);
+  if (!match) return;
+  const rest = sentence.slice(match[0].length);
+  const explicitItem = COLLOQUIAL_RETRACTION_ITEM.exec(rest);
+  // A named object must be the requested item. An opener alone cannot turn "Oh no" into a refusal.
+  if (explicitItem) return Boolean(explicitItem.groups?.contact) === contact ? match[0] : undefined;
+  if (!rest || /[,;:–—]/u.test(match[1]!) || COLLOQUIAL_RETRACTION_REASON.test(rest)) return match[0];
+}
+
+function retractsPrivateSentence(sentence: string, source: string, request: RegExpMatchArray, contact: boolean): boolean {
   if (LATE_PRIVATE_RETRACTION.test(sentence) || LATE_PRIVATE_STOP_LEAD.test(sentence)) return true;
-  const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence);
-  if (lead === null) return false;
+  const lead = LATE_PRIVATE_RETRACTION_LEAD.exec(sentence)?.[0] ?? colloquialRetractionLead(sentence, contact);
+  if (lead === undefined) return false;
   // Quotation masking must not turn a partial repeat into a complete request.
   if (sentence !== source) return true;
-  const rest = sentence.slice(lead[0].length);
+  const rest = sentence.slice(lead.length);
   const repeated = [...rest.matchAll(CONTACT_REQ), ...rest.matchAll(PHOTO_REQ)]
     .find(candidate => candidate[0].toLowerCase() === request[0].toLowerCase());
   const requestedItem = PRIVATE_RELAY_ITEM.exec(request[0].toLowerCase())?.[0];
@@ -674,12 +691,12 @@ function retractsPrivateSentence(sentence: string, source: string, request: RegE
     || !PRIVATE_RELAY_COURTESY.test(rest.slice(renewal.index! + renewal[0].length));
 }
 
-function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[]): boolean {
+function retractsPrivateRequest(text: string, source: string, request: RegExpMatchArray, privateRequests: readonly RegExpMatchArray[], contact: boolean): boolean {
   const end = request.index! + request[0].length;
   const tail = text.slice(end);
   if (LATE_ORPHAN_QUESTION.test(tail) || [...tail.matchAll(RELAY_SENTENCE_TEXT)].some(part => {
     const start = end + part.index!;
-    return retractsPrivateSentence(part[0], source.slice(start, start + part[0].length), request);
+    return retractsPrivateSentence(part[0], source.slice(start, start + part[0].length), request, contact);
   })) return true;
   return privateRequests.some(candidate => {
     if (candidate.index! < end || candidate[0].toLowerCase() === request[0].toLowerCase() || reportsPrivateRequest(text, candidate)) return false;
@@ -728,7 +745,7 @@ export function parseRelayRequest(text: string): RelayRequest {
       || (/\?\s*$/.test(spoken) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(spoken));
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
-      || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos])
+      || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)
       || (!!contact && refusesNumberSwap(low, clauses));
     return privateRelayRequestAllowed(refused, hedged)
       ? { kind: contact ? "contact_share" : "photo" } : { kind: "none" };
