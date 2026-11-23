@@ -472,9 +472,13 @@ const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to
 const TRANSFER = "send|share|give|pass|forward|text|disclose|reveal";
 const SWAP_MODAL_REFUSAL = new RegExp(SHARE_NEG.source + "\\s+(?:ever\\s+)?(?:" + TRANSFER + ")\\b");
 const REFUSES_MATCH_ACCESS = new RegExp("\\b(?:they|he|she)\\s+" + SHARE_NEG.source + "\\s+(?:have|get)\\b");
+const PENDING_SWAP_RECIPIENT = "(?:them|him|her|my (?:match|date))";
 const DECLINES_PENDING_SEND = new RegExp(
-  "^\\s*(?:(?:actually|please|pls|i|no|never mind|nvm)\\s+)*(?:i(?='ll\\b))?(?:(?:don'?t|do\\s+not)(?:\\s+want\\s+(?:you\\s+)?to)?|" +
-  SHARE_NEG.source + ")\\s+(?:" + TRANSFER + ")(?:\\s+out)?\\s+(?:it|that)(?:\\s+(?:to|with)\\s+(?:them|him|her|my (?:match|date)))?(?:\\s+(?:yet|please|pls))*\\s*$",
+  String.raw`^\s*(?:(?:actually|please|pls|i|no|never mind|nvm)\s+)*(?:i(?='ll\b))?` +
+  String.raw`(?:(?:don'?t|do\s+not)(?:\s+(?:want\s+(?:you\s+)?to|(?:you\s+)?dare))?|never|${SHARE_NEG.source})` +
+  String.raw`\s+(?:${TRANSFER})(?:\s+out)?\s+` +
+  String.raw`(?:(?:it|that)(?:\s+(?:to|with)\s+${PENDING_SWAP_RECIPIENT})?|${PENDING_SWAP_RECIPIENT}\s+(?:it|that|anything))` +
+  String.raw`(?:\s+(?:yet|please|pls|any\s?more|now|after all))*\s*$`,
 );
 const PRIVATE_RELAY_ITEM = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?|email)|(?:this|that|the|my|these) (?:photos?|pics?|pictures?|selfies?|images?))\b/;
 const PRIVATE_RELAY_ACTION = /\b(?:send(?:ing)?|sent|shar(?:e|ing)|giv(?:e|ing)|pass(?:ing)?|forward(?:ing)?|show(?:ing)?|text(?:ing)?)\b/;
@@ -484,6 +488,8 @@ const RELAY_CLAUSE = /[,;.!?\n]+|\b(?:but|however)\b/;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
 const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;
 
+const quotedRelaySeparator = (quotation: string): string => /[.!?…]\s*["']$/.test(quotation) ? ";" : " ";
+
 // Keep offsets so a request can be compared with the actual words before it.
 const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"')
   .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length));
@@ -491,7 +497,7 @@ const ownRelayWords = (text: string): string => text.replace(/[“”]/g, '"')
 function directRelayLead(prefix: string): boolean {
   // Treat a complete quoted sentence as a boundary without reading its words as consent.
   const clause = prefix.replace(/[“”]/g, '"')
-    .replace(RELAY_QUOTATION, quotation => /[.!?…]\s*["']$/.test(quotation) ? ";" : " ")
+    .replace(RELAY_QUOTATION, quotedRelaySeparator)
     .split(/[.!?;…\n]+/).at(-1)!;
   if (DIRECT_RELAY_LEAD.test(clause)) return true;
   const comma = clause.lastIndexOf(",");
@@ -512,8 +518,19 @@ function refusesNumberSwap(clauses: readonly string[]): boolean {
 
 const relayClauses = (text: string): string[] => text.replace(SWAP_GO_AHEAD, " ").split(RELAY_CLAUSE);
 
+// A simple third-person attribution introduces a report through the next sentence boundary.
+// Leave an explicit first-person contrast in the sender's words.
+const REPORTED_SWAP_SEGMENT = /(^|[.,!?;\n])\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:said|says?|(?:tells?|told|asks?|asked)\s+(?:me|us))\s*,([^.!?;\n]*)/gu;
+const OWN_SWAP_CONTRAST = /\b(?:but|however)\s+(?:i|we)\b/u;
+
 export function withdrawsRelaySwap(text: string): boolean {
-  return refusesNumberSwap(relayClauses(ownRelayWords(text.replace(/[’‘`´]/g, "'")).trim().toLowerCase()));
+  const own = text.replace(/[’‘`´]/g, "'").replace(/[“”]/g, '"')
+    .replace(RELAY_QUOTATION, quotedRelaySeparator).trim().toLowerCase();
+  const authored = own.replace(REPORTED_SWAP_SEGMENT, (_segment, boundary: string, report: string) => {
+    const contrast = OWN_SWAP_CONTRAST.exec(report);
+    return contrast ? boundary + report.slice(contrast.index) : boundary;
+  });
+  return refusesNumberSwap(relayClauses(authored));
 }
 
 /**
