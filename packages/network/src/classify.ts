@@ -992,9 +992,10 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
 const NAMED_TIME_JOIN = String.raw`\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)`;
 const BARE_NAMED_TIME_JOIN = new RegExp(`^${NAMED_TIME_JOIN}$`);
 const JOINED_SHORT_DAY = new RegExp(String.raw`^(${NAMED_TIME_JOIN})(${DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|")})\b`);
-const OFFERED_TIME_REFUSAL_END = String.raw`(?=\s*(?:(?:for (?:me|us)|either|at all|right now)\s*)*(?:$|[,;.!?\n]|\b(?:and|but|so|though|however|because|since)\b))`;
+const OFFERED_TIME_REFUSAL_DETAIL = String.raw`(?:for (?:me|us)|(?:in|with) (?:my|our|the) (?:schedule|calendar)|on (?:my|our) end|either|at all|at the moment|right now|anymore|unfortunately|this week)`;
+const OFFERED_TIME_REFUSAL_END = String.raw`(?=(?:\s+${OFFERED_TIME_REFUSAL_DETAIL}\b)*\s*(?:$|[,;.!?\n]|\b(?:and|but|so|though|however|because|since)\b))`;
 const OFFERED_TIME_REFUSAL =
-  String.raw`\s*(?:(?:both|all)\s+)?(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
+  String.raw`\s*(?:(?:both|all)\s+)?(?:(?:(?:is|'s|are|would be|will be)\s+)?(?:(?:both|all)\s+)?(?:out(?: of town)?|bad|busy|unavailable|full|packed|booked|taken|no good|not (?:good|great|ideal|possible|free|available)|tough|rough|a no|off|impossible)\b|` +
   String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|fit|suit|make it))?|` +
   String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:good|great|fine|free|available|possible|ideal|an option|a good fit)\b)` + OFFERED_TIME_REFUSAL_END;
 const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);

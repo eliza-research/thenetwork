@@ -95,3 +95,6 @@
 {"text":"Saturday and Sunday aren't booked and both work for me.","answer":"yes","keys":["b","c"]}
 {"text":"Saturday and Sunday aren't bad, so both work for me.","answer":"yes","keys":["b","c"]}
 {"text":"Saturday at 11am and Sunday at 2pm don't work for me.","answer":"unclear","keys":[]}
+{"text":"Saturday and Sunday don't work with my schedule. Thursday works.","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday don't work for me anymore. Thursday works.","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Saturday and Sunday both don't at the moment.","answer":"yes","keys":["a"]}
