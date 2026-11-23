@@ -551,11 +551,18 @@ const LATE_PRIVATE_STOP_LEAD = new RegExp(String.raw`^[,\s–—]*${RELAY_MARKED
 const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM})\b`, "giu");
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const TRAILING_PRIVATE_CONDITION =
-  /^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[,\s]+)*(\(\s*)?((?:only\s+)?(?:if|when|unless|once|after|until|provided|as\s+long\s+as|in\s+case)\b.*)$/iu;
+  /^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(\(\s*)?((?:only\s+)?(?:if|when|unless|once|after|until|provided|as\s+long\s+as|in\s+case)\b.*)$/iu;
 const POLITE_PRIVATE_CONDITION =
   /^(?:if\s+(?:you\s+(?:can|could|don't mind)|you(?:'re| are)\s+able to|(?:it|that)(?:'s| is)\s+(?:ok(?:ay)?(?: with you)?|convenient for you)|possible)|when\s+you\s+(?:can|get a chance|have a chance))\b/iu;
 const PRIVATE_CONDITION_MAIN = /^(?:only\s+)?(?:if|when)\b[^,]+,\s*(\S.*)$/iu;
-const PRIVATE_CONDITION_STATEMENT = /^(?:i|we|he|she|they|it|the|my)\b.+\b(?:is|are|can|will|have|has|am)\b|^i'll\b|^we'll\b/iu;
+const PRIVATE_CONDITION_STATEMENT = /^(?:(?:i|we|he|she|they|it|the|my)\b.+?\b(?:is|are|can|will|have|has|am)|(?:i|we)'ll)\s+\S/iu;
+const PRIVATE_CONDITION_FOLLOWUP = /^(?:please\s+)?let me know\s*$/iu;
+const INDEPENDENT_WHEN_QUESTION = /^when\s+(?:is|are|do|does|did|can|could|will|would|should|have|has)\s+\S/iu;
+const PRIVATE_CONDITION_ITEM_NAME = new RegExp(String.raw`\b(?:${CONTACT_RELAY_NAME}|${PHOTO_RELAY_NAME})\b`, "u");
+const INCOMPLETE_CONDITION_ACTION = new RegExp(
+  String.raw`\b(?:(?:do|handle|take care of)(?:\s+(?:it|that|this))?|(?:${TRANSFER}|show|tell)|tell\s+${OTHER}\s+(?:it|that|this))(?:\s+(?:now|then|myself))?\s*$`,
+  "u",
+);
 const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
@@ -620,8 +627,13 @@ function privateClauseIsConditional(clause: string, source: string, detached: bo
   if (polite && PRIVATE_RELAY_COURTESY.test(condition.slice(polite[0].length))) return false;
   if (detached || /^\s*,\s*and\b/i.test(clause)) {
     const main = PRIVATE_CONDITION_MAIN.exec(condition)?.[1];
-    if (main && !PRIVATE_RELAY_ITEM.test(main.toLowerCase()) && !PRIVATE_RELAY_REFERENCE.test(main.toLowerCase())
-      && (TEXT_REQ.test(main) || (detached && PRIVATE_CONDITION_STATEMENT.test(main)))) return false;
+    if (main && (TEXT_REQ.test(main)
+      || (detached && (PRIVATE_CONDITION_STATEMENT.test(main) || PRIVATE_CONDITION_FOLLOWUP.test(main))))) {
+      const words = main.toLowerCase();
+      return PRIVATE_RELAY_ITEM.test(words) || PRIVATE_RELAY_REFERENCE.test(words)
+        || INCOMPLETE_CONDITION_ACTION.test(words)
+        || (PRIVATE_CONDITION_ITEM_NAME.test(words) && (PRIVATE_RELAY_ACTION.test(words) || /\btell\b/u.test(words)));
+    }
   }
   return true;
 }
@@ -633,9 +645,9 @@ function conditionsPrivateRequest(text: string, source: string, request: RegExpM
   const boundary = /^[.!?;…\n]+\s*/u.exec(text.slice(start + clause.length));
   if (!boundary) return false;
   const adjacentStart = start + clause.length + boundary[0].length;
-  const adjacent = text.slice(adjacentStart).split(RELAY_SENTENCE, 1)[0]!;
-  // A line break can continue a request. A sentence break needs an explicit restrictive link.
-  if (/[.!?;…]/u.test(boundary[0]) && !/^\s*\(?\s*only\s+/i.test(adjacent)) return false;
+  const remaining = text.slice(adjacentStart);
+  const adjacent = remaining.split(RELAY_SENTENCE, 1)[0]!;
+  if (remaining[adjacent.length] === "?" && INDEPENDENT_WHEN_QUESTION.test(adjacent)) return false;
   return privateClauseIsConditional(adjacent, source.slice(adjacentStart, adjacentStart + adjacent.length), true);
 }
 

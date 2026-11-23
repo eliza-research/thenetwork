@@ -214,6 +214,8 @@ test.each([
   "Give him my number unless he objects.",
   "Give him my number if it's okay with him.",
   "Give him my number if you can, after he asks.",
+  "Send him my number. If he asks.",
+  "Send him my number, please — if he asks.",
 ])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
   const id = "conditional-swap-" + randomUUID();
   await resetSwapMatch(id);

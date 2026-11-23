@@ -566,6 +566,7 @@ test("a signed photo request respects the intended item and separately preserves
     "Send him my photo if he asks.",
     "Show him my photo when Pat agrees.",
     "Send Élodie my photo when Élodie asks.",
+    "Send him my photo; When Alex asks.",
     "Send him my photo. Actually, no.",
     "Send him my photo, hold on.",
     "Send him my photo. Hang on.",

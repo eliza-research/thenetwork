@@ -234,6 +234,14 @@
 {"text": "Send him my number if you can, after he asks.", "want": "none"}
 {"text": "Send him my number if you could, please. Only if Sam asks.", "want": "none"}
 {"text": "Send him my number. Only if Sam asks.", "want": "none"}
+{"text": "Send him my number. If he asks.", "want": "none"}
+{"text": "Send him my photo; When Alex asks.", "want": "none"}
+{"text": "Send him my number, please — if he asks.", "want": "none"}
+{"text": "Send him my number. If he asks, I can.", "want": "none"}
+{"text": "Send him my number. If he asks, I'll do it.", "want": "none"}
+{"text": "Send him my number. If he asks, I'll send.", "want": "none"}
+{"text": "Send him my number. If he asks, the number can be sent.", "want": "none"}
+{"text": "Send him my number. When is dinner?", "want": "contact_share"}
 {"text": "Send him my number\nif he asks.", "want": "none"}
 {"text": "Send him my number if you could, please.", "want": "contact_share"}
 {"text": "Send him my number if it's convenient for you.", "want": "contact_share"}
@@ -243,5 +251,6 @@
 {"text": "Send him my number. If he asks where dinner is, the address is on the invite.", "want": "contact_share"}
 {"text": "Send him my number; if she asks about dinner, I'll be there.", "want": "contact_share"}
 {"text": "Send him my photo\nIf he asks where to park, tell him the garage is free.", "want": "photo"}
+{"text": "Send him my photo.\nIf he wants recommendations on coffee, let me know.", "want": "photo"}
 {"text": "Send him my number, and if he asks about parking, tell him it's free.", "want": "contact_share"}
 {"text": "Send him my number, and if he asks about parking, tell him my number.", "want": "none"}
