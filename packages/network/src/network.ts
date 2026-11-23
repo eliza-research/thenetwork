@@ -7878,7 +7878,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   relayCancelSwap(memberId: MemberId): number { const n = this.relayDesk.cancelSwaps(memberId); if (n) this.dirty = true; return n; }
   /** The member's open match for the relay, if any (ids only); `matchId` narrows it to that one match. */
   relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId); }
-  relayRequestMatch(ask: Pick<RelayAsk, "from" | "kind" | "matchId" | "targetName">) { return this.relayDesk.requestMatch(ask); }
   /** The member is (or may be) a minor, their age is unknown or in conflict, or they were declined or are unknown: staff never see their words. */
   ageInDoubt(id: MemberId): boolean {
     // A member this Network has not loaded yet (no message since the state began) is read from the snapshot, as holdMember does.

@@ -16,30 +16,17 @@ export function lawNamedRelayRequiresTheSelectedCounterpart(named: boolean): boo
   return !named || !relayTextRecipientAllowed(named, false);
 }
 
-/** Story: Ask the agent to relay my own words / Use a named recipient only when one counterpart has that name (spec/relayRequestAddress.md) */
+/** Story: Ask the agent to relay my own words / A name identifies one recipient on an unselected relay (spec/relayRequestAddress.md) */
 //@ pure
-export function relayNamedCandidateAllowed(distinctCounterparts: number): boolean {
-  return distinctCounterparts === 1;
+export function relayNameCollisionRefuses(selectedItem: boolean, otherCounterpartMatches: boolean): boolean {
+  return !selectedItem && otherCounterpartMatches;
 }
 
-/** Story: Ask the agent to relay my own words / Use a named recipient only when one counterpart has that name (spec/relayRequestAddress.md) */
+/** Story: Ask the agent to relay my own words / A name identifies one recipient on an unselected relay (spec/relayRequestAddress.md) */
 //@ pure
-export function lawNamedRelayAcceptsExactlyOneDistinctCounterpart(distinctCounterparts: number): boolean {
+export function lawNameCollisionRefusesOnlyAnUnselectedRelay(selectedItem: boolean, otherCounterpartMatches: boolean): boolean {
   //@ ensures \result === true
-  return relayNamedCandidateAllowed(distinctCounterparts) === (distinctCounterparts === 1);
-}
-
-/** Story: Ask the agent to relay my own words / An unnamed number request leaves a different pending match alone (spec/relayRequestAddress.md) */
-//@ pure
-export function relayBarePhoneRequestAllowed(barePhoneRequest: boolean, competingIncoming: boolean): boolean {
-  return !(barePhoneRequest && competingIncoming);
-}
-
-/** Story: Ask the agent to relay my own words / An unnamed number request leaves a different pending match alone (spec/relayRequestAddress.md) */
-//@ pure
-export function lawCompetingIncomingSwapNeedsARecipient(barePhoneRequest: boolean): boolean {
-  //@ ensures \result === true
-  return relayBarePhoneRequestAllowed(barePhoneRequest, true) === !barePhoneRequest;
+  return relayNameCollisionRefuses(selectedItem, otherCounterpartMatches) === (!selectedItem && otherCounterpartMatches);
 }
 
 /** Story: Ask the agent to relay my own words / Polite wording still needs a direct request to send a private item (spec/relayRequestAddress.md) */

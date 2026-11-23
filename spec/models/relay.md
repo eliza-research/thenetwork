@@ -16,14 +16,11 @@ The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the
 
 A member's own estimate can make one message unsafe to relay. The member can still use the match when only the item reader recognizes an estimate. The signed turn can independently record an age and close an unsafe match before the relay action. A member can report what another person said without that report becoming their own age.
 
-### Select the relay recipient
+### Unselected named relay
 
-A named request without a selected item resolves one distinct person across
-open mutual matches. The service checks the accounts and any reviewed photo
-for that match. An unselected request without a name uses the newest match,
-unless an incoming number swap on another open match makes the choice unclear.
-The shell supplies the name count and the competing live-swap check to the
-model. The swap notice names the counterpart already shown to the member.
+The service selects the newest open mutual match when the signed turn does
+not select an item. The shell checks whether another open match with the same
+name identifies a different person. The model takes that check as an input.
 A refusal changes no swap, photo selection, or queued delivery. A selected
 item keeps its match and still uses the same counterpart and photo checks.
 
@@ -341,8 +338,7 @@ module relay {
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
 
-  // RelayDesk resolves the recipient. The endpoint uses that same match for current account authority
-  // and any approved photo. The model omits the set of matches and reads those checks as inputs.
+  // The shell reads the name. RelayDesk applies the existing relayRequestAddress.md guard before swapping.
   pure def relayTextRecipientAllowed(named: bool, counterpartMatches: bool): bool =
     not(named) or counterpartMatches
 
@@ -353,26 +349,16 @@ module relay {
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
 
-  pure def relayNamedCandidateAllowed(distinctCounterparts: int): bool = distinctCounterparts == 1
-  pure def relayBarePhoneRequestAllowed(barePhoneRequest: bool, competingIncoming: bool): bool =
-    not(barePhoneRequest and competingIncoming)
+  pure def relayNameCollisionRefuses(selectedItem: bool, otherCounterpartMatches: bool): bool =
+    not(selectedItem) and otherCounterpartMatches
 
-  action commitUnresolvedRecipient(k: str): bool = all {
+  // The shell supplies the different-person test. The selected match and the durable state stay the same.
+  action commitAmbiguousName(k: str, selectedItem: bool, otherCounterpartMatches: bool): bool = all {
     ep.phase.get(k) == "claimed", Set("share", "text").contains(ep.kind.get(k)),
     not(w.erased.get(owner(k))),
+    relayNameCollisionRefuses(selectedItem, otherCounterpartMatches),
     ep' = committed(ep, k),
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
-  }
-
-  action commitAmbiguousName(k: str, distinctCounterparts: int): bool = all {
-    not(relayNamedCandidateAllowed(distinctCounterparts)),
-    commitUnresolvedRecipient(k),
-  }
-
-  action commitBarePhoneWithCompetingSwap(k: str, barePhoneRequest: bool, competingIncoming: bool): bool = all {
-    ep.kind.get(k) == "share",
-    not(relayBarePhoneRequestAllowed(barePhoneRequest, competingIncoming)),
-    commitUnresolvedRecipient(k),
   }
 
   // The endpoint unit before the desk decides (relay-endpoint.ts:231-232): sync the unsent items, and record in the
@@ -759,9 +745,9 @@ module relay {
     }
   }
   // The photo model omits the receipt. A name refusal leaves the approved item unclaimed.
-  action refuseAmbiguousPhoto(distinctCounterparts: int): bool = all {
+  action refuseAmbiguousPhoto(selectedItem: bool, otherCounterpartMatches: bool): bool = all {
     PHOTO_RELAY, photo.state == "approved", not(photo.claimed),
-    not(relayNamedCandidateAllowed(distinctCounterparts)),
+    relayNameCollisionRefuses(selectedItem, otherCounterpartMatches),
     w' = w, desk' = desk, queue' = queue, photo' = photo, ep' = ep, g' = g,
   }
 
@@ -803,14 +789,12 @@ module relay {
   }
 
   // One fault at most per committed request keeps the random simulation on long, interesting traces; faults
-  // still combine across requests. "wrongRecipient" supplies the mismatched name, "ambiguousName" a
-  // distinct-person collision, and "competingSwap" an unnamed reply with another live incoming swap.
+  // still combine across requests. "wrongRecipient" supplies the mismatched name; "ambiguousName" supplies a distinct-person collision.
   // "rateTheirs"/"rateMine": the engine's rate limit; "refuseAsk",
   // "refuseTheirs", "refuseMine": Network.send refuses (the conversation streak or the leak guard).
-  pure val FAULTS = Set("none", "wrongRecipient", "ambiguousName", "competingSwap", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
+  pure val FAULTS = Set("none", "wrongRecipient", "ambiguousName", "rateTheirs", "rateMine", "refuseAsk", "refuseTheirs", "refuseMine")
   action commit(k: str, tc: str, fault: str): bool =
-    if (Set("text", "share").contains(ep.kind.get(k)) and fault == "ambiguousName") commitAmbiguousName(k, 2)
-    else if (ep.kind.get(k) == "share" and fault == "competingSwap") commitBarePhoneWithCompetingSwap(k, true, true)
+    if (Set("text", "share").contains(ep.kind.get(k)) and fault == "ambiguousName") commitAmbiguousName(k, false, true)
     else if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
     else if (ep.kind.get(k) == "share" and fault == "wrongRecipient") commitPrivateRecipientMismatch(k, true, false)
     else if (ep.kind.get(k) == "share")
@@ -1079,19 +1063,10 @@ module relay {
   run unselectedNamedCollisionLeavesPhotoUnclaimedTest =
     init
       .then(selectPhoto).then(reviewPhoto(true))
-      .then(refuseAmbiguousPhoto(2))
+      .then(refuseAmbiguousPhoto(false, true))
       .expect(photo.state == "approved" and not(photo.claimed) and not(queue.rows.keys().contains(PHOTO_ITEM)) and safety)
       .then(photoRequest(false, false))
       .expect(photo.claimed and queue.rows.keys().contains(PHOTO_ITEM) and safety)
-
-  run competingSwapNeedsNamedReplyTest =
-    init
-      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
-      .then(claim("b1", "share")).then(commit("b1", "pass", "competingSwap")).then(answer("b1"))
-      .expect(ep.receipt.get("b1") == "completed" and desk.swaps.exists(sw => sw.src == "A")
-        and not(numberPending("A")) and not(numberPending("B")) and safety)
-      .then(claim("b2", "share")).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
-      .expect(numberPending("A") and numberPending("B") and safety)
 
   run delegatedPhotoLeavesSelectionUnclaimedTest =
     init
