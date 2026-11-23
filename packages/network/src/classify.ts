@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, normalizeFractionalAgeInitialism, parseReply, quoteStillOpen, quotedFromAnother, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canJoin, normalizeFractionalAgeInitialism, parseReply, ownYouthCue, unquotedOwnAgeEvidence, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
@@ -105,7 +105,7 @@ function describesAnotherPerson(text: string): boolean {
 /** Teachers, coaches and parents talk about school; that is not a sign the sender is a minor (network-consent-10). */
 const ADULT_SCHOOL_CTX = /\b(teach|teacher|teaching|coach|coaching|tutor|tutoring|professor|my (kid|kids|son|daughter|students?|class|child|children)|our (kids|students)|i work (at|in) a (high |middle )?school|went to (high|middle) school|in high school i|back in (high|middle) school|my high school (days|years|friends))\b/;
 /** First-person signs of being under 18 that are not an age. One sentence at a time. */
-const MINOR_SIGNS = /\b((i (have|got|gotta)|i've got|finishing|studying for|doing) (my |a |so much )?(homework|hw|(math|chem|bio|history|physics|spanish|english|algebra|geometry) (test|quiz|homework)|finals|midterms|a quiz)|math test|my (mom|dad|mum|parents|mother|father) (says?|said|won'?t|wont|doesn'?t|don'?t|grounded|makes?)\b|i'?m grounded|school nights?|(my|going to|go to) (prom|homecoming)\b|i get out of school|(after|before) school (today|tomorrow|tmrw|tmr)\b|(can|could) (we|i)[^.?!]{0,30}after school|i'?m (a minor|underage)|im (a minor|underage)|when i turn (1[4-8]|sixteen|seventeen|eighteen))/;
+const MINOR_SIGNS = /\b((i (have|got|gotta)|i've got|finishing|studying for|doing) (my |a |so much )?(homework|hw|(math|chem|bio|history|physics|spanish|english|algebra|geometry) (test|quiz|homework)|finals|midterms|a quiz)|math test|my (mom|dad|mum|parents|mother|father) (says?|said|won'?t|wont|doesn'?t|don'?t|grounded|makes?)\b|i'?m grounded|school nights?|(my|going to|go to) (prom|homecoming)\b|i get out of school|(after|before) school (today|tomorrow|tmrw|tmr)\b|(can|could) (we|i)[^.?!]{0,30}(?<schoolTime>after school)|i'?m (a minor|underage)|im (a minor|underage)|when i turn (1[4-8]|sixteen|seventeen|eighteen))/;
 
 const CATEGORY_WORDS: [RegExp, Category][] = [
   [/\b(date|dating|romance|romantic|partner to date)\b/i, "romance"],
@@ -194,11 +194,11 @@ export function minorSignOf(text: string): boolean {
   const t = normText(text);
   for (const s of sentencesOf(t)) {
     if (ADULT_SCHOOL_CTX.test(s.text)) continue;
-    const re = new RegExp(MINOR_SIGNS.source, "g");
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(s.text))) {
-      if (!quotedFromAnother(t, s.at + m.index)) return true;
-      if (m[0].length === 0) re.lastIndex++;
+    for (const match of allMatches(MINOR_SIGNS, s.text)) {
+      const start = s.at + match.index;
+      const schoolTime = match.groups?.schoolTime;
+      const evidenceStart = schoolTime ? start + match[0].lastIndexOf(schoolTime) : start;
+      if (ownYouthCue(t, evidenceStart, start + match[0].length)) return true;
     }
   }
   return false;
@@ -322,15 +322,9 @@ function allMatches(rx: RegExp, text: string): RegExpExecArray[] {
   return out;
 }
 
-/**
- * The age is not the sender's age today when a not-now word sits immediately before it in the same
- * clause, or when the age is still inside a quote. Quote state is read from the whole message, so
- * a period inside quotes (`"Hey." I'm 15.`) does not turn the closing quote into a new opener.
- * The word lookbehind stops at the previous clause, so that closer cannot cancel the next statement.
- */
+/** A not-now word applies within its own clause. Quote scope is checked on the evidence span. */
 function notNowBefore(text: string, at: number): boolean {
   const before = text.slice(0, at);
-  if (quoteStillOpen(before)) return true;
   let from = 0;
   CLAUSE_BREAK.lastIndex = 0;
   for (const m of before.matchAll(CLAUSE_BREAK)) from = m.index! + m[0].length;
@@ -354,7 +348,8 @@ export function agesStated(body: string, { directOnly = false } = {}): { age?: n
     for (const { rx, age, explicit, estimated, reading } of AGE_RX) {
       if (directOnly && estimated) continue;
       for (const m of allMatches(rx, s.text)) {
-        if (notNowBefore(t, s.at + m.index)) continue;
+        const start = s.at + m.index;
+        if (!unquotedOwnAgeEvidence(t, start, start + m[0].length) || notNowBefore(t, start)) continue;
         const after = s.text.slice(m.index + m[0].length);
         const rawAge = age(m);
         const part = reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after), { reading: m[0] }) : undefined;

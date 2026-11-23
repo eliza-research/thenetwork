@@ -290,3 +290,10 @@
 {"text":"cant go 'cause my mom won't let me","teen":true}
 {"text":"I told her \"I'm underage\"","teen":true}
 {"text":"ugh \"so tired. i have a math test tomorrow","teen":true}
+{"text":"Can we adapt what she said: \"after school tomorrow\"?","teen":false}
+{"text":"He said \"She said ‘I’m underage.’\"","teen":false}
+{"text":"She said “I’m in middle school.”","teen":false}
+{"text":"I'm underage.","teen":true,"age":17}
+{"text":"She said 'I'm underage.'","teen":false}
+{"text":"I heard her say, \"I’m underage.\"","teen":false}
+{"text":"She said \"I am a minor","teen":false}

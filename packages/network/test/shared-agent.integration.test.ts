@@ -13,6 +13,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import { slopOnboarding } from "../service/packs.ts";
 import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
@@ -100,6 +101,57 @@ test("signed app turns distinguish a sports score and height from stated ages", 
   const fraction = turn("fractional-birthday-conflicts", phone, "I just turned 7.5.", "friends");
   expect((await post(fraction)).status).toBe(200);
   expect(await service.accounts.lowestAge(phone, (await service.accounts.personFor(phone))!)).toBe(13);
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("a signed quoted youth cue does not restrict the adult sender", async () => {
+  const app = APPS.friends;
+  const phone = "+12125550179";
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Age fixture signup failed: ${joined.error}`);
+  const rt = service.runtimeFor(app.id)!;
+  const ageState = async () => {
+    const member = (await rt.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+    return { floor: await service.accounts.lowestAge(phone, person), minor: member?.minor, signal: member?.minorSignal };
+  };
+  for (const [i, text] of [
+    "She said “I’m underage.”",
+    'He said "She said ‘I’m in seventh grade.’"',
+    "I overheard a conversation: she is 15.",
+    'Can we adapt what she said: "after school tomorrow"?',
+    "She said 'I’m underage.'",
+    'I heard her say, "I’m underage."',
+  ].entries()) {
+    clock.advance(MINUTE);
+    expect((await post(turn(`quoted-youth-${i}`, phone, text, app.id))).status).toBe(200);
+    expect(await ageState(), text).toEqual({ floor: 29, minor: false, signal: false });
+  }
+  clock.advance(MINUTE);
+  expect((await post(turn("own-quoted-youth-cue", phone, 'I told her “I’m underage.”', app.id))).status).toBe(200);
+  expect(await ageState()).toEqual({ floor: 29, minor: true, signal: true });
+  clock.advance(MINUTE);
+  expect((await post(turn("own-youth-cue", phone, "I'm underage.", app.id))).status).toBe(200);
+  expect(await ageState()).toEqual({ floor: 17, minor: true, signal: true });
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("fresh Slop onboarding preserves the member's age and matching tags across a quoted age", () => {
+  const now = clock.now();
+  const fresh = slopOnboarding.read(undefined, "I'm a woman looking for men.", [], { now, age: 29 });
+  expect(fresh.state).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
+  expect(fresh.tags.some(tag => tag.tag.startsWith("romance:"))).toBe(true);
+
+  const quoted = slopOnboarding.read(fresh.state, 'She said "Hello. Age: 12."', [], { now, age: 29 });
+  expect(quoted.state).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
+  expect(quoted.tags).toEqual(fresh.tags);
+
+  const own = slopOnboarding.read(quoted.state, "I'm in 7th grade.", [], { now, age: 29 });
+  expect(own.state).toMatchObject({ age: { value: 12 }, minor: true, declined: false });
+  expect(own.tags).toEqual([]);
 }, 60_000);
 
 // spec/travelPresence.md, "Tell the Network my travel dates"

@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeFractionalAgeInitialism, quoteStillOpen, quotedFromAnother, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_LOOSE_TAIL, AGE_PART, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeFractionalAgeInitialism, ownYouthCue, tryChatJson, unquotedOwnAgeEvidence } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -156,7 +156,7 @@ const G_MAN = "man|guy|dude|male|boy|gentleman|bloke|trans ?man|trans ?guy|ftm|d
 const G_NB = "non[- ]?binary|nonbinary|nonbinery|nb|enby|genderqueer|gender ?queer|agender|gender ?fluid|genderfluid|two[- ]spirit";
 const ADJ_LITE = "straight|gay|bi|queer|trans|cis|single|lesbian|pan";
 
-const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then|"|')\s*$/;
+const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then)\s*$/;
 /** What may follow a number for it to be the sender's age ("I'm 15", "I'm 27, woman"); never "15 minutes", "5'4". */
 const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:and|in|into|sober|clean|ago|of)\\b)|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
@@ -205,7 +205,8 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
   for (const s of sentences(normalizeFractionalAgeInitialism(t))) {
     for (const r of AGE_RULES) for (const m of all(r.rx, s.text)) {
       const lead = m[0].length - m[0].trimStart().length;
-      if ((r.reading && quoteStillOpen(t.slice(0, s.start + m.index + lead)))
+      const start = s.start + m.index;
+      if (!unquotedOwnAgeEvidence(t, start + lead, start + m[0].length)
         || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
       const after = s.text.slice(m.index + m[0].length);
       if (KIN_AFTER.test(after)) continue;
@@ -222,8 +223,8 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
       }
     }
     for (const r of MINOR_SIGNS) for (const m of all(r.rx, s.text)) {
-      const lead = m[0].length - m[0].trimStart().length;
-      if (quotedFromAnother(t, s.start + m.index + lead)) continue;
+      const start = s.start + m.index;
+      if (!ownYouthCue(t, start, start + m[0].length)) continue;
       out.minor ??= cand(true as const, s, m, 0.9);
       const a = r.age?.(m);
       if (a !== undefined && a >= 10 && a < 18 && (!out.age || a < out.age.value)) { out.age = cand(a, s, m, 0.85); out.strict = false; }

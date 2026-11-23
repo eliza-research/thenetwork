@@ -66,6 +66,32 @@ export function confirmedUnderage(age: number): boolean {
   return ageInRange(age) && !joinableAge(age);
 }
 
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function ownAgeEvidenceAllowed(quoted: boolean): boolean {
+  return !quoted;
+}
+
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function ownYouthCueAllowed(quoted: boolean, ownAttribution: boolean, unfinishedCasual: boolean): boolean {
+  return !quoted || ownAttribution || unfinishedCasual;
+}
+
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function lawQuotedWordsDoNotSetSenderAge(quoted: boolean): boolean {
+  //@ ensures \result === true
+  return !quoted || !ownAgeEvidenceAllowed(quoted);
+}
+
+/** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
+//@ pure
+export function lawAnotherSpeakersYouthCueCannotRestrictSender(quoted: boolean): boolean {
+  //@ ensures \result === true
+  return !quoted || !ownYouthCueAllowed(quoted, false, false);
+}
+
 /** Story: Take part in adult matching / Project a committed age using its original owner (spec/memberAge.md) */
 //@ pure
 export function recordedAgeFloorApplies(recordedOwner: string, currentOwner: string): boolean {

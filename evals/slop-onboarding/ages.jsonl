@@ -111,3 +111,13 @@
 {"text":"She said \"I'm in high school\"","minor":false}
 {"text":"cant go 'cause my mom won't let me","minor":true}
 {"text":"I told her \"I'm underage\"","minor":true}
+{"text":"She said \"Hello. Age: 12.\"","minor":false,"declined":false}
+{"text":"She said \"First sentence. I am 16 years old.\"","minor":false,"declined":false}
+{"text":"She said \"Hello. 15f here.\"","minor":false,"declined":false}
+{"text":"He said \"She said ‘I’m in seventh grade.’\"","minor":false,"declined":false}
+{"text":"He said 'I’m in middle school.'","minor":false,"declined":false}
+{"text":"I'm in 7th grade.","minor":true,"age":12,"declined":false}
+{"text":"I'm underage.","minor":true,"declined":false}
+{"text":"She said 'I'm underage.'","minor":false}
+{"text":"I heard her say, \"I’m underage.\"","minor":false}
+{"text":"She said \"I am a minor","minor":false}

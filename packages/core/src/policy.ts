@@ -5,7 +5,7 @@
 //  - 18+: full membership (romance and other adult-only features stay 18+).
 // Missing or invalid ages fail closed: they cannot join and cannot be matched.
 
-import { adultAge, ageConjunctionAllowed, ageInRange, fractionalAgeEvidence, joinableAge, matchableAge, maxAge, minMemberAge } from "./generated/memberAge.ts";
+import { adultAge, ageConjunctionAllowed, ageInRange, fractionalAgeEvidence, joinableAge, matchableAge, maxAge, minMemberAge, ownAgeEvidenceAllowed, ownYouthCueAllowed } from "./generated/memberAge.ts";
 
 // spec/memberAge.md, "Age data outside the human range is unusable"
 export const MIN_MEMBER_AGE = minMemberAge;
@@ -95,45 +95,60 @@ export function normalizeFractionalAgeInitialism(text: string): string {
  * are not quotes. A quote that has closed is not open: `he said "hi" I'm 15` is a real age.
  */
 export function quoteStillOpen(prefix: string): boolean {
-  let double = false, single = false;
-  for (let i = 0; i < prefix.length; i++) {
-    const c = prefix[i]!;
-    const prev = i > 0 ? prefix[i - 1]! : "";
-    const next = i + 1 < prefix.length ? prefix[i + 1]! : "";
-    if (c === "\"") {
-      // 6" is inches, unless this mark closes a quote that is already open.
-      if (!double && /[0-9]/.test(prev)) continue;
-      double = !double;
-      continue;
-    }
-    if (c !== "'") continue;
-    if (/[a-z0-9]/.test(prev) && /[a-z0-9]/.test(next)) continue;
-    if (!single && (/[0-9]/.test(prev) || /[a-z]/.test(prev))) continue;
-    single = !single;
-  }
-  return double || single;
+  return quoteInSpan(prefix, prefix.length, prefix.length) !== undefined;
 }
 
-/**
- * True when the minor sign at `at` sits inside a closed double-quoted span that a named third
- * party introduced in the same sentence (`she said "..."`, `my friend texted "..."`). Unlike
- * quoteStillOpen, a leading apostrophe (`'cause`, `'til`, `'em`, `'sup`, `class of '27`), an
- * unclosed quote, or the sender's own quoted words (`I told her "I'm underage"`) never hide a
- * self-statement: those stay minor. Single quotes are never quotes here.
- */
-const QUOTE_SPEAKER = /\b(he|she|they|someone|somebody|(?:my|his|her|their|this|a) (?:[a-z]+ )?(?:friend|sister|brother|sis|bro|cousin|mom|mum|dad|mother|father|teacher|classmate|kid|son|daughter|girl|guy|boy|coworker|roommate|bf|gf|boyfriend|girlfriend|ex))((?: [a-z]+){0,2}) (?:said|says|texted|texts|wrote|writes|told me|tells me|asked|asks|messaged|dm'?d|replied|posted|goes|went|was like|is like)\s*[:,]?\s*$/;
-const FIRST_PERSON = /\b(?:i|i'[a-z]+|ive|im|id|we|we'[a-z]+|me|us)\b/;
-export function quotedFromAnother(text: string, at: number): boolean {
-  let open = -1;
-  for (let i = 0; i < at; i++) {
-    if (text[i] !== "\"") continue;
-    if (open < 0 && /[0-9]/.test(text[i - 1] ?? "")) continue;
-    open = open < 0 ? i : -1;
+/** Check the exact evidence span in the normalized message, across sentence boundaries. */
+export function unquotedOwnAgeEvidence(text: string, start: number, end: number): boolean {
+  return ownAgeEvidenceAllowed(quoteInSpan(text, start, end) !== undefined);
+}
+
+const OWN_QUOTE = /^\s*(?:i|we)\s+(?:said|told|texted|wrote|replied|posted)(?:\s+(?:him|her|them|you|everyone|my [a-z]+))?\s*[:,]?\s*$/;
+const SPEECH_FRAME = /\b(?:say|said|says|tell|told|tells|text|texted|texts|message|messaged|write|wrote|writes|quote|quoted|reply|replied|asked|asks|posted|read|was like|is like)\b[^.!?;\n]*$/;
+const LEADING_ELISION = /^(?:cause|em|sup|til|till|tis|twas)\b/;
+
+/** A repeat of the sender's own disclosure or an unfinished casual aside can still be a youth cue. */
+export function ownYouthCue(text: string, start: number, end: number): boolean {
+  const quote = quoteInSpan(text, start, end);
+  if (!quote) return ownYouthCueAllowed(false, false, false);
+  const before = text.slice(0, quote.at).split(/[.!?;\n]/).at(-1)!;
+  const attributed = SPEECH_FRAME.test(before);
+  const unfinishedCasual = !attributed && !hasClosingQuote(text, quote);
+  return ownYouthCueAllowed(true, OWN_QUOTE.test(before), unfinishedCasual);
+}
+
+type Quote = { at: number; mark: "'" | '"' };
+
+function hasClosingQuote(text: string, quote: Quote): boolean {
+  for (let at = text.indexOf(quote.mark, quote.at + 1); at >= 0; at = text.indexOf(quote.mark, at + 1)) {
+    if (quoteDelimiter(text, at, true)) return true;
   }
-  if (open < 0 || text.indexOf("\"", at) < 0) return false;
-  const clause = text.slice(0, open).split(/[.!?;\n]/).pop()!;
-  const m = QUOTE_SPEAKER.exec(clause);
-  return !!m && !FIRST_PERSON.test(clause.slice(0, m.index) + m[1] + m[2]);
+  return false;
+}
+
+function quoteDelimiter(text: string, at: number, closing: boolean): boolean {
+  const prev = text[at - 1] ?? "", next = text[at + 1] ?? "";
+  if (text[at] === '"') return closing || !/\d/.test(prev);
+  if (/[a-z0-9]/i.test(prev) && /[a-z0-9]/i.test(next)) return false;
+  if (closing) return true;
+  if (/[a-z0-9]/i.test(prev)) return false;
+  const after = text.slice(at + 1), before = text.slice(0, at);
+  if (/^\d{2}\b/.test(after) && /\bclass of\s*$/i.test(before)) return false;
+  return !LEADING_ELISION.test(after) || SPEECH_FRAME.test(before.split(/[.!?;\n]/).at(-1)!);
+}
+
+function quoteInSpan(text: string, start: number, end: number): Quote | undefined {
+  let doubleAt = -1, singleAt = -1;
+  const active = (): Quote | undefined => {
+    if (doubleAt >= 0 && (singleAt < 0 || doubleAt < singleAt)) return { at: doubleAt, mark: '"' };
+    if (singleAt >= 0) return { at: singleAt, mark: "'" };
+  };
+  for (let i = 0; i < end; i++) {
+    if (i >= start && (doubleAt >= 0 || singleAt >= 0)) return active();
+    if (text[i] === '"' && quoteDelimiter(text, i, doubleAt >= 0)) doubleAt = doubleAt < 0 ? i : -1;
+    if (text[i] === "'" && quoteDelimiter(text, i, singleAt >= 0)) singleAt = singleAt < 0 ? i : -1;
+  }
+  return active();
 }
 
 export const AGE_LOOSE_TAIL = "and\\b(?!\\s+(?:\\d|(?:a|one)\\s+half\\b))|now\\b|too\\b";
