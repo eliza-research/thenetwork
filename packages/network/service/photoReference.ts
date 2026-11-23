@@ -672,7 +672,7 @@ function takeBackOf(t: string, original: string, ctx: ReaderContext): PhotoReadi
   let target: Target | null = null;
   const rest: string[] = [];
   for (let i = 0; i < words.length; i++) {
-    const found = target || ["all", "both", "everyone", "everybody"].includes(words[i]!) ? null : targetAt(words, i, ctx, false);
+    const found: ReturnType<typeof targetAt> = target || ["all", "both", "everyone", "everybody"].includes(words[i]!) ? null : targetAt(words, i, ctx, false);
     if (found) { target = found.target; i += found.len - 1; continue; }
     const w = words[i]!;
     if (!WITHDRAW.has(w) && !VERBS.has(w) && !AUX.has(w)) rest.push(w);

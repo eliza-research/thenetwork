@@ -165,7 +165,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const dev = devShortcutsAllowed(env);
   const hashKey = o.hashKey ?? env.PLATFORM_HASH_KEY ?? (dev ? DEV_HASH_KEY : undefined);
   if (!hashKey) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
-  const sessionSecret = (o.sessionSecret || undefined) ?? (env.PLATFORM_SESSION_SECRET || undefined) ?? (dev ? DEV_SESSION_SECRET : undefined);
+  const sessionSecret = o.sessionSecret || env.PLATFORM_SESSION_SECRET || (dev ? DEV_SESSION_SECRET : "");
   if (!sessionSecret) throw new Error("PLATFORM_SESSION_SECRET is required in production and outside PLATFORM_ENV=dev");
   if (!dev && sessionSecret === hashKey) throw new Error("PLATFORM_SESSION_SECRET must differ from PLATFORM_HASH_KEY outside PLATFORM_ENV=dev");
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DAY, earliestDayKeyOf, EngineRng, HOUR, localParts, type Facet, type Member, type MemberId } from "@thenetwork/core";
+import { DAY, earliestDayKeyOf, EngineRng, HOUR, localParts, type Category, type Facet, type Member, type MemberId } from "@thenetwork/core";
 import { laneLimits } from "../../core/src/generated/matchLane.ts";
 import { ageOnDay } from "../../core/src/generated/memberAge.ts";
 import { plantedEngineInput } from "../../sim/src/planted.ts";
@@ -65,7 +65,7 @@ test("the chosen members pass every pair and member check as adults", () => {
 });
 
 test("friends while teen introductions run pairs teen-ready teens born at most 2 years apart and refuses every other pair", () => {
-  const pair = (first: Partial<Member>, second: Partial<Member>, teenIntros = true, category = "social") =>
+  const pair = (first: Partial<Member>, second: Partial<Member>, teenIntros = true, category: Category = "social") =>
     pairReason(worldOf({ [a]: first, [b]: second }, teenIntros), a, b, category, "Friend");
   expect(pair(born(20100315), born(20090601))).toBeNull();
   expect(pair(born(20100315), born(20090601), false)).toBe("underage");
@@ -558,7 +558,7 @@ test("friends plans a table of teens born within 2 years at board games at the l
   expect(teenPlanReason(w, { ...plan, activityId: "wine_bar" }, atLibrary)).toBe("underage");
   expect(teenPlanReason(w, { ...plan, hostId: trio[0] }, atLibrary)).toBe("underage");
   expect(planPlaceOffered(true, activityById.get("library_games")!, library)).toBe(true);
-  expect(planPlaceOffered(true, activityById.get("wine_bar")!, { ...library, activities: ["wine_bar"] })).toBe(false);
+  expect(planPlaceOffered(true, activityById.get("wine_bar")!, library)).toBe(false);
   expect(planPlaceOffered(true, activityById.get("library_games")!, { ...library, allAges: false })).toBe(false);
   expect(planPlaceOffered(false, activityById.get("library_games")!, library)).toBe(false);
 });

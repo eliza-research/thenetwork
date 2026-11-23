@@ -14,7 +14,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   canChooseFeedSegment, canPickRun, canReceiveDiff, canReceiveRuns, canResetWorld, canToggleCompare, chooseFeedSegment, columnShown, compareShown, feedEmptyNote,
   feedSegmentNow, feedSegmentOffered, feedShows, gameView, initial as initialPanels, ladderView, maxProactiveHundredths, maxRunPicks, metricsSectionShown, pickRun, proactiveWarns, receiveDiff,
-  receiveRuns, reviewerSwitchShown, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
+  receiveRuns, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
   type PipelineColumn, type RunCompare, type StateFilter,
 } from "../../core/src/generated/consolePanels.ts";
 import { panelStaffOf } from "./ops.tsx";
@@ -31,7 +31,7 @@ import { BiasMonitor, Config, Growth, Lab, Requests, RunDiffView, SafetyCases, S
 import { gamePanelsOf, Levels } from "./network.tsx";
 import { CostPanel } from "./ops.tsx";
 import { stateLabel } from "./panels.tsx";
-import { MemberName, ReviewerSwitch, ReviewQueue, ScoreParts } from "./review.tsx";
+import { MemberName, ReviewQueue, ScoreParts } from "./review.tsx";
 import {
   COLUMNS, DAY, DRAWER_TABS, OPEN, originLabel, originOf, stateGroupOf, store, useStore, type DrawerTab, type FilterKey, type Opp,
 } from "./store.ts";
@@ -511,7 +511,6 @@ function Game() {
   const panels = gamePanelsOf(s);
   const view = gameView(panels.game);
   if (view === "NoGameView" || !g) return <EmptyState title="The game runs in the simulated world only." />;
-  const mode = s.reviewMode();
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <InspectorSection title="Scoreboard">
@@ -548,7 +547,6 @@ function Game() {
           <Kpi label="oracle peeks" value={g.peeks} />
         </KpiGrid>
         {view === "GameOverView" && <Alert variant="destructive">Game over: three safety strikes.</Alert>}
-        {mode && reviewerSwitchShown(panels) && <ReviewerSwitch mode={mode} title="Who approves network-composed opportunities before anyone is contacted. You: they queue in the Review tab." />}
         {canResetWorld(panels, false) && (
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm">seed <Input type="number" value={resetSeed} onChange={e => setResetSeed(Number(e.target.value))} className="w-20" /></label>

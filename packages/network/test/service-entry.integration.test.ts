@@ -66,7 +66,8 @@ test("a staging or production main.ts refuses a missing or weak turn secret, mis
 
 test("a production main.ts refuses to start without the Workers AI token and account, so the relay never blocks every text without an error at start", async () => {
   const ready = { SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: staff };
-  for (const env of [{}, { CLOUDFLARE_AI_TOKEN: "synthetic-ai-token" }, { CLOUDFLARE_ACCOUNT_ID: "synthetic-account" }]) {
+  const partial: Record<string, string>[] = [{}, { CLOUDFLARE_AI_TOKEN: "synthetic-ai-token" }, { CLOUDFLARE_ACCOUNT_ID: "synthetic-account" }];
+  for (const env of partial) {
     const r = await runMain({ ...ready, ...env });
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("refusing to start (PLATFORM_ENV=production): needs CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID (photo ratings and the relay classifier, which production needs)");

@@ -531,10 +531,7 @@ export class NetworkService implements RuntimeHost {
     if (dev && !o.engineJudge) this.log("[engine-judge] no engine judge injected: heuristic matching only (dev)");
     this.reviewJudgeWorker = new ReviewJudgeWorker({
       clock: this.clock, judgeFor, limits: reviewLimits, log: this.log,
-      teenFacts: async (rt, memberId) => {
-        const { accountDays, apps, lineType } = await this.teenAccountFacts(rt, memberId);
-        return { accountDays, apps, lineType };
-      },
+      teenFacts: (rt, memberId) => this.teenAccountFacts(rt, memberId),
     });
     this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks() });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });

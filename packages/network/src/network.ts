@@ -3811,7 +3811,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const reason: JudgeReasonCode = verdict === said ? j.reason : fresh && !fresh.packetClean ? "packet_suspect" : "prior_flag";
     const next = judgmentStep(state, j.revision, verdict, packetCurrent, gatesPass, late);
     const rosterHasMinor = this.teenRoster(o);
-    const rubric = reviewRubric(rosterHasMinor) === "MinorRubric" ? "minor" : "adult";
+    const rubric: ReviewPacket["rubric"] = reviewRubric(rosterHasMinor) === "MinorRubric" ? "minor" : "adult";
     const stale = next.phase === "AwaitingJudge" || j.rubric !== rubric;
     this.ctx.log("review_judgment", { oppId: o.id, revision: j.revision, verdict: j.verdict, reason: j.reason, rubric, rosterHasMinor,
       basePacketHash: j.basePacketHash, currentHash: current?.packet.basePacketHash ?? null, stale });

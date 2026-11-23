@@ -579,7 +579,7 @@ export class OutboundQueue {
       const pending = tx`id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)}`;
       if (decision?.ok === false) {
-        if (!("retryAt" in decision)) return { ended: "suppressed_ineligible", note: decision.reason } as const;
+        if (!("retryAt" in decision)) return { kind: "ended", ended: "suppressed_ineligible", note: decision.reason } as const;
         const deferred = await tx`update platform.outbound set status='retry_scheduled',next_attempt_at=${new Date(decision.retryAt)},
           note=${decision.reason},updated_at=${new Date(start)},person_cap=false where ${pending} returning id`;
         if (deferred.length) return "retry_scheduled";
@@ -601,11 +601,11 @@ export class OutboundQueue {
         }
       }
       const [now] = await tx`select status,lease_until from platform.outbound where id=${row.id}`;
-      if (now && (now.status!==row.status || now.lease_until!==null)) return {busy:String(now.status)};
+      if (now && (now.status!==row.status || now.lease_until!==null)) return { kind: "busy", busy: String(now.status) } as const;
       return "dropped_forgotten";
     });
     if (typeof admission==="object") {
-      if ("busy" in admission) return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
+      if (admission.kind === "busy") return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
       return this.end(row, admission.ended, admission.note);
     }
     if (admission === "deferred_quiet_hours" || admission === "retry_scheduled") {

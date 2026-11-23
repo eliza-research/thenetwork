@@ -21,11 +21,13 @@ import { Accounts } from "../../packages/platform/src/accounts.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { keyedHash } from "../../packages/platform/src/phone.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
-import { MemoryPhotoStore, PHOTO_CONSENT, PhotoService, photoRaterFromEnv, withRetry, type PhotoStorage, type PhotoType } from "../../packages/platform/src/photos.ts";
+import { LIVE_MEMBERSHIP, MemoryPhotoStore, PHOTO_APPS, PHOTO_CONSENT, PhotoService, photoRaterFromEnv, withRetry, type PhotoStorage, type PhotoType } from "../../packages/platform/src/photos.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { platformHooks } from "../../packages/mcp/src/hooks.ts";
 import { PhotoIntake, PHOTO_TEXT } from "../../packages/network/service/photoIntake.ts";
+import type { PhotoUploadLinks } from "../../packages/platform/src/photo-upload-link.ts";
+import { initial as linkInitial, step as stepLink, uploadLinkDailyLimitReached, uploadLinkHolderAllowed, type UploadLinkHolder } from "../../packages/core/src/generated/photoUploadLink.ts";
 import { biasReport, type BiasMember, type BiasOpp } from "../../packages/network/service/bias.ts";
 import { reviewerOfRecord, slaAlerts } from "../../packages/network/service/service.ts";
 import { APP_REASONS, DEFAULT_SLA_HOURS, toNetworkReason } from "../../packages/observatory/src/apps.ts";
@@ -80,6 +82,42 @@ class FakeWorkersAI {
   rater() { return makeClefRater({ token: "fake-token", accountId: "fake-account", fetch: this.fetch }); }
 }
 
+function memoryUploadLinks(people: MemoryPeopleStore, photos: PhotoService, now: () => number): Pick<PhotoUploadLinks, "issue" | "refusal" | "recordConsent"> {
+  const issued = new Map<string, number[]>();
+  const holder = async (personId: string, app: AppId) => {
+    const refusal = await photos.mayTake(personId, app);
+    const m = await people.getMembership(personId, app);
+    const liveMember = !!m && LIVE_MEMBERSHIP.includes(m.state);
+    const h: UploadLinkHolder = {
+      takesPhotos: refusal !== "photos_off" && refusal !== "app_not_allowed" && PHOTO_APPS.includes(app),
+      adult: refusal !== "adults_only" && refusal !== "not_verified", banned: refusal === "banned", held: false, liveMember,
+    };
+    return { h, m, refusal: refusal ?? (liveMember ? undefined : "not_member" as const) };
+  };
+  return {
+    async refusal(personId, app) {
+      const { h, refusal } = await holder(personId, app);
+      return uploadLinkHolderAllowed(h) ? undefined : { ok: false, reason: refusal ?? "adults_only" } as const;
+    },
+    async recordConsent(personId, app) {
+      const { h, m } = await holder(personId, app);
+      if (!uploadLinkHolderAllowed(h) || !m) return false;
+      await people.putMembership({ ...m, profile: { ...m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: now(), photoConsentSource: "text" } });
+      return true;
+    },
+    async issue(personId, app) {
+      const at = now();
+      const today = (issued.get(personId) ?? []).filter(t => t >= at - DAY);
+      if (uploadLinkDailyLimitReached(today.length)) return { ok: false, reason: "daily_limit" } as const;
+      const { h, refusal } = await holder(personId, app);
+      const link = stepLink(linkInitial, { type: "issueUploadLink", holder: h, at });
+      if (link.phase !== "UploadLinkOpen") return { ok: false, reason: refusal ?? "adults_only" } as const;
+      issued.set(personId, [...today, at]);
+      return { ok: true, url: `https://slop.date/photos/add#link-${personId}-${today.length}`, expiresAt: link.expiresAt } as const;
+    },
+  };
+}
+
 /** The offline world: people, memberships, photos, the rater and the text intake on memory stores. */
 function offlineWorld(o: { rater?: boolean } = {}) {
   let now = T0;
@@ -102,7 +140,7 @@ function offlineWorld(o: { rater?: boolean } = {}) {
   const fetched: string[] = [];
   const replies: { to: string; text: string }[] = [];
   const intake = new PhotoIntake({
-    people, accounts, photos, phoneKey: e => keyedHash(HASH_KEY, `phone:${e}`), now: () => now,
+    people, accounts, photos, links: memoryUploadLinks(people, photos, () => now), phoneKey: e => keyedHash(HASH_KEY, `phone:${e}`), now: () => now,
     fetchMedia: async url => { fetched.push(url); return jpegWithExif(); },
     reply: async (to, text) => { replies.push({ to, text }); },
   });

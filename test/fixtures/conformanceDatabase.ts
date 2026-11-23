@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { applySchema, DEV_PG_URL } from "../../packages/observatory/db/dev-pg.ts";
+import { deferred } from "./deferred.ts";
 
 function databaseUrl(database: string): string {
   const url = new URL(DEV_PG_URL);
@@ -43,8 +44,8 @@ export async function withConformanceDatabases(prefix: string, count: number, ru
 export type InboundRowHold = { waiter: number; release(): Promise<void> };
 
 export async function holdInboundRowUntilWaited(sql: SQL, id: string, start: () => void, beforeRelease: (tx: SQL) => Promise<unknown> = async () => undefined): Promise<InboundRowHold> {
-  const released = Promise.withResolvers<void>();
-  const locked = Promise.withResolvers<number>();
+  const released = deferred<void>();
+  const locked = deferred<number>();
   const done = sql.begin(async tx => {
     const [row] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid from platform.inbound where id = ${id} for update`;
     if (!row) throw new Error(`The inbound row ${id} is missing`);

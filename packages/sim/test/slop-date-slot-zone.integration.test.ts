@@ -15,7 +15,7 @@ test("a slop date and a no-show fall at the slot hour in the zone of the date's 
   const cityOf = new Map(result.flows.map(f => [f.key, f.city]));
   const met = result.world.state.interactions.filter(i => i.outcome === "completed" || i.outcome === "no_show");
   expect(met.length).toBeGreaterThan(0);
-  const wrong = met.flatMap(i => {
+  const wrong = met.flatMap((i): { id: string; city: string | undefined; hour: number | undefined }[] => {
     const city = cityOf.get(i.id);
     if (!city) return [{ id: i.id, city: undefined, hour: undefined }];
     const hour = localParts(i.at, CITY_TZ[city]).hour;

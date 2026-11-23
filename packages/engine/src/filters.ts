@@ -413,9 +413,9 @@ export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], 
   if (mi.m.state === "paused") return "state_paused";
   if (optedOut?.(id)) return "opted_out";
   // With the lane: a lane opt-in withdrawn after the proposal (engine-pipeline-10), romance included.
-  if (lane !== undefined) {
-    if (!mi.m.prefs.categoriesOptIn.includes(lane)) return "category_opt_out";
-    if (lane === "romance" && !mi.m.prefs.romanceOptIn) return "romance_opt_out";
+  if (category !== undefined) {
+    if (!mi.m.prefs.categoriesOptIn.includes(category)) return "category_opt_out";
+    if (category === "romance" && !mi.m.prefs.romanceOptIn) return "romance_opt_out";
   }
   for (const o of others) if (o !== id && w.blocked.has(pairKey(id, o))) return "blocked";
   return null;

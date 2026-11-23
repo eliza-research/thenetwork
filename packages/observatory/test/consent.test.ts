@@ -21,7 +21,9 @@ async function captureSixDayGame() {
   const g = await game();
   const initial = structuredClone(g.state());
   await g.control({ type: "step", ms: 6 * DAY });
-  return { initial, ...structuredClone({ state: g.state(), rows: rowsFromGame(g) }) };
+  const state = g.state();
+  const messages = Object.fromEntries(state.members.map(m => [m.id, g.world.channel.messagesFor(m.id)]));
+  return { initial, ...structuredClone({ state, rows: rowsFromGame(g), messages }) };
 }
 
 // These two journeys read the same six-day result. The other games still have their own state.
@@ -29,12 +31,14 @@ let sixDayGame: ReturnType<typeof captureSixDayGame> | undefined;
 const defaultGameFixture = () => sixDayGame ??= captureSixDayGame();
 
 /** Messages the Network sent a member about an opportunity (probe key or proposal id). */
-const about = (g: GameSource, memberId: string, oppId: string) =>
-  g.world.channel.messagesFor(memberId).filter(m => m.direction === "outbound" && (m.meta?.proposalId === oppId || (m.meta?.probe as { key?: string } | undefined)?.key === oppId));
+type Sent = ReturnType<GameSource["world"]["channel"]["messagesFor"]>;
+const outboundAbout = (messages: Sent, oppId: string) =>
+  messages.filter(m => m.direction === "outbound" && (m.meta?.proposalId === oppId || (m.meta?.probe as { key?: string } | undefined)?.key === oppId));
+const about = (g: GameSource, memberId: string, oppId: string) => outboundAbout(g.world.channel.messagesFor(memberId), oppId);
 
 describe("consent-first game mode (NYC)", () => {
   test("NYC only; probes come before reveals; meetings at real venues; engine runs linked", async () => {
-    const { initial, state: s } = await defaultGameFixture();
+    const { initial, state: s, messages } = await defaultGameFixture();
     expect(initial.members.length).toBe(250);
     expect(initial.members.every(m => m.city === "nyc")).toBe(true);
     expect(initial.env.label).toContain("consent-first");
@@ -56,7 +60,7 @@ describe("consent-first game mode (NYC)", () => {
     expect(s.network!.review.approved).toBeGreaterThan(0);
     expect(engineOpps.every(o => o.state === "IN_REVIEW" || o.review?.decision === "expired" || !!o.review?.invalidated
       || (o.review?.decision === "approve" && o.review.approver === "judge" && o.review.reviewer === "sim_review_judge"))).toBe(true);
-    for (const o of engineOpps.filter(x => x.review?.decision !== "approve")) for (const id of o.participants) expect(about(g, id, o.id)).toEqual([]);
+    for (const o of engineOpps.filter(x => x.review?.decision !== "approve")) for (const id of o.participants) expect(outboundAbout(messages[id] ?? [], o.id)).toEqual([]);
     expect(engineOpps.filter(o => o.review?.decision === "approve" && o.review.approver === "judge").length).toBeGreaterThan(0);
     expect(engineOpps.filter(o => o.review?.decision === "approve").every(o => o.review!.approver === "judge" || o.review!.approver === "staff")).toBe(true);
     expect(engineOpps.filter(o => o.review?.decision === "expired").every(o => !!o.review!.exceptionReason)).toBe(true);

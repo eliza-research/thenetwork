@@ -3,6 +3,7 @@ import { ConsentNetwork, type NetworkState } from "../../packages/network/src/ne
 import { PgStore, runStored, type NetworkStore } from "../../packages/network/src/store.ts";
 import { withConformanceDatabase } from "./conformanceDatabase.ts";
 import { serveJourney } from "./serveJourney.ts";
+import { deferred } from "./deferred.ts";
 
 type Gate = "load" | "run" | "save";
 type Unit = {
@@ -42,7 +43,7 @@ await withConformanceDatabase("runtime_unit_conformance", async sql => {
     const id = `ntwrk:conformance${++counter}`;
     const store = new PgStore(sql, id);
     const net = new ConsentNetwork({ seed: 1, engine: { cities: ["nyc"] } });
-    const finished = Promise.withResolvers<void>();
+    const finished = deferred<void>();
     const unit: Unit = { id, store, restores: 0, restoresNamed: 0, result: finished.promise };
     const importState = net.importState.bind(net);
     net.importState = (state: NetworkState) => { unit.restores++; return importState(state); };

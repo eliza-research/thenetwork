@@ -26,7 +26,7 @@ const addGrant = <K>(out: Map<K, RoleGrant[]>, k: K, g: RoleGrant) => {
 
 export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: boolean; minLength?: number; variable?: string } = {}): Map<string, RoleGrant[]> {
   const out = new Map<string, RoleGrant[]>();
-  const variable = o.variable ?? variable;
+  const variable = o.variable ?? "OBSERVATORY_TOKENS";
   const short = (tok: string) => { if (o.minLength && tok.length < o.minLength) throw new Error(`${variable}: a token is shorter than ${o.minLength} characters (use a random token, for example openssl rand -base64 32)`); return tok; };
   for (const part of (spec ?? "").split(",").map(x => x.trim()).filter(Boolean)) {
     const i = part.indexOf(":"), j = part.lastIndexOf(":");

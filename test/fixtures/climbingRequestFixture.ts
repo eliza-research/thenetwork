@@ -1,5 +1,6 @@
 import type { ReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { withSignedTurnFixture, type SignedTurnFixture } from "./signedTurnFixture.ts";
+import { deferred } from "./deferred.ts";
 
 type Item = { oppId: string; deadline: number; origin: "request"; revision: number };
 
@@ -25,8 +26,8 @@ async function requestClimbingPartner(fixture: SignedTurnFixture) {
 }
 
 export function startClimbingRequestFixture(reviewJudge?: ReviewJudge, env?: Record<string, string>) {
-  const ready = Promise.withResolvers<Awaited<ReturnType<typeof requestClimbingPartner>>>();
-  const finished = Promise.withResolvers<void>();
+  const ready = deferred<Awaited<ReturnType<typeof requestClimbingPartner>>>();
+  const finished = deferred<void>();
   const closed = withSignedTurnFixture(async fixture => {
     ready.resolve(await requestClimbingPartner(fixture));
     await finished.promise;

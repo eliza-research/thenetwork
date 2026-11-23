@@ -10,6 +10,7 @@ import {
 } from "../../engine/src/reviewJudge.ts";
 import type { JudgeWork } from "../src/network.ts";
 import type { AppId } from "../../platform/src/apps.ts";
+import type { TeenAgeFacts } from "../../platform/src/accounts.ts";
 import { dayOf } from "./cost.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
@@ -17,7 +18,6 @@ type Env = Record<string, string | undefined>;
 
 interface ReviewJudgeLimits { budgetMicros: number; requestLimit: number }
 interface EngineJudgeLimits { maxCostMicro: number; maxRequests: number }
-interface TeenAccountFacts { accountDays: number; apps: string[]; lineType: string | null; firstReadingExact: boolean }
 type JudgeCostPurpose = "review_judge" | "engine_judge";
 
 function positiveUsd(env: Env, name: string, fallback: number): number {
@@ -85,7 +85,7 @@ interface StoredRow { opportunity_id: string; revision: number; packet_hash: str
 interface ReviewJudgeWorkerOptions {
   clock: Clock;
   judgeFor: (app: AppId) => ReviewJudge | undefined;
-  teenFacts: (rt: NetworkRuntime, memberId: MemberId) => Promise<TeenAccountFacts>;
+  teenFacts: (rt: NetworkRuntime, memberId: MemberId) => Promise<TeenAgeFacts>;
   limits: ReviewJudgeLimits;
   log: (line: string) => void;
 }

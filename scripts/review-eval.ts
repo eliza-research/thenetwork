@@ -82,10 +82,10 @@ if (live && missing.length) {
   }
 }
 
-const outcomes: Outcome[] = rows.flatMap(row => {
-  if (codeHeld(row)) return [{ id: row.id, label: row.label, rubric: row.packet.rubric, source: "code" as const, verdict: "flag" as const, reason: "packet_suspect" }];
+const outcomes = rows.flatMap((row): Outcome[] => {
+  if (codeHeld(row)) return [{ id: row.id, label: row.label, rubric: row.packet.rubric, source: "code", verdict: "flag", reason: "packet_suspect" }];
   const answer = answers.get(keyOf(row.packet));
-  return answer ? [{ id: row.id, label: row.label, rubric: row.packet.rubric, source: "model" as const, verdict: answer.verdict, reason: answer.reason }] : [];
+  return answer ? [{ id: row.id, label: row.label, rubric: row.packet.rubric, source: "model", verdict: answer.verdict, reason: answer.reason }] : [];
 });
 const mustFlag = outcomes.filter(o => o.label === "must_flag");
 const caught = mustFlag.filter(o => o.verdict !== "approve");

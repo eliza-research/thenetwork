@@ -12,7 +12,7 @@ import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/re
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import type { CostLedger } from "./cost.ts";
-import type { PhotoRelayAnswer, PhotoRelayFinish } from "./photoRelayFlow.ts";
+import { PHOTO_RELAY_TEXT, type PhotoRelayAnswer, type PhotoRelayFinish } from "./photoRelayFlow.ts";
 
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
 
@@ -167,6 +167,9 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
     if (photo) {
       result = photoStored(photo);
       if (swapWithdrawn && request.kind === "text") await rt.unitOfWork(net => { net.relayCancelSwap(memberId as MemberId); });
+    } else if (request.kind === "photo") {
+      result = photoStored({ status: "unavailable", text: PHOTO_RELAY_TEXT.unavailable });
+      await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
     } else if (request.kind === "none" && swapWithdrawn) {
       result = await rt.unitOfWork(async net => {
         net.relayCancelSwap(memberId as MemberId);
