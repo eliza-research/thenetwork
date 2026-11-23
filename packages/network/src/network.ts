@@ -125,7 +125,8 @@ import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
   immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
-  reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
+  reportRestrictsMatching, safetyQuestionAppliesTarget, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer, step as stepSafetyCase,
+  type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
@@ -163,11 +164,41 @@ export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind
 const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
   .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
 
-export function pendingReportReplyName(text: string): string | undefined {
+function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
+  const reply = safetyName(text).replace(/^(?:no|nope)(?:[,.!?;:]\s*| )/, "");
+  const clause = reply.split(/[,.!?;:]/, 1)[0]!.trim();
+  if (names.some(name => name && clause === `not ${safetyName(name)}`)) return true;
+  if (competing) return false;
+  if (["not him", "not her", "not them"].includes(clause)) return true;
+  const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
+  return ["someone else", "somebody else"].some(phrase => replacement === phrase || replacement.startsWith(`${phrase} `));
+}
+
+const SAFETY_CLARIFICATION_CONFIRMATION = /^(?:yes|yeah|yep|yup|correct|(?:that's )?(?:him|her|them))$/;
+
+function safetyReplyNames(text: string): string[] {
+  const literal = safetyName(text).replace(/^(?:i (?:mean|meant)|it's)\s+/, "");
+  if (!literal) return [];
+  if (text.normalize("NFKC").includes("?")) return [literal];
+  const qualified = safetyName(literal
+    .replace(/^(?:yes|yeah|yep|yup|correct|ok|okay)[,.!\s]+/, "")
+    .replace(/[,\s]+(?:please|pls|thanks|thank you)$/, ""));
+  // Either reading can be an exact name. Keep both so an ambiguous result cannot file a report.
+  return qualified && qualified !== literal ? [literal, qualified] : [literal];
+}
+
+interface PendingReportReplyName { name: string; routable: boolean }
+
+export function pendingReportReplyNames(text: string): PendingReportReplyName[] {
   const body = text.trim();
-  if (ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || consentOf(body).answer !== "unclear") return;
-  const name = safetyName(body.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
-  return name || undefined;
+  if (/^(?:block|report)\s/i.test(body)) return [];
+  const names = safetyReplyNames(body);
+  const acknowledgement = ACK_ONLY.test(body);
+  return names.flatMap(name => {
+    const routable = !acknowledgement && !SAFETY_CLARIFICATION_CONFIRMATION.test(name) && consentOf(name).answer === "unclear";
+    // A reserved reply cannot choose the app. An alternate exact name can still make the answer ambiguous.
+    return routable || names.length > 1 ? [{ name, routable }] : [];
+  });
 }
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -805,7 +836,8 @@ const ASK_EVERY_DAYS = 7;
 /** "block him", "report my date": a block or report about the member's counterpart, not a name. */
 const PRONOUN_TARGET = /^(?:him|her|them|they|he|she|my date|my match|(?:the|this|that) (?:guy|girl|person|dude|man|woman))\b/i;
 /** A reply to "Who do you mean?" that drops the question. */
-const NEVER_MIND = /^\W*(?:never ?mind|nvm|nobody|no one|none|forget it|no|nope|cancel that)\W*$/i;
+const CANCEL_SAFETY_QUESTION = /^\W*(?:never ?mind|nvm|forget it|cancel that)\W*$/i;
+const NO_SAFETY_TARGET = /^\W*(?:nobody|no one|none|no|nope)\W*$/i;
 
 /** Actual NYC presence for the whole requested window; conversation ownership grants no location. */
 export function presentInNyc(snapshot: WorldSnapshot, id: MemberId, from: number, to: number): boolean {
@@ -1149,11 +1181,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
     if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
     if (reportChoice) {
-      const name = pendingReportReplyName(body);
-      const matches = this.memberReply && !msg.reaction && name && msg.signedReceivedAt !== undefined
-        ? this.pendingReportChoices(m.id, name, msg.signedReceivedAt) : [];
+      const names = pendingReportReplyNames(body);
+      const matches = this.memberReply && !msg.reaction && names.length && msg.signedReceivedAt !== undefined
+        ? this.pendingReportChoices(m.id, names, msg.signedReceivedAt) : [];
       const current = matches[0];
-      if (matches.length === 1 && current?.askedAt === reportChoice.askedAt
+      if (matches.length === 1 && current?.routable && current.askedAt === reportChoice.askedAt
         && current.targetId === reportChoice.targetId && current.kind === reportChoice.kind) {
         m.pendingSafety = undefined;
         this.applyBlock(m, "report", current.kind, this.members.get(current.targetId));
@@ -1161,7 +1193,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
-    if (m.pendingSafety && !mcp && this.answerWho(m, body)) return;
+    if (m.pendingSafety && !mcp && this.answerWho(m, body, msg.signedReceivedAt)) return;
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -2403,7 +2435,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Exact displayed choices in the saved question that still name a current counterpart. */
-  pendingReportChoices(memberId: MemberId, name: string, receivedAt: number): PendingReportChoice[] {
+  pendingReportChoices(memberId: MemberId, replyNames: readonly PendingReportReplyName[], receivedAt: number):
+    (PendingReportChoice & { routable: boolean })[] {
     const pending = this.members.get(memberId)?.pendingSafety;
     const now = this.now();
     if (pending?.verb !== "report" || !reportClarificationTimeCurrent(pending.at, receivedAt, now, now - DAY)) return [];
@@ -2414,42 +2447,52 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (offered.length !== pending.targets?.length) return [];
     const counterparts = new Set(this.counterparts(memberId).map(candidate => candidate.m.id));
     const names = this.namesFor(offered);
-    return offered.flatMap((target, index) => counterparts.has(target.id) && safetyName(names[index]!) === name
-      ? [{ askedAt: pending.at, targetId: target.id, kind: pending.kind }]
-      : []);
+    return offered.flatMap((target, index) => {
+      const displayedName = safetyName(names[index]!);
+      const reply = replyNames.find(({ name }) => name === displayedName);
+      return reply && counterparts.has(target.id)
+        ? [{ askedAt: pending.at, targetId: target.id, kind: pending.kind, routable: reply.routable }]
+        : [];
+    });
   }
 
   /**
    * The member's answer to "Who do you mean?" (within a day). A bare yes can confirm the one
    * person named in the question if another action is not also waiting for a reply.
    */
-  private answerWho(m: MemberState, body: string): boolean {
+  private answerWho(m: MemberState, body: string, signedReceivedAt: number | undefined): boolean {
     const p = m.pendingSafety!;
-    m.pendingSafety = undefined;
-    if (this.now() - p.at > DAY) return false;
+    const now = this.now();
+    const oldestQuestion = now - DAY;
+    if (!safetyQuestionIsCurrent(p.at, oldestQuestion)) { m.pendingSafety = undefined; return false; }
+    if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return false;
     const text = body.trim();
-    const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
-    const exact = this.resolveTarget(m, name, p.verb === "report").target;
-    // The answer to "Who do you mean?" names its target with a word or two around it ("yes, Ben",
-    // "Ben please"): strip a leading yes and a trailing please before comparing, so the name still
-    // has to be the whole answer and "Ben's friend" or "not Ben, Cy" never resolves to Ben.
-    const core = name.replace(/^(?:yes|yeah|yep|yup|correct|ok|okay)[,.!\s]+/i, "").replace(/(?:[,\s]+(?:please|pls|thanks|thank you))$/i, "");
-    const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && safetyName(value) === core) ? exact : undefined;
-    const competing = m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
-    const confirmed = !competing && p.targets?.length === 1
-      && /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i.test(text)
-      ? this.members.get(p.targets[0]!) : undefined;
-    // A pronoun ("him", "him please") answers the one person the question named.
-    const pronoun = !competing && p.targets?.length === 1 && PRONOUN_TARGET.test(core)
-      ? this.members.get(p.targets[0]!) : undefined;
-    const target = named ?? pronoun ?? confirmed;
-    if (target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id))) {
-      this.applyBlock(m, p.verb, p.kind, target);
+    const names = safetyReplyNames(text);
+    const matches = new Map<MemberId, MemberState>();
+    for (const name of names) {
+      const match = this.resolveTarget(m, name, p.verb === "report").target;
+      if (match && [this.fullNames.get(match.id), match.display, match.first].some(value => value && safetyName(value) === name)) {
+        matches.set(match.id, match);
+      }
+    }
+    const named = matches.size === 1 ? matches.values().next().value : undefined;
+    const competing = !!m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
+    const sole = p.targets?.length === 1 ? this.members.get(p.targets[0]!) : undefined;
+    const exactConfirmation = !text.normalize("NFKC").includes("?") && names.some(name => SAFETY_CLARIFICATION_CONFIRMATION.test(name));
+    const confirmed = safetyQuestionUsesSoleOffer(!!sole, competing, exactConfirmation, matches.size > 0) ? sole : undefined;
+    const target = named ?? confirmed;
+    const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
+    const cancels = CANCEL_SAFETY_QUESTION.test(text) || (!competing && NO_SAFETY_TARGET.test(text));
+    const rulesOutTarget = !!sole && excludesSoleSafetyTarget(text, [this.fullNames.get(sole.id), sole.display, sole.first], !!competing);
+    // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
+    if (!safetyQuestionResolves(!!allowedTarget, !!competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return false;
+    m.pendingSafety = undefined;
+    if (allowedTarget && safetyQuestionAppliesTarget(true, rulesOutTarget)) {
+      this.applyBlock(m, p.verb, p.kind, allowedTarget);
       return true;
     }
     if (competing) return false;
-    if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
-    if (text.split(/\s+/).length > 4) return false;
+    if (cancels) { this.ack(m, "Okay."); return true; }
     if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return true; }
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
@@ -5235,8 +5278,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         m.interruptionSurvey = undefined;
         continue;
       }
+      const safetyQuestionOpen = !!m.pendingSafety && safetyQuestionIsCurrent(m.pendingSafety.at, now - DAY);
       if (survey.sentAt !== undefined || !interruptionFeedbackAskDue(now - survey.answeredAt, eligible,
-        !!m.awaiting || !!m.pendingSafety || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
+        !!m.awaiting || safetyQuestionOpen || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
       const code = interruptionFeedbackCode(this.app.id, m.id, survey.opportunityId);
       const responseKey = `${this.app.id.toUpperCase()} ${code}`;
       const body = `Was that invitation worth a text? Reply WORTH YES ${responseKey} or WORTH NO ${responseKey}.`;

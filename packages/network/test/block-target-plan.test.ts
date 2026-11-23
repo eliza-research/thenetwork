@@ -149,6 +149,167 @@ describe("block and report targets in a group plan", () => {
     expect(w.net.exportState().blocks.includes("a|b")).toBe(false);
   });
 
+  test.each([["yes", true], ["no", true], ["never mind", false]] as const)("a competing probe and a %s safety reply", async (reply, keepsQuestion) => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    expect(w.meetings.length).toBe(1);
+    const from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+    const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pendingOf()).toBeDefined();
+    expect(w.net.safetyReports()).toHaveLength(0);
+
+    // A competing probe gets a yes. An explicit cancellation clears the safety question.
+    w.propose(["a", "c"]);
+    await w.runUntil(() => w.probed("a"), 2 * DAY);
+    expect(w.probed("a")).toBe(true);
+    await w.say("a", reply);
+    if (keepsQuestion) expect(w.probed("a")).toBe(false);
+    expect(w.net.exportState().blocks.includes("a|b")).toBe(false);
+    expect(w.net.safetyReports()).toHaveLength(0);
+    expect(!!pendingOf()).toBe(keepsQuestion);
+
+    await w.say("a", "Ben");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual(keepsQuestion ? [["a", "b"]] : []);
+  });
+
+  test("a long answer that names nobody keeps the safety question", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    const from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+    const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pendingOf()).toBeDefined();
+    await w.say("a", "I mean the tall guy from Saturday");
+    expect(pendingOf()).toBeDefined();
+    await w.say("a", "Ben");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
+  test("a long reply that rules out the named person ends the question without filing", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    const from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+    const pendingOf = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pendingOf()).toBeDefined();
+    await w.say("a", "no it was someone else from last week");
+    expect(pendingOf()).toBeUndefined();
+    expect(w.net.safetyReports()).toHaveLength(0);
+    expect(w.to("a", from).some(s => /couldn't tell who you mean/i.test(s.body))).toBe(true);
+    // A later bare "yes" must not file against the person just ruled out.
+    await w.say("a", "yes");
+    expect(w.net.safetyReports()).toHaveLength(0);
+  });
+
+  test.each([true, false])("an explicit exclusion of Ben ends the safety question (competing probe: %s)", async competing => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const pending = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pending()?.targets).toEqual(["b"]);
+    if (competing) {
+      w.propose(["a", "c"]);
+      await w.runUntil(() => w.probed("a"), 2 * DAY);
+      expect(w.probed("a")).toBe(true);
+    }
+
+    await w.say("a", "No, not Ben. He wasn't there last week.");
+    expect(pending()).toBeUndefined();
+    expect(w.net.safetyReports()).toEqual([]);
+    await w.say("a", "yes");
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(w.net.exportState().blocks).not.toContain("a|b");
+  });
+
+  test("someone else in an unrelated reply keeps the safety question", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const pending = () => w.net.exportState().members.find(m => m.id === "a")?.pendingSafety;
+    expect(pending()?.targets).toEqual(["b"]);
+    await w.say("a", "I cannot make Friday because I am picking someone else up");
+    expect(pending()?.targets).toEqual(["b"]);
+    expect(w.net.safetyReports()).toEqual([]);
+    await w.say("a", "Ben");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
+  test.each([true, false])("an invitation survey considers only a current safety question (current: %s)", async current => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    const invitation = w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    await w.say("a", "report him, he was creepy");
+    const state = w.net.exportState();
+    const member = state.members.find(m => m.id === "a")!;
+    expect(member.pendingSafety?.targets).toEqual(["b"]);
+    member.awaiting = undefined;
+    member.unsol = { state: [] };
+    member.interruptionSurvey = { opportunityId: invitation, answeredAt: w.clock.now() - 2 * DAY };
+    if (!current) member.pendingSafety!.at -= DAY + HOUR;
+    w.net.importState(state);
+
+    const from = w.mark();
+    await w.run(12 * HOUR);
+    expect(w.to("a", from).some(message => message.body.includes("Was that invitation worth a text?"))).toBe(!current);
+    expect(w.net.safetyReports()).toHaveLength(0);
+  });
+
+  test.each(["him and Cy", "him? actually, don't report him", "him?", "my date"])(
+    "a pronoun with other words cannot file the sole pending report: %s", async answer => {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+      await w.onboard("a", "b");
+      w.propose(["a", "b"]);
+      await w.answerProbes(["a", "b"]);
+      await w.run(5 * DAY);
+      await w.say("a", "report him, he was creepy");
+      await w.say("a", answer);
+      expect(w.net.safetyReports()).toEqual([]);
+    },
+  );
+
+  test("an ambiguous qualified name cannot confirm a different offered person", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Yeah Yes"), climber("c", "Yes Moss"), climber("d", "Dana Shaw")], { review: "auto" });
+    await w.onboard("a", "b", "c", "d");
+    const recentMatch = w.propose(["a", "d"]);
+    await w.answerProbes(["a", "d"]);
+    await w.run(5 * DAY);
+    const state = w.net.exportState();
+    const recent = state.opps.find(opp => opp.id === recentMatch)!;
+    expect(recent.meetingAt).toBeDefined();
+    state.opps.push({ ...recent, id: "older-counterparts", stage: "done", participants: ["a", "b", "c"],
+      bookedTold: ["a", "b", "c"], meetingAt: recent.meetingAt! - DAY, status: [["a", "yes"], ["b", "yes"], ["c", "yes"]] });
+    w.net.importState(state);
+
+    const from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(sent => sent.body)).toEqual([expect.stringMatching(/^Who do you mean: Dana\?/)]);
+
+    await w.say("a", "Yeah Yes");
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(w.net.exportState().blocks).toEqual([]);
+  });
+
   test("a name with a word around it, or a pronoun, answers 'Who do you mean?'", async () => {
     // One person named: a pronoun, or the name with a yes / please around it, files the report.
     for (const answer of ["him", "yes, Ben", "Ben please", "him please", "yeah, Ben"]) {
@@ -157,7 +318,7 @@ describe("block and report targets in a group plan", () => {
       w.propose(["a", "b"]);
       await w.answerProbes(["a", "b"]);
       await w.run(5 * DAY);
-      let from = w.mark();
+      const from = w.mark();
       await w.say("a", "report him, he was creepy");
       expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
       await w.say("a", answer);
@@ -173,7 +334,7 @@ describe("block and report targets in a group plan", () => {
         for (const x of ["a", "b", "c"]) if (w.probed(x)) await w.say(x, "yes");
       }
       expect(w.net.exportState().opps.find(o => o.id === id)?.stage).toBe("scheduled");
-      let from = w.mark();
+      const from = w.mark();
       await w.say("a", "block him");
       expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/Who do you mean: (Ben or Cy|Cy or Ben)\?/);
       await w.say("a", answer);
@@ -186,7 +347,7 @@ describe("block and report targets in a group plan", () => {
       w.propose(["a", "b", "c"]);
       await w.answerProbes(["a", "b", "c"]);
       await w.run(5 * DAY);
-      let from = w.mark();
+      const from = w.mark();
       await w.say("a", "block him");
       expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/Who do you mean/);
       await w.say("a", answer);
@@ -211,7 +372,7 @@ describe("block and report targets in a group plan", () => {
       await w.say("a", "ok thanks");
       const id2 = w.propose(["a", "c"]);
       expect(await w.runUntil(() => w.probed("a"), 4 * DAY)).toBe(true);
-      let from = w.mark();
+      const from = w.mark();
       await w.say("a", "report him, he was creepy");
       expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
       return { w, id2 };
@@ -221,7 +382,7 @@ describe("block and report targets in a group plan", () => {
       const from = w.mark();
       await w.say("a", answer);
       expect(w.net.safetyReports()).toEqual([]);
-      expect((w.net as any).opps.get(id2)?.stage).toBe("probing");
+      expect(w.net.exportState().opps.find(opp => opp.id === id2)?.stage).toBe("probing");
       expect(awaiting(w, "a")).toBe("probe");
       expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/yes or a no/);
     }
@@ -229,7 +390,7 @@ describe("block and report targets in a group plan", () => {
       const { w, id2 } = await probeSetup();
       await w.say("a", answer);
       expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
-      expect((w.net as any).opps.get(id2)?.stage).toBe("probing");
+      expect(w.net.exportState().opps.find(opp => opp.id === id2)?.stage).toBe("probing");
     }
     // A booked date waits: the pronoun is read as the booked confirmation, the named answer files the report.
     const bookedSetup = async () => {
@@ -239,7 +400,7 @@ describe("block and report targets in a group plan", () => {
       await w.answerProbes(["a", "b", "c"]);
       for (let i = 0; i < 48 && !["a", "b", "c"].every(x => awaiting(w, x) === "booked"); i++) await w.run(HOUR);
       expect(["a", "b", "c"].every(x => awaiting(w, x) === "booked")).toBe(true);
-      let from = w.mark();
+      const from = w.mark();
       await w.say("a", "report him, he was creepy");
       expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/Who do you mean: (Ben or Cy|Cy or Ben)\?/);
       return { w, id };
@@ -256,11 +417,8 @@ describe("block and report targets in a group plan", () => {
       const { w, id } = await bookedSetup();
       await w.say("a", "yes, Ben");
       expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
-      expect((w.net as any).opps.get(id)?.stage).toBe("closed");
+      expect(w.net.exportState().opps.find(opp => opp.id === id)?.stage).toBe("closed");
     }
-    // A crew offer waits: the Nov-18 lock covered this too, but its setup no longer reaches a crew
-    // offer on this base (the planner makes 0 plans in 14 days, pool 6), so it is not re-locked here.
-    // The competing-kind logic is the same code path and is locked by the probe and booked variants above.
   });
 
   test("reporting someone not a counterpart after 'Who do you mean?' does not file a report", async () => {
