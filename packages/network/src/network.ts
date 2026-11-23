@@ -2321,8 +2321,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   reportRestrictionsForLeave(id: MemberId, ordinaryLeave: boolean): string[] {
+    const member = this.members.get(id);
+    const reportedMinor = member?.minorSignal === true && member.minorReported === true;
     return this.reports.filter(r => r.subjectId === id
-      && carryReportOnAppLeave(ordinaryLeave, REPORT_PHASE[r.status], r.met, URGENT_REPORTS.has(r.kind))).map(r => r.id);
+      && carryReportOnAppLeave(ordinaryLeave, REPORT_PHASE[r.status], r.met, URGENT_REPORTS.has(r.kind), reportedMinor && r.kind === "minor")).map(r => r.id);
   }
 
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
