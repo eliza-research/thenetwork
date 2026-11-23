@@ -166,6 +166,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       // Readable without row-level security, on purpose: app configuration, each app's own views (they
       // filter by app), the public event catalog used in snapshots, and scoped ops, audit and safety tables.
       const catalog = ["network.public_events", "network.public_event_imports"];
+      const personAgeView = "platform.observatory_person_ages";
       const allowed = (role: string, rel: string): boolean => {
         if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
@@ -177,18 +178,28 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
         if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
         if (role === "network_observatory_audit") return rel === "network.staff_audit";
         if (role === "network_observatory_cross_app") return [
-          "network.network_state_console_cross_app", "platform.memberships", "platform.people", "platform.person_blocks", "platform.observatory_person_ages",
+          "network.network_state_console_cross_app", "platform.memberships", "platform.people", "platform.person_blocks", personAgeView,
         ].includes(rel);
         return false;
       };
       const open = rows.filter((r: any) => !(r.kind === "r" && r.rls) && !allowed(r.role, r.rel)).map((r: any) => `${r.role} ${r.rel}`);
       expect(open).toEqual([]);
-      const ageReaders = rows.filter(r => r.rel === "platform.observatory_person_ages").map(r => r.role);
-      expect(ageReaders).toEqual(["network_observatory_cross_app"]);
-      expect(rows.filter(r => r.rel === "platform.signup_eligibility")).toEqual([]);
-      const ageProjection = await sql`select column_name from information_schema.columns
-        where table_schema = 'platform' and table_name = 'observatory_person_ages' order by ordinal_position`;
-      expect(ageProjection.map(r => r.column_name)).toEqual(["person_id", "age"]);
+      const personAgeColumns = await sql`
+        select attname as name, format_type(atttypid, atttypmod) as type from pg_attribute
+        where attrelid = ${personAgeView}::regclass and attnum > 0 and not attisdropped order by attnum`;
+      expect(personAgeColumns).toEqual([{ name: "person_id", type: "uuid" }, { name: "age", type: "integer" }]);
+      const personAgeReaders = await sql`
+        select r.rolname as role, n.nspname || '.' || c.relname as relation
+        from pg_roles r cross join pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where (r.rolname like 'network\\_%' or r.rolname = 'platform_service') and n.nspname = 'platform'
+          and c.relname in ('observatory_person_ages', 'signup_eligibility')
+          and has_any_column_privilege(r.oid, c.oid, 'select')
+        order by 1, 2`;
+      expect(personAgeReaders).toEqual([
+        { role: "network_observatory_cross_app", relation: personAgeView },
+        { role: "network_service", relation: "platform.signup_eligibility" },
+        { role: "platform_service", relation: "platform.signup_eligibility" },
+      ]);
       const evidenceViews = ["outbound_evidence", "booking_receipts"];
       for (const view of evidenceViews) {
         const readers = rows.filter(r => r.rel.startsWith(`network.${view}_`)).map(r => `${r.role} ${r.rel}`);
