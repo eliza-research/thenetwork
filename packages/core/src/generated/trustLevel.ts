@@ -4,12 +4,12 @@
 /** Story: Pause unsafe activity / Trust scores at three trigger watch and scores at six trigger hold (spec/trustLevel.md) */
 export type TrustLevel = "Ok" | "Watch" | "Hold";
 
+/** Story: Pause unsafe activity / Clean time lowers the score through a recorded decay event (spec/trustLevel.md) */
+export const trustDecayDays: number = 14;
 /** Story: Pause unsafe activity / Trust scores at three trigger watch and scores at six trigger hold (spec/trustLevel.md) */
 export const watchScore: number = 3;
 /** Story: Pause unsafe activity / Trust scores at three trigger watch and scores at six trigger hold (spec/trustLevel.md) */
 export const holdScore: number = 6;
-/** Story: Pause unsafe activity / Clean time lowers the score through a recorded decay event (spec/trustLevel.md) */
-export const trustDecayDays: number = 14;
 
 /** Story: Pause unsafe activity / Trust scores at three trigger watch and scores at six trigger hold (spec/trustLevel.md) */
 //@ pure
@@ -28,6 +28,26 @@ export function contactExtractionRisk(explicitBypass: boolean): number {
 export function lawExplicitContactBypassTriggersWatch(explicitBypass: boolean): boolean {
   //@ ensures \result === true
   return levelForScore(contactExtractionRisk(explicitBypass), false) === (explicitBypass ? "Watch" : "Ok");
+}
+
+/** Story: Pause unsafe activity / A choice of alternatives does not supply a threat signal (spec/trustLevel.md) */
+//@ pure
+export function orElseIsThreat(terminal: boolean, harmfulConsequence: boolean): boolean {
+  return terminal || harmfulConsequence;
+}
+
+/** Story: Pause unsafe activity / A choice of alternatives does not supply a threat signal (spec/trustLevel.md) */
+//@ pure
+export function lawNonterminalOrElseNeedsHarm(harmfulConsequence: boolean): boolean {
+  //@ ensures \result === true
+  return orElseIsThreat(false, harmfulConsequence) === harmfulConsequence;
+}
+
+/** Story: Pause unsafe activity / A choice of alternatives does not supply a threat signal (spec/trustLevel.md) */
+//@ pure
+export function lawTerminalOrElseSuppliesThreat(harmfulConsequence: boolean): boolean {
+  //@ ensures \result === true
+  return orElseIsThreat(true, harmfulConsequence);
 }
 
 /** Story: Pause unsafe activity / A hold stays in place until staff lift it (spec/trustLevel.md) */

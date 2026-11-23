@@ -6,6 +6,8 @@ export type WeeklyDigest = "KeepDigest" | "KeepRequested" | "HoldDigest";
 /** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
 export type AssistantActivity = "AssistantActive" | "AssistantInactive" | "AssistantUnchanged";
 
+/** Story: Receive updates on a surface I use / An assistant link records its selected surface (spec/notificationDelivery.md) */
+export const primaryDigestAssistantIndex: number = 0;
 /** Story: Receive updates on a surface I use / Ignore inactive assistants and assistants whose links went unused twice (spec/notificationDelivery.md) */
 export const maxIgnoredStreak: number = 2;
 /** Story: Receive updates on a surface I use / A useful assistant must lead the other surfaces (spec/notificationDelivery.md) */
@@ -94,6 +96,13 @@ export function assistantDigestCanLink(singleApp: boolean, hasReadableAssistant:
 export function lawMixedDigestOrMissingGrantNeverLinks(singleApp: boolean, hasReadableAssistant: boolean): boolean {
   //@ ensures \result === true
   return !(!singleApp || !hasReadableAssistant) || !assistantDigestCanLink(singleApp, hasReadableAssistant);
+}
+
+/** Story: Receive updates on a surface I use / An assistant link records its selected surface (spec/notificationDelivery.md) */
+//@ pure
+export function lawNonemptyButtonPageHasPrimaryTarget(assistantCount: number): boolean {
+  //@ ensures \result === true
+  return !(assistantCount > 0) || (0 <= primaryDigestAssistantIndex && primaryDigestAssistantIndex < assistantCount);
 }
 
 /** Story: Receive updates on a surface I use / Ignore inactive assistants and assistants whose links went unused twice (spec/notificationDelivery.md) */

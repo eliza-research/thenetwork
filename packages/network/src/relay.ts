@@ -24,7 +24,8 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
-import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
+import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
+import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
   relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
@@ -113,6 +114,8 @@ export interface RelayAsk {
   kind: RelayItem["kind"];
   /** The message (text) or a caption (photo). */
   text?: string;
+  /** A first name explicitly addressed by the member in the signed request. */
+  targetName?: string;
   /** Photos the member chose (opaque ids); the service checks they are the member's own. */
   photoIds?: string[];
   /** The active item the member's turn named (the Cloud wire's itemId): only that match, else none. */
@@ -179,6 +182,13 @@ export class RelayDesk {
     const match = this.matchFor(ask.from, ask.matchId);
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
+    if (ask.targetName !== undefined) {
+      const recipient = this.host.member(to)?.firstName;
+      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
+        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+      }
+    }
     const now = this.host.now();
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
     const item: RelayItem = ask.kind === "photo"
@@ -362,9 +372,11 @@ export class RelayDesk {
       : h.kind === "text" && h.text ? { id: h.itemId, kind: "text", from: h.from, to: h.to, at: h.at, text: h.text } : undefined;
     if (!match || !item) { decided(); return { ok: true, delivered: false }; }
     // Rate limits are judged at the original time (the item's own attempt is excluded by the engine).
-    const again = relayItem(item, this.context(item, match, o, h.at));
+    const context = this.context(item, match, o, h.at);
+    const again = relayItem(item, context);
     const first = (this.host.member(h.from)?.firstName ?? "").trim().split(/\s+/)[0] || "Your match";
-    const rendered = again.decision === "pass" ? again.rendered : again.decision === "hold" && item.kind === "text" ? RELAY_WORDING.text(first, item.text!) : "";
+    const canOverride = staffMayReleaseHeldText(VERDICT[again.decision], item.kind === "text", context.sender.held === true, context.recipient.held === true);
+    const rendered = again.decision === "pass" ? again.rendered : canOverride ? RELAY_WORDING.text(first, item.text!) : "";
     const released = decided();
     if (!rendered) return { ok: true, delivered: false };
     const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };

@@ -2,13 +2,13 @@
 // docs/results/2026-10-08-slop-world.md. No LLM calls.
 //   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
 import { writePath } from "../../../../core/src/runtime/files.ts";
+import { simulationSeeds } from "../../input.ts";
 import { BASELINES } from "./baselines.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { runSlopWorld } from "./world.ts";
 
 const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
-const [s0, s1] = (arg("seeds", "1-8")!).split("-").map(Number);
-const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
+const seeds = simulationSeeds(arg("seeds", "1-8"));
 const perCity = Number(arg("per-city", "300")), weeks = Number(arg("weeks", "4"));
 const only = (arg("only", "random,greedy,oracle")!).split(",") as (keyof typeof BASELINES)[];
 

@@ -16,6 +16,13 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 
 [A report keeps its own disposition](../safetyCase.md#a-hold-ban-or-dismissal-updates-the-matching-report). `pendingReportHold` in `packages/network/src/network.ts` reads the open report's subject, encounter, and urgency. [A ban refuses new ordinary text](../safetyCase.md#a-ban-allows-only-carrier-commands-and-app-leave). `NetworkService.inbound` calls `inboundAllowedAfterBan` before the report reaches the runtime.
 
+The report reader supplies an eligible subject and affirmative age evidence
+before the report enters the modeled minor path. The reported age restricts
+the subject in its source app through the report action. The person's own
+age remains an independent input.
+
+The [trust classifier](../trustLevel.md#an-explicit-attempt-to-bypass-contact-consent-triggers-watch) supplies the `abuse` action’s risk. A direct third-party messaging-handle request supplies two points. The classifier leaves a quoted request, a public venue reference, or the member’s own handle outside that action.
+
 [Danger disclosures during a check-in](../safetyCase.md#direct-current-danger-text-gets-immediate-guidance-first) use the [receipt of the exact current feedback prompt](../meetingSettlement.md#a-feedback-reply-needs-receipt-of-its-exact-prompt). The model receives the receipt check and the attributed counterpart as inputs. Unattributed disclosures and disclosures without the exact receipt receive guidance without changing attendance or creating a report. The ordinary member report uses its separate transition.
 
 The shared-line clarification action treats the offered target as the exact displayed-name match. Its live memberships represent verified current app owners. It can route the reply to the app that asked when only one current offer matches. Explicit app routing and several matching offers leave that other app's report untouched. The runtime rechecks the pending question and target while applying the report.
@@ -102,7 +109,10 @@ module safety_trust {
   }
   type ReportIdentity = (Mid, Mid, str, str, int)
   // slot: what profile.ts slotOf reads from the record; hour: the New York hour of the meeting (truth)
-  type Inter = { parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int }
+  type Inter = {
+    opportunityId: str, parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int,
+    counterpartAbsence: Set[Mid],
+  }
   // A staff lift reads the decision identifiers, then commits the durable and runtime changes together.
   type Lift = { m: Mid, scope: str, expectedLocal: int, expectedGlobal: int, stage: str }
   type Src = { msgs: int, reporters: Set[Mid], staff: bool, other: int }
@@ -238,9 +248,14 @@ module safety_trust {
     nextHold: st.nextHold + 1,
     globalHoldReleases: if (scope == "*") st.globalHoldReleases.filter(x => x._1 != p) else st.globalHoldReleases,
   }
-  // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
-  pure def noShows(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "no_show").size()
-  pure def dates(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "completed").size()
+  // profile.ts and meetingSettlement.md: group by exact opportunity. NOBODY is missing legacy attribution.
+  pure def noShowDateIds(st: State, m: Mid): Set[str] =
+    st.inters.filter(i => i.by == m and i.parts.contains(m) and i.outcome == "no_show").map(i => i.opportunityId)
+  pure def completedDateIds(st: State, m: Mid): Set[str] =
+    st.inters.filter(i => i.parts.contains(m) and i.outcome == "completed").map(i => i.opportunityId)
+      .exclude(noShowDateIds(st, m))
+  pure def noShows(st: State, m: Mid): int = noShowDateIds(st, m).size()
+  pure def dates(st: State, m: Mid): int = completedDateIds(st, m).size()
   // profile.ts: one directed block per member with settled same-app encounter evidence at block time.
   pure def blockedBy(st: State, m: Mid): int = st.contextualBlocks.filter(b => b._2 == m).size()
   // slop rules.ts with SLOP_DEFAULT_OPTIONS trust { blockedBy: 2, noShows: 2 }
@@ -436,9 +451,17 @@ module safety_trust {
     }
   }
 
+  // The planned roster decides which opportunity is erased. A feedback interaction uses its actual roster.
+  pure def forgetEncounterHistory(st: State, m: Mid): State = {
+    ...st,
+    opps: OPP_IDS.mapBy(k => { val o = st.opps.get(k)
+      if (o.parts.contains(m)) { ...o, stage: "deleted" } else o }),
+    inters: st.inters.filter(i => not(i.parts.contains(m))),
+  }
+
   // network.ts:916 forget (leave one app: service.ts:821 forget -> forgetMember)
   pure def forget(st: State, m: Mid): State = {
-    ...st,
+    ...forgetEncounterHistory(st, m),
     live: st.live.set(m, false),
     trust: ALL_MIDS.mapBy(x => if (x == m) NO_TRUST else {
       val t = st.trust.get(x)
@@ -448,9 +471,6 @@ module safety_trust {
     minorF: st.minorF.set(m, false),
     blocks: st.blocks.filter(b => not(b.contains(m))),
     contextualBlocks: st.contextualBlocks.filter(b => b._1 != m and b._2 != m),
-    opps: OPP_IDS.mapBy(k => { val o = st.opps.get(k)
-      if (o.parts.contains(m)) { ...o, stage: "deleted" } else o }),
-    inters: st.inters.filter(i => not(i.parts.contains(m))),
     // reports about them stay; a reporter who left is not named (reporterId = "")
     reports: st.reports.map(r => if (r.reporter == m) { ...r, reporter: NOBODY } else r),
     restricted: st.restricted.exclude(Set(m)),
@@ -615,12 +635,14 @@ module safety_trust {
   }
 
   // Feedback keeps its receipt day. The dating slot comes from the booked meeting's local day and hour.
-  pure def recordOf(o: Opp, m: Mid, selfNoShow: bool, feedbackAt: int): Inter =
-    { parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
-      hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour) }
+  pure def recordOf(k: str, o: Opp, m: Mid, selfNoShow: bool, directAbsence: bool, feedbackAt: int): Inter =
+    { opportunityId: k, parts: o.going, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
+      hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour),
+      counterpartAbsence: if (directAbsence and o.kind == "date" and o.going.size() == 2)
+        o.going.exclude(Set(m)) else Set() }
 
-  // The answer to the check-in after a meeting (onFeedback 2636). `intent`: what the member means ("fine",
-  // "report", "selfNoShow"); `reader`: checkInReport's output (an oracle). After SD-067 a happy answer reads
+  // onFeedback records an answer after an exact receipt. The direct counterpart absence intent is an
+  // attendance statement, and reader represents separately recognized safety reports. A happy answer reads
   // as no report: the corpus evals/network/check-in-reports.jsonl (gate in scripts/sim/evals.ts) checks the
   // reader on direct answers, so the model takes `checkInReaderSound` as a named assumption for this path. The
   // separate immediate danger disclosure path requires exact receipt and counterpart attribution.
@@ -638,7 +660,7 @@ module safety_trust {
     // postDateReports on slop and peon (SD-221); never for a plan
     val reportKind = if (o.kind == "date") reader else "none"
     val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-      inters: s0.inters.union(Set(recordOf(o, m, intent == "selfNoShow", s0.now))) }
+      inters: s0.inters.union(Set(recordOf(k, o, m, intent == "selfNoShow", intent == "counterpartAbsence", s0.now))) }
     // checkInReported -> blockAndReport for each other (SD-229); the member means the person of the date
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
@@ -677,7 +699,8 @@ module safety_trust {
     }
   }
 
-  // "block X" / "report X" (handleBlock 1412). route() (service.ts:1085): a member of several apps whose text
+  // An explicit block/report command reaches handleBlock. safetyCase.md models the polite prefix and conditional refusal.
+  // route() (service.ts:1085): a member of several apps whose text
   // names a counterpart goes to the app of the newest meeting with them (SD-250); else any app of theirs (the
   // newest item or the last writer). The target is looked up on that app. `ambiguous`: two possible people,
   // so "Who do you mean?" (pendingSafety).
@@ -1010,7 +1033,7 @@ module safety_trust {
     nondet flag2 = Set(true, false).oneOf()
     nondet verb = Set("block", "report").oneOf()
     nondet kind = REPORT_KINDS.oneOf()
-    nondet intent = Set("fine", "report", "selfNoShow").oneOf()
+    nondet intent = Set("fine", "report", "selfNoShow", "counterpartAbsence").oneOf()
     nondet reader = Set("none", "harassment", "no_show", "minor").oneOf()
     nondet risk = Set(1, 2, 3, 6).oneOf()
     nondet d = Set(1, 6, 13, 14).oneOf()
@@ -1156,10 +1179,26 @@ module safety_trust {
   // trust.ts:4-5 "Watch lasts until the score decays below 3: 14 days from 3". SD-141 (fixed in db176ce).
   val watchLasts14Days = not(s.earlyWatchExit)
 
-  // network.ts o.post "came: !f.selfNoShow": a no-show counts against the person who did not come. SD-222
-  // (fixed in 581888d).
+  // network.ts attributes a no-show to the exact self-report. An unattributed older row cannot count.
   val noShowCountsAbsentOnly = ALL_MIDS.forall(m => s.live.get(m) implies
-    noShows(s, m) <= OPP_IDS.filter(k => s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted").size())
+    noShowDateIds(s, m).subseteq(OPP_IDS.filter(k =>
+      s.opps.get(k).absent.contains(m))))
+  val attendanceCountsOncePerBooking = ALL_MIDS.forall(m =>
+    dates(s, m) + noShows(s, m) <= OPP_IDS.filter(k => {
+      val o = s.opps.get(k)
+      (o.stage == "done" or o.stage == "deleted") and o.going.contains(m)
+    }).size())
+  // A removed opportunity retains only ghost attendance facts in this model. An interaction can survive
+  // if it did not name the erased member, even when the planned roster included that member.
+  val feedbackHistoryUsesActiveRoster = s.inters.forall(i => {
+    val o = s.opps.get(i.opportunityId)
+    i.parts.forall(m => s.live.get(m)) and (o.stage != "deleted" implies i.parts == o.going)
+  })
+
+  val counterpartAbsenceStaysWithExactPair = s.inters.forall(i =>
+    i.counterpartAbsence != Set() implies
+      (i.outcome == "completed" and i.parts.size() == 2 and i.parts.contains(i.by)
+        and i.counterpartAbsence == i.parts.exclude(Set(i.by))))
 
   // The Slop profile reads completed attendance using the booked meeting time in its local zone.
   val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies
@@ -1208,6 +1247,9 @@ module safety_trust {
     reportersCounted,
     watchLasts14Days,
     noShowCountsAbsentOnly,
+    attendanceCountsOncePerBooking,
+    feedbackHistoryUsesActiveRoster,
+    counterpartAbsenceStaysWithExactPair,
     slotFromMeeting,
     everyMetReportFiled,
     relayBlockReachesSafety,
@@ -1526,6 +1568,64 @@ module safety_trust {
       .then(meet("o1", Set(BEN_S)))
       .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
       .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 1)
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .expect(attendanceCountsOncePerBooking and dates(s, ANA_S) == 1 and dates(s, BEN_S) == 0)
+
+  run completedDateRepliesCountOnceTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set()))
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .then(tick(1))
+      .then(checkIn("o1", BEN_S, "fine", "none"))
+      .expect(s.inters.size() == 2 and attendanceCountsOncePerBooking and dates(s, ANA_S) == 1 and dates(s, BEN_S) == 1)
+
+  run legacyNoShowWithoutAttributionTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set(BEN_S)))
+      .then(s' = { ...s, inters: Set(recordOf("o1", s.opps.get("o1"), NOBODY, true, false, s.now)) })
+      .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
+
+  // The trace adds a fourth accepted seat to the usual three-person fixture, then drops it before feedback.
+  run groupFeedbackUsesActiveRosterTest =
+    init
+      .then(bookPlan("o1", "slop", "ana", "ben", "cy", false))
+      .then(all {
+        val other = { app: "slop", p: "fourth", g: 0 }
+        val o = s.opps.get("o1")
+        val booked = o.parts.union(Set(other))
+        val allBooked = { ...o, parts: booked, going: booked, told: booked }
+        s' = { ...s, opps: dropOpps(s.opps.set("o1", allBooked), other) }
+      })
+      .expect(s.opps.get("o1").stage == "scheduled" and s.opps.get("o1").told.size() == 4
+        and s.opps.get("o1").going.size() == 3)
+      .then(meet("o1", Set(BEN_S)))
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
+      .expect(feedbackHistoryUsesActiveRoster and s.inters.size() == 2 and s.inters.forall(i => i.parts.size() == 3)
+        and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
+      .then(s' = forgetEncounterHistory(s, { app: "slop", p: "fourth", g: 0 }))
+      .expect(s.opps.get("o1").stage == "deleted" and s.inters.size() == 2 and
+        feedbackHistoryUsesActiveRoster and attendanceCountsOncePerBooking and noShowCountsAbsentOnly
+        and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
+      .then(leave("slop", "ben"))
+      .expect(feedbackHistoryUsesActiveRoster and s.inters == Set())
+
+  run directCounterpartAbsenceStaysAttendanceEvidenceTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set(BEN_S)))
+      .then(checkIn("o1", ANA_S, "counterpartAbsence", "none"))
+      .expect(counterpartAbsenceStaysWithExactPair and s.inters.exists(i => i.counterpartAbsence == Set(BEN_S))
+        and s.reports == Set() and s.blocks == Set() and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
+
+  run groupAbsenceCannotNameOneCounterpartTest =
+    init
+      .then(bookPlan("o1", "slop", "ana", "ben", "cy", false))
+      .then(meet("o1", Set()))
+      .then(checkIn("o1", ANA_S, "counterpartAbsence", "none"))
+      .expect(s.inters.size() == 1 and s.inters.forall(i => i.counterpartAbsence == Set()) and s.reports == Set())
 
   // SD-442: the answer comes the next day. The record keeps the feedback day and the earlier booked slot.
   run sd442SlotTest =

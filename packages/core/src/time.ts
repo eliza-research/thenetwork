@@ -23,9 +23,9 @@ export function localParts(ts: number, tz: string): LocalParts {
   return { year: +p.year!, month: +p.month!, day: +p.day!, hour: +p.hour! % 24, minute: +p.minute!, weekday: wd };
 }
 
-/** UTC timestamp of a local wall-clock time (handles DST via a two-step offset correction). */
+/** Resolve a local wall-clock hour to UTC. Round fractional hours to minutes before applying the zone offset. */
 export function fromLocal(y: number, mo: number, d: number, h: number, tz: string): number {
-  const guess = Date.UTC(y, mo - 1, d, h);
+  const guess = Date.UTC(y, mo - 1, d, 0, Math.round(h * 60));
   const off = (ts: number) => { const p = localParts(ts, tz); return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(ts / MINUTE) * MINUTE; };
   let ts = guess - off(guess);
   ts = guess - off(ts);
@@ -39,5 +39,6 @@ export function fromLocal(y: number, mo: number, d: number, h: number, tz: strin
 /** True if `ts` falls in local quiet hours [s, e) (wrapping past midnight); s === e means none. */
 export function inQuietHours(ts: number, tz: string, [s, e]: [number, number]): boolean {
   if (s === e) return false;
-  return withinQuietHours(localParts(ts, tz).hour, s, e);
+  const { hour, minute } = localParts(ts, tz);
+  return withinQuietHours(hour + minute / 60, s, e);
 }

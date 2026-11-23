@@ -215,8 +215,21 @@ export function planStandingWindowCoversSlot(windowStart: number, windowEnd: num
 
 /** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
 //@ pure
+export function weeklyWindowCandidate(end: number, start: number, now: number, until: number): boolean {
+  return end > now && start < until;
+}
+
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+//@ pure
 export function statedPlanWindowAllows(statedAt: number, statedUntil: number, now: number, slotStart: number, coversSlot: boolean): boolean {
   return statedAt > now || statedUntil <= slotStart || coversSlot;
+}
+
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+//@ pure
+export function lawExpiredWeeklyWindowCannotEnterEvidence(start: number, now: number, until: number): boolean {
+  //@ ensures \result === true
+  return !weeklyWindowCandidate(now, start, now, until);
 }
 
 /** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */

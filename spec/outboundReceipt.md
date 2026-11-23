@@ -48,6 +48,21 @@ pure def lawDeliveredIgnoresFailure(phase: ReceiptPhase): bool =
     not(canApplyReceipt({ phase: phase }, ProviderFailed))
 ```
 
+### A terminal receipt preserves the recipient cap after payload erasure
+
+A successful terminal receipt for a nonmember keeps counting toward the same line and recipient's hourly cap until one hour after provider acceptance. When the receipt removes the address and body, record a keyed digest scoped to the line and recipient and the original acceptance time in the same transaction. Use the outbound ID to count the receipt once. A late receipt outside the hour needs no entry. Remove expired entries during queue retention. A failed receipt creates no entry. Compliance still bypasses admission caps.
+
+```quint
+pure def keepScrubbedRecipientCount(phase: ReceiptPhase, nonmember: bool, hadAddress: bool, windowOpen: bool): bool =
+  (phase == ProviderDelivered or phase == ProviderRead) and nonmember and hadAddress and windowOpen
+
+pure def lawFailedReceiptHasNoScrubbedRecipientCount(nonmember: bool, hadAddress: bool, windowOpen: bool): bool =
+  not(keepScrubbedRecipientCount(ProviderFailed, nonmember, hadAddress, windowOpen))
+
+pure def lawScrubbedRecipientCountRequiresOpenWindow(phase: ReceiptPhase, nonmember: bool, hadAddress: bool): bool =
+  not(keepScrubbedRecipientCount(phase, nonmember, hadAddress, false))
+```
+
 ### An uncertain send waits for a receipt instead of sending again
 
 After an ambiguous provider response, wait for receipt lookup with the original idempotency key. If a response arrives but its acceptance cannot be validated or committed, retain the request for the same lookup. The queue updates only the send attempt whose lease still owns the row. If the outcome write also fails, leave the lease for recovery. If the provider confirms it never admitted the key, the queue can retry with that same key. If the lookup remains uncertain past the retention deadline, the queue fails the row without resending.

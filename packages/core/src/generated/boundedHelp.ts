@@ -58,6 +58,12 @@ export function lawHighRiskHelpTakesPrecedence(homeEntry: boolean): boolean {
 
 /** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */
 //@ pure
+export function boundedHelperCanRank(eligible: boolean, commonPresence: boolean): boolean {
+  return eligible && commonPresence;
+}
+
+/** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */
+//@ pure
 export function homeHelperSetAllowed(helperCount: number, knownSingleton: boolean): boolean {
   return helperCount >= 2 || (helperCount === 1 && knownSingleton);
 }
@@ -66,6 +72,13 @@ export function homeHelperSetAllowed(helperCount: number, knownSingleton: boolea
 //@ pure
 export function needsSecondHomeHelper(homeEntry: boolean, requestedHelpers: number, knownSingleton: boolean): boolean {
   return homeEntry && requestedHelpers === 1 && !knownSingleton;
+}
+
+/** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */
+//@ pure
+export function lawBoundedHelperNeedsCommonPresence(eligible: boolean): boolean {
+  //@ ensures \result === true
+  return !boundedHelperCanRank(eligible, false);
 }
 
 /** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */

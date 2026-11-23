@@ -162,6 +162,21 @@ pure def countMark(known: bool, count: int): CountMark =
 pure def lawEveryKnownPositiveCountIsAnAlarm(count: int): bool = (countMark(true, count) == CountAlarm) iff count > 0
 ```
 
+### Stopping the console closes the lab and finishes interrupted runs
+
+Close admission before stopping the lab. Active children exit before shutdown returns. A seed that was waiting for its start record cannot launch after admission closes. Persist an end time and a failed status for jobs stopped while queued or running. Keep the result of each finished run. A repeated shutdown waits for the same work.
+
+```quint
+pure def labAcceptsWork(stopping: bool): bool = not(stopping)
+
+pure def labRunInterrupted(status: str): bool = status == "queued" or status == "running"
+
+pure def lawLabClosesAdmissionOnShutdown(stopping: bool): bool = stopping implies not(labAcceptsWork(stopping))
+
+pure def lawFinishedLabRunSurvivesShutdown(status: str): bool =
+  (status == "done" or status == "failed") implies not(labRunInterrupted(status))
+```
+
 ## Story: Compare two matching runs
 
 > As a staff member, I want to pick two matching runs and see what changed between them, so that I can see the effect of an engine change.
@@ -337,6 +352,56 @@ pure def inviterMark(known: bool, sharePercent: int): ShareMark =
   if (not(known)) ShareUnknown else if (sharePercent >= inviterTargetPercent) ShareMet else ShareBelow
 
 pure def lawTwoMessagesAWeekDoNotWarn(rateHundredths: int): bool = rateHundredths <= 200 implies not(proactiveWarns(rateHundredths))
+```
+
+### Confirmed proactive delivery contributes to the staff rate
+
+Use the [provider receipt lifecycle](outboundReceipt.md) for proactive delivery evidence. Count each delivered message once, including when its status advances to read. An accepted or sent status alone does not establish delivery. Use the same status set for member counters, app totals, and the attention score.
+
+```quint
+pure val confirmedProactiveDeliveryStatuses: List[str] = List("delivered", "read")
+
+pure def confirmsProactiveDelivery(status: str): bool =
+  confirmedProactiveDeliveryStatuses.foldl(false, (confirmed, candidate) => confirmed or status == candidate)
+
+pure def lawAcceptedProactiveDeliveryIsUnconfirmed(status: str): bool =
+  (status == "queued" or status == "accepted" or status == "sent") implies not(confirmsProactiveDelivery(status))
+```
+
+### Proactive load uses observed member time
+
+Divide confirmed proactive messages by observed member weeks. Count each
+joined member from their recorded join time or the start of the report
+period, whichever is later. If an older joined record has no join time,
+use the start of the report period. A join after the report ends adds zero.
+The metrics panel and the headless report use the same score.
+
+```quint
+pure def observedMembershipMs(start: int, end: int, joinedAt: int): int =
+  if (end < start or end < joinedAt) 0
+  else if (start < joinedAt) end - joinedAt
+  else end - start
+
+pure def lawFutureJoinAddsNoMemberTime(start: int, end: int, joinedAt: int): bool =
+  end < joinedAt implies observedMembershipMs(start, end, joinedAt) == 0
+
+pure def lawMembershipTimeIsWithinTheReport(start: int, end: int, joinedAt: int): bool =
+  observedMembershipMs(start, end, joinedAt) >= 0 and
+    (start <= end implies observedMembershipMs(start, end, joinedAt) <= end - start)
+```
+
+### The simulated interruption proxy keeps each STOP window
+
+For the simulated interruption proxy, keep each recorded STOP transition. A confirmed proactive message is rejected if a STOP for the same member occurs from its send time through 72 hours later. Later resumption and later STOP transitions preserve the earlier evidence. Real metrics use recorded interruption survey answers.
+
+```quint
+pure val interruptionProxyWindowMs: int = 72 * 3600000
+
+pure def stopRejectsInterruption(sentAt: int, stopAt: int): bool =
+  sentAt <= stopAt and stopAt - sentAt <= interruptionProxyWindowMs
+
+pure def lawStopOutsideInterruptionWindowDoesNotReject(sentAt: int, stopAt: int): bool =
+  (stopAt < sentAt or stopAt - sentAt > interruptionProxyWindowMs) implies not(stopRejectsInterruption(sentAt, stopAt))
 ```
 
 ## Story: Follow events in the feed and the pipeline

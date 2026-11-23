@@ -102,6 +102,58 @@ pure def lawEmergencyCheckInNeedsReceipt(attributedReport: bool): bool =
   not(emergencyCheckInReport(false, attributedReport))
 ```
 
+## Story: Block or report a person directly
+
+> As a member, I want a clearly requested block or report to reach the right person or ask me who I mean.
+
+### Direct polite safety requests use the existing counterpart chooser
+
+A direct request beginning with “can you” or “could you” can ask to block or report. For these forms, conditional, hypothetical and delayed wording cannot start the action. “My date” and “my match” refer to a counterpart under the existing target rules. Use the existing chooser for uncertainty, including confirmation for a report by reference after a past meeting.
+
+```quint
+pure def safetyRequestMayResolveTarget(directCommand: bool, conditionalOrDelayed: bool): bool =
+  directCommand and not(conditionalOrDelayed)
+
+pure def lawConditionalSafetyRequestCannotResolveTarget(directCommand: bool): bool =
+  not(safetyRequestMayResolveTarget(directCommand, true))
+```
+
+### Report language distinguishes physical harm from casual contact
+
+A direct affirmative statement that the counterpart choked the reporter is unsafe report evidence. Treat “hit me up” as a casual contact idiom. Disregard that idiom and denied evidence when classifying the report. The established counterpart and check-in receipt rules still apply.
+
+```quint
+pure def acceptsReportEvidence(affirmative: bool, casualContact: bool): bool =
+  affirmative and not(casualContact)
+
+pure def lawCasualContactDoesNotEstablishHarm(affirmative: bool): bool =
+  not(acceptsReportEvidence(affirmative, true))
+
+pure def lawDeniedEvidenceDoesNotEstablishHarm(casualContact: bool): bool =
+  not(acceptsReportEvidence(false, casualContact))
+```
+
+### A minor report needs affirmative attributable evidence
+
+Use the same age reading for a direct report and a post-meeting check-in.
+A direct statement about a person can use digits, a spelled age, or a
+compound form such as “16-year-old.” “My date was sixteen” can open the
+same review as “he's sixteen.” Ignore times, prices, ages of relatives
+or objects, questions, and qualified or quoted statements. A statement
+that the member reports about a counterpart can place a safety hold in
+the existing app and does not overwrite that person's stated age.
+
+```quint
+pure def acceptsMinorReportEvidence(eligibleSubject: bool, minorAgeSignal: bool, affirmative: bool): bool =
+  eligibleSubject and minorAgeSignal and affirmative
+
+pure def lawMinorReportNeedsAffirmation(eligibleSubject: bool, minorAgeSignal: bool): bool =
+  not(acceptsMinorReportEvidence(eligibleSubject, minorAgeSignal, false))
+
+pure def lawMinorReportNeedsAnEligibleSubject(minorAgeSignal: bool, affirmative: bool): bool =
+  not(acceptsMinorReportEvidence(false, minorAgeSignal, affirmative))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.

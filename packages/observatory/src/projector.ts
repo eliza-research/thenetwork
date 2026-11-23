@@ -2,7 +2,11 @@
 // state. Opportunities follow the PRD 32.10 state machine as far as the records reveal it; the
 // edges the Network learns follow PRD 32.13 (introduced, met, enjoyed, would_interact_again, avoid).
 import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
-import type { RunRecord } from "@thenetwork/core";
+import type { RunRecord, SimMeta } from "@thenetwork/core";
+import { consoleBookingReceiptCurrent } from "../../core/src/generated/consoleMemberView.ts";
+import { confirmationWindowHours } from "../../core/src/generated/meetingSettlement.ts";
+import { currentConsentViewChanges } from "../../core/src/generated/observatoryMemberConsent.ts";
+import { closedProbeUpdate, observatoryMeetingHeld, replacementRosterMode } from "../../core/src/generated/observatoryRoster.ts";
 import { requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
 import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus, ReviewInfo, ReviewReason, TimeChoice } from "./types.ts";
@@ -12,8 +16,16 @@ const TERMINAL: ReadonlySet<OppState> = new Set<OppState>([
   "COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED",
 ]);
 export const isTerminal = (s: OppState) => TERMINAL.has(s);
+// Acceptance credit follows saidYes in spec/models/console_views.md.
+export const ACCEPTED_PARTICIPATION_STATUSES: readonly ParticipantStatus[] = [
+  "accepted", "confirmed", "attended", "no_show", "cancelled_with_notice",
+];
+export function countsAsAcceptance(status: ParticipantStatus | undefined): boolean {
+  return status !== undefined && ACCEPTED_PARTICIPATION_STATUSES.includes(status);
+}
+
 /** The statuses that hold a counted yes which a flake notice can take back. */
-const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set<ParticipantStatus>(["accepted", "countered", "confirmed"]);
+const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set(["accepted", "confirmed"]);
 
 export interface ProjectorOptions {
   /** State a member takes when they join (from their profile: normal, quiet...). */
@@ -27,13 +39,15 @@ export interface ProjectorOptions {
 }
 
 export class Projector {
-  private meetings = new Map<string, string>(); // meetingId -> proposalId
+  private stoppedParticipation = new Map<MemberId, MemberStatus>();
+  private meetings = new Map<string, { proposalId: string; at: number }>();
   /** The member who last received the under-13 decline (join_declined itself carries no member id). */
   private declineTo?: MemberId;
   /** Opportunities already counted in their participants' proposal counters. */
   private counted = new Set<string>();
   /** Booked-plan messages (SimMeta.booked): the plan is booked when it reaches the member; only a typed "can't" or no undoes it. */
   private booked = new Set<string>();
+  private bookingRevision = new Map<string, number>();
   /** The last times offered to each member (a requester's time question names no opportunity; its answer does). */
   private lastOptions = new Map<MemberId, TimeChoice[]>();
   constructor(private store: Store, private opts: ProjectorOptions = {}) {}
@@ -49,6 +63,17 @@ export class Projector {
     this.store.touchMember(id);
     return m.counters;
   }
+
+  private setParticipantStatus(o: ObsOpportunity, id: MemberId, status: ParticipantStatus) {
+    const prior = o.status[id];
+    o.status[id] = status;
+    const delta = Number(countsAsAcceptance(status)) - Number(countsAsAcceptance(prior));
+    if (delta === 0) return;
+    this.store.counts.accepts += delta;
+    const member = this.counters(id);
+    if (member) member.accepted += delta;
+  }
+
   /** State each opportunity was in when last seen (time in state). */
   private lastState = new Map<string, OppState>();
   private changed(o: ObsOpportunity, rec: RunRecord) {
@@ -88,13 +113,13 @@ export class Projector {
         const msg = r.msg;
         if (msg.system) return;
         c.messages++;
+        if (r.bookingNoticeMeetingId) this.bookingNotice(r);
         const k = this.counters(msg.memberId);
         if (msg.direction === "inbound") { c.inbound++; if (k) k.msgsIn++; return; }
         c.outbound++;
         if (k) k.msgsOut++;
         if (msg.body === UNDER_MIN_AGE_DECLINE) this.declineTo = msg.memberId;
         if (msg.meta?.proactive && msg.status === "delivered") { c.proactive++; if (k) k.proactive++; }
-        if (msg.meta?.booked) this.booked.add(msg.id);
         this.timesAndBooking(msg, r);
         const pid = msg.meta?.proposalId;
         const o = pid ? s.opps.get(pid) : undefined;
@@ -104,10 +129,6 @@ export class Projector {
           if (o.status[msg.memberId] === "pending") o.status[msg.memberId] = "invited";
           if (o.state === "PROPOSED") this.setState(o, "INVITING");
           this.changed(o, r);
-        } else if (msg.meta?.type === "cancellation" && /calling this one off/i.test(msg.body) && !isTerminal(o.state)) {
-          this.setState(o, "CANCELLED", "participant dropped");
-          this.changed(o, r);
-          s.pushFeed({ t: r.t, kind: "skip", text: `${this.names(o.participants)}: called off after a drop`, members: o.participants, opportunityId: o.id, severity: "warn" });
         }
         return;
       }
@@ -135,27 +156,19 @@ export class Projector {
         const o = r.proposalId ? s.opps.get(r.proposalId) : undefined;
         if (!o || !(r.memberId in o.status)) return;
         let st: ParticipantStatus | undefined;
-        // A booked plan (the reveal with an opt-out) is a yes when it arrives (below); only a typed no or "can't" changes it.
-        const bookedMsg = this.booked.has(r.messageId);
-        if (bookedMsg && r.intent !== "decline" && r.intent !== "booked_cancel") return;
-        const said = bookedMsg ? "decline" : r.intent;
+        // A response to an already booked plan changes attendance only when its notice arrives.
+        if (this.booked.has(r.messageId)) return;
+        const said = r.intent;
         if (r.messageType === "proposal") {
           if (said === "accept") st = "accepted";
           else if (said === "decline") st = "declined";
           else if (said === "counter") st = "countered";
           else if (said === "ignore" || said === "ack" || said === "none") st = "ignored";
-        } else if (r.intent === "flake_notice" && YES_BEFORE_FLAKE.has(o.status[r.memberId]!)) {
-          // Cancelled with notice is a yes taken back (spec/models/console_views.md, saidYes), and the
-          // c.accepts counter already holds that yes. A member with no yes (declined, ignored, dropped) keeps
-          // the status, so a status count of yes answers (sources/real.ts) equals c.accepts.
-          st = "cancelled_with_notice";
         }
-        if (!st || isTerminal(o.state) && st !== "cancelled_with_notice") return;
-        const prev = o.status[r.memberId];
-        if (prev === st) return;
-        o.status[r.memberId] = st;
-        if (st === "accepted" || st === "countered") { c.accepts++; const k = this.counters(r.memberId); if (k) k.accepted++; }
-        if (st === "declined") { c.declines++; if (prev === "accepted" || prev === "countered" || prev === "confirmed") c.accepts--; }
+        if (!st || isTerminal(o.state)) return;
+        if (o.status[r.memberId] === st) return;
+        this.setParticipantStatus(o, r.memberId, st);
+        if (st === "declined") c.declines++;
         if (st === "accepted" || st === "declined") {
           s.pushFeed({ t: r.t, kind: st === "accepted" ? "accept" : "decline", text: `${this.name(r.memberId)} ${st === "accepted" ? "said yes to" : "passed on"} ${o.participants.length > 2 ? "a group" : "meeting " + this.names(o.participants.filter(x => x !== r.memberId))}`, members: [r.memberId], opportunityId: o.id, severity: st === "accepted" ? "good" : undefined });
         }
@@ -165,15 +178,16 @@ export class Projector {
       }
       case "meeting_scheduled": {
         const o = s.opps.get(r.proposalId);
-        if (!this.meetings.has(r.meetingId)) { c.meetingsScheduled++; this.meetings.set(r.meetingId, r.proposalId); }
+        if (!this.meetings.has(r.meetingId)) { c.meetingsScheduled++; this.meetings.set(r.meetingId, { proposalId: r.proposalId, at: r.at }); }
         if (!o) return;
         this.setState(o, "SCHEDULED");
+        if (o.booked && o.booked.at !== r.at) {
+          o.booked = Object.keys(o.booked.cancelled).length ? { ...o.booked, at: r.at, told: {} } : undefined;
+        }
         o.meetingAt = r.at;
         for (const id of r.participants) {
-          // A booked plan (attention v1.2) is booked before anyone is told: a member who had not said yes in
-          // words is in by default (silence = in), so they count as a yes here.
-          if (o.status[id] !== "accepted" && o.status[id] !== "countered" && o.status[id] !== "cancelled_with_notice") { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
-          if (o.status[id] !== "cancelled_with_notice") o.status[id] = "confirmed";
+          // The booking establishes the roster. A late addition can emit another record for the same meeting.
+          if (o.status[id] !== "cancelled_with_notice") this.setParticipantStatus(o, id, "confirmed");
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
         this.changed(o, r);
@@ -183,31 +197,35 @@ export class Projector {
       case "outcome": {
         const o = s.opps.get(r.proposalId);
         const showed = Object.entries(r.attendance).filter(([, a]) => a.showed).map(([id]) => id);
+        const held = observatoryMeetingHeld(showed.length);
         for (const [id, a] of Object.entries(r.attendance)) {
           // A member who said no to a booked plan was not expected: not a no-show (the plan is booked first).
-          if (!a.showed && o?.status[id] === "declined") continue;
+          if (!a.showed && (o?.status[id] === "declined" || a.cancelledByNetwork && !a.cancelledWithNotice)) continue;
           if (a.showed) c.attended++; else if (a.cancelledWithNotice) c.cancelledWithNotice++; else c.noShows++;
           if (o) {
-            o.status[id] = a.showed ? "attended" : a.cancelledWithNotice ? "cancelled_with_notice" : "no_show";
+            this.setParticipantStatus(o, id, a.showed ? "attended" : a.cancelledWithNotice ? "cancelled_with_notice" : "no_show");
             if (a.showed) o.enjoyment[id] = a.enjoyment;
           }
-          if (a.showed) {
+          if (a.showed && held) {
             const k = this.counters(id);
-            if (k) { k.meetings++; if (showed.length >= 2) { k.enjoymentSum += a.enjoyment; k.enjoymentN++; } }
+            if (k) { k.meetings++; k.enjoymentSum += a.enjoyment; k.enjoymentN++; }
           }
         }
-        const held = showed.length >= 2;
         if (held) {
           c.meetingsHeld++;
           for (const id of showed) { c.enjoymentSum += r.attendance[id]!.enjoyment; c.enjoymentN++; }
           this.learnEdges(showed, r.attendance, r.t);
         }
-        if (o) { this.setState(o, held ? "COMPLETED" : "ABANDONED", held ? undefined : "not enough people showed"); this.changed(o, r); }
+        if (o) {
+          if (!isTerminal(o.state)) this.setState(o, held ? "COMPLETED" : "ABANDONED", held ? undefined : "not enough people showed");
+          this.changed(o, r);
+        }
         const mean = held ? showed.reduce((a, id) => a + r.attendance[id]!.enjoyment, 0) / showed.length : 0;
         const ids = Object.keys(r.attendance);
         s.pushFeed({
           t: r.t, kind: "outcome", members: ids, opportunityId: r.proposalId,
-          text: held ? `${this.names(showed)} met · enjoyment ${(mean * 100).toFixed(0)}%` : `${this.names(ids)}: meeting fell through`,
+          text: held ? `${this.names(showed)} met · enjoyment ${(mean * 100).toFixed(0)}%`
+            : o?.state === "CANCELLED" ? `${this.names(ids)}: meeting cancelled` : `${this.names(ids)}: meeting fell through`,
           severity: !held ? "warn" : mean >= ENJOYED ? "good" : mean < AVOID ? "bad" : "info",
         });
         return;
@@ -227,11 +245,20 @@ export class Projector {
         s.pushFeed({ t: r.t, kind: "block", text: `${this.name(r.from)} blocked ${this.name(r.to)}`, members: [r.from, r.to], severity: "warn" });
         return;
       }
-      case "opt_out": {
-        c.optOuts++;
-        const m = s.member(r.memberId);
-        if (m) { m.state = "opted_out"; s.touchMember(m.id); }
-        s.pushFeed({ t: r.t, kind: "opt_out", text: `${this.name(r.memberId)} texted STOP`, members: [r.memberId], severity: "warn" });
+      case "opt_in": case "opt_out": {
+        const m = s.member(r.memberId), stopping = r.type === "opt_out";
+        if (!m || !currentConsentViewChanges(m.joined, m.state === "opted_out", stopping)) return;
+        if (stopping) {
+          this.stoppedParticipation.set(m.id, m.state);
+          m.state = "opted_out";
+          c.optOuts++;
+          s.pushFeed({ t: r.t, kind: "opt_out", text: `${this.name(r.memberId)} texted STOP`, members: [r.memberId], severity: "warn" });
+        } else {
+          m.state = this.stoppedParticipation.get(m.id) ?? this.opts.joinState?.(m.id) ?? "normal";
+          this.stoppedParticipation.delete(m.id);
+          c.optOuts--;
+        }
+        s.touchMember(m.id);
         return;
       }
       case "adversarial_attempt":
@@ -276,6 +303,9 @@ export class Projector {
   private consentLog(r: Extract<RunRecord, { type: "network_log" }>): boolean {
     const s = this.store, d = r.detail as Record<string, any>;
     switch (r.kind) {
+      case "meeting_rescheduled":
+        this.bookingRevision.set(d.oppId, d.revision);
+        return true;
       case "review_queued": {
         // PRD 32.8: the opportunity waits for a reviewer; no member has heard about it yet.
         const p = d.proposal as Proposal;
@@ -399,7 +429,11 @@ export class Projector {
       }
       case "booked_cancelled": {
         const o = s.opps.get(d.oppId);
-        if (o?.booked) { o.booked = { ...o.booked, cancelled: { ...o.booked.cancelled, [d.memberId]: { at: r.t, told: !!d.told } } }; this.changed(o, r); }
+        if (o?.meetingAt !== undefined) {
+          const prior = o.booked ?? { at: o.meetingAt, optOutHours: confirmationWindowHours, told: {}, cancelled: {} };
+          o.booked = { ...prior, cancelled: { ...prior.cancelled, [d.memberId]: { at: r.t, told: !!d.told } } };
+          this.changed(o, r);
+        }
         s.pushFeed({ t: r.t, kind: "decline", text: `${this.name(d.memberId)} called off a booked plan${d.told ? "" : " (silently)"}`, members: [d.memberId], opportunityId: d.oppId, severity: "warn" });
         return true;
       }
@@ -411,16 +445,32 @@ export class Projector {
       case "probe_replaced": {
         const o = s.opps.get(d.oppId);
         if (!o) return true;
-        o.participants = o.participants.map(x => (x === d.out ? d.in : x));
-        delete o.status[d.out]; o.status[d.in] = "checking";
-        // The Network rebuilds every reason after a swap; show the new ones.
-        if (d.proposal?.explanations) o.explanations = { ...d.proposal.explanations };
+        const recorded = d.proposal as Proposal | undefined;
+        const incoming = d.in as MemberId, outgoing = d.out as MemberId | undefined;
+        const mode = replacementRosterMode(recorded !== undefined, outgoing !== undefined, o.participants.includes(incoming));
+        if (mode === "recorded" && recorded) {
+          o.participants = [...recorded.participants];
+          o.alternates = [...(recorded.alternates ?? [])];
+        } else {
+          if (mode === "substitute") o.participants = o.participants.map(id => id === outgoing ? incoming : id);
+          if (mode === "append") o.participants = [...o.participants, incoming];
+          o.alternates = o.alternates.filter(id => id !== incoming);
+        }
+        if (outgoing !== undefined) delete o.status[outgoing];
+        o.status[incoming] = "checking";
+        if (recorded?.explanations) o.explanations = { ...recorded.explanations };
         this.changed(o, r);
         return true;
       }
       case "probe_closed": {
         const o = s.opps.get(d.proposalId);
-        if (o && !isTerminal(o.state)) { this.setState(o, "SKIPPED", String(d.reason ?? "not sent")); this.changed(o, r); }
+        if (!o) return true;
+        const terminal = isTerminal(o.state);
+        const alternates: MemberId[] | undefined = Array.isArray(d.alternates) ? d.alternates : undefined;
+        if (!closedProbeUpdate(terminal, alternates !== undefined)) return true;
+        if (alternates) o.alternates = [...alternates];
+        if (!terminal) this.setState(o, "SKIPPED", String(d.reason ?? "not sent"));
+        this.changed(o, r);
         return true;
       }
       case "venue": {
@@ -482,24 +532,47 @@ export class Projector {
     }
   }
 
+  private bookingNotice(record: Extract<RunRecord, { type: "message" }>) {
+    const { msg, bookingNoticeMeetingId } = record;
+    const booking = bookingNoticeMeetingId ? this.meetings.get(bookingNoticeMeetingId) : undefined;
+    if (!booking) return;
+    const o = this.store.opps.get(booking.proposalId);
+    if (!o || o.meetingAt !== booking.at || msg.status !== "delivered" || msg.ts >= booking.at
+      || !(msg.memberId in o.status)) return;
+    if (msg.direction === "inbound") {
+      if (!YES_BEFORE_FLAKE.has(o.status[msg.memberId]!)) return;
+      this.setParticipantStatus(o, msg.memberId, "cancelled_with_notice");
+    } else {
+      if (isTerminal(o.state)) return;
+      this.setState(o, "CANCELLED", "participant dropped");
+      this.store.pushFeed({ t: record.t, kind: "skip", text: `${this.names(o.participants)}: called off after a drop`,
+        members: o.participants, opportunityId: o.id, severity: "warn" });
+    }
+    this.changed(o, record);
+  }
+
   /**
    * Times a message offered (attention v1.2: a probe, the requester's time question, other times after
    * "neither") and the booked plan it carries (SimMeta.timeOptions, SimMeta.booked).
    */
   private timesAndBooking(msg: Extract<RunRecord, { type: "message" }>["msg"], r: RunRecord) {
-    const meta = (msg.meta ?? {}) as { timeOptions?: { key: string; label: string; start: number }[]; probe?: { key?: string }; proposalId?: string; booked?: { proposalId: string; at: number; optOutHours: number } };
+    const meta = (msg.meta ?? {}) as SimMeta;
     if (meta.timeOptions?.length) {
       const offered = meta.timeOptions.map(x => ({ key: x.key, label: x.label, start: x.start }));
       this.lastOptions.set(msg.memberId, offered);
       const o = this.store.opps.get(meta.probe?.key ?? meta.proposalId ?? "");
       if (o) { o.times = { ...o.times, [msg.memberId]: { offered } }; this.changed(o, r); }
     }
-    const b = meta.booked;
-    const o = b ? this.store.opps.get(b.proposalId) : undefined;
-    if (b && o) {
-      o.booked = { at: b.at, optOutHours: b.optOutHours, told: { ...o.booked?.told, [msg.memberId]: msg.ts }, cancelled: { ...o.booked?.cancelled } };
-      this.changed(o, r);
-    }
+    const notice = meta.bookingUpdate ?? (meta.booked && { at: meta.booked.at, revision: 0 });
+    const o = this.store.opps.get(meta.proposalId ?? meta.booked?.proposalId ?? "");
+    if (!notice || !o || !consoleBookingReceiptCurrent(
+      notice.at === o.meetingAt && notice.revision === (this.bookingRevision.get(o.id) ?? 0),
+      o.participants.includes(msg.memberId), msg.status === "delivered", msg.ts, r.t,
+    )) return;
+    if (meta.booked) this.booked.add(msg.id);
+    o.booked = { at: notice.at, optOutHours: meta.booked?.optOutHours ?? confirmationWindowHours,
+      told: { ...o.booked?.told, [msg.memberId]: msg.ts }, cancelled: { ...o.booked?.cancelled } };
+    this.changed(o, r);
   }
 
   /** A consent-network opportunity from its proposal (state and statuses set by the caller). */
@@ -516,7 +589,7 @@ export class Projector {
   private recomputeConsent(o: ObsOpportunity, r: RunRecord) {
     if (o.state === "SCHEDULED" || isTerminal(o.state)) return;
     const sts = o.participants.map(id => o.status[id]);
-    const yes = o.participants.filter(id => o.status[id] === "accepted" || o.status[id] === "countered");
+    const yes = o.participants.filter(id => o.status[id] === "accepted");
     const group = o.participants.length > 2;
     if (!group && sts.includes("declined")) { this.setState(o, "DECLINED", "declined"); return; }
     const quorum = group ? Math.max(3, Math.ceil(o.participants.length * 0.66)) : 2;
@@ -528,6 +601,7 @@ export class Projector {
           this.store.addEdge({ from: yes[i]!, to: yes[j]!, type: "introduced", strength: 0.3, createdAt: r.t, origin: "learned" });
       }
     } else if (yes.length) this.setState(o, "PARTIALLY_ACCEPTED");
+    else if (o.state === "PARTIALLY_ACCEPTED" || o.state === "MUTUALLY_ACCEPTED" || o.state === "QUORUM_MET") this.setState(o, "INVITING");
   }
 
   /** PRD 32.13 edge learning from a held meeting. */

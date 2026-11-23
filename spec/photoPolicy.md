@@ -6,6 +6,18 @@ The [photo flow model](models/photos_rating.md) covers storage, asynchronous rat
 
 > As an adult slop.date member, I want the service to keep my own photos private and use a bounded set for matching.
 
+### Only a shared or Slop line can accept photos for Slop
+
+A text attachment on another app's dedicated line cannot trigger a Slop consent request, attachment fetch, or upload. A shared line or a Slop line still checks the sender's age, membership, and consent before it fetches the attachment.
+
+```quint
+pure def textPhotoLineAllowed(sharedLine: bool, slopLine: bool): bool =
+  sharedLine or slopLine
+
+pure def lawDedicatedOtherLineCannotTakeSlopPhoto(sharedLine: bool, slopLine: bool): bool =
+  (not(sharedLine) and not(slopLine)) implies not(textPhotoLineAllowed(sharedLine, slopLine))
+```
+
 ### The rater requires an adult age without a failed age check
 
 The shared age policy supplies the adult eligibility result. A known failed age check excludes the subject. The production platform also requires a live membership, consent where applicable, and no ban.
