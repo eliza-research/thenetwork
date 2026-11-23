@@ -192,6 +192,7 @@
 {"text": "Send him my number. Cancel.", "want": "none"}
 {"text": "Send him my photo. On second thought.", "want": "none"}
 {"text": "Send him my number. Let me think.", "want": "none"}
+{"text": "Send him my number. Lol nevermind he's weird.", "want": "none"}
 {"text": "Send him my number. Keep it private.", "want": "none"}
 {"text": "Send him my photo. Reconsidering.", "want": "none"}
 {"text": "Send him my number. Ugh actually.", "want": "none"}
@@ -252,6 +253,7 @@
 {"text": "Send him my photo. Wait, send it, she said.", "want": "none"}
 {"text": "Send him my photo. 🚫📸 I'll show him myself.", "want": "none"}
 {"text": "give him my number if he asks", "want": "none"}
+{"text": "send him my number whenever he asks", "want": "none"}
 {"text": "send them my number if they ask for it", "want": "none"}
 {"text": "share my number with him if he wants it", "want": "none"}
 {"text": "give her my number only if she asks", "want": "none"}
