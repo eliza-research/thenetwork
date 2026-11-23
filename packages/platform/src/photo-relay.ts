@@ -722,10 +722,9 @@ export class PhotoRelayService {
       and phase = 'ready' order by created_at, id`).map(offerRow);
     const out: RenewedViewLink[] = [];
     for (const o of offers) {
-      if (!photoViewLinkRenewable(PHASE[o.phase], o.recipientPersonId === personId, await this.viewCurrent(o))) continue;
       const link = await this.o.sql.begin(async (tx: SQL) => {
         const locked = await this.lockedOffer(tx, o.id);
-        if (!locked || locked.phase !== "ready" || locked.recipientPersonId !== personId) return undefined;
+        if (!locked || !photoViewLinkRenewable(PHASE[locked.phase], locked.recipientPersonId === personId, await this.viewCurrent(locked, tx))) return undefined;
         await tx`delete from platform.photo_page_links where offer_id = ${o.id} and purpose = 'view'`;
         return this.issueLink(tx, { personId, app, purpose: "view", offerId: o.id, expiresAt: null });
       });

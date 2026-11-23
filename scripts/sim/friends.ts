@@ -65,8 +65,6 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
   await friendsActivityDurationGate(b);
   await b.run("friends repeat plans keep the local weekday and time across DST, with the minimum lead", () => {
     const s = friendsSnapshotAfter(1);
-    const past = s.outcomes.find(o => o.positive.length >= 2)!;
-    expect(past).toBeTruthy();
     // Replay a positive meetup from the seeded world at the clock changes, plus an ordinary week.
     // Inspect the real planner's timestamps before the harness rounds them to weekly slot indices.
     const cases = [
@@ -75,10 +73,14 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       ["2027-03-08T00:30:00Z", "2027-03-08T14:00:00Z", "2027-03-14T23:30:00Z"],
       ["2026-10-25T23:30:00Z", "2026-10-31T18:00:00Z", "2026-11-02T00:30:00Z"],
     ];
+    const past = s.outcomes.find(o => o.positive.length >= 2)!;
+    expect(past).toBeTruthy();
+    const input = engineInputOf(s);
+    const history = { feedback: input.feedback!.filter(f => f.at <= past.at), interactions: input.interactions!.filter(x => x.at <= past.at) };
     const actual: string[][] = [];
     for (const [at, planningAt] of cases) {
       const now = Date.parse(planningAt!);
-      const w = new World({ ...engineInputOf(s), now }, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+      const w = new World({ ...input, ...history, now }, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
       const outcome = { ...past, at: Date.parse(at!), positive: past.positive.slice(0, 2), attended: past.positive.slice(0, 2) };
       const wk = planFriendsWeek(w, { now, tz: NYC_TZ, evidence: new Map(), venues: VENUES.map(v => ({ ...v, hours: { weekday: [0, 24], weekend: [0, 24] } })), crews: [], outcomes: [outcome], offered: [] },
         { ...DEFAULT_FRIENDS_POLICY, crews: false, timeOptions: false }, FRIENDS_PLANS);
@@ -115,7 +117,8 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
   });
 
   await b.run("plans: every offered time fits the selected venue's opening hours", () => {
-    for (const seed of [101, 102, 103]) {
+    const partnerSeeds = new Set([103, 120]);
+    for (const seed of [101, 102, 103, 120]) {
       const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
       r.world.state.week = 3; r.world.state.now += 7 * DAY;
       const s = buildFriendsSnapshot(r.world.personas, r.world.state);
@@ -127,7 +130,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const placed = wk.plans.filter(p => p.venueId);
       if (!placed.length) throw new Error(`seed ${seed} produced no new table with an open venue`);
       expect(placed.some(p => p.options.length > 1)).toBe(true);
-      if (seed === 101 || seed === 102) {
+      if (partnerSeeds.has(seed)) {
         const windows = (["tue_eve", "sat_eve", "sun_am"] as const).map(name => {
           const start = slotTime(s.week, SLOTS.indexOf(name));
           return { start, end: start + 3 * HOUR };
@@ -137,15 +140,17 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
           memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
         }])) });
         const openVenues = venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } }));
+        const everyWindowDaypart = (activityId: string) => (["weekday_evening", "weekend_evening", "weekend_day"] as const).every(d => activityById.get(activityId)!.dayparts.includes(d));
         const veterans = r.world.personas.filter(p => isReal(p) && attendedGroup(w, p.id)).sort((a, b) => a.id.localeCompare(b.id));
         let pair: MemberId[] | undefined, partners: ReturnType<typeof planFriendsWeek>["partners"] = [];
         for (let i = 0; i < veterans.length && !pair; i++) for (let j = i + 1; j < veterans.length && !pair; j++) {
           const a = veterans[i]!, c = veterans[j]!;
-          if (!a.stated.activities.some(x => c.stated.activities.includes(x))) continue;
+          const shared = a.stated.activities.filter(x => c.stated.activities.includes(x));
+          if (!shared.length || !shared.every(everyWindowDaypart)) continue;
           const found = planFriendsWeek(w, inputOf([a.id, c.id]), policy, FRIENDS_PLANS).partners;
           if (found.length === 1) { pair = [a.id, c.id]; partners = found; }
         }
-        if (!pair) throw new Error(`seed ${seed}: no pair of group veterans with a shared activity gets one partner table at normal hours`);
+        if (!pair) throw new Error(`seed ${seed}: no pair of group veterans with a shared evening and daytime activity gets one partner table at normal hours`);
         const open = planFriendsWeek(w, { ...inputOf(pair), venues: openVenues }, policy, FRIENDS_PLANS).partners;
         expect(open.length).toBe(1);
         expect(open[0]!.options.length).toBe(3);

@@ -1068,6 +1068,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
     this.trust.onChange = (id, from, to, why) => this.onTrustChange(id, from, to, why);
     this.trust.onEvent = (id, e) => this.caseEvent(id, e);
+    return new Proxy(this, {
+      get: (target, key) => {
+        const value: unknown = Reflect.get(target, key);
+        return typeof value === "function" ? (...args: unknown[]) => { target.beginUnit(); return value.apply(target, args); } : value;
+      },
+    });
   }
 
   /** The store runTick() uses when none is passed. */
@@ -1087,7 +1093,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const u = reportChoice || privateInviteTurn || currentDanger || interruptionFeedbackAnswer(msg.body) ? undefined : await this.understandSafely(msg);
     if (this.declinedIds.has(msg.memberId)) return "handled";
     // What a member says can change the snapshot (a trip, a setting): read it fresh, never up to 20 minutes stale.
-    this.beginUnit();
+    this.dirty = true;
     const m = this.member(msg.memberId);
     this.syncMember(m);
     // spec/outreachPolicy.md, "Count a sent invitation at terminal expiry or after 72 hours"
@@ -1974,7 +1980,6 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Project a verified join from another conversation shard without adding the invitee to this Network. */
   announceVerifiedInviteJoin(inviterId: MemberId, inviteeId: MemberId, at: number): void {
-    this.beginUnit();
     if (inviterId === inviteeId || this.invitedIds.has(inviteeId) || this.declinedIds.has(inviterId)) return;
     this.dirty = true;
     if (!this.record(inviterId) || !this.ctx.verifiedJoinedInviteeName?.(inviterId, inviteeId)) return;
@@ -1987,7 +1992,6 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Ask for a decision on a reviewed plan. Its record and current approval stay in the service. */
   askReviewedHomeHelpConsent(input: { recipientId: MemberId; role: "requester" | "helper"; deliveryId: string; body: string }): boolean {
-    this.beginUnit();
     const { recipientId, role, deliveryId, body } = input;
     if (!this.record(recipientId) || this.declinedIds.has(recipientId)) return false;
     const member = this.member(recipientId);
@@ -1998,7 +2002,6 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Stage an exact reviewed gathering invitation using ordinary proactive outreach budgets. */
   askReviewedGatheringInvitation(recipientId: MemberId, deliveryId: string, body: string): boolean {
-    this.beginUnit();
     const member = this.gatheringOutreachMember(recipientId);
     if (!member) return false;
     this.dirty = true;
@@ -2008,7 +2011,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Logistics for the recipient's own current RSVP use the same timing as a booked meeting. */
   sendGatheringRsvpNotice(recipientId: MemberId, { id, body, kind, startsAt }:
     { id: string; body: string; kind: GatheringNoticeKind; startsAt: number }): boolean {
-    this.beginUnit();
     const member = this.gatheringOutreachMember(recipientId);
     if (!member) return false;
     const now = this.now();
@@ -2299,7 +2301,6 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Staff lift a member's hold (only a person can). Their case stays open as "lifted" until staff close it. */
   liftHold(memberId: MemberId, actor: string, note?: string, durableStaffHold = false): ActionResult {
-    this.beginUnit();
     const runtimeHeld = this.trust.level(memberId) === "hold";
     const decision = holdLiftResult(!!actor.trim(), runtimeHeld || durableStaffHold);
     if (decision !== "AllowedAction") return { ok: false, reason: SAFETY_REFUSAL[decision] };
@@ -2676,7 +2677,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   clearMinorSignal(memberId: MemberId, actor: string, note?: string): ActionResult {
-    this.beginUnit();
     const stored = this.record(memberId);
     const m = this.members.get(memberId) ?? (stored && recordMinorSignalOpen(stored) ? this.member(memberId) : undefined);
     if (m) this.syncRecord(m);
@@ -2757,7 +2757,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   manageStandingIntents(memberId: MemberId, command: StandingIntentCommand, canonicalMembership: boolean, causeId: string): StandingTurn {
-    this.beginUnit();
     const known = this.members.get(memberId);
     const scope = stepIntentManagement(initialIntentManagement, {
       type: "authorizeIntentCommand", command: command.kind,
@@ -2844,7 +2843,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   agentStandingChange(memberId: MemberId, supplied: string, change: "pause" | "resume", adult: boolean, causeId: string): AgentStandingResult {
-    this.beginUnit();
     const ref = canonicalStandingReference(supplied);
     const m = this.members.get(memberId);
     if (!m || !this.record(memberId) || m.optedOut) return { kind: "refused", reason: "unknown_ref" };
@@ -3780,7 +3778,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   judgePackets(now: number = this.now()): { work: JudgeWork[]; close: { oppId: string; reason: string }[] } {
-    this.beginUnit();
     return this.awaitingJudge(now, 20);
   }
 
@@ -3813,16 +3810,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   recordJudgments(judgments: readonly ReviewJudgment[]): ActionResult[] {
-    this.beginUnit();
-    return judgments.map(j => this.judgmentStep(j));
+    return judgments.map(j => this.recordJudgment(j));
   }
 
   recordJudgment(j: ReviewJudgment): ActionResult {
-    this.beginUnit();
-    return this.judgmentStep(j);
-  }
-
-  private judgmentStep(j: ReviewJudgment): ActionResult {
     const o = this.opps.get(j.oppId);
     if (!o || o.stage !== "review" || !o.review) return { ok: false, reason: "judgment_stale" };
     if (j.reviewer !== this.judgeReviewer) return { ok: false, reason: "judgment_reviewer_unknown" };
@@ -3888,7 +3879,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const item of work) {
       const call = judgeCallDecision(item.packetClean, item.priorFlag, true, 0, 1, 0, 1, item.packet.deadline - now);
       const judgment = call === "CallJudge" ? judge(item.packet) : uncalledJudgment(item.packet, call, this.judgeReviewer);
-      if (judgment) this.judgmentStep(judgment);
+      if (judgment) this.recordJudgment(judgment);
     }
     if (close.length) this.closeUnjudgeable(close);
   }
@@ -3987,7 +3978,6 @@ export class ConsentNetwork implements NetworkUnderTest {
    * as "review_stale" and changes nothing.
    */
   decide(oppId: string, decision: ReviewDecision, opts: ReviewOptions = {}): ActionResult {
-    this.beginUnit();
     const fi = this.fraud.find(x => x.id === oppId);
     if (fi) return this.decideFraud(fi, decision, opts);
     const o = this.opps.get(oppId);
@@ -5662,7 +5652,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   resumeTeenIntros(actor: string): ActionResult {
-    this.beginUnit();
     const who = actor.trim();
     if (!who) return { ok: false, reason: "actor_required" };
     if (!teenIntroSwitchAllowed(true, teenFriendApp(this.app.id))) {
@@ -6802,7 +6791,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   async tick(now: number, engine: EngineStep = inlineEngine) {
     if (this.lastTick && now > this.lastTick) this.tickGap = now - this.lastTick;
     this.lastTick = now;
-    this.beginUnit();
     for (const m of [...this.members.values()]) {
       this.syncMember(m);
       this.refreshUnanswered(m, now);
@@ -8915,11 +8903,6 @@ export class ConsentNetwork implements NetworkUnderTest {
    * rows are written by the service (onPosting); a closed posting ends its open seat items at once.
    */
   applyPosting(p: JobPosting, actor: string): ActionResult {
-    this.beginUnit();
-    return this.postingStep(p, actor);
-  }
-
-  private postingStep(p: JobPosting, actor: string): ActionResult {
     const bad = postingProblem(p);
     if (bad) return { ok: false, reason: bad };
     const rec = this.snapshotCached().members.find(x => x.id === seatIdOf(p.id));
@@ -8955,7 +8938,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         clear();
         const posting = postingFromDraft(waiting, m.id, this.now(), prev);
         if (!posting) return reply(POSTING_COPY.dropped);
-        const r = this.postingStep(posting, m.id);
+        const r = this.applyPosting(posting, m.id);
         if (!r.ok) return reply(r.reason === "adults_only" ? POSTING_COPY.adultsOnly : r.reason === "opt_in" ? POSTING_COPY.optIn : POSTING_COPY.notReady);
         return reply(posting.status !== "active" ? POSTING_COPY.closed(posting.title) : prev ? POSTING_COPY.updated(posting.title) : POSTING_COPY.saved(posting.title));
       }
@@ -9133,7 +9116,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const m = this.members.get(to);
         if (!m) return "refused";
         this.dirty = true;
-        const r = this.send(m, body, { type: "relay", proposalId: o.matchId }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
+        const r = this.send(m, body, { type: "relay", proposalId: o.matchId }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}), ...(o.noDefer ? { noDefer: true } : {}) });
         return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
       },
       saysYounger: (id, text) => {
@@ -9155,7 +9138,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       },
     };
   }
-  relayRequest(ask: RelayAsk, o: RelayCallOptions): Promise<RelayOutcome> { this.beginUnit(); return this.relayDesk.request(ask, o); }
+  relayRequest(ask: RelayAsk, o: RelayCallOptions): Promise<RelayOutcome> { return this.relayDesk.request(ask, o); }
   relayCancelSwap(memberId: MemberId): number { const n = this.relayDesk.cancelSwaps(memberId); if (n) this.dirty = true; return n; }
   relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId).match; }
   relayLiveMatches(memberId: MemberId): { match: RelayMatch; otherFirstName: string; meeting: boolean }[] {
@@ -9170,7 +9153,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("photo_review_expired", { photoRelayItemId: itemId });
   }
   photoNotice(memberId: MemberId, key: string, text: string, kind: "relay" | "info", threadId?: string, link?: string): boolean {
-    this.beginUnit();
     if (!this.record(memberId) || this.declinedIds.has(memberId)) return false;
     const thread = threadId === undefined ? undefined : this.opps.get(threadId);
     if (threadId !== undefined && (!thread || !thread.participants.includes(memberId))) return false;
@@ -9179,7 +9161,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       { key, ...(thread ? { about: thread.participants.filter(p => p !== memberId) } : {}), ...(link ? { relayContact: link } : {}) }) !== "refused";
   }
   photoReportAnswer(memberId: MemberId, key: string, text: string): boolean {
-    this.beginUnit();
     if (!this.record(memberId) || this.declinedIds.has(memberId)) return false;
     this.dirty = true;
     return this.send(this.member(memberId), text, { type: "info" }, "info", { key, answersMemberAction: true }) !== "refused";
@@ -9210,7 +9191,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   welcomeJoined(id: MemberId, verifiedInviterId?: MemberId): boolean {
     if (this.declinedIds.has(id)) return false;
-    this.beginUnit();
+    this.dirty = true;
     const m = this.member(id);
     if (m.stage !== "new" && verifiedInviterId === undefined) return false;
     this.syncMember(m);

@@ -47,7 +47,7 @@ pure def lawDirectRefusalWithdrawsPendingSwap(namesOwnContact: bool, withholdsCo
 
 ### A phone exchange must still have consent at dispatch
 
-A withdrawal also marks the prepared shares involving that member. An outbound share must still have a passed record and no rejection or withdrawal. A swap question goes only while the matching request is pending within its consent window.
+A withdrawal also marks the prepared shares involving that member. An outbound share must still have a passed record and no rejection or withdrawal. A swap question goes only while the matching request is pending within its consent window. A swap request waits only when its question went to the other member at once. When the send path refuses the question or would hold it (quiet hours, the conversation streak cap, or the same question to that member less than 10 minutes before), no swap waits and the asker hears "I can't swap numbers right now."; a new request 10 minutes or more after the earlier question can wait again. Changed (verification 2026-11-23, SD-138): a swap waited and the asker heard that the other member was asked when the question was refused or held -> only a question that went out makes a swap wait, because the asker was told something that was not true.
 
 ```quint
 pure def relayRecordMayDispatch(passed: bool, rejected: bool, withdrawn: bool): bool =

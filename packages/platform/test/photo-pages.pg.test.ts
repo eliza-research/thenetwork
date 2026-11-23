@@ -475,4 +475,34 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(await f.relay.offer(offerId)).toMatchObject({ phase: "asking" });
     expect((await f.relay.held("slop")).filter(h => h.offerId === offerId)).toEqual([]);
   }, T);
+
+  test("a STOP that commits while a view-link renewal waits for the offer lock issues no new link", async () => {
+    const w = await world();
+    const { offerId } = await w.ready([1]);
+    const viewLinks = async () => (await sql`select id from platform.photo_page_links where offer_id = ${offerId} and purpose = 'view' order by id`).map((r: any) => r.id as string);
+    const before = await viewLinks();
+    expect(before).toHaveLength(1);
+    const watcher = new SQL({ url, max: 1 });
+    let held!: () => void, release!: () => void;
+    const holding = new Promise<void>(r => { held = r; }), gate = new Promise<void>(r => { release = r; });
+    const stop = sql.begin(async tx => {
+      await tx`select id from platform.photo_offers where id = ${offerId} for update`;
+      held();
+      await gate;
+      return w.relay.endFor(w.recipient, tx);
+    });
+    await holding;
+    const renewal = w.relay.renewViewLinks(w.recipient, "slop");
+    let waiting = 0;
+    for (let i = 0; i < 200 && waiting === 0; i++) {
+      waiting = Number((await watcher`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`)[0].n);
+      if (waiting === 0) await new Promise(r => setTimeout(r, 25));
+    }
+    expect(waiting).toBe(1);
+    release();
+    expect(await stop).toBe(1);
+    expect(await renewal).toEqual([]);
+    expect(await viewLinks()).toEqual(before);
+    await watcher.close();
+  }, T);
 });

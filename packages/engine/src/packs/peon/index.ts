@@ -109,5 +109,6 @@ export const peonPack: AppPack = {
     facetPhrase: { skill: "has" },
     leadBits: (w, c, me) => peonLeadBits(w, c, me),
     safeFallback: PEON_SAFE_FALLBACK,
+    publicWords: ["verified", "employer", "hiring", "only", "never"],
   },
 };

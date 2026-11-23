@@ -131,6 +131,7 @@ test("a scam is blocked at once and the sender is told; no staff queue holds it 
 
 test("a swap request lasts only as long as the engine's consent (15 min, never backdated) and a member can take it back",async()=>{
   const numbers=async()=>(await sql`select id from network.messages where app_id='friends' and (body like ${"%"+phones.ari.slice(2)+"%"} or body like ${"%"+phones.bo.slice(2)+"%"})`).length;
+  clock.advance(10*MINUTE);
   expect(await (await post(await ask("ari","ttl-ari","send Bo my number"))).json()).toMatchObject({decision:"hold"});
   // 16 minutes later Bo asks: Ari's consent is stale, so nothing is shared; Bo's request now waits for Ari instead.
   clock.advance(16*MINUTE);
@@ -142,6 +143,7 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
   expect(await numbers()).toBe(0);
   // Ari takes theirs back through the relay action ("don't send my number" is nothing to relay, and confirmed).
   expect(await (await post(await ask("ari","ttl-ari-cancel","actually don't send my number"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
+  clock.advance(10*MINUTE);
   expect(await (await post(await ask("bo","ttl-bo-2","send Ari my number"))).json()).toMatchObject({decision:"hold"});
   expect(await (await post(await ask("bo","ttl-bo-refuse","don't delay, my number is off limits"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
   expect(await numbers()).toBe(0);
@@ -150,6 +152,7 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
 },60_000);
 
 test("a number goes out only after both members asked for the swap",async()=>{
+  clock.advance(10*MINUTE);
   const first=await post(await ask("ari","swap-ari","send Bo my number"));
   expect(await first.json()).toMatchObject({decision:"hold",delivered:false});
   expect((await sql`select id from network.messages where app_id='friends' and body like ${"%"+phones.ari.slice(2)+"%"}`).length).toBe(0);
@@ -282,6 +285,57 @@ test.each(["Ari said “Don't send my number.”", "Ari said ‘don't send it pl
     expect(await sharesQueued()).toBe(before + 2);
   }, 60_000,
 );
+test("a swap question that cannot go to the other person now is not recorded, and the asker is told it did not go (SD-138)", async () => {
+  const id = "quiet-swap-" + randomUUID();
+  const swapQuestions = async () => (await sql`select id from network.messages where app_id='friends' and member_id=${bo} and body like '%would like to swap numbers%'`).length;
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    clock.advance(DAY - ((clock.now() - Date.UTC(2026, 0, 1, 7)) % DAY));
+    const now = clock.now();
+    state.opps = [{ ...swapMatchTemplate!, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
+    if (state.relay) state.relay.swaps = [];
+    net.importState(state);
+  });
+  const before = await swapQuestions();
+  expect(await (await post(await ask("ari", id + "-night", "send Bo my number"))).json())
+    .toMatchObject({ decision: "block", senderNotice: "I can't swap numbers right now.", delivered: false });
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toEqual([]);
+  expect(await swapQuestions()).toBe(before);
+  clock.advance(9 * 60 * MINUTE);
+  expect(await (await post(await ask("ari", id + "-day", "send Bo my number"))).json())
+    .toMatchObject({ decision: "hold", senderNotice: "I'll share your number as soon as they say they want to swap numbers too.", delivered: false });
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toHaveLength(1);
+  expect(await swapQuestions()).toBe(before + 1);
+}, 60_000);
+test("a swap asked again less than 10 minutes after the same question went to the other person does not wait, and one asked 10 minutes after it does", async () => {
+  const id = "reask-swap-" + randomUUID();
+  const swapQuestions = async () => (await sql`select id from network.messages where app_id='friends' and member_id=${bo} and body like '%would like to swap numbers%'`).length;
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    clock.advance(DAY - ((clock.now() - Date.UTC(2026, 0, 1, 7)) % DAY) + 9 * 60 * MINUTE);
+    const now = clock.now();
+    state.opps = [{ ...swapMatchTemplate!, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
+    state.members = state.members.map(member => member.id === bo ? { ...member, outbound: 0, unsol: {}, unsolStreak: 0, lastOutUnsol: false } : member);
+    if (state.relay) state.relay.swaps = [];
+    net.importState(state);
+  });
+  const before = await swapQuestions();
+  expect(await (await post(await ask("ari", id + "-1", "send Bo my number"))).json()).toMatchObject({ decision: "hold" });
+  const askedAt = clock.now();
+  expect(await swapQuestions()).toBe(before + 1);
+  expect(await (await post(await ask("ari", id + "-cancel", "actually don't send my number"))).json()).toMatchObject({ decision: "none" });
+  clock.advance(askedAt + 9 * MINUTE - MINUTE - clock.now());
+  expect(await (await post(await ask("ari", id + "-2", "send Bo my number"))).json())
+    .toMatchObject({ decision: "block", senderNotice: "I can't swap numbers right now.", delivered: false });
+  expect(clock.now() - askedAt).toBe(9 * MINUTE);
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toEqual([]);
+  expect(await swapQuestions()).toBe(before + 1);
+  expect(await (await post(await ask("ari", id + "-3", "send Bo my number"))).json()).toMatchObject({ decision: "hold" });
+  expect(clock.now() - askedAt).toBe(10 * MINUTE);
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toHaveLength(1);
+  expect(await swapQuestions()).toBe(before + 2);
+  expect(await (await post(await ask("ari", id + "-end", "never mind, don't send my number"))).json()).toMatchObject({ decision: "none" });
+}, 60_000);
 test("a relayed text that says the sender is under 18 is blocked and starts the minors policy: the minor signal on the person, a safety case, and the match closed (audit ST-D2)",async()=>{
   await service.runtimeFor("friends")!.unitOfWork(net=>{
     const st=net.exportState();

@@ -24,7 +24,6 @@ The model agrees with `RelayDesk` (`packages/network/src/relay.ts`), the relay h
 
 Known drift (the model keeps the rule; another area owns the code):
 
-- SD-138, a refused swap question. `waitingSwapAsked` states that a swap waits only on a question that was not refused. `RelayDesk.swap` records the waiting swap before it sends the question and does not read the result of `host.send`, so a refused question still leaves a waiting swap and the member hears that the Network asked. In quiet hours the question is deferred, not refused. `askRefusedTest` and `askQuietTest` replay the rule, not this code.
 - The review column. `relayAdmission` gives `relayRecordMayDispatch` the value `rec.review === "rejected"` from the `review` column of `network.relay_records` (migration 0086). No record gets a review now, so `queueSend` takes it as false. The read and the column must go with a migration that settles the old rows.
 
 ```quint
@@ -398,6 +397,8 @@ module relay {
           } else {
             // The other member is asked once, now or not at all (noDefer: quiet hours refuse it), and only an
             // asked swap waits (RelayDesk.swap, SD-138). A refused ask logs nothing and answers "refused".
+            // refuseAsk stands for every other send refusal: the conversation streak cap, and the same
+            // question to that member less than 10 minutes before (a re-ask after a cancel).
             val s = { key: askKey(k), iid: k, src: src, dst: dst, number: false, ask: true, at: now }
             if (recipientRefuses(w, src, dst, false) or refuseAsk or w.quiet.get(dst)) all {
               desk' = d0, queue' = persist(d0, queue), g' = g1.with("askRefused", g1.askRefused.union(Set(k))),

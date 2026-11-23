@@ -137,8 +137,25 @@ describe("automated review core (owner decision 2026-11-22, D15 to D17)", () => 
     const from = w.mark();
     const at = w.members.findIndex(m => m.id === BEA.id);
     w.members[at] = { ...w.members[at]!, age: 16 };
+    expect(w.members[at]!.birthKey).toBeUndefined();
     expect(w.net.decide(item.id, "approve", { reviewer: "staff-1", revision: 0 })).toEqual({ ok: false, reason: "participant_minor" });
     await w.run(DAY);
+    expect(oppOf(w, item.id)?.stage).toBe("closed");
+    expect(itemMessages(w, item.id, from)).toEqual([]);
+  });
+
+  test("the staff review check right after the member record turns 16, with no tick between, reads the new age", async () => {
+    const w = await world([ARI, BEA], holdEveryItem.inline, "ntwrk");
+    const item = await requestItem(w, ARI.id);
+    await tickNow(w);
+    expect(w.net.reviewBlock(item.id, "approve")).toBeUndefined();
+    const from = w.mark();
+    const at = w.members.findIndex(m => m.id === BEA.id);
+    w.members[at] = { ...w.members[at]!, age: 16 };
+    expect(w.members[at]!.birthKey).toBeUndefined();
+    expect(w.net.reviewBlock(item.id, "approve")).toBe("participant_minor");
+    await w.run(DAY);
+    expect(oppOf(w, item.id)?.stage).toBe("closed");
     expect(itemMessages(w, item.id, from)).toEqual([]);
   });
 

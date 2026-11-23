@@ -41,7 +41,7 @@ export interface RelayHost {
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   ratesPhotos: boolean;
   observeSenderAge?(memberId: MemberId, text: string): boolean;
-  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string }): "sent" | "deferred" | "refused";
+  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; noDefer?: boolean }): "sent" | "deferred" | "refused";
   minorSignal(id: MemberId, saysYounger: boolean): void;
   saysYounger?(id: MemberId, text: string): boolean;
   severeBlock(id: MemberId): void;
@@ -215,9 +215,11 @@ export class RelayDesk {
       if (this.s.swaps.some(x => x.matchId === match.id && x.from === ask.from)) return { itemId: ask.itemId, decision: "waiting", reason: NOTICE.swapAlready };
       const probe = await this.decide(this.share(ask.itemId, ask.from, to, now, mineValue), match, o);
       if (probe.decision !== "pass") return this.apply(probe, match, this.share(ask.itemId, ask.from, to, now, mineValue));
-      this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
       const name = this.host.member(ask.from)?.firstName ?? "Your match";
-      this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask` });
+      if (this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask`, noDefer: true }) !== "sent") {
+        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.swapFailed };
+      }
+      this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
       return { itemId: ask.itemId, decision: "waiting", reason: NOTICE.swapWait };
     }
     const theirValue = o.contactOf?.(to);
