@@ -9,7 +9,7 @@ import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
 import { call, CHALLENGE, register, setup, tokenRequest, VERIFIER } from "../../mcp/test/harness.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
-import type { PhotoStorage } from "../../platform/src/photos.ts";
+import { PHOTO_CONSENT, type PhotoStorage } from "../../platform/src/photos.ts";
 import { createServiceMcp } from "../service/serve.ts";
 import { NetworkService } from "../service/service.ts";
 
@@ -652,4 +652,108 @@ test.skipIf(!pgAvailable)("cross-app signup does not freeze a temporary browser 
       expect(await ages(number)).toMatchObject({ account: after, friends: { effective: after, minor }, peon: { effective: after, recorded: age, minor } });
     }
   });
+}, 60_000);
+
+// spec/photoRetention.md, "Consent, adult eligibility, and a valid image precede storage"
+test.skipIf(!pgAvailable)("cross-app minor signup refuses and removes an in-flight adult photo upload", async () => {
+  const objects = new Map<string, Uint8Array>();
+  const enteredPut = Promise.withResolvers<string>();
+  const releasePut = Promise.withResolvers<void>();
+  let puts = 0;
+  const storage: PhotoStorage = {
+    kind: "local",
+    async put(key, bytes) {
+      puts++;
+      if (puts === 2) {
+        enteredPut.resolve(key);
+        await releasePut.promise;
+      }
+      objects.set(key, bytes);
+    },
+    async get(key) { return objects.get(key); },
+    async delete(key) { objects.delete(key); },
+  };
+  await withSignupWorld(["slop:nyc", "friends:nyc"], async w => {
+    const number = "+12125550186";
+    let cookie = "";
+    const slop = (path: string, method: string, body?: BodyInit, headers?: Record<string, string>) =>
+      w.env.fetch(new Request("https://slop.date" + path, {
+        method, body, headers: { cookie, origin: "https://slop.date", ...headers },
+      }));
+    const json = (path: string, body: unknown) => slop(path, "POST", JSON.stringify(body), { "content-type": "application/json" });
+    expect((await json("/api/auth/otp/start", { phone: number })).status).toBe(200);
+    const verified = await json("/api/auth/otp/verify", { phone: number, code: w.harness.provider.last(number) });
+    expect(verified.status).toBe(200);
+    cookie = verified.headers.getSetCookie()[0]?.split(";")[0] ?? "";
+    expect(cookie).toMatch(/^sid_slop=/);
+    const joinedSlop = await json("/api/join", {
+      firstName: "Jo", age: 29, homeCity: "nyc", consent: { sms: true, version: APPS.slop.consent.version },
+    });
+    expect(joinedSlop.status).toBe(200);
+    expect(await joinedSlop.json()).toMatchObject({ ok: true });
+    cookie = joinedSlop.headers.getSetCookie()[0]?.split(";")[0] ?? cookie;
+    const person = await w.service.accounts.personFor(number);
+    if (!person) throw new Error("No verified Slop person");
+
+    const upload = () => slop("/api/photos", "POST", Uint8Array.from([255,216,255,218,0,2,1,255,217]), {
+      "content-type": "image/jpeg", "x-photo-consent": PHOTO_CONSENT.version,
+    });
+    const list = async () => (await slop("/api/photos", "GET")).json() as Promise<{ eligible: boolean; photos: { id: string }[] }>;
+    const currentAge = async () => {
+      const owner = await w.service.accounts.personFor(number);
+      if (!owner) throw new Error("No person during photo audit");
+      return w.service.accounts.lowestAge(number, owner);
+    };
+    const rows = () => w.connector.store.sql.unsafe<{ id: string; storage_key: string }[]>(
+      "select id,storage_key from platform.photos where person_id=$1 and deleted_at is null order by id", [person.id],
+    );
+    expect(await currentAge()).toBe(29);
+    const existingUpload = await upload();
+    expect(existingUpload.status).toBe(200);
+    const existing = await existingUpload.json() as { id: string };
+    expect(await list()).toMatchObject({ eligible: true, photos: [{ id: existing.id }] });
+
+    w.clock.advance(HOUR);
+    const friends = browserOn(w, "friends.help");
+    const open = await openConnection(w, "friends.help", friends, "photo-upload-age-fence");
+    const rid = hiddenField(open.html, "rid");
+    await confirmPhone(w, friends, rid, number);
+    const inFlight = upload();
+    try {
+      const delayedKey = await Promise.race([
+        enteredPut.promise,
+        inFlight.then(result => { throw new Error("Upload returned before storage wait: " + result.status); }),
+      ]);
+      expect(await rows()).toMatchObject([{ id: existing.id }]);
+      const signedUp = await submitSignup(friends, rid, { firstName: "Jo", birthdate: "2008-10-10" });
+      expect(signedUp.status).toBe(200);
+      expect(signedUp.html).toContain("Signup confirmed.");
+      expect(await currentAge()).toBe(17);
+      const afterCleanup = await rows();
+      expect(afterCleanup).toEqual([]);
+      expect(objects.size).toBe(0);
+      expect(await list()).toEqual(expect.objectContaining({ eligible: false, photos: [] }));
+
+      releasePut.resolve();
+      const late = await inFlight;
+      expect(late.status).toBe(403);
+      expect(await late.json()).toEqual({ ok: false, error: "adults_only" });
+      expect(await rows()).toEqual([]);
+      expect(objects.has(delayedKey)).toBe(false);
+      expect(await list()).toMatchObject({ eligible: false, photos: [] });
+      const freshWhileMinor = await upload();
+      expect(freshWhileMinor.status).toBe(403);
+      expect(puts).toBe(2);
+
+      const birthdayBoundary = Date.UTC(2026, 9, 10, 12);
+      w.clock.advance(birthdayBoundary - w.clock.now());
+      expect(await currentAge()).toBe(18);
+      expect(await list()).toMatchObject({ eligible: true, photos: [] });
+      expect(await w.service.photos.staffLinks(person.id, "slop", "https://slop.date"))
+        .toEqual({ ok: true, value: [] });
+    } finally {
+      releasePut.resolve();
+      await inFlight.catch(() => undefined);
+    }
+  }, { photoStorage: storage });
 }, 60_000);
