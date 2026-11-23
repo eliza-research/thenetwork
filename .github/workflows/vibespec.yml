@@ -349,10 +349,18 @@ jobs:
         if: steps.peer-evaluator.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 16
+        env:
+          SEEDED: ${{ steps.formal-previous.outputs.cache-matched-key || steps.formal-checkpoint.outputs.cache-matched-key }}
         shell: bash
         run: |
+          baseline=()
+          if [[ -n "$SEEDED" ]]; then
+            before="$RUNNER_TEMP/formal-peer-before"
+            find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' > "$before"
+            baseline=("$before")
+          fi
           node scripts/precompute-formal-shard.ts 2 2
-          python3 scripts/formal-shard-artifacts.py stage "$RUNNER_TEMP/formal-shard"
+          python3 scripts/formal-shard-artifacts.py stage "$RUNNER_TEMP/formal-shard" "${baseline[@]}"
       - name: Upload formal actions for this attempt
         id: peer-upload
         if: steps.peer-bundle.outcome == 'success'

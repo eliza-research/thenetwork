@@ -104,6 +104,14 @@ limit. The workflow now gives the main shard up to 16 minutes. The shared
 full verifier if the shard reaches its new cap. The 30-minute job limit
 stays in place.
 
+In the first v2-to-v3 migration run, both jobs restored the same
+38,853,933-byte archive. The peer sent 2,643 receipts in a 45,360,449-byte
+artifact. The full runner already had 2,493 of them and imported 150.
+When the peer starts from an earlier full archive or checkpoint, it now
+sends only new receipts. If none were added, it sends the manifest alone
+so the full runner can continue. An empty starting cache still sends all
+of the peer's receipts. [Migration run](https://github.com/eliza-research/thenetwork/actions/runs/45118102065)
+
 ## Whole-flow simulator probe
 
 `pnpm run quint:check` has 31 executable whole-flow models. It calls Quint
