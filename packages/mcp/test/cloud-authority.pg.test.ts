@@ -61,9 +61,9 @@ test("the connected-assistant page checks live Cloud authority and retains a com
   const verdicts = new Map<string, "valid" | "invalid" | "unavailable">();
   let sessionUnavailable = false;
   const env = setup({ store, log: () => {}, platform: { ...platform, cloudAuthorityRequired: () => true,
-    async session(app, req, host) {
+    async session(app, req) {
       if (sessionUnavailable) throw new Error("Session store unavailable");
-      return platform.session?.(app, req, host);
+      return platform.session?.(app, req);
     },
     async cloudGrantAuthority() { return authority; },
     async validateCloudGrant(grant) { return verdicts.get(grant.id) ?? "valid"; },

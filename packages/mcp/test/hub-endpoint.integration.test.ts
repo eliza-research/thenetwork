@@ -20,7 +20,7 @@ async function consentFor(env: Env, app: McpAppId, phone: string, o: { redirect?
   const first = await start.text();
   expect(start.status, first.slice(0, 300)).toBe(200);
   const rid = /name="rid" value="([^"]+)"/.exec(first)?.[1];
-  const browser = /((?:__Host-)?mcp_auth(?:-[a-z]+)?=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
+  const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
   if (!rid || !browser) throw new Error("no authorization request");
   const cookies = new Map<string, string>([[browser.slice(0, browser.indexOf("=")), browser.slice(browser.indexOf("=") + 1)]]);
   const post = async (path: string, form: Record<string, string>) => {
@@ -253,66 +253,6 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
     expect((await page("", HUB, "")).status).toBe(401);
   });
 
-  test("with the production cookie names, one browser authorizes two apps on ntwrk.party at once, keeps both sessions and lists both grants", async () => {
-    const env = setup({ productionCookies: true });
-    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }, { app: "friends", state: "active" }]);
-    const browser = cookieJar();
-    const send = async (path: string, init: RequestInit = {}) => {
-      const res = await env.fetch(new Request(`${origin(HUB)}${path}`, { ...init, headers: { ...init.headers as Record<string, string>, cookie: browser.header() } }));
-      for (const header of res.headers.getSetCookie()) browser.take(header);
-      return res;
-    };
-    const start = async (app: McpAppId) => {
-      const reg = await register(env, HUB);
-      const q = new URLSearchParams({
-        response_type: "code", client_id: reg.body.client_id, redirect_uri: RETURN, code_challenge: CHALLENGE,
-        code_challenge_method: "S256", state: `st-${app}`, scope: "membership:read profile:write", resource: endpoint(app),
-      });
-      const res = await send(`/oauth/authorize?${q}`);
-      const html = await res.text();
-      expect(res.status, html.slice(0, 300)).toBe(200);
-      return { app, clientId: reg.body.client_id as string, rid: /name="rid" value="([^"]+)"/.exec(html)![1]!, html };
-    };
-    const form = (rid: string, path: string, fields: Record<string, string>) => send(path, {
-      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: origin(HUB) },
-      body: new URLSearchParams({ rid, ...fields }).toString(),
-    });
-    const slop = await start("slop");
-    const friends = await start("friends");
-    expect(slop.html).toContain('action="/oauth/authorize/phone"');
-    expect(friends.html).toContain('action="/oauth/authorize/phone"');
-    for (const flow of [slop, friends]) {
-      env.clock.t += 31_000;
-      const phone = await form(flow.rid, "/oauth/authorize/phone", { phone: PHONE_A });
-      expect(await phone.text(), flow.app).not.toContain("This page has expired");
-      const code = await form(flow.rid, "/oauth/authorize/code", { code: env.provider.last(PHONE_A)! });
-      expect(await code.text(), flow.app).toContain('action="/oauth/authorize/consent"');
-    }
-    for (const flow of [slop, friends]) {
-      const done = await form(flow.rid, "/oauth/authorize/consent", { decision: "approve" });
-      expect(done.status, `${flow.app}: ${(await done.clone().text()).slice(0, 300)}`).toBe(303);
-      const code = new URL(done.headers.get("location")!).searchParams.get("code")!;
-      const tok = await tokenRequest(env, HUB, { grant_type: "authorization_code", code, redirect_uri: RETURN, client_id: flow.clientId, code_verifier: VERIFIER });
-      expect(tok.res.status, flow.app).toBe(200);
-      const status = await call(env, endpoint(flow.app), "check_status", {}, { token: tok.body.access_token });
-      expect(status.body!.result.structuredContent, flow.app).toMatchObject({ app: flow.app, status: "active" });
-    }
-    const names = defaultApps();
-    const listed = await send("/oauth/consents");
-    const html = await listed.text();
-    expect(listed.status, html.slice(0, 300)).toBe(200);
-    expect(html).toContain(`Test Assistant (${names.slop.name})`);
-    expect(html).toContain(`Test Assistant (${names.friends.name})`);
-    for (const app of ["slop", "friends"] as const) {
-      const again = await start(app);
-      expect(again.html, app).toContain('action="/oauth/authorize/consent"');
-      expect(again.html, app).not.toContain('action="/oauth/authorize/phone"');
-    }
-    const sessionCookies = [...browser.jar.keys()].filter(name => name.includes("sid"));
-    expect(sessionCookies.every(name => name.startsWith("__Host-")), sessionCookies.join()).toBe(true);
-    expect(new Set(sessionCookies).size).toBe(2);
-  });
-
   test("a token from /oauth/authorize without a resource is The Network's; an app path answers 401 that names its own metadata", async () => {
     const env = setup();
     await addMember(env, PHONE_A, APPS.map(app => ({ app, state: "active" as const })));
@@ -346,7 +286,7 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
     const q = new URLSearchParams({ response_type: "code", client_id: reg.body.client_id, redirect_uri: RETURN, code_challenge: CHALLENGE, code_challenge_method: "S256", state: "st-x" });
     const start = await env.fetch(new Request(`${origin("slop.date")}/oauth/authorize?${q}`));
     const rid = /name="rid" value="([^"]+)"/.exec(await start.text())?.[1];
-    const browser = /((?:__Host-)?mcp_auth(?:-[a-z]+)?=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
+    const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
     expect(rid && browser).toBeTruthy();
     env.clock.t += 31_000;
     const sends = env.provider.sent.length;

@@ -32,23 +32,6 @@ pure def readBrowserClient(flow: BrowserFlow, clientExists: bool): BrowserFlow =
   { ...flow, phase: if (clientExists) BrowserBound else BrowserExpired }
 ```
 
-### Each app on a shared host keeps its own browser cookies
-
-One host can serve more than one app. The ntwrk.party host serves its own app and the other apps at their own connector paths. The host's own app uses the host session cookie and the host binding cookie. Each other app on that host uses a session cookie and a binding cookie that include its app id. Thus a sign-in for one app does not replace the sign-in for another app in the same browser, and two open authorization requests for different apps on one host each keep their own binding cookie. A session still authenticates only its own app, so a cookie never moves a grant to another app. The shell makes the cookie names from this scope and reads each app's session only from that app's cookie.
-
-```quint
-type BrowserCookieScope = HostAppCookie | HostedAppCookie
-
-pure def browserCookieScope(hostApp: str, app: str): BrowserCookieScope =
-  if (hostApp == app) HostAppCookie else HostedAppCookie
-
-pure def lawOnlyTheHostAppUsesTheHostCookie(hostApp: str, app: str, other: str): bool =
-  (app != other) implies not(browserCookieScope(hostApp, app) == HostAppCookie and browserCookieScope(hostApp, other) == HostAppCookie)
-
-pure def lawAnAppOnItsOwnHostKeepsTheHostCookie(app: str): bool =
-  browserCookieScope(app, app) == HostAppCookie
-```
-
 ### An existing session leads to consent or a new sign-in starts
 
 After validating a new authorization request, use its existing site identity if one is available. An unavailable session gives a retry. A retry of the initial session check reopens the same browser-bound request while it still waits for a phone. Without a session, a Cloud-only app sends the person to Cloud and another app asks for a phone. A Cloud return also requires a bound request that is still waiting for a phone.

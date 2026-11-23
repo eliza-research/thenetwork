@@ -21,7 +21,7 @@ async function signupPages(env: Env, domain: string, app: McpAppId) {
   const phoneForm = await start.text();
   expect(start.status, phoneForm.slice(0, 300)).toBe(200);
   const rid = /name="rid" value="([^"]+)"/.exec(phoneForm)?.[1];
-  const browser = /((?:__Host-)?mcp_auth(?:-[a-z]+)?=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
+  const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
   if (!rid || !browser) throw new Error("no authorization request");
   const cookies = new Map<string, string>([[browser.slice(0, browser.indexOf("=")), browser.slice(browser.indexOf("=") + 1)]]);
   const post = async (path: string, form: Record<string, string>) => {

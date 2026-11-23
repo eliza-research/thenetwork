@@ -168,7 +168,7 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
       });
       const start = await env.fetch(new Request(`${origin(domain)}/oauth/authorize?${query}`, { headers: { cookie: `sid_peon=${session.token}` } }));
       const rid = /name="rid" value="([^"]+)"/.exec(await start.text())?.[1];
-      const browser = /((?:__Host-)?mcp_auth(?:-[a-z]+)?=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
+      const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
       const pending = rid && await store.getAuthRequest(rid);
       const approve = () => env.fetch(new Request(`${origin(domain)}/oauth/authorize/consent`, {
         method: "POST", headers: {

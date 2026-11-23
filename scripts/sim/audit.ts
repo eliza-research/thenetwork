@@ -28,7 +28,6 @@ import { planLedger } from "../../packages/network/src/plans.ts";
 import { Trust } from "../../packages/network/src/trust.ts";
 import { buildSite, DRAFT_MARKERS, SITES } from "../../sites/sites.ts";
 import { DEFAULT_BACKEND_ORIGIN } from "../../sites/skills.config.ts";
-import { connectorEndpoint, openaiConnectorEndpoint } from "../../packages/core/src/generated/brandIdentity.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { Block, expect } from "./gate.ts";
 
@@ -319,21 +318,15 @@ async function sitesGates(b: Block) {
       for (const s of SITES) {
         const r = built[s.domain]!;
         const skill = readFileSync(join(r.out, "SKILL.md"), "utf8");
-        const names = (url: string) => new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\w/-])").test(skill);
-        expect([s.domain, names(connectorEndpoint(s.key)), names(openaiConnectorEndpoint(s.key))]).toEqual([s.domain, true, true]);
+        expect([s.domain, skill.includes(`https://${s.domain}/mcp`)]).toEqual([s.domain, true]);
         if (["friends", "slop", "ntwrk"].includes(s.app)) {
-          expect([s.domain, skill.includes(`\`${connectorEndpoint(s.key)}\``), skill.includes(`\`${openaiConnectorEndpoint(s.key)}\``)]).toEqual([s.domain, true, true]);
           expect(skill).toContain(`https://${s.domain}/api/app`);
-          expect(skill).toContain("<!-- agentSignup: checkConnectorSetup");
-          expect(skill).toContain("Signup isn't supported in this agent yet.");
+          expect(skill).toContain("native OAuth flow");
           expect(skill).toContain("<!-- agentSignup: offerHandoff -->");
           expect(skill).not.toMatch(/\/api\/(?:auth\/otp\/verify|me\/export)/);
         }
         expect(skill).toContain("help@ntwrk.party");
-        for (const o of SITES.filter(o => o.domain !== s.domain)) {
-          expect([s.domain, o.domain, names(connectorEndpoint(o.key)) || names(openaiConnectorEndpoint(o.key))]).toEqual([s.domain, o.domain, false]);
-          expect([s.domain, o.domain, o.app !== "ntwrk" && skill.includes(`https://${o.domain}/mcp`)]).toEqual([s.domain, o.domain, false]);
-        }
+        for (const o of SITES.filter(o => o.domain !== s.domain)) expect([s.domain, o.domain, skill.includes(`https://${o.domain}/mcp`)]).toEqual([s.domain, o.domain, false]);
         expect([s.domain, readFileSync(join(r.out, "_worker.js"), "utf8").includes(DEFAULT_BACKEND_ORIGIN)]).toEqual([s.domain, true]);
         expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older/i.test(skill)]).toEqual([s.domain, true]);
         if (s.app === "ntwrk") continue;

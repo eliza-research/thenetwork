@@ -7,7 +7,7 @@ import { signupDraftAppEnabled, signupDraftBrowserAction, signupDraftBrowserSour
 import {
   type BrowserForm, type StoredPage, browserEntryMayResume, browserSignupAppAllowed, browserSignupConsentAllowed,
   browserSignupJoinAllowed, browserSignupMemberAllowed, browserSignupOpenAllowed, browserSignupOwnerBindingAllowed,
-  browserCookieScope, initial as browserInitial, mayCompareBrowserDigest, sessionMatchesConsent, step as stepBrowser,
+  initial as browserInitial, mayCompareBrowserDigest, sessionMatchesConsent, step as stepBrowser,
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
@@ -305,7 +305,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
   }
   const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
-  const browserCookie = (c: Pick<Ctx, "host" | "app">) => `${secureCookies(c.host) ? "__Host-mcp_auth" : "mcp_auth"}${browserCookieScope(c.host.id, c.app.id) === "HostAppCookie" ? "" : `-${c.app.id}`}`;
+  const browserCookie = (a: McpApp) => (secureCookies(a) ? "__Host-mcp_auth" : "mcp_auth");
   let lastSweep = 0;
 
   function resourceOf(issuer: string, host: McpAppId, app: McpAppId, surface: Surface): string {
@@ -538,14 +538,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       codeChallenge: challengeIn, scopes, resource, e164: null, personId: null, step: "phone" as const, createdAt: now(), expiresAt: now() + ttl.requestMs,
     };
     await store.putAuthRequest(r);
-    const cookie = `${browserCookie(c)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.host) ? "; Secure" : ""}`;
+    const cookie = `${browserCookie(c.host)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.host) ? "; Secure" : ""}`;
     const response = await authorizeEntry(c, r, client, false);
     response.headers.append("set-cookie", cookie);
     return response;
   }
 
   async function readAuthorizationSession(c: Ctx) {
-    try { return await o.platform.session?.(c.app.id, c.req, c.host.id); }
+    try { return await o.platform.session?.(c.app.id, c.req); }
     catch { return "unavailable" as const; }
   }
 
@@ -627,7 +627,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function liveRequest(c: Ctx, form: URLSearchParams) {
     const rid = form.get("rid") ?? "";
     const r = rid ? await store.getAuthRequest(rid) : undefined;
-    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c));
+    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host));
     if (!r) return undefined;
     const sameApp = r.app === c.app.id && canonicalResource(r.resource, c) === r.resource;
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
@@ -780,7 +780,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form || !live) return messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
     const { r, client, flow } = live;
     if (openAiUnavailable(c, client)) return messagePage(c, "Not available", "This assistant connection is not available on this site.", 403);
-    const clearCookie = `${browserCookie(c)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
+    const clearCookie = `${browserCookie(c.host)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
 
     const approving = step === "consent" && form.get("decision") === "approve";
     const expired = () => messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
@@ -845,14 +845,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const verified = { ...r, e164, personId: who.personId, step: "consent" as const };
         if (!await store.advanceAuthRequest(r, verified, now)) return expired();
         const res = await verifiedConsentPage(c, verified, client, { e164, personId: who.personId });
-        const site = o.platform.createSession ? await o.platform.createSession(c.app.id, { e164, personId: who.personId }, c.host.id) : undefined;
+        const site = o.platform.createSession ? await o.platform.createSession(c.app.id, { e164, personId: who.personId }) : undefined;
         if (site) res.headers.append("set-cookie", site);
         return res;
       });
     }
 
     if (action.phase === "CheckingConsentOwner" && r.e164) {
-      const current = o.platform.session ? await o.platform.session(c.app.id, c.req, c.host.id) : undefined;
+      const current = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
       const owner = current === "unavailable" ? undefined : await o.platform.login(r.e164);
       const checked = stepBrowser(action, {
         type: "readConsentOwner",
@@ -898,7 +898,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   /** Validate Cloud authority before the atomic issuance so outages remain retryable. */
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
-    const clearCookie = `${browserCookie(c)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
+    const clearCookie = `${browserCookie(c.host)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
     const issued = await issueConnectorGrant<Grant>(r, {
       now,
       makeGrant: at => ({
@@ -1425,7 +1425,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   async function signupDraft(c: Ctx, discard: boolean, body: Record<string, unknown> | undefined): Promise<Response> {
     if (!signupDraftAppEnabled(c.app.id)) return json(404, { error: "not_found" });
-    const who = await o.platform.session?.(c.app.id, c.req, c.host.id);
+    const who = await o.platform.session?.(c.app.id, c.req);
     if(who==="unavailable")return temporarilyUnavailable();
     if (!who) return json(401, { error: "sign_in_required" });
     const key = o.platform.phoneKey(who.e164);

@@ -1,7 +1,7 @@
 import { serveHttp } from "../../core/src/runtime/http.ts";
 // The service's two HTTP servers, its tick loop, and the MCP server mounted on it. Shared by main.ts,
 // the shared backend (deploy/backend/server.ts) and scripts/platform-dev.ts (local dev).
-import { createMcpHandler, devHostMap, defaultApps, defaultHostMap, isMcpAppId, type McpApp, type McpAppId, type McpHandler, MemoryOAuthStore, PgOAuthStore, platformHooks, siteSessionCookieName } from "../../mcp/src/index.ts";
+import { createMcpHandler, devHostMap, defaultApps, defaultHostMap, isMcpAppId, type McpApp, type McpAppId, type McpHandler, MemoryOAuthStore, PgOAuthStore, platformHooks } from "../../mcp/src/index.ts";
 import { devShortcutsAllowed, type Env } from "../../platform/src/env.ts";
 import { CloudflareTurnstile } from "../../platform/src/turnstile.ts";
 import { isAppId, siteHosts, stagingSiteOrigins } from "../../platform/src/apps.ts";
@@ -96,13 +96,14 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     apps,
     platform: platformHooks({
       store: svc.people, otp: api.otp, accounts: api.accounts, sessions: api.sessions,
-      authenticatedSiteSession: (app,req,name)=>api.authenticatedSiteSession(app,req,name),
+      authenticatedSiteSession: (app,req)=>api.authenticatedSiteSession(app,req),
       cloudAuthorityRequired: app=>isAppId(app) && api.cloudAuthorityRequired(app),
       beginCloudOAuth: (app,rid)=>isAppId(app)?api.beginCloudOAuth(app,rid):Promise.resolve(undefined),
       cloudGrantAuthority: (app,req,resource)=>isAppId(app)?api.cloudGrantAuthority(app,req,resource):Promise.resolve(undefined),
       validateCloudGrant: grant=>isAppId(grant.app)?api.validateCloudGrant(grant):Promise.resolve("invalid" as const),
       app: id => svc.apps[id],
-      cookieName: (id, host) => siteSessionCookieName(host, id, dev), secureCookie: !dev,
+      // The same cookie as the platform API (packages/platform/src/api.ts): sid_<app> in dev, __Host-sid elsewhere.
+      cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
       // submit_profile: the person's own profile, from their own agent, to their own member (decision 10).
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
