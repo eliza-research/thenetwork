@@ -552,25 +552,38 @@ const RELAY_SENTENCE_MARKS = String.raw`.!?;…\n`;
 const RELAY_SENTENCE = new RegExp(`[${RELAY_SENTENCE_MARKS}]+`);
 const RELAY_SENTENCE_TEXT = new RegExp(`[^${RELAY_SENTENCE_MARKS}]+`, "g");
 const PRIOR_ASSENT_NAME = String.raw`(?!(?:i|we|you|me|us|it|this|that|she|he|they|them|him|her)\b)[\p{L}][\p{L}'-]{1,30}`;
-const PRIOR_ASSENT_ACTOR = String.raw`(?:she|he|they|them|him|her|my\s+(?:match|date)|${PRIOR_ASSENT_NAME})`;
-const PRIOR_ASSENT_ACTION = String.raw`(?:agrees?(?:\s+to\s+(?:it|this|that))?|approves?(?:\s+(?:it|this|that))?|says?\s+(?:yes|ok(?:ay)?|so)|asks?(?:\s+(?:me|us))?|requests?)`;
-const PRIOR_ASSENT_ITEM = String.raw`(?:\s+for\s+(?:it|me|${CONTACT_RELAY_ITEM}|${PHOTO_RELAY_ITEM}))?`;
+const PRIOR_ASSENT_ACTOR = String.raw`(?<actor>she|he|they|them|him|her|my\s+(?:match|date)|${PRIOR_ASSENT_NAME})`;
+const PRIOR_ASSENT_ACTION = String.raw`(?:(?<action>agree|approve|ask|request|consent)s?|says?\s+(?:yes|ok(?:ay)?|so))`;
+const PRIOR_ASSENT_ITEM = String.raw`(?:\s+(?!first\b)(?<item>.+?))?`;
 const PRIOR_ASSENT_CONDITIONS = [
   String.raw`${PRIOR_ASSENT_ACTOR}\s+(?:(?:has|have)\s+to|needs?\s+to|must|has\s+got\s+to)\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
   String.raw`${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}\s+first`,
   String.raw`wait\s+for\s+${PRIOR_ASSENT_ACTOR}\s+to\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
-  String.raw`(?:only\s+after|unless)\s+${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
+  String.raw`(?:only\s+after|(?<unless>unless))\s+${PRIOR_ASSENT_ACTOR}\s+${PRIOR_ASSENT_ACTION}${PRIOR_ASSENT_ITEM}(?:\s+first)?`,
 ].map(condition => new RegExp(`^(?:please\\s+)?${condition}$`, "iu"));
-const PRIOR_NAMED_WAIT = new RegExp(
-  String.raw`^(?:please\s+)?wait\s+for\s+(?<actor>${PRIOR_ASSENT_NAME})\s+to\s+(?<action>agree|approve)(?:\s+first)?$`, "iu",
-);
-const PRIOR_NAMED_ASSENT_COMPLETED = new RegExp(
-  String.raw`^(?<actor>${PRIOR_ASSENT_NAME})\s+(?:has\s+)?already\s+(?<action>agree|approve)d$`, "iu",
-);
+const PRIOR_ASSENT_COMPLETED = new RegExp(String.raw`^(?<actor>${PRIOR_ASSENT_NAME})\s+(?:(?:has|have)\s+)?(?:already\s+)?(?:(?<shortAction>agree|approve)d|(?<longAction>ask|request|consent)ed)(?:\s+already)?${PRIOR_ASSENT_ITEM}$`, "iu");
+const PRIOR_SENDER_CONFIRM = /^(?:please\s+)?wait\s+until\s+i\s+(?:confirm|approve)\s+(?:(?:that\s+)?you\s+can\s+)?/u;
+const PRIOR_CONTACT_SWAP = /^(?:(?:the|this|our)\s+)(?:(?:phone\s+)?number\s+)?swap$/u;
 const PRIOR_ASSENT_CONTINUATION = /,\s*(?:and|but|however|yet)\b/iu;
 
+function priorAssentItemKey(value: string, request: RegExpMatchArray, contact: boolean): string | undefined {
+  const item = value.replace(/^(?:for|to)\s+/u, "");
+  if (/^(?:it|this|that)$/u.test(item)) return "it";
+  if (/^(?:me|us)$/u.test(item)) return item;
+  if (contact && PRIOR_CONTACT_SWAP.test(item)) return "number swap";
+  const words = item.replace(/^(?:me\s+)?(?:sharing|sending|giving|forwarding|passing|showing|texting)\s+/u, "");
+  const directive = "send " + words;
+  const transfer = linkedPrivateTransfer(directive);
+  if (!transfer || transfer[0] !== directive || !linkedTransferMatchesRequest(transfer, request, contact)) return;
+  return (transfer.groups?.contact ?? transfer.groups?.photo ?? "it") + " " + (namedPrivateRecipient(transfer) ?? "");
+}
+
+function assentKey(actor: string, action: string, item: string): string {
+  return actor + " " + action + " " + item;
+}
+
 // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
-function priorSentenceConditionsShare(source: string, request: RegExpMatchArray): boolean {
+function priorSentenceConditionsShare(source: string, request: RegExpMatchArray, contact: boolean): boolean {
   const prefix = source.slice(0, request.index!).replace(/[“”]/g, '"')
     .replace(RELAY_QUOTATION, quotation => " ".repeat(quotation.length - 1) + quotedRelaySeparator(quotation));
   const waits = new Set<string>();
@@ -581,15 +594,31 @@ function priorSentenceConditionsShare(source: string, request: RegExpMatchArray)
     const opening = continuation < 0 ? part[0] : part[0].slice(0, continuation);
     if (opening !== source.slice(part.index, part.index! + opening.length)) continue;
     const sentence = opening.trim().toLowerCase().replace(/(?:,\s*|\s+)(?:please|thanks|thank you)$/, "");
-    const wait = PRIOR_NAMED_WAIT.exec(sentence)?.groups;
-    if (wait) {
-      waits.add(wait.actor + " " + wait.action);
+    const confirm = PRIOR_SENDER_CONFIRM.exec(sentence);
+    if (confirm) {
+      const item = sentence.slice(confirm[0].length);
+      const transfer = linkedPrivateTransfer(item);
+      if ((contact && PRIOR_CONTACT_SWAP.test(item))
+        || (transfer && transfer[0] === item && linkedTransferMatchesRequest(transfer, request, contact))) return true;
+    }
+    const condition = PRIOR_ASSENT_CONDITIONS.map(pattern => pattern.exec(sentence)?.groups).find(Boolean);
+    if (condition) {
+      const item = condition.item ? priorAssentItemKey(condition.item, request, contact) : "";
+      if (item === undefined) {
+        // A prerequisite involving another private item still holds this transfer.
+        if (priorAssentItemKey(condition.item!, request, !contact) !== undefined) return true;
+        continue;
+      }
+      if (condition.unless || !condition.action) return true;
+      waits.add(assentKey(condition.actor!, condition.action, item));
       continue;
     }
-    if (PRIOR_ASSENT_CONDITIONS.some(condition => condition.test(sentence))) return true;
-    // Only a later, affirmative statement about the same named actor and action settles this wait.
-    const completed = continuation < 0 && PRIOR_NAMED_ASSENT_COMPLETED.exec(sentence)?.groups;
-    if (completed && !/^[\s.!?;…]*\?/u.test(source.slice(end))) waits.delete(completed.actor + " " + completed.action);
+    // A later assertion must identify the same actor and action to settle a wait.
+    const completed = continuation < 0 && PRIOR_ASSENT_COMPLETED.exec(sentence)?.groups;
+    if (completed && !/^[\s.!?;…]*\?/u.test(source.slice(end))) {
+      const item = completed.item ? priorAssentItemKey(completed.item, request, contact) : "";
+      if (item !== undefined) waits.delete(assentKey(completed.actor!, (completed.shortAction ?? completed.longAction)!, item));
+    }
   }
   return waits.size > 0;
 }
@@ -971,7 +1000,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     const uncertain = HEDGE.test(low) || uncertainPrivateTransfer(clauses)
       || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
       || question || privateShareQualified(spoken, privateRequest)
-      || priorSentenceConditionsShare(t.slice(start), privateRequest);
+      || priorSentenceConditionsShare(t.slice(start), privateRequest, !!contact);
     // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
     const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
       || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)

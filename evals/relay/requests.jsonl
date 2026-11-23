@@ -407,3 +407,9 @@
 {"text": "He has to ask me first. Share my number with him.", "want": "none"}
 {"text": "Ana must approve it first. Share my number with him.", "want": "none"}
 {"text": "Wait for Ana to agree to it. Share my number with him.", "want": "none"}
+{"text": "He has to consent first. Share my number with him.", "want": "none"}
+{"text": "Wait until I confirm the number swap. Share my number with him.", "want": "none"}
+{"text": "Wait for Ana to approve sharing my number with Ari. Share my number with Ari.", "want": "none"}
+{"text": "Wait for Ana to approve sharing my number with Bo. Share my number with Ari.", "want": "contact_share"}
+{"text": "Ari has to approve my number first. Ari already approved my photo. Share my number with him.", "want": "none"}
+{"text": "Ari has to approve my number first. Ari already approved my number. Share my number with him.", "want": "contact_share"}
