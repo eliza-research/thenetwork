@@ -471,6 +471,8 @@ test.each([
   { text: "Send him my number. Whenever he asks, tell me before you send it.", shares: false },
   { text: "Send him my number. Every time he asks, tell me before you send it.", shares: false },
   { text: "Send him my number. Every time he asks, tell me.", shares: false },
+  { text: "Send him my number. Every time he asks, he can have it.", shares: false },
+  { text: "Send him my number. Every time he asks, he can have my photo.", shares: true },
   { text: "Send him my number. Let me think it over first.", shares: false },
   { text: "Send him my number. Lemme think.", shares: false },
   { text: "Send him my number. Let me think for a sec.", shares: false },

@@ -230,6 +230,10 @@
 {"text": "send him my number, and every time he asks about parking, the pass is on the dashboard", "want": "contact_share"}
 {"text": "send him my number, and every time he asks, it is okay", "want": "none"}
 {"text": "send him my number. every time he asks, tell me", "want": "none"}
+{"text": "send him my number. every time he asks, he can have it", "want": "none"}
+{"text": "send him my photo. each time he asks, he can have it", "want": "none"}
+{"text": "send him my number. anytime he asks, he will get it", "want": "none"}
+{"text": "send him my number. every time he asks, he can have my photo", "want": "contact_share"}
 {"text": "send him my number anytime, thanks", "want": "contact_share"}
 {"text": "send them my number if they ask for it", "want": "none"}
 {"text": "share my number with him if he wants it", "want": "none"}
