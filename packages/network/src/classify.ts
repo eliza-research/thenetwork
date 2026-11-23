@@ -836,10 +836,11 @@ const DAY_WORDS: [RegExp, string][] = [
 ];
 const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times)\b/;
 const OTHER_TIMES = /\bother times?\b/;
+const NO_OTHER_TIMES = /\b(?:no|not) other times?\b/g;
 /** "Any of them", "whichever", "any time": every option. */
 const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|whichever|any ?time|all good)\b/;
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
-const ALL_WEAK = /\b(either|both)\b/g;
+const ALL_WEAK = /\b(?:either|both)\b(?:\s+of\s+(?:them|(?:those|these)(?:\s+(?:times|options|slots))?)\b)?/g;
 const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
 const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
 const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
@@ -1190,12 +1191,13 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const weakCues = explicitTimesOnly || strongAll ? [] : [...t.matchAll(ALL_WEAK)];
   const weakAt = weakCues[0];
   const weakRefusal = weakCues.some(cue => refusedClauses.has(clauseAt(t, cue.index!, cue[0].length)));
-  if (weakAt && (pos.size || unresolved.length || weakOrdinalMissing || weakRefusal)) {
+  const weakNegated = weakCues.some(cue => negatedAt(t, cue.index!, cue[0].length));
+  if (weakAt && (pos.size || unresolved.length || weakOrdinalMissing || weakRefusal || weakNegated)) {
     if (contradictedExclusion) return { ...unclear, why: "slot" };
-    if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return explicitYes([]);
+    if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t.replace(NO_OTHER_TIMES, ""))) return explicitYes([]);
     if (unresolved.length || weakOrdinalMissing || [...pos].some(key => !all.includes(key))
       || [...pickedClauses].some(clause => refusedClauses.has(clause))
-      || weakCues.some(cue => negatedAt(t, cue.index!, cue[0].length))) return { ...unclear, why: "slot" };
+      || weakNegated) return { ...unclear, why: "slot" };
     const chosen = picked.filter(key => !neg.has(key) && open.includes(key));
     return chosen.length ? explicitYes(pickedTimes(chosen, open)) : { ...unclear, why: "slot" };
   }
