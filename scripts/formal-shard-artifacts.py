@@ -27,16 +27,19 @@ def identity():
     return {"source": source, "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "assignment": json.loads(assignment)}
 
 
-def stage(destination):
+def stage(destination, before):
+    baseline = set(before.read_text().splitlines()) if before else set()
     raw = destination / "raw"
     raw.mkdir(parents=True)
     actions = {}
     for file in sorted(CACHE.iterdir()):
-        if ACTION.fullmatch(file.name):
+        if ACTION.fullmatch(file.name) and file.name not in baseline:
             actions[file.name] = info(file)
             shutil.copyfile(file, raw / file.name)
-    if not actions or any(meta["bytes"] <= 0 for meta in actions.values()):
+    if (not actions and before is None) or any(meta["bytes"] <= 0 for meta in actions.values()):
         raise ValueError("Generation produced no usable formal receipts")
+    if not actions:
+        raw.rmdir()
     (destination / "manifest.json").write_text(json.dumps({**identity(), "actions": actions}, indent=2) + "\n")
     print(f"Published {len(actions)} formal receipts ({sum(meta['bytes'] for meta in actions.values())} bytes)")
 
@@ -44,13 +47,16 @@ def stage(destination):
 def restore(source):
     manifest_path = source / "manifest.json"
     raw = source / "raw"
-    if manifest_path.is_symlink() or raw.is_symlink() or {item.name for item in source.iterdir()} != {"manifest.json", "raw"}:
+    if manifest_path.is_symlink() or not manifest_path.is_file() or raw.is_symlink():
         raise ValueError("Unexpected formal shard bundle")
     manifest = json.loads(manifest_path.read_text())
     if any(manifest.get(key) != value for key, value in identity().items()):
         raise ValueError("Formal shard source, run, attempt or model assignment differs")
     actions = manifest["actions"]
-    if not actions or {item.name for item in raw.iterdir()} != set(actions):
+    expected_files = {"manifest.json", "raw"} if actions else {"manifest.json"}
+    if not isinstance(actions, dict) or {item.name for item in source.iterdir()} != expected_files:
+        raise ValueError("Formal shard action manifest differs from its bundle")
+    if actions and {item.name for item in raw.iterdir()} != set(actions):
         raise ValueError("Formal shard action manifest differs from its bundle")
     missing = []
     for name, expected in actions.items():
@@ -71,7 +77,7 @@ def restore(source):
 
 
 if sys.argv[1] == "stage":
-    stage(Path(sys.argv[2]))
+    stage(Path(sys.argv[2]), Path(sys.argv[3]) if len(sys.argv) > 3 else None)
 elif sys.argv[1] == "restore":
     restore(Path(sys.argv[2]))
 else:

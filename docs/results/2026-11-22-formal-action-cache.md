@@ -47,8 +47,70 @@ A concurrent projection with an invalid spec edit reported a failed model.
 
 The full cold Network check was stopped after it reported all 150 models.
 Its scratch directory had reached 232 MiB when free disk space reached
-323 MiB. These measurements cover generation and cache reuse. The full
-Network validation suite remains open.
+323 MiB. Those local measurements cover generation and cache reuse.
+
+## Hosted archive selection
+
+Both runs used tree `ac22cbd6f92af2ec9b0ed863f10b165f9e2667e0` on
+`ubuntu-24.04` and ran `pnpm run check` over 150 spec modules. The normal
+profile used seed 1 with the pinned Quint Rust evaluator v0.7.1 and Dafny
+4.11.0. There were no model API calls. This comparison is one run per
+archive. The check time excludes cache restore and setup.
+
+| Restored archive | Archive bytes | Restore seconds | Check seconds | Job seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Successful full check | 40,310,306 | 3 | 64 | 132 |
+| Checkpoint from a stopped check | 38,136,370 | 3 | 250 | 324 |
+
+Both archives had the same restore prefix. GitHub picked the newer
+checkpoint, adding 186 seconds to the check. The stopped run wrote its
+completed actions after the check reached its 27-minute limit. [Successful
+archive run](https://github.com/eliza-research/thenetwork/actions/runs/45103938245/job/137460812146)
+· [Checkpoint restore](https://github.com/eliza-research/thenetwork/actions/runs/45105686125/job/137466305804)
+· [Stopped cold check](https://github.com/eliza-research/thenetwork/actions/runs/45101900073)
+
+The workflow gives successful archives and checkpoints separate prefixes.
+The successful key also names the three tool files that can invalidate all
+action receipts or all compiled simulator receipts: `action.ts`, `run.ts`,
+and `simulator.ts`. A normal run checks its pull request and base branch
+scopes for a completed archive with that key. On a hit, the full job
+downloads one archive. A same-run retry can use its own checkpoint.
+An earlier completed archive, another checkpoint, or generation actions
+can supply reusable receipts while the two jobs precompute missing
+simulation actions. Explicit cold dispatches start with empty caches. A
+single full check still decides the result and publishes the completed
+archive.
+
+Nine hosted controls exercised the actual cache steps with small files.
+A completed archive in the base scope took priority over an earlier tool
+revision in the pull request scope. Each of the three input files triggered
+precompute when changed. The controls also passed for v2 migration, retry,
+an unrelated checkpoint, an empty cache, and an explicit cold dispatch.
+[GitHub cache scope controls](https://github.com/lalalune/thenetwork-1/actions/runs/45116324801)
+
+## Two-runner cold qualification
+
+A normal fork dispatch of the two-runner workflow found no completed,
+checkpoint, legacy, or generation archive. The main shard ran for 11m 58s
+and the generation shard ran for 6m 21s. The full job verified 1,147 peer
+receipts, imported 1,076 new ones, and passed `pnpm run check` in 7m 26s.
+The job took 20m 30s from setup through archive upload and cleanup. It
+reported 150 model, safety, replay, and proof results and 448 reachability
+results, all passing. [Cold cache-miss run](https://github.com/lalalune/thenetwork-1/actions/runs/45115613254/job/137497646669)
+
+The observed main shard had two seconds to spare under its 12-minute
+limit. The workflow now gives the main shard up to 16 minutes. The shared
+27-minute deadline and bounded peer wait leave about 10 minutes for the
+full verifier if the shard reaches its new cap. The 30-minute job limit
+stays in place.
+
+In the first v2-to-v3 migration run, both jobs restored the same
+38,853,933-byte archive. The peer sent 2,643 receipts in a 45,360,449-byte
+artifact. The full runner already had 2,493 of them and imported 150.
+When the peer starts from an earlier full archive or checkpoint, it now
+sends only new receipts. If none were added, it sends the manifest alone
+so the full runner can continue. An empty starting cache still sends all
+of the peer's receipts. [Migration run](https://github.com/eliza-research/thenetwork/actions/runs/45118102065)
 
 ## Whole-flow simulator probe
 
