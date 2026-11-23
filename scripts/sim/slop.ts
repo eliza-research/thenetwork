@@ -23,7 +23,7 @@ import { runEngine, type EngineResult } from "../../packages/engine/src/engine.t
 import { privateVocabulary } from "../../packages/engine/src/explain.ts";
 import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
-import { cellIn } from "../../packages/engine/src/packs/slop/profile.ts";
+import { cellIn, datingMarkets } from "../../packages/engine/src/packs/slop/profile.ts";
 import { limitMiles } from "../../packages/engine/src/packs/slop/geo.ts";
 import { makeSlopPack, mutualMarkets, planFromInput, SLOP_ASK_QUESTIONS, SLOP_ENGINE_CONFIG, slopPack, slopProfiles } from "../../packages/engine/src/packs/slop/index.ts";
 import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
@@ -150,6 +150,12 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       expect(r.flows.every(f => !f.declaredMinor)).toBe(true);
     }
   });
+  await b.run("world: a no-show without a member's check-in remains unattributed", () => {
+    const run = runSlopWorld({ seed: 5, perCity: 120, weeks: 3, matcher: BASELINES.random as never });
+    const absent = run.world.state.interactions.filter(interaction => interaction.outcome === "no_show");
+    expect(absent.length).toBeGreaterThan(0);
+    expect(absent.every(interaction => interaction.noShowBy === undefined)).toBe(true);
+  });
   await b.run("world: a check-in report holds the offender (no new harassment victim after the first report)", () => {
     const r = runSlopWorld({ seed: 5, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
     const firstReport = new Map<string, number>();
@@ -212,11 +218,46 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   });
 
   // ---- conformance: core rules, then the stated filters and the never-shared rating -------------------
+  await slopFeedbackClockGate(b);
   await conformance(b, slopPack, { world: seed => slopWorld(seed), cfg: SLOP_ENGINE_CONFIG, seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
 
   const cfg = (seed: number) => ({ ...SLOP_ENGINE_CONFIG, seed });
   const run = (input: EngineInput, seed = 1, p = slopPack) => runEngine(input, cfg(seed), { pack: p });
   const SEEDS = [1, 2, 3];
+  await b.run("conformance slop: multi-city proposals need presence in a market within both distance limits", async () => {
+    const now = Date.UTC(2026, 9, 5, 16), ids = ["alex", "sam"];
+    for (const seed of SEEDS) for (const reverse of [false, true]) {
+      for (const scenario of ["no_trip", "shared_trip", "disjoint_trips", "valid_fallback", "outside_scope"] as const) {
+        const input: EngineInput = {
+          now,
+          members: ids.map(id => ({ id, name: id, age: 30, homeCity: "nyc", state: "normal", joinedAt: now - 60 * DAY, unansweredProactive: 0,
+            prefs: { categoriesOptIn: ["romance"], romanceOptIn: true, formats: ["one_to_one"], maxTravelMinutes: 60, onlyWhenAsked: false, quietHours: [22, 8] } })),
+          facets: ids.flatMap((id, i) => [
+            { id: `${id}:prefs`, memberId: id, kind: "preference", value: "dating preferences", tags: [
+              "romance:is:nonbinary", "romance:seeks:nonbinary", "romance:age:25-35", "slop:goal:long_term",
+              `slop:scope:multi:${scenario === "outside_scope" ? "sf" : "nyc,sf"}`,
+              `slop:max_miles:${scenario === "valid_fallback" ? 25 : 2}`,
+              `slop:zip:${i && scenario !== "outside_scope" ? "10463" : "10002"}`,
+            ], scope: "agent_private", provenance: "said", confidence: 1 },
+            { id: `${id}:interest`, memberId: id, kind: "interest", value: "museums", tags: ["museums"], scope: "shareable", provenance: "said", confidence: 1 },
+          ]),
+          intents: ids.map(id => ({ id: `${id}:date`, memberId: id, objective: "find a date", category: "romance", horizonDays: 30, status: "active", createdAt: now - DAY })),
+          presence: ids.flatMap((id, i): EngineInput["presence"] => [
+            { memberId: id, city: "nyc", type: "home", areas: [] },
+            ...(scenario === "shared_trip" || scenario === "disjoint_trips" ? [{ memberId: id, city: "sf" as const, type: "temporary" as const, areas: [],
+              from: now + (scenario === "disjoint_trips" ? 1 + 2 * i : 1) * DAY,
+              to: now + (scenario === "disjoint_trips" ? 2 + 2 * i : 4) * DAY }] : []),
+          ]),
+          edges: [], recentProposals: [],
+        };
+        if (reverse) { input.members.reverse(); input.facets.reverse(); input.presence.reverse(); input.intents.reverse(); }
+        const proposals = (await run(input, seed)).proposals;
+        const expected = scenario === "shared_trip" ? ["sf"] : scenario === "valid_fallback" ? ["nyc"] : [];
+        expect({ scenario, cities: proposals.map(p => p.city) }).toEqual({ scenario, cities: expected });
+        if (scenario === "shared_trip") expect(proposals[0]!.window).toEqual({ start: now + DAY, end: now + 4 * DAY });
+      }
+    }
+  });
   const inputs = new Map(SEEDS.map(s => [s, slopWorld(s, { perCity: 60 })]));
   const results = new Map<number, Promise<EngineResult>>();
   const result = (s: number) => { if (!results.has(s)) results.set(s, run(inputs.get(s)!, s)); return results.get(s)!; };
@@ -359,6 +400,30 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     expect(apart.length).toBe(0);
   });
 
+  await b.run("conformance slop: a booked trip uses the canonical member and the half-open travel window", async () => {
+    const input = inputs.get(1)!;
+    const member = input.members.find(m => m.homeCity === "nyc" && canBeMatched(m.age))!;
+    const visitAt = input.now + 2 * DAY;
+    const alias = `trip:${member.id}`;
+    const trip: Presence = { memberId: alias, city: "sf", type: "temporary", from: visitAt, to: visitAt + DAY, areas: [] };
+    const snapshot: EngineInput = {
+      ...input,
+      idAliases: { ...input.idAliases, [alias]: member.id },
+      presence: [
+        ...input.presence.filter(row => row.memberId !== member.id),
+        trip,
+        { ...trip, to: visitAt + 2 * DAY },
+        { ...trip, city: member.homeCity },
+        { ...trip, city: "la", from: visitAt - DAY, to: visitAt },
+        { ...trip, city: "la", from: visitAt + 1 },
+      ],
+    };
+    const world = new World(snapshot, resolveConfig(cfg(1)), localEmbed, slopPack);
+    const profile = slopProfiles(world.input, world.canonical).get(member.id)!;
+    expect(profile.visiting).toEqual(["sf"]);
+    expect(datingMarkets(profile)).toContain("sf");
+  });
+
   // Appearance ratings are used in matching and never shared (founder decision 2026-10-08).
   const RATER = { ...RATER_DEFAULTS, noise: 0.4 };
   const res = await runSlopWorldAsync({ seed: 5, perCity: 70, weeks: 3, minorShare: 0.15, platform: { rater: RATER, photos: { noiseSd: 1 } }, bodyTypes: BODY_TYPE_DEFAULTS, matcher: slopEngineMatcher({ seed: 5 }) });
@@ -423,4 +488,27 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
 
   // ---- slop-live: the production ConsentNetwork with the slop wiring (scripts/sim/slop-live.ts) -----
   await slopLiveArm(b, o);
+}
+
+// spec/slopSimulationFeedback.md, "Use feedback from the current simulated time"
+async function slopFeedbackClockGate(b: Block): Promise<void> {
+  const c = { pending: 0, earlyFeedback: 0, boundaries: 0, boundaryFailures: 0 };
+  await runSlopWorldAsync({ seed: 13, perCity: 150, weeks: 4, matcher: world => {
+    const matcher = slopEngineMatcher({ seed: 13 });
+    return { ...matcher, propose(ctx) {
+      const s = ctx.snapshot, pending = world.state.feedback.filter(f => f.at > s.now);
+      c.pending += pending.length;
+      c.earlyFeedback += s.feedback.filter(f => f.at > s.now).length;
+      const sample = pending[0];
+      if (sample) {
+        const before = buildSlopSnapshot(world.personas, { ...world.state, now: sample.at - 1 });
+        const due = buildSlopSnapshot(world.personas, { ...world.state, now: sample.at });
+        c.boundaries++;
+        if (before.feedback.some(f => f.id === sample.id) || !due.feedback.some(f => f.id === sample.id)) c.boundaryFailures++;
+      }
+      return matcher.propose(ctx);
+    } };
+  } });
+  b.gate("world: Slop exposes feedback at its recorded receipt time",
+    c.pending > 0 && c.boundaries > 0 && c.earlyFeedback + c.boundaryFailures === 0, JSON.stringify(c));
 }

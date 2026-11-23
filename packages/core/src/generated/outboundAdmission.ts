@@ -114,6 +114,19 @@ export function conversationPolicy(compliance: boolean, atCap: boolean, agent: b
   return compliance || !atCap ? ({ decision: "Proceed", reengage: false } as ConversationAdmission) : (agent && !reengaged && waited ? ({ decision: "Proceed", reengage: true } as ConversationAdmission) : ({ decision: "AwaitingReply", reengage: false } as ConversationAdmission));
 }
 
+/** Story: Recheck a queued message at send time / A STOP or an app leave does not release a text held for an answer (spec/outboundAdmission.md) */
+//@ pure
+export function inboundReleasesHeldTexts(stop: boolean, leave: boolean): boolean {
+  return !(stop || leave);
+}
+
+/** Story: Recheck a queued message at send time / A STOP or an app leave does not release a text held for an answer (spec/outboundAdmission.md) */
+//@ pure
+export function lawOptOutKeepsHeldTexts(stop: boolean, leave: boolean): boolean {
+  //@ ensures \result === true
+  return !(stop || leave) || !inboundReleasesHeldTexts(stop, leave);
+}
+
 /** Story: Recheck a queued message at send time / Apply line controls and sending caps before checking the text (spec/outboundAdmission.md) */
 //@ pure
 export function linePolicy(lineAction: string, agent: boolean, newConversation: boolean): Admission {

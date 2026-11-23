@@ -5,7 +5,7 @@
 // directory made mkdir of "" throw ENOENT, and an empty port became 0, which the server refuses.
 // This runs the real CLI as a child process, with exactly the values the copied file carries, and
 // expects the documented command to start and answer with the default cluster URL (localhost:54339).
-// Skipped without Postgres, like the other dev-cluster tests.
+// REQUIRE_PG=1 also exercises startup when the availability check fails.
 import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { describe, expect, test } from "vitest";
 import { once } from "node:events";
@@ -19,7 +19,7 @@ import { pgAvailable } from "./pg.ts";
 const T = 180_000;
 const REPO = join(import.meta.dirname, "..", "..", "..");
 
-describe.skipIf(!pgAvailable)("the dev Postgres startup (Postgres)", () => {
+describe.skipIf(!pgAvailable && process.env.REQUIRE_PG !== "1")("the dev Postgres startup (Postgres)", () => {
   test("the empty values of a copied .env.example read as 'leave the default': the documented startup command starts the default cluster", async () => {
     const child = spawnProcess([process.execPath, "--import", "tsx", "packages/observatory/db/dev-pg.ts", "up"], {
       cwd: REPO,
@@ -58,8 +58,10 @@ describe.skipIf(!pgAvailable)("the dev Postgres startup (Postgres)", () => {
         const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
         expect({ code, err }).toEqual({ code: 0, err: "" });
         const sql = new SQL(out.trim());
-        try { expect((await sql`select current_user`)[0].current_user).toBe(user ?? "postgres"); }
-        finally { await sql.close(); }
+        try {
+          const [server] = await sql`select current_user, current_setting('unix_socket_directories') as sockets`;
+          expect(server).toEqual({ current_user: user ?? "postgres", sockets: process.platform === "win32" ? "" : "/tmp" });
+        } finally { await sql.close(); }
       } finally {
         await run("down").exited;
         rmSync(dir, { recursive: true, force: true });

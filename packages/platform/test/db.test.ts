@@ -4,7 +4,7 @@
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { migrate, migrations } from "../../observatory/db/migrate.ts";
+import { migrate, migrations, withDevMigrationLock } from "../../observatory/db/migrate.ts";
 import { dropDb, emptyDb, migratedDb, pgAvailable } from "./pg.ts";
 
 const T = 120_000;
@@ -68,25 +68,30 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     const upTo = all.findIndex(m => m.id === "0007_friends_platform_safety");
     // Apply 0001-0006 by hand, as a dev database had them before 0007.
     const sql = new SQL({ url, max: 1 });
-    try {
-      for (const m of all.slice(0, upTo)) await sql.unsafe(await fileAt(m.file).text());
-      await sql`create table if not exists public.__migrations (id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`;
-      for (const m of all.slice(0, upTo)) await sql`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, 'old', ${m.repeatable})`;
-      const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
-      await sql`insert into platform.phone_identities (e164, person_id, verified_at, method) values ('+12125550161', ${p.id}, now(), 'otp_sms')`;
-      await sql`insert into platform.memberships (app_id, person_id, member_id, state, first_name) values ('buddies', ${p.id}, 'buddies_m1', 'active', 'Bea')`;
-      await sql`insert into platform.consent_events (e164, app_id, state, source, at) values ('+12125550161', 'buddies', 'opted_in', 'web_form', now())`;
-      await sql`insert into platform.audit (app_id, actor, action) values ('buddies', 'staff@x', 'read')`;
-      await sql.begin(async tx => {
-        await tx`select set_config('app.app_id', 'buddies', true)`;
-        await tx`insert into network.members (id, app_id, name, home_city, person_id) values ('buddies_m1', 'buddies', 'Bea', 'nyc', ${p.id})`;
-        await tx`insert into network.facets (id, app_id, member_id, kind, value, privacy_scope, provenance) values ('f1', 'buddies', 'buddies_m1', 'interest', 'chess', 'matchable', 'said')`;
-      });
-      await sql`insert into network.network_state (id, version, state) values ('buddies:nyc', 1, '{}'::jsonb)`;
-      await sql`insert into network.staff_audit (actor, action, app_id) values ('staff@x', 'review', 'buddies')`;
-    } finally { await sql.close(); }
-    const r = await migrate(url);
+    await withDevMigrationLock(url, async () => {
+      try {
+        for (const m of all.slice(0, upTo)) await sql.unsafe(await fileAt(m.file).text());
+        await sql`create table if not exists public.__migrations (id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`;
+        for (const m of all.slice(0, upTo)) await sql`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, 'old', ${m.repeatable})`;
+        const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
+        await sql`insert into platform.phone_identities (e164, person_id, verified_at, method) values ('+12125550161', ${p.id}, now(), 'otp_sms')`;
+        await sql`insert into platform.memberships (app_id, person_id, member_id, state, first_name) values ('buddies', ${p.id}, 'buddies_m1', 'active', 'Bea')`;
+        await sql`insert into platform.consent_events (e164, app_id, state, source, at) values ('+12125550161', 'buddies', 'opted_in', 'web_form', now())`;
+        await sql`insert into platform.audit (app_id, actor, action) values ('buddies', 'staff@x', 'read')`;
+        await sql.begin(async tx => {
+          await tx`select set_config('app.app_id', 'buddies', true)`;
+          await tx`insert into network.members (id, app_id, name, home_city, person_id) values ('buddies_m1', 'buddies', 'Bea', 'nyc', ${p.id})`;
+          await tx`insert into network.facets (id, app_id, member_id, kind, value, privacy_scope, provenance) values ('f1', 'buddies', 'buddies_m1', 'interest', 'chess', 'matchable', 'said')`;
+        });
+        await sql`insert into network.network_state (id, version, state) values ('buddies:nyc', 1, '{}'::jsonb)`;
+        await sql`insert into network.staff_audit (actor, action, app_id) values ('staff@x', 'review', 'buddies')`;
+      } finally { await sql.close(); }
+    });
+    const parallel = await Promise.all(["rename_parallel_a", "rename_parallel_b"].map(emptyDb));
+    urls.push(...parallel);
+    const [r, ...fresh] = await Promise.all([url, ...parallel].map(database => migrate(database)));
     expect(r.applied).toContain("0007_friends_platform_safety");
+    for (const result of fresh) expect(result.applied).toEqual(all.map(migration => migration.id));
     const db = new SQL({ url, max: 1 });
     try {
       const appIds = async (q: Promise<any[]>) => [...new Set((await q).map((x: any) => x.app_id))];
@@ -164,7 +169,10 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       const allowed = (role: string, rel: string): boolean => {
         if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
-        if (apps.includes(app) && [`network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`].includes(rel)) return true;
+        if (apps.includes(app) && [
+          `network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `network.booking_receipts_${app}`,
+          `platform.person_blocks_${app}`, `platform.matching_ages_${app}`,
+        ].includes(rel)) return true;
         if (catalog.includes(rel)) return apps.includes(app) || role === "network_observatory_cross_app";
         if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
         if (role === "network_observatory_audit") return rel === "network.staff_audit";
@@ -173,16 +181,19 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       };
       const open = rows.filter((r: any) => !(r.kind === "r" && r.rls) && !allowed(r.role, r.rel)).map((r: any) => `${r.role} ${r.rel}`);
       expect(open).toEqual([]);
-      const outboundReaders = rows.filter(r => r.rel.startsWith("network.outbound_evidence_")).map(r => `${r.role} ${r.rel}`);
-      expect(outboundReaders.sort()).toEqual([
-        "network_observatory network.outbound_evidence_ntwrk",
-        ...apps.map(app => `network_observatory_${app} network.outbound_evidence_${app}`),
-      ].sort());
+      const evidenceViews = ["outbound_evidence", "booking_receipts"];
+      for (const view of evidenceViews) {
+        const readers = rows.filter(r => r.rel.startsWith(`network.${view}_`)).map(r => `${r.role} ${r.rel}`);
+        expect(readers.sort()).toEqual([
+          `network_observatory network.${view}_ntwrk`,
+          ...apps.map(app => `network_observatory_${app} network.${view}_${app}`),
+        ].sort());
+      }
       const catalogWriters = await sql`
         select r.rolname as role, c.relname as relation
         from pg_roles r cross join pg_class c join pg_namespace n on n.oid = c.relnamespace
         where r.rolname like 'network\\_observatory%' and n.nspname = 'network'
-          and (c.relname in ('public_events', 'public_event_imports') or c.relname in ${sql(apps.map(app => `outbound_evidence_${app}`))})
+          and (c.relname in ('public_events', 'public_event_imports') or c.relname in ${sql(evidenceViews.flatMap(view => apps.map(app => `${view}_${app}`)))})
           and has_table_privilege(r.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')`;
       expect(catalogWriters).toEqual([]);
       expect(rows.filter((r: any) => r.rel === "network.network_state_console" || r.rel === "network.network_state")).toEqual([]);

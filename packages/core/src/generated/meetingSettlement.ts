@@ -27,10 +27,16 @@ export type Event =
   | { type: "requestFeedback"; unsent: boolean; asOf: number; feedbackAt: number }
   | { type: "resolveAttendance"; timedOut: boolean; everyoneResponded: boolean };
 
-/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
-export const bookingNoticeRetryMs: number = exact_meetingSettlement(5 * 60000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 3600000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowHours: number = 48;
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+export const bookingNoticeRetryMs: number = exact_meetingSettlement(5 * 60000);
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const feedbackDelayHours: number = 3;
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
@@ -39,12 +45,6 @@ export const settlementDelayDays: number = 4;
 export const meetingFeedbackPrefix: string = "meeting-feedback:";
 /** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
 export const meetingFeedbackReplyMs: number = exact_meetingSettlement(7 * 86400000);
-/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
-export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
-/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
-export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 3600000);
-/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
-export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
@@ -78,6 +78,19 @@ export function silentConfirmationDue(accepted: boolean, bookingDelivered: boole
 export function lawConfirmedDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, wordsRecorded: boolean, explicitReply: boolean): boolean {
   //@ ensures \result === true
   return !confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation;
+}
+
+/** Story: Confirm a booked meeting after the details arrive / Release an expired booking reply before the next prompt (spec/meetingSettlement.md) */
+//@ pure
+export function releaseBookingReply(elapsedMs: number, hasMeeting: boolean, meetingStarted: boolean): boolean {
+  return !hasMeeting || meetingStarted || elapsedMs > confirmationWindowMs;
+}
+
+/** Story: Confirm a booked meeting after the details arrive / Release an expired booking reply before the next prompt (spec/meetingSettlement.md) */
+//@ pure
+export function lawFutureBookingKeepsReply(elapsedMs: number): boolean {
+  //@ ensures \result === true
+  return !(elapsedMs <= confirmationWindowMs) || !releaseBookingReply(elapsedMs, true, false);
 }
 
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
@@ -325,10 +338,114 @@ export function lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: number
   return !meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs);
 }
 
+/** Story: Ask for feedback and close attendance once / Use direct counterpart absence during attendance collection (spec/meetingSettlement.md) */
+//@ pure
+export function pairedFeedbackAbsence(attendanceOpen: boolean, uniqueCounterpart: boolean, directStatement: boolean): boolean {
+  return attendanceOpen && uniqueCounterpart && directStatement;
+}
+
+/** Story: Ask for feedback and close attendance once / Use direct counterpart absence during attendance collection (spec/meetingSettlement.md) */
+//@ pure
+export function lawClosedAttendanceRejectsCounterpartAbsence(uniqueCounterpart: boolean, directStatement: boolean): boolean {
+  //@ ensures \result === true
+  return !pairedFeedbackAbsence(false, uniqueCounterpart, directStatement);
+}
+
+/** Story: Ask for feedback and close attendance once / Use direct counterpart absence during attendance collection (spec/meetingSettlement.md) */
+//@ pure
+export function lawCounterpartAbsenceNeedsUniqueCounterpart(attendanceOpen: boolean, directStatement: boolean): boolean {
+  //@ ensures \result === true
+  return !pairedFeedbackAbsence(attendanceOpen, false, directStatement);
+}
+
+/** Story: Ask for feedback and close attendance once / Use the active roster in interaction history (spec/meetingSettlement.md) */
+//@ pure
+export function feedbackHistorySeat(status: string): boolean {
+  return status === "yes";
+}
+
+/** Story: Ask for feedback and close attendance once / Use the active roster in interaction history (spec/meetingSettlement.md) */
+//@ pure
+export function lawWithdrawnSeatCannotEnterFeedbackHistory(status: string): boolean {
+  //@ ensures \result === true
+  return !(status === "dropped") || !feedbackHistorySeat(status);
+}
+
+/** Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time (spec/meetingSettlement.md) */
+//@ pure
+export function completedMeetingSlot(localWeekday: number, localHour: number): number {
+  return localWeekday < 0 || localWeekday > 6 || localHour < 0 || localHour > 23 ? -1 : (localWeekday < 5 ? (localHour >= 17 ? localWeekday : -1) : (localWeekday === 5 ? (localHour >= 17 ? 6 : 5) : (localHour >= 17 ? 8 : 7)));
+}
+
+/** Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time (spec/meetingSettlement.md) */
+//@ pure
+export function lawWeekdayMeetingSlotNeedsEvening(localWeekday: number, localHour: number): boolean {
+  //@ ensures \result === true
+  return !(localWeekday < 5 && localHour < 17) || completedMeetingSlot(localWeekday, localHour) === -1;
+}
+
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function slopCompletedDateCounts(completed: boolean, exactAbsence: boolean): boolean {
+  return completed && !exactAbsence;
+}
+
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function slopNoShowCounts(exactAttribution: boolean, onRoster: boolean): boolean {
+  return exactAttribution && onRoster;
+}
+
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function lawSlopCannotCountCompletionAndAbsence(completed: boolean, exactAttribution: boolean, onRoster: boolean): boolean {
+  //@ ensures \result === true
+  return !(slopCompletedDateCounts(completed, slopNoShowCounts(exactAttribution, onRoster)) && slopNoShowCounts(exactAttribution, onRoster));
+}
+
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function lawSlopUnattributedAbsenceCannotCount(onRoster: boolean): boolean {
+  //@ ensures \result === true
+  return !slopNoShowCounts(false, onRoster);
+}
+
+/** Story: Ask for feedback and close attendance once / A liked date paces new proposals from its booked start (spec/meetingSettlement.md) */
+//@ pure
+export function completedDatePacingAt(knownBooking: boolean, bookedAt: number, feedbackAt: number): number {
+  return knownBooking ? bookedAt : feedbackAt;
+}
+
+/** Story: Ask for feedback and close attendance once / A liked date paces new proposals from its booked start (spec/meetingSettlement.md) */
+//@ pure
+export function lawKnownDatePacingUsesBooking(bookedAt: number, feedbackAt: number): boolean {
+  //@ ensures \result === true
+  return completedDatePacingAt(true, bookedAt, feedbackAt) === bookedAt;
+}
+
+/** Story: Ask for feedback and close attendance once / Pacing feedback follows its own date (spec/meetingSettlement.md) */
+//@ pure
+export function completedDateFeedbackMatches(feedbackAt: number, meetingAt: number, hasOpportunity: boolean, sameOpportunity: boolean, isCounterpart: boolean): boolean {
+  return feedbackAt >= meetingAt && (hasOpportunity ? sameOpportunity : isCounterpart);
+}
+
+/** Story: Ask for feedback and close attendance once / Pacing feedback follows its own date (spec/meetingSettlement.md) */
+//@ pure
+export function lawFeedbackForAnotherDateCannotPace(feedbackAt: number, meetingAt: number, isCounterpart: boolean): boolean {
+  //@ ensures \result === true
+  return !completedDateFeedbackMatches(feedbackAt, meetingAt, true, false, isCounterpart);
+}
+
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): boolean {
   return accepted && bookingDelivered;
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+//@ pure
+export function reportedAbsenceIdentifiesMember(pairMeeting: boolean, identifiedInGroup: boolean): boolean {
+  return pairMeeting || identifiedInGroup;
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
@@ -339,10 +456,9 @@ export function attendanceBookingReceived(accepted: boolean, exactReceipt: boole
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
-export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
-  const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
-  const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
-  return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
+export function lawUnnamedGroupReportDoesNotIdentifyAnyone(pairMeeting: boolean): boolean {
+  //@ ensures \result === true
+  return !(!pairMeeting) || !reportedAbsenceIdentifiesMember(pairMeeting, false);
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
@@ -350,6 +466,14 @@ export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding
 export function lawAttendanceNeedsExactBookingReceipt(accepted: boolean, receiptAt: number, settledAt: number): boolean {
   //@ ensures \result === true
   return !attendanceBookingReceived(accepted, false, receiptAt, settledAt);
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+//@ pure
+export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
+  const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
+  const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
+  return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
 }
 
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */

@@ -240,6 +240,7 @@ describe.each(SITES)("$domain", (s) => {
       expect(skill).toContain("then come back to this conversation");
       expect(skill).not.toContain("RESPONSE_STYLE");
       expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+      expect(skill).toContain("the person opens https://ntwrk.party/oauth/consents in the browser where they connected");
       if (s.app !== "ntwrk") expect(skill).not.toContain(`https://${s.domain}/mcp`);
       expect(skill).not.toContain("cannot add this app's connector");
       if (["friends", "slop", "ntwrk"].includes(s.app)) {
@@ -392,7 +393,7 @@ test("staging builds keep the served entry, skills and signed router on configur
   } finally { await server?.stop(true); await backend.stop(true); }
 });
 
-test("a local or test MCP_URL moves the ntwrk.party connector endpoints that the skills name", () => {
+test("a local or test MCP_URL moves the ntwrk.party connector endpoints and the agent access page that the skills name", () => {
   const env = { MCP_URL: "https://{domain}.dev.example.test/mcp", BACKEND_ORIGIN: "https://api.dev.example.test" };
   for (const site of SITES) {
     const source = readFileSync(join(SKILLS_DIR, site.skill, "SKILL.md"), "utf8");
@@ -404,6 +405,9 @@ test("a local or test MCP_URL moves the ntwrk.party connector endpoints that the
     expect(local, site.domain).not.toContain("https://ntwrk.party/mcp");
     expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}`);
     expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}/openai`);
+    expect(production, site.domain).toContain("https://ntwrk.party/oauth/consents");
+    expect(local, site.domain).not.toContain("https://ntwrk.party/oauth");
+    expect(local, site.domain).toContain("https://ntwrk.party.dev.example.test/oauth/consents");
   }
 });
 
@@ -537,6 +541,25 @@ test("slop.date keeps its safety information off the landing page, and photos ar
     expect(t, f).toMatch(/never asks? (them|you) for photos/);
   }
   expect(text(read(slop, "privacy.html"))).toContain("never shown to you, to other members or to anyone else");
+});
+
+test("members aged 13 to 17 are told they are never matched on dates, and nothing promises them an introduction (founder 2026-11-22)", () => {
+  for (const s of SITES) {
+    for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
+      const t = read(s, f).replace(/\s+/g, " ");
+      expect(t, f).toMatch(/Ask for their birthday/);
+      expect(t, f).toMatch(/Never send a birthday or an age through a tool/);
+      expect(t, f).toMatch(/never matche[sd] (them )?on dates/i);
+      expect(t, f).toMatch(/friendship introductions (only, )?with people within 2 years of their own age/);
+      expect(t, f).toContain("Never promise them an introduction.");
+      expect(t, f).not.toMatch(/introductions and matching are for adults 18 and older\./);
+    }
+    const privacy = text(read(s, "privacy.html"));
+    expect(privacy).toContain("birth date");
+    expect(privacy).toContain("Today, no member under 18 is introduced to anyone.");
+  }
+  expect(read(SITES.find((s) => s.app === "slop")!, "SKILL.md").replace(/\s+/g, " ")).toContain("slop.date will not match them on dates");
+  expect(read(SITES.find((s) => s.app === "ntwrk")!, "SKILL.md").replace(/\s+/g, " ")).toContain("For ages 13–17, draft only friends interests and their own help; never offer dates or work, and never say that these interests lead to an introduction today.");
 });
 
 test("peon.biz says a person reviews every introduction; no compliance gate blocks joining", () => {

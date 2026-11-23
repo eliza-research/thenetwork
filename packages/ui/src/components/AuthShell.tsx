@@ -14,7 +14,6 @@ export type AuthShellProps = Omit<ComponentProps<"div">, "title"> & {
   title: string;
   /** Which page parts show: the generated `chromeFor` of the view. */
   chrome?: PageChrome;
-  /** Where the brand mark goes. Default: the home page of the app's site. */
   homeHref?: string;
   siteOrigin?: string;
 };

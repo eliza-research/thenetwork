@@ -5,6 +5,7 @@
 // not stored as events, and leak-guard reasons keep only their kind. One exception, as before:
 // feedback_given keeps the feedback text in its payload; describe() never shows it.
 import type { MemberId } from "@thenetwork/core";
+import { requestEventView } from "../../core/src/generated/requestResultView.ts";
 import type { RunRecord } from "@thenetwork/core";
 import { desireById } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { SLOT_KINDS, URGENT_REPORTS, type SendKind } from "@thenetwork/network";
@@ -215,9 +216,21 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "opportunity_closed": text = `Closed: ${human(p.reason)}`; keep("reason"); break;
     case "venue": text = `Venue: ${p.venue}`; keep("venue", "meetingAt"); break;
     case "request": text = `Asked for ${requestLabel(p)}`; keep("kind", "category", "desireId"); break;
-    case "request_result":
-      text = p.outcome === "fulfilled" ? `Request fulfilled in ${p.hours}h` : p.outcome === "probing" ? `Request: checking ${p.candidates ?? ""} candidates`.replace("  ", " ") : `Request waiting (${human(p.reason)})`;
-      severity = p.outcome === "fulfilled" ? "good" : p.outcome === "waiting" ? "warn" : undefined; keep("outcome", "reason", "hours", "candidates"); break;
+    case "request_result": {
+      const view = requestEventView(typeof p.outcome === "string" ? p.outcome : "");
+      if (view === "RequestBooked" || view === "RequestFulfilled") {
+        const action = view === "RequestBooked" ? "booked" : "fulfilled";
+        text = `Request ${action} in ${p.hours}h`;
+        severity = "good";
+      } else if (view === "RequestProbing") {
+        text = `Request: checking ${p.candidates ?? ""} candidates`.replace("  ", " ");
+      } else {
+        text = `Request waiting (${human(p.reason)})`;
+        if (view === "RequestWaiting") severity = "warn";
+      }
+      keep("outcome", "reason", "hours", "candidates");
+      break;
+    }
     case "request_withdrawn_want": text = "Request closed: the want was withdrawn"; break;
     case "trust": text = `Trust ${String(p.from).toUpperCase()} → ${String(p.to).toUpperCase()} (${human(p.why)})`; severity = p.to === "ok" ? "info" : "bad"; keep("from", "to", "why", "score"); break;
     case "abuse": text = `Abuse handled: ${(p.kinds as string[] | undefined)?.map(human).join(", ") ?? "?"}`; severity = "bad"; keep("risk"); break;

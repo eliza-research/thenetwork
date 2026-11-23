@@ -18,12 +18,13 @@
 // NO RACE OR ETHNICITY: there is no field for it; tags that look like one are dropped here, so no
 // rule, score or explanation can read them (PRD 40.5; conformance test "no race filters").
 import type { City, Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched, DAY, temporaryPresenceWindow } from "@thenetwork/core";
+import { canBeMatched, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
+import { completedDateFeedbackMatches, completedDatePacingAt, completedMeetingSlot, slopCompletedDateCounts, slopNoShowCounts } from "../../../../core/src/generated/meetingSettlement.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
-import type { EngineInput } from "../../types.ts";
-import { pairKey } from "../../world.ts";
+import type { EngineInput, InteractionRecord } from "../../types.ts";
+import { memberIdResolver, pairKey, type MemberIdResolver } from "../../world.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
 
@@ -39,7 +40,7 @@ const NEVER_USED = /^(race|ethnicity|skin|nationality|immigration|hiv|sti|health
 export interface History {
   /** Probes this member answered yes / no / never answered (interaction records). */
   yes: number; no: number; silent: number;
-  /** Booked first dates that happened, no-shows (either side), back-outs at the reveal by this member. */
+  /** Completed dates, attributed absences and back-outs at the reveal by this member. */
   dates: number; noShows: number; backouts: number;
   /** Distinct people whose feedback about this member was negative. */
   negativeFrom: number;
@@ -104,17 +105,24 @@ export interface SlopProfile {
   history: History;
 }
 
-const cache = new WeakMap<EngineInput, Map<MemberId, SlopProfile>>();
+type ProfileCache = { defaultProfiles?: Map<MemberId, SlopProfile>; byResolver: WeakMap<MemberIdResolver, Map<MemberId, SlopProfile>> };
+const cache = new WeakMap<EngineInput, ProfileCache>();
 /** An unanswered question older than this counts as silence (SlopPackOptions.silentFallback). */
 export const SILENT_AFTER_DAYS = 7;
 
-/** Typed dating profiles for every member of an engine input (cached per input object). */
-export function slopProfiles(input: EngineInput, canonical: (id: MemberId) => MemberId = x => x): Map<MemberId, SlopProfile> {
-  let out = cache.get(input);
-  if (out) return out;
-  out = buildProfiles(input, canonical);
-  cache.set(input, out);
-  return out;
+/** Typed dating profiles use the input's aliases by default. Each custom resolver has its own cached view. */
+export function slopProfiles(input: EngineInput, canonical?: MemberIdResolver): Map<MemberId, SlopProfile> {
+  let entry = cache.get(input);
+  if (!entry) {
+    entry = { byResolver: new WeakMap() };
+    cache.set(input, entry);
+  }
+  const cached = canonical ? entry.byResolver.get(canonical) : entry.defaultProfiles;
+  if (cached) return cached;
+  const profiles = buildProfiles(input, canonical ?? memberIdResolver(input));
+  if (canonical) entry.byResolver.set(canonical, profiles);
+  else entry.defaultProfiles = profiles;
+  return profiles;
 }
 
 function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, SlopProfile> {
@@ -127,6 +135,19 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const l = facetsBy.get(id) ?? [];
     l.push(f);
     facetsBy.set(id, l);
+  }
+  const visitsByMember = new Map<MemberId, Set<City>>();
+  const visitAt = now + 2 * DAY;
+  for (const row of input.presence) {
+    const trip = temporaryPresenceWindow(row);
+    if (!trip || !presenceWindowContains(trip, visitAt)) continue;
+    const id = C(row.memberId);
+    let cities = visitsByMember.get(id);
+    if (!cities) {
+      cities = new Set();
+      visitsByMember.set(id, cities);
+    }
+    cities.add(row.city);
   }
   const hist = histories(input, C);
   // Questions asked >= 7 days ago and never answered (recentAsks; reason slop_<field>).
@@ -180,11 +201,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
     const is = one("romance:is:") as Gender | undefined;
     const seeks = [...new Set(has("romance:seeks:"))].sort() as Gender[];
-    const visiting = [...new Set(input.presence.flatMap(p => {
-      if (C(p.memberId) !== m.id || p.city === m.homeCity) return [];
-      const trip = temporaryPresenceWindow(p);
-      return trip && presenceWindowContains(trip, now + 2 * DAY) ? [p.city] : [];
-    }))].sort();
+    const visiting = [...(visitsByMember.get(m.id) ?? [])].filter(city => city !== m.homeCity).sort();
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,
@@ -231,20 +248,12 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
 const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
-/** Slot index of a timestamp in the dating week (the slop world's slots: weekday evenings 19:00, weekend 14:00 / 19:00 UTC). */
-function slotOf(t: number): number | undefined {
-  const d = new Date(t);
-  const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
-  const eve = d.getUTCHours() >= 17;
-  if (dow <= 4) return eve ? dow : undefined;
-  return dow === 5 ? (eve ? 6 : 5) : (eve ? 8 : 7);
-}
-
 function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, History> {
   const out = new Map<MemberId, History>();
   const h = (id: MemberId) => { let x = out.get(id); if (!x) { x = emptyHistory(); out.set(id, x); } return x; };
   const now = input.now;
   const firstEncounter = new Map<string, number>();
+  const attendance = new Map<string, { completed?: InteractionRecord; absent: Set<MemberId> }>();
   for (const r of input.interactions ?? []) {
     if (r.at > now) continue;
     if (r.participants.length === 2 && slopRecordedBlockContext(r.outcome)) {
@@ -255,18 +264,50 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     if (r.outcome === "declined") for (const id of r.declinedBy ?? []) h(C(id)).no++;
     if (r.outcome === "cancelled") for (const id of r.declinedBy ?? []) h(C(id)).backouts++;
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
-    if (r.outcome === "completed") for (const id of r.participants) {
-      const x = h(C(id)); x.dates++;
-      const s = slotOf(r.at);
-      if (s !== undefined) x.attendedSlots.push(s);
+    if (r.outcome !== "completed" && r.outcome !== "no_show") continue;
+
+    // Restored network rows have a saved opportunity ID. Standalone records use their own ID.
+    const opportunityId = r.opportunityId ?? r.id;
+    const known = attendance.get(opportunityId) ?? { absent: new Set<MemberId>() };
+    attendance.set(opportunityId, known);
+    if (r.outcome === "completed") {
+      const previous = known.completed;
+      if (!previous || (previous.bookedMeeting == null && r.bookedMeeting != null)
+        || ((previous.bookedMeeting != null) === (r.bookedMeeting != null) && r.at < previous.at)) known.completed = r;
+    } else {
+      const roster = new Set(r.participants.map(C));
+      for (const id of r.noShowBy ?? []) {
+        const member = C(id);
+        if (slopNoShowCounts(true, roster.has(member))) known.absent.add(member);
+      }
     }
-    if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
   }
+
   const negFrom = new Map<MemberId, Set<MemberId>>();
-  const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
-  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.participants) {
-    const k = C(id), cur = lastDate.get(k);
-    if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
+  const lastDate = new Map<MemberId, { opportunityId: string; at: number; participants: MemberId[]; liked?: boolean }>();
+  for (const { completed, absent } of attendance.values()) {
+    for (const id of absent) h(id).noShows++;
+    if (!completed) continue;
+
+    // Pacing accepts the feedback reference on older direct engine inputs that lack a saved opportunity.
+    const marker = completed.id.lastIndexOf(":fb:");
+    const opportunityId = completed.opportunityId ?? (marker < 0 ? completed.id : completed.id.slice(0, marker));
+    // Older direct engine inputs, including the dating world's UTC calendar, store the meeting start in at.
+    const booked = completed.bookedMeeting;
+    const parts = booked === null ? undefined : localParts(booked?.at ?? completed.at, booked?.timeZone ?? "UTC");
+    const slot = parts ? completedMeetingSlot(parts.weekday, parts.hour) : -1;
+    const at = completedDatePacingAt(booked != null, booked?.at ?? 0, completed.at);
+    const participants = [...new Set(completed.participants.map(C))];
+    for (const id of participants) {
+      if (!slopCompletedDateCounts(true, absent.has(id))) continue;
+      const history = h(id);
+      history.dates++;
+      if (slot >= 0) history.attendedSlots.push(slot);
+      const cur = lastDate.get(id);
+      if (!cur || at > cur.at || (at === cur.at && opportunityId < cur.opportunityId)) {
+        lastDate.set(id, { opportunityId, at, participants });
+      }
+    }
   }
   // Order-independent: feedback in (time, id) order, so "the last word on the last date" is stable under shuffles.
   const fbs = [...(input.feedback ?? [])].sort((x, y) => (x.at - y.at) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
@@ -277,7 +318,10 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     h(from).rated.push({ about, v });
     if (f.sentiment === "negative") { const set = negFrom.get(about) ?? new Set(); set.add(from); negFrom.set(about, set); }
     const ld = lastDate.get(from);
-    if (ld && f.at >= ld.at) ld.liked = f.wouldMeetAgain === true;
+    if (ld && completedDateFeedbackMatches(f.at, ld.at, f.opportunityId !== undefined, f.opportunityId === ld.opportunityId,
+      from !== about && ld.participants.includes(about))) {
+      ld.liked = f.wouldMeetAgain === true;
+    }
   }
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;
   for (const [id, d] of lastDate) { const y = h(id); y.lastDateAt = d.at; y.lastDateLiked = d.liked; }

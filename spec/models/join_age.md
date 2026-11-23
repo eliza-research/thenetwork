@@ -8,7 +8,11 @@ A person needs to join by text or web and have their lowest stated age apply acr
 
 Check membership creation, the age floor, under-13 erasure, and single-player access for minors. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and the signed turn journey cover the prepared Peon signup format.
+The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and signed turn journeys cover both the prepared Peon signup format and bare answers to a pending enrollment question.
+
+The [near-birthday rule](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) supplies the parser's age estimate. This model uses 17 as the minor representative for a near eighteenth birthday, and retains the same adult and minimum-age boundaries.
+
+The [fractional age and conjunction rule](../memberAge.md#a-half-age-needs-age-wording-to-confirm-an-under-13-refusal) supplies the current age and its explicit flag. The model takes these fields as input. A signed-turn regression checks how the readers produce the fields.
 
 Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -31,7 +35,7 @@ Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) fo
 // presence check are oracles: a message carries their output as nondeterministic fields.
 //
 // Scope and abstractions: one phone, one person, three apps (ntwrk, slop, friends). Ages abstract to
-// {12, 15, 25} on the text path and {0, 12, 15, 25} on the web path (S:262 refuses 0 in text; A:87 accepts
+// {12, 15, 17, 25} on the text path and {0, 12, 15, 25} on the web path (S:262 refuses 0 in text; A:87 accepts
 // it on the web). Join modes are the production values (AGENTS.md 2026-10-09: ntwrk invite-only on the web,
 // slop and friends open). Every text turn is a signed gateway turn (AGENTS.md decision 2). One turn runs at
 // a time: text and web joins share the `join:<phone>` lock (S:1140, A:348), and the member path runs alone
@@ -44,7 +48,7 @@ module join_age {
   pure val OTHER_APPS = Set("slop", "friends")
   // A membership that is a live member (not invited, not removed): the code's own filter (S:1442, A:357).
   pure val LIVE = Set("onboarding", "active", "paused")
-  pure val TEXT_AGES = Set(NONE, 12, 15, 25)
+  pure val TEXT_AGES = Set(NONE, 12, 15, 17, 25)
   pure val WEB_AGES = Set(0, 12, 15, 25)
   pure val MAX_CRASHES = 1
   pure val MAX_FAILS = 1
@@ -1110,6 +1114,15 @@ module join_age {
       .expect(g.last.outcome == "declined" and not(db.pendJoin.has) and db.mstate.get("friends") == "removed"
         and not(g.declineOpen) and under13StoresNothingStrict and safety)
 
+  // A loose fractional age restricts matching without erasing the membership.
+  // Age wording confirms the same age and permits refusal.
+  run fractionalAgeRequiresExplicitWordingTest =
+    init.then(webJoinOk("friends", 17))
+      .then(receive(M_AM12.with("explicit", false), "friends")).then(unitStep).then(flushStep).then(doneStep(true))
+      .expect(db.floor == 13 and db.mstate.get("friends") == "active" and not(matchable(db, "friends")) and safety)
+      .then(receive(M_AM12, "friends")).then(unitStep).then(flushStep).then(flushForgetStep).then(doneStep(true))
+      .expect(db.floor == 12 and db.mstate.get("friends") == "removed" and under13StoresNothingStrict and safety)
+
   // Q-join_age-4: the saved age survives the crash and the next recovery finishes both apps.
   run q4DeclineStepFailsTest =
     init.then(webJoinOk("friends", 15)).then(webJoinOk("slop", 15))
@@ -1127,6 +1140,12 @@ module join_age {
       .then(receive(M_SAM25, "ntwrk")).then(noticeStep).then(joinStep).then(personStep).then(ageStep)
       .then(memberStep).then(createStep).then(welcomeStep).then(afterStep).then(lfPendStep).then(doneStep(true))
       .expect(db.mstate.get("ntwrk") == "active" and safety)
+
+  run nextEighteenthBirthdayKeepsMinorFloorTest =
+    init.then(joinNtwrkByText(M_SAM15.with("age", 17).with("explicit", false)))
+      .expect(db.floor == 17 and db.net.get("ntwrk").minor)
+      .then(receive(M_SAM25, "ntwrk")).then(lfCloseStep).then(unitStep).then(flushStep).then(doneStep(true))
+      .expect(db.floor == 17 and APPS.forall(a => not(matchable(db, a))) and safety)
 
   // A 15-year-old joins by text: single-player, matchable nowhere, the minor looking-for question.
   run minorJoinTest =

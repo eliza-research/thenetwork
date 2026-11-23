@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { accessSync, constants } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { basename, delimiter, extname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { nodeReadable } from "./streams.ts";
@@ -49,9 +49,11 @@ export function spawnProcessSync(argv: readonly string[], options: Omit<Options,
 }
 
 export function findExecutable(name: string): string | null {
-  const paths = isAbsolute(name) || name.includes("/") ? [name]
-    : (process.env.PATH ?? "").split(delimiter).map(part => join(part, name));
-  for (const candidate of paths) {
+  const paths = basename(name) === name
+    ? (process.env.PATH ?? "").split(delimiter).map(part => join(part, name)) : [name];
+  const candidates = process.platform === "win32" && !extname(name)
+    ? paths.flatMap(path => [path, `${path}.exe`]) : paths;
+  for (const candidate of candidates) {
     try { accessSync(candidate, constants.X_OK); return candidate; } catch { /* Try the next path. */ }
   }
   return null;

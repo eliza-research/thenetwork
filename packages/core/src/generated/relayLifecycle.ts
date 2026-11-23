@@ -75,6 +75,12 @@ export function canReviewHold(relay: RelayLifecycle): boolean {
 
 /** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
 //@ pure
+export function staffMayReleaseHeldText(verdict: RelayVerdict, isText: boolean, senderHeld: boolean, recipientHeld: boolean): boolean {
+  return verdict === "Hold" && isText && !(senderHeld || recipientHeld);
+}
+
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
+//@ pure
 export function reviewHold(relay: RelayLifecycle, released: boolean): RelayLifecycle {
   //@ ensures (inv(relay) && canReviewHold(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
   //@ ensures (inv(relay) && canReviewHold(relay)) ==> stepReviewRemainsRecorded(relay, \result)
@@ -97,6 +103,13 @@ export function sometimesReviewReleases(relay: RelayLifecycle): boolean {
 //@ pure
 export function sometimesReviewRejects(relay: RelayLifecycle): boolean {
   return relay.phase === "Rejected";
+}
+
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
+//@ pure
+export function lawStaffTextReleaseRequiresBothPartiesClear(verdict: RelayVerdict, isText: boolean, senderHeld: boolean, recipientHeld: boolean): boolean {
+  //@ ensures \result === true
+  return !staffMayReleaseHeldText(verdict, isText, senderHeld, recipientHeld) || !(senderHeld || recipientHeld);
 }
 
 /** Do the rules allow this event in this state? */

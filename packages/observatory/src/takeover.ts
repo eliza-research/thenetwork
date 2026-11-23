@@ -4,12 +4,12 @@
 import { MINUTE, type MemberId } from "@thenetwork/core";
 import { decide, type AgentReply, type PersonaAgent, type PersonaContext, type SimMessage } from "@thenetwork/sim";
 // The Network's own reader (refusal first): the simulator's parseYesNo read "absolutely not" as yes.
-import { parseYesNo } from "@thenetwork/network";
+import { bookedTextDeclines, explicitBookingCancellation, parseYesNo, sentencesOf } from "@thenetwork/network";
+import { playerBookingConfirmationAllowed } from "../../core/src/generated/opportunityLifecycle.ts";
 import type { PlayerPrompt } from "./types.ts";
 
 interface Pending { prompt: PlayerPrompt; ctx: PersonaContext; msg: SimMessage; resolve: (r: AgentReply) => void }
 
-const CANT_MAKE_IT = /can'?t make it|have to bail|can'?t come|cancel/i;
 const NO_REPLY_NEEDED = new Set(["info", "confirmation", "cancellation", "system", "concierge"]);
 
 export class TakeoverAgent implements PersonaAgent {
@@ -62,19 +62,38 @@ export class TakeoverAgent implements PersonaAgent {
     const mem = ctx.memory;
     const pid = msg.meta?.proposalId ?? d.proposalId;
     const base: AgentReply = { ...d, action: "reply", text, delayMs: 2 * MINUTE, proposalId: pid };
-    if (CANT_MAKE_IT.test(text)) {
-      const upcoming = Object.entries(mem.proposals).find(([, pr]) => pr.decision !== "decline" && pr.at && pr.at > ctx.now)?.[0] ?? pid;
+    const answer = parseYesNo(text);
+    const booked = msg.meta?.booked;
+    const cancellationRequests = sentencesOf(text).flatMap(({ text: clause }) => {
+      const sentence = clause.replace(/;\s*$/, "");
+      const comma = sentence.indexOf(",");
+      const attendanceAnswer = comma >= 0 && parseYesNo(sentence.slice(0, comma)) === "yes";
+      const request = explicitBookingCancellation(sentence)
+        ?? (attendanceAnswer ? explicitBookingCancellation(sentence.slice(comma + 1)) : undefined);
+      return request ? [request] : [];
+    });
+    const namesBooking = cancellationRequests.some(request => request.localStart || request.day || request.needsExactStart);
+    const cancels = cancellationRequests.length > 0;
+    if ((booked || cancels) && !namesBooking && bookedTextDeclines(text, cancels || answer === "no")) {
+      const upcoming = booked?.proposalId
+        ?? Object.entries(mem.proposals).find(([, pr]) => pr.decision !== "decline" && pr.at && pr.at > ctx.now)?.[0] ?? pid;
       if (upcoming && mem.proposals[upcoming]) mem.proposals[upcoming]!.plannedShow = false;
       return { ...base, intent: "flake_notice", decision: "none", proposalId: upcoming };
     }
-    if (d.messageType === "proposal" && pid) {
-      const yn = parseYesNo(text);
-      if (yn !== "unclear") {
-        const decision = yn === "no" ? "decline" : yn === "counter" ? "counter" : "accept";
-        const pr = mem.proposals[pid] ?? { decision, plannedShow: false, enjoyment: 0, others: d.participants?.filter(x => x !== ctx.persona.id) ?? [] };
-        mem.proposals[pid] = { ...pr, decision, plannedShow: decision !== "decline" };
-        return { ...base, intent: decision, decision };
+    if (booked && playerBookingConfirmationAllowed(booked.proposalId === msg.meta?.proposalId, booked.at, ctx.now,
+      cancels, answer === "yes")) {
+      const plan = mem.proposals[booked.proposalId];
+      if (plan) {
+        plan.decision = "accept";
+        plan.plannedShow = true;
       }
+      return { ...base, intent: "accept", decision: "accept", proposalId: booked.proposalId };
+    }
+    if (!booked && d.messageType === "proposal" && pid && answer !== "unclear") {
+      const decision = answer === "no" ? "decline" : answer === "counter" ? "counter" : "accept";
+      const pr = mem.proposals[pid] ?? { decision, plannedShow: false, enjoyment: 0, others: d.participants?.filter(x => x !== ctx.persona.id) ?? [] };
+      mem.proposals[pid] = { ...pr, decision, plannedShow: decision !== "decline" };
+      return { ...base, intent: decision, decision };
     }
     if (d.messageType === "onboarding" || d.messageType === "question") { mem.questionsAnswered++; return { ...base, intent: "answer_question" }; }
     if (d.messageType === "feedback_request") return { ...base, intent: "feedback" };

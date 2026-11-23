@@ -162,3 +162,16 @@
 {"text":"Within 50 miles, I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC. My distance limit is 50 miles.","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"]}}}
+{"text":"29F seeking M 30-40","expect":{"gender":"woman","seeks":["man"],"ageRange":[30,40]}}
+{"text":"32M seeking F 28-35","expect":{"gender":"man","seeks":["woman"],"ageRange":[28,35]}}
+{"text":"looking for F 28","expect":{"gender":null,"seeks":["woman"]}}
+{"text":"one hundred miles is my limit","expect":{"distance":{"mode":"radius","miles":100}}}
+{"text":"a hundred miles works for me","expect":{"distance":{"mode":"radius","miles":100}}}
+{"text":"two miles","asked":"distance","expect":{"distance":{"mode":"radius","miles":2}}}
+{"text":"id go up to twenty-five miles for a date","expect":{"distance":{"mode":"radius","miles":25}}}
+{"text":"up to one hundred kilometers","asked":"distance","expect":{"distance":{"mode":"radius","miles":62}}}
+{"text":"I ran one hundred miles this month","expect":{"distance":null}}
+{"text":"within 0.9 miles","expect":{"distance":null}}
+{"text":"within one mile","expect":{"distance":{"mode":"radius","miles":1}}}
+{"text":"within 200 miles","expect":{"distance":{"mode":"radius","miles":200}}}
+{"text":"within 200.1 miles","expect":{"distance":null}}

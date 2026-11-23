@@ -28,7 +28,6 @@ export type ConsentViewProps = Omit<AuthShellProps, "title" | "chrome" | "childr
 
 /**
  * The consent page of a connector: the assistant's name as its own claim, the return host, what it can do, "Allow" and "Don't allow".
- * When the server offers signup (no person in this app yet), "Finish signup" comes first as the main action.
  * @model spec/authorizationPages.md
  */
 export function ConsentView({ view = "ConsentView", rid, clientName, redirectHost, scopes, canSignup = false, signupSaved = false, signupApproval, ...props }: ConsentViewProps) {

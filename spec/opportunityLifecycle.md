@@ -88,7 +88,7 @@ pure def lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, ac
 
 ### An explicit cancellation selects the named upcoming meeting
 
-Read the member's own explicit cancellation in the current app. A request with an exact date and time in New York local time selects that start before interpreting a reply to another booking or probe. Keep that other reply slot open. Consider only accepted bookings on the member's current roster with a known start later than now. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. A cancellation without a date keeps the normal routing for an active booked reply slot and for a probe answer.
+Read the member's own explicit cancellation in the current app. A request or direct attendance refusal with an exact date and time in New York local time selects that start before interpreting a reply to another booking or probe. A direct date-only cancellation can select a unique booking on the named local day. Read “today,” “tonight,” “tomorrow,” or a bare weekday from the signed receive date. When a natural-language activity name does not bind an exact start, ask for the full start before changing any booking. Keep that other reply slot open. Consider only accepted bookings on the member's current roster with a known start later than now. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. A cancellation without a date keeps the normal routing for an active booked reply slot and for a probe answer.
 
 ```quint
 type UnlinkedCancellation = NoCancellation | NoMatchingBooking | AskWhichBooking | CancelMatchingBooking
@@ -115,6 +115,49 @@ pure def lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRos
   startAt <= now implies not(upcomingCancellationEligible(proposal, onRoster, accepted, startKnown, startAt, now))
 ```
 
+### A number-swap refusal does not decline the booked meeting
+
+A statement that says the booking need not be cancelled preserves it. A conditional attendance statement cannot cancel on its own. Withdrawing a number swap changes number-sharing consent. Keep the booking unless the text separately and directly declines attendance. A separate affirmative booking answer can still confirm the plan. The text reader distinguishes that answer or refusal from the transfer clause before the booked reply uses it.
+
+```quint
+pure def bookedReplyDeclines(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool, keepsBooking: bool): bool =
+  not(keepsBooking) and (if (swapWithdrawal) directAttendanceDecline else ordinaryDecline)
+
+pure def lawSwapWithdrawalAloneDoesNotCancel(ordinaryDecline: bool): bool =
+  not(bookedReplyDeclines(ordinaryDecline, true, false, false))
+
+pure def lawKeepingTheBookingVetoesABookedDecline(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool): bool =
+  not(bookedReplyDeclines(ordinaryDecline, swapWithdrawal, directAttendanceDecline, true))
+```
+
+### A player can confirm the future booking in the prompt
+
+In the staff simulation, a clear yes sets the player's plan to attend the
+booking named in the current prompt. This applies before that booking starts.
+A cancellation request or a request that names a booking cannot confirm by
+the same reply. A mixed or unclear answer supplies no confirmation.
+An attendance commitment leaves the world's cancellation and attendance checks in force.
+
+```quint
+pure def playerBookingConfirmationAllowed(exactPromptBooking: bool, startAt: int, receivedAt: int,
+    cancellationRequest: bool, directYes: bool): bool =
+  exactPromptBooking and startAt > receivedAt and not(cancellationRequest) and directYes
+
+pure def lawPlayerCannotConfirmAStartedBooking(exactPromptBooking: bool, startAt: int, receivedAt: int,
+    cancellationRequest: bool, directYes: bool): bool =
+  startAt <= receivedAt implies
+    not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, directYes))
+
+pure def lawPlayerCanConfirmOnlyThePromptBooking(startAt: int, receivedAt: int, cancellationRequest: bool, directYes: bool): bool =
+  not(playerBookingConfirmationAllowed(false, startAt, receivedAt, cancellationRequest, directYes))
+
+pure def lawCancellationRequestCannotConfirmPlayerAttendance(exactPromptBooking: bool, startAt: int, receivedAt: int, directYes: bool): bool =
+  not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, true, directYes))
+
+pure def lawPlayerAttendanceConfirmationNeedsAClearYes(exactPromptBooking: bool, startAt: int, receivedAt: int, cancellationRequest: bool): bool =
+  not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, false))
+```
+
 ### A new minor signal closes an unbooked opportunity involving that person
 
 Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster. A booked opportunity also closes when the minor received a probe for it and was replaced before the booking: a minor who was asked stays on its roster, so a reminder or feedback request about it describes them. Decision 2026-11-17 (NYC world, seed 3): a member who stated 20 declined a probe, was replaced, and was found to be 16 the next day; the two adults then got 4 messages about the booked plan.
@@ -130,6 +173,18 @@ pure def lawAskedMinorClosesABookedOpportunity(proposal: OpportunityLifecycle): 
 
 pure def lawMinorContactClosesAnUnbookedOpportunity(proposal: OpportunityLifecycle): bool =
   (proposal.phase == InReview or proposal.phase == Probing) implies closesForMinor(proposal, true, false, false, true)
+```
+
+### A block closes an open opportunity for the active pair
+
+A block closes an open opportunity that still includes both people. Before booking, both must be on the current proposal roster. After booking, both must still accept the booking. A block from another app closes the affected opportunity when the runtime reads the block, before it sends reminders or records completion. A booked cancellation uses the existing neutral notice.
+
+```quint
+pure def closesForBlock(proposal: OpportunityLifecycle, activeBlockedPair: bool): bool =
+  canClose(proposal) and activeBlockedPair
+
+pure def lawBlockClosesOnlyAnActivePair(proposal: OpportunityLifecycle, activeBlockedPair: bool): bool =
+  closesForBlock(proposal, activeBlockedPair) implies (canClose(proposal) and activeBlockedPair)
 ```
 
 ### A scheduled opportunity is done when feedback becomes due

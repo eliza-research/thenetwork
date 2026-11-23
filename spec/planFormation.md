@@ -180,17 +180,25 @@ pure def planStandingWindowCoversSlot(windowStart: int, windowEnd: int, slotStar
 ### The member's latest weekly answer takes precedence
 
 Record this week's windows from the member's own text answer to their weekly
-check-in. A clear answer that the whole week is busy records an empty week.
+check-in. Remove named exclusions from a group of days before storing the
+windows. For example, “weekday evenings, excluding Friday” leaves four evenings. A clear answer that the whole week is busy records an empty week.
 An unclear answer leaves the earlier record in place. A recorded answer applies
-for seven days. When that period includes the activity's start, a stated window
-must contain the whole activity. Standing or learned availability cannot make
-an excluded activity eligible. Formation, rescheduling, and dispatch use the
-same rule for this record.
+for seven days. A stated weekday and part of day refers to its first remaining
+local occurrence before that period ends. When that period includes the
+activity's start, a stated window must contain the whole activity. Standing or
+learned availability cannot make an excluded activity eligible. Formation,
+rescheduling, and dispatch use the same rule for this record.
 
 ```quint
 type WeeklyCheckinEvidence = KeepEarlier | RecordWindows | RecordUnavailable
 
 pure val weeklyCheckinEvidenceMs: int = 604800000
+
+pure def weeklyWindowCandidate(end: int, start: int, now: int, until: int): bool =
+  end > now and start < until
+
+pure def lawExpiredWeeklyWindowCannotEnterEvidence(start: int, now: int, until: int): bool =
+  not(weeklyWindowCandidate(now, start, now, until))
 
 pure def weeklyCheckinEvidence(directAnswer: bool, hasWindows: bool, wholeWeekBusy: bool): WeeklyCheckinEvidence =
   if (not(directAnswer)) KeepEarlier

@@ -239,7 +239,12 @@ export function fill(text: string, env: Record<string, string | undefined> = pro
     .replaceAll("{{TEXT_LINE}}", cfg.TEXT_LINE)
     .replaceAll("{{TURNSTILE_SITE_KEY}}", key);
   const hubMcp = mcpUrlFor("ntwrk.party", env);
-  if (hubMcp !== PRODUCTION_HUB_MCP) filled = filled.replace(/https:\/\/ntwrk\.party\/mcp(?=[/\s"'`<>?#)]|$)/g, hubMcp);
+  if (hubMcp !== PRODUCTION_HUB_MCP) {
+    const hubBase = hubMcp.endsWith("/mcp") ? hubMcp.slice(0, -"/mcp".length) : new URL(hubMcp).origin;
+    filled = filled
+      .replace(/https:\/\/ntwrk\.party\/mcp(?=[/\s"'`<>?#)]|$)/g, hubMcp)
+      .replace(/https:\/\/ntwrk\.party\/oauth(?=[/\s"'`<>?#)]|$)/g, `${hubBase}/oauth`);
+  }
   const staging = stagingSiteOrigins(env);
   if (Object.keys(staging).length) {
     // Rewrite exact app URL authorities only, including the encoded URLs inside agent prompts.

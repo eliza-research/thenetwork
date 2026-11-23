@@ -82,6 +82,8 @@ pure val membersValues = Set(List("one", "two"), List("two", "three"), List("thr
 
 Use the exact settled Friends plan and its private replies. A seat needs a timely reply to its own delivered feedback prompt, confirmed attendance in that reply, and an explicit yes to the same activity again. Record the reply's schedule revision. Settlement marks the seat only if it verifies receipt of the booking for that same revision and confirms attendance. A staged booking, an older revision, and older state with no such mark do not authorize a repeat. A reply reporting an absence cannot supply repeat consent. A later decline of that crew offer removes the seat. Defer to a pending crew offer or an existing crew for the table. Use each original plan for at most one new repeat and keep the same group of three to six consenting attendees. Recheck the shared activity, public venue, full window, current availability, and the current fit of every seat before review and again at approval. Rotate the host in stable member order. Every member needs to accept the new plan separately.
 
+The general simulator uses the same repeat-feedback parser as the Network. It projects a repeat-interest edge only when that parser gives a yes from a recorded attendee.
+
 ```quint
 pure def friendsRepeatSourceAllowed(completed: bool, settlementComplete: bool, crewActive: bool, alreadyOffered: bool): bool =
   completed and settlementComplete and not(crewActive or alreadyOffered)
@@ -132,6 +134,29 @@ pure val invitedValues = Set(List("one", "two"), List("two", "three"))
 pure val alternatesValues = Set(List(), List("three"), List("one"))
 
 pure def sometimesPublishesAPlan(s: FriendsRun): bool = s.phase == WeekComplete and not(newPlanAlternateCanRemain(s, "one"))
+```
+
+### A standby has no initial invitation and holds one bench place
+
+At publication, collect initial invitees from crew sessions, crew offers,
+repeats, new plans, and activity partner plans. An open table contacts its
+extra candidates with its initial invitees. Keep those invitations. For repeat
+benches and closed-table benches, keep a standby only if the member has no
+initial invitation or earlier standby place. Check repeat benches first, then
+closed-table benches, in planning order. The activity partner allowance stays
+separate from initial group invitations.
+
+```quint
+pure def friendStandbyCanRemain(hasInitialInvitation: bool, hasStandbyPlace: bool): bool =
+  not(hasInitialInvitation or hasStandbyPlace)
+
+pure def lawFriendStandbyHasNoOtherSeat(hasInitialInvitation: bool, hasStandbyPlace: bool): bool =
+  friendStandbyCanRemain(hasInitialInvitation, hasStandbyPlace) implies
+  not(hasInitialInvitation) and not(hasStandbyPlace)
+
+pure def lawFriendUnassignedStandbyCanRemain(hasInitialInvitation: bool, hasStandbyPlace: bool): bool =
+  (not(hasInitialInvitation) and not(hasStandbyPlace)) implies
+  friendStandbyCanRemain(hasInitialInvitation, hasStandbyPlace)
 ```
 
 ### An unsuccessful starting member leaves the rest of the table candidates available

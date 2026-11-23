@@ -13,6 +13,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import { slopOnboarding } from "../service/packs.ts";
 import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
@@ -72,6 +73,202 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
   expect(row.sender).toBeNull();expect(row.event).toBeNull();expect(row.type).toBe("object");expect(row.replies.length).toBe(1);
   expect(escaped).toBe(0);
 },60_000);
+
+test("signed answers to the enrollment question require a positive app choice", async () => {
+  // spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
+  const cases = [
+    { text: "I'm not interested at all", apps: [] },
+    { text: "Friends, that's all", apps: ["friends"] },
+    { text: "Not everything", apps: [] },
+    { text: "All apps except dating", apps: [] },
+    { text: "All three, please", apps: ["friends", "slop"] }, // The fixture runs both child apps.
+  ];
+  const actual = [];
+  for (const [i, { text, apps }] of cases.entries()) {
+    const phone = `+1212555019${i}`;
+    const send = async (step: string, input: string) => {
+      clock.advance(MINUTE);
+      expect((await post(turn(`looking-for-${i}-${step}`, phone, input))).status).toBe(200);
+    };
+    const pending = () => service.people.getPending(service.accounts.phoneHash(phone), "looking_for");
+    await send("hello", "Hello!");
+    await send("join", "Ria, 30");
+    expect(await pending()).toMatchObject({ app: "ntwrk" });
+    await send("answer", text);
+    const person = await service.accounts.personFor(phone);
+    const memberships = (await service.people.memberships(person!.id)).map(membership => membership.app).filter(app => app !== "ntwrk").sort();
+    const consent = await sql`select app_id from platform.consent_events where e164 = ${phone} and source = 'looking_for' order by app_id`;
+    actual.push({ text, memberships, consent: consent.map(row => row.app_id), pending: !!await pending() });
+  }
+  expect(actual).toEqual(cases.map(({ text, apps }) => ({
+    text, memberships: apps, consent: apps, pending: apps.length === 0,
+  })));
+}, 60_000);
+
+// spec/memberAge.md, "Commit a stated age before projecting it across apps"
+test("a sports score or height leaves a verified adult's age intact across signed app turns", async () => {
+  const phone = "+12125550198";
+  for (const app of [APPS.friends, APPS.slop]) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+  }
+  const person = (await service.accounts.personFor(phone))!;
+  const controls = ["I am 3 and I am undefeated.", "I am 3 and my record is 3-1.", "I'm 5 and also my team won.", "I'm 5.5"];
+  for (const [i, text] of controls.entries()) {
+    expect((await post(turn(`ambiguous-number-keeps-adult-${i}`, phone, text, "friends"))).status).toBe(200);
+    expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  }
+  const age = turn("sports-real-age", phone, "I am 17 years old and my team won.", "friends");
+  expect((await post(age)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(17);
+
+  const fractionalBirthday = turn("fractional-birthday-adult-hold", phone, "I just turned 7.5.", "friends");
+  expect((await post(fractionalBirthday)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(13);
+  expect((await service.people.memberships(person.id)).map(member => member.state)).toEqual(["active", "active"]);
+
+  const birthday = turn("sports-birthday-age", phone, "I just turned 12 and I am undefeated.", "friends");
+  expect((await post(birthday)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(13);
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("a signed quoted youth cue does not restrict the adult sender", async () => {
+  const app = APPS.friends;
+  const phone = "+12125550179";
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Age fixture signup failed: ${joined.error}`);
+  const rt = service.runtimeFor(app.id)!;
+  const ageState = async () => {
+    const member = (await rt.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+    return { floor: await service.accounts.lowestAge(phone, person), minor: member?.minor, signal: member?.minorSignal };
+  };
+  for (const [i, text] of [
+    "She said “I’m underage.”",
+    'He said "She said ‘I’m in seventh grade.’"',
+    "I overheard a conversation: she is 15.",
+    'Can we adapt what she said: "after school tomorrow"?',
+    "She said 'I’m underage.'",
+    'I heard her say, "I’m underage."',
+    'Can you check the dialogue: "I’m underage."',
+    'The character whispered, "I’m underage."',
+    'The copy reads, "After school tomorrow."',
+    'I told her "Mara said ‘I’m underage.’"',
+    'I said “I’m 17.”',
+    'Yesterday she told me “I’m underage.”',
+    'Yesterday I told her she said “I’m underage.”',
+    'Yesterday I read a draft: “I’m underage.”',
+  ].entries()) {
+    clock.advance(MINUTE);
+    expect((await post(turn(`quoted-youth-${i}`, phone, text, app.id))).status).toBe(200);
+    expect(await ageState(), text).toEqual({ floor: 29, minor: false, signal: false });
+  }
+  clock.advance(MINUTE);
+  expect((await post(turn("own-quoted-youth-cue", phone, 'Yesterday I told her “I’m underage.”', app.id))).status).toBe(200);
+  expect(await ageState()).toEqual({ floor: 29, minor: true, signal: true });
+  clock.advance(MINUTE);
+  expect((await post(turn("own-youth-cue", phone, "I'm underage.", app.id))).status).toBe(200);
+  expect(await ageState()).toEqual({ floor: 17, minor: true, signal: true });
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("a signed unfinished draft does not set the adult sender's exact age", async () => {
+  const phone = "+12125550176";
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Age fixture signup failed: ${joined.error}`);
+  clock.advance(MINUTE);
+  expect((await post(turn("unclosed-quoted-draft-age", phone, 'Can you proofread this draft: "Hello. Age: 15', app.id))).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  const member = (await service.runtimeFor(app.id)!.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+  expect(member).toMatchObject({ minor: false, minorSignal: false, age: 29 });
+}, 60_000);
+
+// spec/memberAge.md, "Quoted age evidence does not change the sender"
+test("fresh Slop onboarding preserves the member's age and matching tags across a quoted age", () => {
+  const now = clock.now();
+  const fresh = slopOnboarding.read(undefined, "I'm a woman looking for men.", [], { now, age: 29 });
+  expect(fresh.state).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
+  expect(fresh.tags.some(tag => tag.tag.startsWith("romance:"))).toBe(true);
+
+  for (const text of [
+    'She said "Hello. Age: 12."',
+    'Can you proofread this draft: "Hello. Age: 15',
+    'The character whispered, "I’m in 7th grade."',
+    'Can you check the dialogue: "I’m underage."',
+    'One example: "I’m in middle school.',
+    'I told her "Mara said ‘I’m underage.’"',
+    'I said “I’m 17.”',
+    'Yesterday she told me “I’m underage.”',
+    'Yesterday I told her “I’m 17.”',
+    'Yesterday I read a draft: “I’m underage.”',
+    'She said "For a meme: ‘I’m underage.’"',
+    'Translate this: “I’m underage.”',
+    'Caption for the photo: "Hello. Age: 15',
+    '“I’m in seventh grade.”',
+    "He said 'my parents' place is too far. I'm 12 years old.'",
+    'He said ‘my parents’ place is too far. I’m 12 years old.’',
+    "She said 'cause I'm underage'",
+  ]) {
+    const quoted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
+    expect(quoted.state, text).toMatchObject({ age: { value: 29 }, minor: false, declined: false });
+    expect(quoted.tags, text).toEqual(fresh.tags);
+  }
+
+  for (const text of [
+    'Yesterday, I told her “I’m underage.”',
+    'I’ve literally said “I’m underage.”',
+    'Yesterday I told her “I’m in 7th grade.”',
+    "I replied late 'cause I'm underage.",
+    'I replied late ’cause I’m underage.',
+    'I replied late, ’cause I’m underage.',
+    "She said 'we are friends' and I'm underage.",
+  ]) {
+    const restricted = slopOnboarding.read(fresh.state, text, [], { now, age: 29 });
+    expect(restricted.state, text).toMatchObject({ age: { value: 29 }, minor: true, declined: false });
+    expect(restricted.tags).toEqual([]);
+  }
+
+  const own = slopOnboarding.read(fresh.state, "I'm in 7th grade.", [], { now, age: 29 });
+  expect(own.state).toMatchObject({ age: { value: 12 }, minor: true, declined: false });
+  expect(own.tags).toEqual([]);
+}, 60_000);
+
+test.each([
+  ["third-party nested quote", "+17185550182", 'She said "For a meme: ‘I’m underage.’"', 29, false],
+  ["translation of quoted dialogue", "+17185550183", 'Translate this: “I’m underage.”', 29, false],
+  ["unfinished caption with an exact age", "+17185550184", 'Caption for the photo: "Hello. Age: 15', 29, false],
+  ["a possessive in reported speech", "+17185550185", "He said 'my parents' place is too far. I'm 12 years old.'", 29, false],
+  ["a direct disclosure after an elision", "+17185550186", "I replied late 'cause I'm underage.", 17, true],
+  ["a direct disclosure after a closing quote", "+17185550187", "She said 'we are friends' and I'm underage.", 17, true],
+  ["reported speech beginning with an elision", "+17185550188", "She said 'cause I'm underage'", 29, false],
+  ["a direct disclosure after a comma and elision", "+17185550189", "I replied late, ’cause I’m underage.", 17, true],
+])("a signed review attributes age evidence for %s", async (scenario, phone, text, floor, minor) => {
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(joined.error);
+  clock.advance(MINUTE);
+  expect((await post(turn(scenario, phone, text, app.id))).status).toBe(200);
+  const stored = (await service.runtimeFor(app.id)!.pg.load())?.members.find(row => row.id === joined.membership.memberId);
+  const state = { floor: await service.accounts.lowestAge(phone, person), minor: stored?.minor, signal: stored?.minorSignal };
+  expect(state, text).toEqual({ floor, minor, signal: minor });
+}, 60_000);
 
 // spec/travelPresence.md, "Tell the Network my travel dates"
 test("signed travel stores one coarse trip in the routed app and never guesses missing dates", async () => {
@@ -257,7 +454,8 @@ test("signed solo concierge offers current public listings without recruiting an
       allAges, event("111", "Public art tour", "Arts"), event("112", "Garden history tour", "History"), event("113", "Public chess group", "Chess"),
       event("114", "Evening music 21+", "Music | All ages"), event("115", "Early garden tour", "Nature | All ages", "09", "10"),
       listing("116", "Weekday walk", "Nature | All ages", "2026-10-12T14:00:00", "2026-10-12T15:00:00"),
-    ]))).toEqual({ published: true, events: 7 });
+      listing("117", "Chelsea garden sketching", "Arts | All ages", "2026-10-10T14:00:00", "2026-10-10T15:00:00", "Chelsea Market", "40.7479,-74.0014"),
+    ]))).toEqual({ published: true, events: 8 });
 
     const before = escaped;
     const request = (id: string, phone: string) => turn(id, phone, "Anything fun this weekend?", "friends");
@@ -279,8 +477,23 @@ test("signed solo concierge offers current public listings without recruiting an
     const teenResponse = await post(request("all-ages-solo-events", teen));
     expect(teenResponse.status).toBe(200);
     const teenAnswer = (await teenResponse.json()).replies[0];
-    expect(teenAnswer.split("\n")).toHaveLength(1);
+    expect(teenAnswer.split("\n")).toHaveLength(2);
     expect(teenAnswer).toContain("Nature sketch walk");
+    const named = turn("area-solo-events", adult, "Anything fun near chelsea market this weekend?", "friends");
+    const namedResponse = await post(named);
+    expect(namedResponse.status).toBe(200);
+    const namedAnswer = await namedResponse.json();
+    expect(namedAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(namedAnswer.replies[0].split("\n")).toHaveLength(1);
+    expect(namedAnswer.replies[0]).toContain("Chelsea garden sketching");
+    expect(await (await post(named)).json()).toEqual(namedAnswer);
+    const clarification = turn("unknown-solo-events", adult, "Find events near Moon Harbor this weekend?", "friends");
+    const unknownResponse = await post(clarification);
+    expect(unknownResponse.status).toBe(200);
+    const unknown = await unknownResponse.json();
+    expect(unknown).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(unknown.replies[0]).toContain("Which NYC neighborhood should I use?");
+    expect(unknown.replies[0]).not.toContain("Moon Harbor");
     expect(await sql`select id from network.requests where app_id='friends'`).toHaveLength(0);
     expect(await sql`select id from network.opportunities where app_id='friends'`).toHaveLength(0);
 
@@ -291,6 +504,9 @@ test("signed solo concierge offers current public listings without recruiting an
     expect(await previous.json()).toEqual({ error: "turn_concierge_changed", retryable: false });
     const empty = await post(request("no-current-solo-events", adult));
     expect((await empty.json()).replies[0]).toContain("couldn't find any current NYC Parks listings");
+    const compound = await post(turn("compound-solo-events", teen, "Anything fun near Chelsea Market but I'm 16.", "friends"));
+    expect(compound.status).toBe(200);
+    expect((await compound.json()).reason).not.toBe("solo_events");
     expect(escaped).toBe(before);
   } finally {
     await server.stop(true);
@@ -438,7 +654,68 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   await server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
 
-test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
+// spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
+test("a bare Friends answer to the pending shared-line question enrolls the current member", async () => {
+  const phone = "+12125550139";
+  const say = async (id: string, text: string) => {
+    clock.advance(MINUTE);
+    const response = await post(turn(id, phone, text));
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  expect(await say("enrollment-route-start", "hello")).toMatchObject({ app: "ntwrk", reason: "onboarding_asked" });
+  expect(await say("enrollment-route-profile", "Ari, 29")).toMatchObject({ app: "ntwrk", reason: "joined" });
+  const pending = () => service.people.getPending(service.accounts.phoneHash(phone), "looking_for");
+  expect(await pending()).toMatchObject({ app: "ntwrk" });
+  expect(await sql`select status, body like 'What are you looking for:%' as disclosed
+    from network.messages where id='ask:in:blooio:enrollment-route-profile'`).toEqual([{ status: "dry_run", disclosed: true }]);
+  expect(await say("enrollment-route-explicit", "join friends")).toMatchObject({ app: "friends", reason: "join_asked" });
+  expect(await pending()).toMatchObject({ app: "ntwrk" });
+  const person = (await service.accounts.personFor(phone))!;
+  expect(await service.people.getMembership(person.id, "friends")).toBeUndefined();
+  const answer = await say("enrollment-route-friends", "friends");
+  expect(await service.people.getMembership(person.id, "friends")).toMatchObject({ state: "active", firstName: "Ari" });
+  expect(answer).toMatchObject({ outcome: "handled", app: "ntwrk", replies: expect.arrayContaining([expect.stringMatching(/friends\.help/i)]) });
+  expect(await pending()).toBeUndefined();
+  expect(await sql`select app_id from platform.consent_events where e164=${phone} and source='looking_for'`)
+    .toEqual([{ app_id: "friends" }]);
+}, 60_000);
+
+// spec/textEnrollment.md, "A pending join routes only a possible join answer"
+test("an expired probe cannot route a signed shared-line reply away from the app that wrote last", async () => {
+  const phone = "+12125550138";
+  const created = await Promise.all([APPS.slop, APPS.friends].map(app => service.accounts.join(
+    app, { e164: phone, personId: null }, {
+      firstName: "Ren", age: 32, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    },
+  )));
+  const [slop, friends] = created;
+  if (!slop.ok || !friends.ok) throw new Error("Could not join both fixture apps");
+  const expired = "shared-route-expired-probe", at = new Date(clock.now() - 3 * DAY), recent = new Date(clock.now() + MINUTE);
+  await sql`insert into network.opportunities (app_id,id,kind,state,city,objective,created_at,updated_at)
+    values ('slop',${expired},'intro','SKIPPED','nyc','A meeting',${at},${at})`;
+  await sql`insert into network.messages (app_id,id,member_id,direction,channel,body,status,opportunity_id,type,ts)
+    values ('slop','shared-route-expired-message',${slop.membership.memberId},'outbound','imessage','Would you like to meet?','dry_run',${expired},'probe',${at}),
+      ('friends','shared-route-recent-message',${friends.membership.memberId},'outbound','imessage','How was your weekend?','dry_run',null,'info',${recent})`;
+  clock.advance(2 * MINUTE);
+  const response = await post(turn("enrollment-route-expired-probe", phone, "Thanks, my weekend was nice"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ app: "friends", memberId: friends.membership.memberId });
+  expect(await sql`select app_id from network.messages where id='in:blooio:enrollment-route-expired-probe'`).toEqual([{ app_id: "friends" }]);
+
+  const current = "shared-route-current-probe", probeAt = new Date(clock.now() - 2 * MINUTE);
+  await sql`insert into network.opportunities (app_id,id,kind,state,city,objective,created_at,updated_at)
+    values ('slop',${current},'intro','PROPOSED','nyc','A meeting',${probeAt},${probeAt})`;
+  await sql`insert into network.messages (app_id,id,member_id,direction,channel,body,status,opportunity_id,type,ts)
+    values ('slop','shared-route-current-message',${slop.membership.memberId},'outbound','imessage','Would you like to meet?','dry_run',${current},'probe',${probeAt})`;
+  clock.advance(MINUTE);
+  const active = await post(turn("enrollment-route-current-probe", phone, "Yes, please"));
+  expect(active.status).toBe(200);
+  expect(await active.json()).toMatchObject({ app: "slop", memberId: slop.membership.memberId });
+}, 60_000);
+
+// spec/notificationAcknowledgement.md, "Count a delivery action only when the store closes a pending delivery"
+test("a signed member open turn records activity once, and STOP revokes replay without rerunning the turn",async()=>{
   const phone="+12125550141", before=escaped;
   const first=await post(turn("friends-join-start",phone,"friends.help","friends"));expect(first.status).toBe(200);
   expect((await first.json() as any).reason).toBe("onboarding_asked");
@@ -448,18 +725,107 @@ test("a normal signed join reaches open context, and STOP revokes replay without
   for (const text of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"]) {
     clock.advance(MINUTE);expect((await post(turn(`friends-onboard-${++n}`,phone,text,"friends"))).status).toBe(200);
   }
+  const personId=(await service.accounts.personFor(phone))!.id;
+  const delivery=async (id:string)=>{
+    await service.notify!.recordSent(
+      {personId,app:"friends",eventType:"requested",subjectId:id,urgency:"requested",summary:"Your update is ready."},
+      {deliveryId:id,channel:"imessage",countsTowardCap:true,sentAt:clock.now()},
+    );
+  };
+  const outcome=async (id:string)=>(await sql`select outcome from notify.deliveries where person_id=${personId} and delivery_id=${id}`)[0]?.outcome;
+  const firstDelivery="net:open-turn-before", nextDelivery="net:open-turn-after", stopDelivery="net:open-turn-stop";
+  await delivery(firstDelivery);
+  const wrongApp=await post(turn("friends-open-other-app",phone,"Tell me something about the weather","slop"));
+  expect(wrongApp.status).toBe(200);
+  expect(await wrongApp.json()).toMatchObject({outcome:"handled",app:"slop",memberId:null});
+  const readProfile=await post(turn("friends-open-profile-read",phone,"show my Friends profile","friends"));
+  expect(readProfile.status).toBe(200);
+  expect(await readProfile.json()).toMatchObject({outcome:"handled",app:"friends"});
+  expect(await service.submitProfile(personId,"friends",phone,"I enjoy hiking and cooking")).toBe("accepted");
+  expect(await outcome(firstDelivery)).toBeNull();
+
   const input=turn("friends-open",phone,"Tell me something about the weather","friends");
   const r=await post(input);expect(r.status).toBe(200);const body=await r.json() as any;
   expect(body.outcome).toBe("open");expect(body.app).toBe("friends");expect(body.context.singlePlayer).toBe(false);expect(body.context.activeItems).toBeNull();
+  expect(await outcome(firstDelivery)).toBe("acted");
+  expect((await sql`select surface,acted from notify.surface_signals where person_id=${personId} and acted>0`))
+    .toEqual([{surface:"imessage",acted:1}]);
+  await delivery(nextDelivery);
   expect(await (await post(input)).json()).toEqual(body);
+  expect(await outcome(nextDelivery)).toBeNull();
   // Canonical receiving is a valid recipient role; the wire's open state must not disable its chat.
   await service.runtimes.get("friends:nyc")!.scoped(tx=>tx`update network.members set participation_state='receiving' where app_id='friends' and id=${body.memberId}`);
   const receiving=await post(turn("friends-receiving-open",phone,"Tell me something about the weather","friends"));expect(receiving.status).toBe(200);
   const receivingBody=await receiving.json() as any;expect(receivingBody.outcome).toBe("open");expect(receivingBody.context.state).toBe("open");
+  expect(await outcome(nextDelivery)).toBe("acted");
+  await delivery(stopDelivery);
+  expect(await outcome(stopDelivery)).toBeNull();
   expect((await post(turn("friends-stop",phone,"STOP","friends"))).status).toBe(200);
+  expect(await outcome(stopDelivery)).not.toBe("acted");
   expect((await post(input)).status).toBe(409);
   expect(escaped).toBe(before);
 },60_000);
+
+// spec/safetyCase.md, "Direct polite safety requests use the existing counterpart chooser"
+test("explicit polite safety requests use the signed member's current counterpart choices", async () => {
+  const reporterPhone = "+12125550396";
+  const join = (phone: string, firstName: string) => service.accounts.join(
+    APPS.friends, { e164: phone, personId: null }, {
+      firstName, age: 31, homeCity: "nyc", consent: { sms: true, wording: APPS.friends.consent.text },
+    },
+  );
+  const [reporter, past, current] = await Promise.all([
+    join(reporterPhone, "Mina"), join("+12125550397", "Nico"), join("+12125550398", "Zoe"),
+  ]);
+  if (!reporter.ok || !past.ok || !current.ok) throw new Error("Could not join the safety fixtures");
+  const rt = service.runtimeFor("friends")!, reporterId = reporter.membership.memberId;
+  // These are already delivered bookings. The journey exercises the signed text reader and durable safety actions.
+  const booked = (otherId: string, stage: "done" | "scheduled") => rt.unitOfWork(n => {
+    const state = n.exportState(), ids = [reporterId, otherId], now = clock.now();
+    const meetingAt = now + (stage === "done" ? -DAY : DAY);
+    const opp: NetworkState["opps"][number] = {
+      id: `polite-safety-${stage}`, origin: "engine", kind: "intro", category: "social", objective: "Coffee", detail: "Coffee",
+      participants: ids, alternates: [], primed: [], status: ids.map(id => [id, "yes"]), explanations: {},
+      stage, meetingAt, deadline: now + DAY, createdAt: now - 2 * DAY,
+      bookedTold: ids, bookedAt: Object.fromEntries(ids.map(id => [id, now - 2 * DAY])),
+      score: 0.8, generator: "fixture",
+      components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 },
+      exploration: false, review: { queuedAt: now - 3 * DAY, deadline: now - 2 * DAY, decision: "approve", reviewer: "fixture" },
+      sameDay: false, contacted: ids, reminded: [], feedbackFrom: [], tags: [], replacements: 0,
+    };
+    state.opps.push(opp);
+    n.importState(state);
+  });
+  const say = async (id: string, text: string) => {
+    clock.advance(MINUTE);
+    const response = await post(turn(`polite-safety-${id}`, reporterPhone, text, "friends"));
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  const reports = () => rt.readState(n => n.safetyReports().filter(r => r.reporterId === reporterId));
+  const blocks = () => sql`select to_id from network.edges where app_id='friends' and type='blocked' and from_id=${reporterId} order by to_id`;
+  await booked(past.membership.memberId, "done");
+  const hypothetical = await say("conditional", "Could you report Nico if I ask later?");
+  expect((hypothetical.replies ?? []).join(" ")).not.toMatch(/Who do you mean/i);
+  expect(await reports()).toEqual([]);
+  expect(await blocks()).toEqual([]);
+  expect(await say("request-report", "Could you report my date, he was rude?")).toMatchObject({
+    outcome: "handled", replies: [expect.stringMatching(/^Who do you mean: Nico\?/)],
+  });
+  expect(await reports()).toEqual([]);
+  await say("confirm-target", "Nico");
+  expect(await reports()).toEqual([expect.objectContaining({ subjectId: past.membership.memberId, kind: "harassment" })]);
+
+  await booked(current.membership.memberId, "scheduled");
+  await say("calendar", "Can you block my calendar?");
+  await say("delayed", "Can you block Zoe tomorrow?");
+  expect(await blocks()).toEqual([{ to_id: past.membership.memberId }]);
+  expect(await say("request-block", "Can you block my match?")).toMatchObject({
+    outcome: "handled", replies: [expect.stringMatching(/^Done\./)],
+  });
+  expect((await blocks()).map(row => row.to_id).sort()).toEqual([past.membership.memberId, current.membership.memberId].sort());
+  expect(await reports()).toHaveLength(1);
+}, 60_000);
 
 test("a committed collection followed by a fault stays unresolved and is never automatically rerun",async()=>{
   const original=service.inbound.bind(service);let handled=0;
@@ -1012,4 +1378,159 @@ test("explicit saved-profile reads select the app without consuming onboarding o
       ["friends", "slop"].map((app) => service.accounts.store.getMembership(person.id, app as "friends" | "slop")),
     ),
   ).toEqual(membershipBeforeGuards);
+}, 60_000);
+
+// spec/memberAge.md, "Commit a stated age before projecting it across apps".
+test("a signed dotted age statement lowers the durable age across apps", async () => {
+  const e164 = "+16465550194";
+  for (const app of [APPS.friends, APPS.slop]) {
+    await service.accounts.invite(app, e164);
+    const person = (await service.accounts.personFor(e164))!;
+    const joined = await service.accounts.join(app, { e164, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc",
+      consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+  }
+  const person = (await service.accounts.personFor(e164))!;
+  const ages = async () => {
+    const floor = await service.accounts.lowestAge(e164, person);
+    const members = await sql`select app_id as app, age from network.members where person_id=${person.id} order by app_id`;
+    return { floor, members };
+  };
+  const readBack = (age: number) => ({ floor: age, members: [{ app:"friends", age }, { app:"slop", age }] });
+
+  const reported = await post(turn("age-dotted-reported", e164, `She said "I'm 15 y.o."`, "friends"));
+  expect(reported.status).toBe(200);
+  expect(await ages()).toEqual(readBack(29));
+  clock.advance(MINUTE);
+
+  const future = await post(turn("age-dotted-future", e164, "I'm 12 y.o., in two years.", "friends"));
+  expect(future.status).toBe(200);
+  expect(await ages()).toEqual(readBack(29));
+  clock.advance(MINUTE);
+
+  const own = turn("age-dotted-current", e164, "I'm 15 y.o. I live in NYC.", "friends");
+  const response = await post(own);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ outcome: "handled" });
+  expect(await ages()).toEqual(readBack(15));
+  expect(await (await post(own)).json()).toMatchObject({ outcome: "handled" });
+  expect(await ages()).toEqual(readBack(15));
+}, 60_000);
+
+// spec/memberAge.md, "A half age needs age wording to confirm an under-13 refusal".
+test("a signed current half-age requires explicit age wording before removing a membership", async () => {
+  const phone = "+12125550196";
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 17, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  expect(joined.ok).toBe(true);
+
+  const current = async () => {
+    const floor = await service.accounts.lowestAge(phone, person);
+    const [member] = await sql`select state from platform.memberships where person_id=${person.id} and app_id='friends'`;
+    return { floor, state: member?.state };
+  };
+  for (const [i, text] of ["I'm 3 and I am undefeated", "I'm 12.5 miles away", "I'm 12.5 y.o., in two years",
+    "I'm 16 and a quarter years old tomorrow"].entries()) {
+    clock.advance(MINUTE);
+    expect((await post(turn(`signed-half-age-negative-${i}`, phone, text, "friends"))).status).toBe(200);
+    expect(await current()).toEqual({ floor: 17, state: "active" });
+  }
+
+  clock.advance(MINUTE);
+  expect((await post(turn("signed-loose-half-age", phone, "I'm 12.5", "friends"))).status).toBe(200);
+  expect(await current()).toEqual({ floor: 13, state: "active" });
+
+  clock.advance(MINUTE);
+  expect((await post(turn("signed-explicit-half-age", phone, "I'm 12.5 years old", "friends"))).status).toBe(200);
+  expect(await current()).toEqual({ floor: 12, state: "removed" });
+}, 60_000);
+
+// spec/memberAge.md, "Commit a stated age before projecting it across apps".
+test("signed fractional ages distinguish an explicit current age from a height or future birthday", async () => {
+  const cases = [
+    ["+12125550191", "I'm 7.5 years old", 7],
+    ["+12125550192", "I'm 5 1/2 years old", 5],
+    ["+12125550193", "I'm 12 and 3 months old", 12],
+    ["+12125550195", "I'm 12 years and 3 months old", 12],
+    ["+16465550191", "I just turned 7 1/2", 13, "active"],
+    ["+16465550192", "I just turned 7.5", 13, "active"],
+  ] as const;
+  const app = APPS.friends;
+  for (const [phone, disclosure, age, expectedState = "removed"] of cases) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 17, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+
+    const state = async () => {
+      const [membership] = await sql`select state from platform.memberships where person_id=${person.id} and app_id='friends'`;
+      return membership?.state;
+    };
+    const controls = ["I'm 5.5", "I'm 5 1/2, slim", "I'm 12 and 3 months sober",
+      "I'm 12 and 3 months old, in two years", "I just turned 7.5 miles away",
+      "When I turned 7.5, I moved", `She said "${disclosure}."`];
+    for (const [i, text] of controls.entries()) {
+      clock.advance(MINUTE);
+      expect((await post(turn(`fraction-age-control-${phone}-${i}`, phone, text, "friends"))).status).toBe(200);
+      expect(await service.accounts.lowestAge(phone, person)).toBe(17);
+      expect(await state()).toBe("active");
+    }
+
+    clock.advance(MINUTE);
+    const message = turn(`fraction-age-disclosure-${phone}`, phone, disclosure, "friends");
+    expect((await post(message)).status).toBe(200);
+    expect(await service.accounts.lowestAge(phone, person)).toBe(age);
+    expect(await state()).toBe(expectedState);
+    expect((await post(message)).status).toBe(200);
+    expect(await service.accounts.lowestAge(phone, person)).toBe(age);
+  }
+}, 60_000);
+
+// spec/memberAge.md, "A near birthday gives an estimate for the present age".
+test("signed birthday wording keeps a distant age separate from an upcoming weekday", async () => {
+  const phone = "+16465550198";
+  const app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  expect(joined.ok).toBe(true);
+
+  for (const [i, text] of ["I'll be 18 in two years", "I'm turning 18 in two years", "I turn 18 in two years"].entries()) {
+    clock.advance(MINUTE);
+    expect((await post(turn(`distance-birthday-age-${i}`, phone, text, "friends"))).status).toBe(200);
+    expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  }
+
+  clock.advance(MINUTE);
+  const age = turn("upcoming-weekday-birthday", phone, "I'm 18 y.o. this Friday", "friends");
+  expect((await post(age)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(17);
+}, 60_000);
+
+test("a signed age with months projects the minor's age to other app memberships", async () => {
+  const phone = "+12125550197";
+  for (const app of [APPS.friends, APPS.slop]) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+  }
+  const person = (await service.accounts.personFor(phone))!;
+  const age = turn("fraction-age-across-apps", phone, "I'm 17 years and 3 months old.", "friends");
+  expect((await post(age)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(17);
+  const stored = await sql`select app_id as app, age from network.members where person_id=${person.id} order by app_id`;
+  expect(stored).toEqual([{ app: "friends", age: 17 }, { app: "slop", age: 17 }]);
 }, 60_000);

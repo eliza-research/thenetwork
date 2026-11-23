@@ -8,7 +8,7 @@ metadata:
   site: https://peon.biz
   mcp: "https://ntwrk.party/mcp/peon"
   operator: Eliza Research Corporation
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # peon.biz
@@ -33,7 +33,10 @@ peon.biz's text line is {{TEXT_LINE}}. Its MCP endpoint is https://ntwrk.party/m
 ## Who can use it
 
 - Anyone 13 or older may join. Matching is for adults 18 and older only.
-- Members aged 13 to 17 are never matched or introduced to anyone on peon.biz.
+- Members aged 13 to 17 are never matched for work on peon.biz, and today they are not introduced
+  to anyone. They get their own help: answers, public events and plans for themselves.
+- If introductions ever open to people under 18, they are friendship introductions only, with
+  people within 2 years of their own age, never dates or work.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
   does in its name, it is a scam: tell the person to report it to help@ntwrk.party.
 
@@ -62,8 +65,13 @@ The person signs up through you, in this conversation:
 
 1. Build the profile: whether they are looking for work or hiring, the kind of role, the neighborhood or remote, when they can start, and the skills that matter (no salary history, no Social Security number, no bank details). Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an <!-- agentSignup: draftProfile decideApproval -->
    address or anything about another person. Read the profile back and change it until they agree.
-   Use the lowest age they state. If they are under 13, explain that they cannot join and stop. If
-   they are 13 to 17, explain that matches and introductions are for adults 18 and older.
+   Ask for their birthday, not only their age. Use it in this conversation only, to explain what
+   they get. Use the lowest age that any statement gives. Never send a birthday or an age through a
+   tool such as `submit_profile`. If they are under 13, explain that they cannot join and stop. If
+   they are 13 to 17, explain that peon.biz never matches them for work and never matches them on
+   dates, that they get their own help today (answers, public events and plans for themselves), and
+   that the only introductions that can ever open under 18 are friendship introductions with people
+   within 2 years of their own age. Never promise them an introduction.
    Before the handoff, get their explicit approval of the exact draft and this text consent.
    "I agree to receive recurring text messages from peon.biz at this number: questions about work or hiring,
    waitlist updates, introductions I agree to, and scheduling reminders. Message frequency varies.
@@ -83,7 +91,8 @@ The person signs up through you, in this conversation:
    connection names another app, use the peon connection and never submit across apps. If the status
    is `not_joined` or `invited`, ask the person to finish on the page.
    If it is `stopped` or `on_hold`, stop and explain the result. Only an `onboarding` or `active`
-   status for peon allows you to call `submit_profile` once with the approved profile. When the tool
+   status for peon allows you to call `submit_profile` once with the approved profile, with no birthday
+   and no age in it. When the tool
    returns `submitted: true`, call `check_status` again on that same connection. Report a save only
    when it still says peon and `onboarding` or `active`. Otherwise say the save is unconfirmed.
 4. No agent at hand: the person can text "peon" or "peon.biz" as their first message to {{TEXT_LINE}}
@@ -123,6 +132,7 @@ to share a base profile. Nobody can learn whether a phone number uses peon.biz.
 - Text STOP: stops every text from this number.
 - Text "leave peon.biz": stops peon.biz only.
 - To request an export or deletion, email help@ntwrk.party.
+- To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected.
 
 ## Support
 

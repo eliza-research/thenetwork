@@ -24,7 +24,8 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
-import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
+import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
+import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
   relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
@@ -40,6 +41,7 @@ const HOUR = 3_600_000, DAY = 24 * HOUR;
  * runs out, the other member's request starts a new swap and the first member is asked again.
  */
 export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
+export const SWAP_WITHDRAWN = "consent:withdrawn";
 /** Log rows kept in the state (the rate limits look back one day; staff and ban notices further). */
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
@@ -78,6 +80,7 @@ export interface RelayHost {
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
+  observeSenderAge?(memberId: MemberId, text: string): boolean;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
 }
@@ -98,22 +101,8 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 /** A member asked to swap numbers; waiting for the other member's own request. */
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
-/**
- * A negation that is not a no to the swap ("I don't mind, send them my number", "don't wait",
- * "stop asking", "never had to wait this long"). Blanked before withdrawsSwap reads the message, so
- * any other negation or cancel word in it still withdraws: the reader errs toward withdrawing, because
- * a swap left pending after a no would share the number.
- */
-const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b/g;
-/**
- * "Don't send my number", "cancel the number swap", "no, not my number": the member takes back a
- * pending swap request. A negation, a cancel word or "keep" together with their number.
- */
-export function withdrawsSwap(text: string): boolean {
-  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(NOT_A_NO, " ");
-  return /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
-    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/.test(t);
-}
+export { withdrawsRelaySwap as withdrawsSwap } from "../../engine/src/relay.ts";
+
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
 
@@ -125,6 +114,8 @@ export interface RelayAsk {
   kind: RelayItem["kind"];
   /** The message (text) or a caption (photo). */
   text?: string;
+  /** A first name explicitly addressed by the member in the signed request. */
+  targetName?: string;
   /** Photos the member chose (opaque ids); the service checks they are the member's own. */
   photoIds?: string[];
   /** The active item the member's turn named (the Cloud wire's itemId): only that match, else none. */
@@ -191,12 +182,22 @@ export class RelayDesk {
     const match = this.matchFor(ask.from, ask.matchId);
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
+    if (ask.targetName !== undefined) {
+      const recipient = this.host.member(to)?.firstName;
+      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
+        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+      }
+    }
     const now = this.host.now();
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
     const item: RelayItem = ask.kind === "photo"
       ? { id: ask.itemId, kind: "photo", from: ask.from, to, at: now, photoIds: [...new Set(ask.photoIds ?? [])], ...(ask.text?.trim() ? { text: ask.text.trim() } : {}),
           consent: { kind: "photo", by: ask.from, itemId: ask.itemId, at: now, photoIds: [...new Set(ask.photoIds ?? [])] } }
       : { id: ask.itemId, kind: "text", from: ask.from, to, at: now, text: (ask.text ?? "").trim() };
+    if (item.kind === "text" && item.text && this.host.observeSenderAge?.(item.from, item.text)) {
+      return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+    }
     const res = await this.decide(item, match, o);
     const out = this.apply(res, match, item, o);
     // Photos cannot be shown to a match until a photo consent exists (Legal); say so plainly.
@@ -316,11 +317,16 @@ export class RelayDesk {
     return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
   }
 
-  /** The member takes back their pending number swap ("don't send my number"). Returns how many requests were removed. */
   cancelSwaps(from: MemberId): number {
     const before = this.s.swaps.length;
     this.s.swaps = this.s.swaps.filter(x => x.from !== from);
-    return before - this.s.swaps.length;
+    let changed = before - this.s.swaps.length;
+    this.s.log = this.s.log.map(record => {
+      if (record.kind !== "contact_share" || record.decision !== "pass" || (record.from !== from && record.to !== from) || record.reasons.includes(SWAP_WITHDRAWN)) return record;
+      changed++;
+      return { ...record, reasons: [...record.reasons, SWAP_WITHDRAWN].sort() };
+    });
+    return changed;
   }
 
   private share(id: string, from: MemberId, to: MemberId, at: number, value: string, consentAt = at): RelayItem {
@@ -366,9 +372,11 @@ export class RelayDesk {
       : h.kind === "text" && h.text ? { id: h.itemId, kind: "text", from: h.from, to: h.to, at: h.at, text: h.text } : undefined;
     if (!match || !item) { decided(); return { ok: true, delivered: false }; }
     // Rate limits are judged at the original time (the item's own attempt is excluded by the engine).
-    const again = relayItem(item, this.context(item, match, o, h.at));
+    const context = this.context(item, match, o, h.at);
+    const again = relayItem(item, context);
     const first = (this.host.member(h.from)?.firstName ?? "").trim().split(/\s+/)[0] || "Your match";
-    const rendered = again.decision === "pass" ? again.rendered : again.decision === "hold" && item.kind === "text" ? RELAY_WORDING.text(first, item.text!) : "";
+    const canOverride = staffMayReleaseHeldText(VERDICT[again.decision], item.kind === "text", context.sender.held === true, context.recipient.held === true);
+    const rendered = again.decision === "pass" ? again.rendered : canOverride ? RELAY_WORDING.text(first, item.text!) : "";
     const released = decided();
     if (!rendered) return { ok: true, delivered: false };
     const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };

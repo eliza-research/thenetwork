@@ -200,7 +200,7 @@ Models: [opportunity](../models/opportunity.md), [review desk](../models/review_
 
 ### Every relay item has consent and a dispatch check
 
-Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
+Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. A withdrawal stops the pending request and any share that has yet to pass final dispatch admission. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
 
 Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_item.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md), [photo check page](../photosCheckPage.md), [my photos page](../photosMinePage.md), [photo view page](../photosViewPage.md).
 
@@ -278,9 +278,9 @@ Models: [gathering review](../monthlyGathering.md), [invitation review](../month
 
 ### A block takes effect now and a report has an accountable owner
 
-A block stops pair contact across apps and invalidates queued work for the pair. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
+A block stops pair contact across apps and invalidates queued work for the pair. When another app reads the block, it closes an open opportunity that still includes both people before messages or settlement proceed. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
 
-Models: [safety and trust](../models/safety_trust.md), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
+Models: [safety and trust](../models/safety_trust.md), [opportunity lifecycle](../opportunityLifecycle.md#a-block-closes-an-open-opportunity-for-the-active-pair), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
 
 ## Story F24 — Export or delete my data
 
@@ -410,7 +410,7 @@ Models: [private contribution history](../contributionHistory.md), [notification
 
 Provide app-scoped member history, review, proposal and match evidence, safety, demand, costs, growth, fairness, event, health and simulation views. Show messages, prior decisions, send or suppress reasons and leak results within two clicks from a member. Keep real and simulated environments explicit. Scrub data by default, write the access audit before a sensitive read and use the admin API for actions. Require a reason for a limited reveal.
 
-Models: [staff console](../models/staff_console.md), [console views](../models/console_views.md), [console privacy](../models/console_privacy.md), [Observatory synchronization](../models/observatory_sync.md).
+Models: [staff console](../models/staff_console.md), [console views](../models/console_views.md), [console privacy](../models/console_privacy.md), [Observatory synchronization](../models/observatory_sync.md), [opportunity rosters](../observatoryRoster.md), [member consent view](../observatoryMemberConsent.md).
 
 ## Story F36 — Recover service without duplicate sends or lost data
 
@@ -453,7 +453,7 @@ Acceptance:
 - The prompt is `Read https://<domain>/SKILL.md?version=<version> and follow it.` The slop.date prompt has no version query. A person can select the prompt without the page script.
 - The Copy button shows only when the page script runs. A press shows "Copied". When the clipboard refuses, the page selects the prompt and the button shows "Selected: press copy".
 - The agent row shows logos only, in this order: ChatGPT, Claude, Grok, Muse, Gemini, Perplexity, Cursor, OpenClaw, Hermes. The agent's name is the hover label of its logo. The accessible name of a tile with a link is "Open in <name>", and of a copy-only tile "Copy the prompt for <name>".
-- The row never shows an agent that the app's connector refuses. The OpenAI surface of the connector serves every app, so each page shows the ChatGPT tile, slop.date included.
+- The row never shows an agent that the app's connector refuses. The OpenAI surface of the connector serves the endpoint of every app, so each page shows the ChatGPT tile, slop.date included. Only the slop.date endpoint of that surface names slop.date.
 - A phone, or a Mac with more than one touch point, does not show Cursor. Without the page script, the Muse tile (copy only) does not show.
 - A press on a tile follows its link, if it has one, and copies the prompt. The status line then says that the agent opens, where to paste the prompt, or "Copy the prompt, then paste it into your agent." when the copy fails. Without the page script the status line stays empty.
 - The page shows, in this order: the brand mark, the headline, the prompt, the Copy button, the agent row, the Messages entry, the status line, and the Privacy and Terms links. It has fewer than 45 words and one heading.
@@ -583,7 +583,7 @@ Acceptance:
 - The agent drafts for the selected app and hands one link to the person after approval. The person's browser confirms their phone and authorizes the app's connector. The peon.biz skill also supports a prepared text the person sends from Messages. The Peon transport needs separate qualification ([product policies](policies.md#age-identity-and-enrollment)).
 - An agent without a supported signup transport explains its capability limit before collecting a profile. The verification code stays in the person's browser. A prepared text is available only where the app supports that signup path.
 - Read the app facts from the skill's own origin before drafting. Facts for another app stop the flow.
-- The lowest stated age applies. Under 13, the agent stops before it asks for a number. At 13 to 17, the agent tells the person that matching and introductions are for adults 18 and older.
+- The agent asks for the person's birthday in the conversation only to explain what the person gets. No tool receives a birthday or an age; the person types the birthday on the signup page. The lowest stated age applies. Under 13, the agent stops before it asks for a number. At 13 to 17, the agent tells the person what they get today (their own help: answers, public events and plans for themselves), that they are never matched on dates or for work, and that friendship is the only kind of introduction that can open to people under 18, only with people within 2 years of their own age. The agent offers a person aged 13 to 17 neither dating nor work matching, and never promises them an introduction. Today nobody under 18 is introduced to anyone ([founder decision 2026-11-22](source/founder-decisions.md)).
 - The agent shows a short draft and the current text consent: recurring texts, variable frequency, message and data rates, STOP and HELP, and links to the text terms, the terms and the privacy policy. Only an explicit approval of this profile and this wording continues. A code, a draft or silence is not approval.
 - The site's authorized signup flow may reuse its live verified browser session. The person enters the number and code on the app's site and controls retries. The agent collects neither credential.
 - An account of another app stops the flow. An existing member is read back, and the agent does not send Join again. An invite-only app without an invitation and an account on hold stop the flow.
@@ -600,7 +600,7 @@ See the [browser phone confirmation and connector handoff](../agentPhoneHandoff.
 
 Acceptance:
 
-- ntwrk.party serves the connector of every app: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app. ChatGPT and Codex use the OpenAI surface, with `/openai` added. Each surface offers each app, slop.date included. The slop.date site keeps no OpenAI surface of its own.
+- ntwrk.party serves the connector of every app: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app. ChatGPT and Codex use the OpenAI surface, with `/openai` added. Each surface serves the endpoint of each app, slop.date included. On the OpenAI surface, only the slop.date endpoint names slop.date: the endpoint of another app, which the OpenAI plugin uses, never lists slop.date or dating. The slop.date site keeps no OpenAI surface of its own.
 - A grant covers only the app of its endpoint path. A token for one app is refused at the endpoint of another app.
 - `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
 - `read_profile` needs explicit profile read permission and a current active membership for the same app. It returns only safe saved fields and makes no profile change.

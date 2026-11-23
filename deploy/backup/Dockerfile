@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.20@sha256:26147acbda4f14c5add9946e2fd2ed543fc402884fd75146bd342a7f6271dc1d
 # The backup job (docs/deploy.md section 8): pg_dump, pg_dumpall and pg_restore of the server's major
 # version, plus Node for deploy/backup/*.ts. Build from the repository root:
 #   docker build -f deploy/backup/Dockerfile --build-arg PG_MAJOR=16 -t network-backup .
@@ -8,10 +9,14 @@ ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a38
 
 FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
-COPY packages ./packages
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN npm install --global corepack@0.35.0 \
-    && corepack pnpm install --frozen-lockfile --prod --ignore-scripts
+    && corepack pnpm fetch --prod --ignore-scripts
+# Link the workspace on manifest changes. Source-only edits can reuse these links.
+COPY --parents packages/*/package.json ./
+RUN corepack pnpm install --offline --frozen-lockfile --prod --ignore-scripts
+COPY tsconfig.json ./
+COPY packages/core ./packages/core
 
 FROM postgres:${PG_MAJOR}-bookworm
 ARG PG_MAJOR

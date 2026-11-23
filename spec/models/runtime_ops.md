@@ -8,7 +8,7 @@ An operator needs the backend to complete scheduled work, report failures, and r
 
 Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The VibeLang shell sequences the effects. The store owns the queue, database advisory locks, and transaction commit.
+The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The VibeLang shell sequences the effects. The store owns the queue, database advisory locks, and transaction commit. The model represents one database. Staff health observes a granted lock for the runtime's network key in that database. A lock with the same key in another database is independent. The local development migration runner joins a second, shared lock in the maintenance database before it changes the common role catalog. The migration action abstracts this lock and the target's schema transaction as one step. The Postgres integration case runs a legacy upgrade beside migrations for other databases.
 
 The [backend lifecycle spec](../backendLifecycle.md) drives worker
 reservations and shutdown decisions. The serving shell starts a single
@@ -27,6 +27,15 @@ evaluates the alerts it could collect, may close a missing episode without
 a prior successful post, and can still ping its heartbeat after a failed
 alert delivery. The retained model below describes different behavior for
 those cases.
+A cached metrics response reads the last completed dispatch separately from the
+measured snapshot. A refresh during the webhook changes the snapshot timestamp
+and leaves the completed alert result visible until dispatch returns.
+
+Send failure counts use observed outcomes. The queue still owns pending
+receipts and reconciles them before their outcomes can affect the failure
+rate. The runtime SQL aggregates accepted SMS receipts by acceptance time.
+The signed synthetic queue tests cover the collected, resolved and expired
+states and the UTC boundary.
 
 [Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
 eligibility, and aggregate outcome rules. The backend reads saved

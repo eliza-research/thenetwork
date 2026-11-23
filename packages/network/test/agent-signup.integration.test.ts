@@ -21,7 +21,9 @@ function hiddenField(html: string, name: string): string {
 }
 
 function finishSignupComesFirst(html: string): boolean {
-  const open = html.indexOf('name="decision" value="open"'), approve = html.indexOf('name="decision" value="approve"');
+  const decisions = [...html.matchAll(/<button\b[^>]*>/g)].map(m => m[0])
+    .filter(tag => /\sname="decision"/.test(tag)).map(tag => /\svalue="([^"]*)"/.exec(tag)?.[1]);
+  const open = decisions.indexOf("open"), approve = decisions.indexOf("approve");
   return open >= 0 && approve >= 0 && open < approve;
 }
 
@@ -98,7 +100,7 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       const joined = await browser("/oauth/authorize/signup", {
         rid, decision: "join", signupView: hiddenField(form, "signupView"),
         consentVersion: hiddenField(form, "consentVersion"),
-        firstName: "Ari", age: "29", homeCity: "nyc", smsConsent: "yes",
+        firstName: "Ari", birthdate: "1997-01-15", homeCity: "nyc", smsConsent: "yes",
       });
       expect(joined.status).toBe(200);
       const approvalForm = await joined.text();
@@ -165,6 +167,33 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       expect(savedProfile.body?.result.structuredContent).toMatchObject({ app: "friends", profile: { first_name: "Ari", home_region: "nyc" } });
       expect(savedProfile.text).not.toContain(phone);
       expect(intake).toHaveBeenCalledTimes(1);
+
+      // The connector can still confirm this app's existing membership while its intake runtime is unavailable.
+      const partial = new NetworkService({
+        url, clock, instance: "agent-signup-unavailable-intake", log: () => {}, photoStorage: null, notify: false,
+        env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc", matchingEnabled: false }],
+      });
+      try {
+        await partial.start();
+        const live = await createServiceMcp(partial, { databaseUrl: url, migrate: false, log: () => {}, env: { PLATFORM_ENV: "dev" } });
+        if (!live || !(live.store instanceof PgOAuthStore)) throw new Error("Expected a shared database-backed connector");
+        try {
+          const partialEnv = { ...env, fetch: async (request: Request) => (await live.fetch(request))! };
+          const status = await call(partialEnv, `${origin}/mcp`, "check_status", {}, auth);
+          expect(status.body?.result.structuredContent).toMatchObject({ app: "friends", status: "active" });
+          expect(await partial.runtimeOfMember("friends", membership!.memberId)).toBeUndefined();
+          const refused = await call(partialEnv, `${origin}/mcp`, "submit_profile", { about: "I like photography." }, auth);
+          expect(refused.body?.result.structuredContent).toMatchObject({
+            app: "friends", submitted: false, status: "active",
+            next_step: "Profile delivery is unavailable. Check your app status before making changes.",
+          });
+          expect(await live.store.sql`select accepted from oauth.profile_submissions`).toEqual([{ accepted: true }]);
+        } finally {
+          await live.store.close();
+        }
+      } finally {
+        await partial.close();
+      }
     } finally {
       await server.stop(true);
       await connector.store.close();
@@ -302,7 +331,7 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
     expect(second.html).toContain('action="/oauth/authorize/signup"');
     expect(finishSignupComesFirst(second.html)).toBe(true);
     const rid2 = hiddenField(second.html, "rid");
-    const joined = await submitSignup(browser, rid2, { firstName: "Noa", age: "31" });
+    const joined = await submitSignup(browser, rid2, { firstName: "Noa", birthdate: "1995-01-15" });
     expect(joined.status).toBe(200);
     expect(joined.html).toContain("Signup confirmed.");
     expect(joined.html).not.toContain('action="/oauth/authorize/signup"');
@@ -317,7 +346,7 @@ test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Fi
   });
 }, 60_000);
 
-test.skipIf(!pgAvailable)("slop.date: an age under 13 typed on the signup page is refused and a higher age later does not undo it", async () => {
+test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup page is refused and a higher age later does not undo it", async () => {
   await withSignupWorld(["slop:nyc"], async w => {
     const site = "slop.date", number = "+12125550165";
     const browser = browserOn(w, site);
@@ -326,28 +355,28 @@ test.skipIf(!pgAvailable)("slop.date: an age under 13 typed on the signup page i
     const consent = await confirmPhone(w, browser, rid, number);
     expect(finishSignupComesFirst(consent)).toBe(true);
 
-    const refused = await submitSignup(browser, rid, { firstName: "Kit", age: "12" });
+    const refused = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "2014-01-15" });
     expect(refused.status).toBe(400);
-    expect(refused.html).toContain("You can’t join this app at the age entered.");
+    expect(refused.html).toContain("You can’t join this app with the birthday entered.");
     expect(refused.html).not.toContain('name="code"');
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
 
-    const retried = await submitSignup(browser, rid, { firstName: "Kit", age: "30" });
+    const retried = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "1996-01-15" });
     expect(retried.status).toBe(400);
-    expect(retried.html).toContain("You can’t join this app at the age entered.");
+    expect(retried.html).toContain("You can’t join this app with the birthday entered.");
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
     expect(await w.connector.store.sql`select id from oauth.grants where client_id=${opened.clientId}`).toEqual([]);
   });
 }, 60_000);
 
-test.skipIf(!pgAvailable)("friends.help: a teen age typed on the signup page joins but can never be matched", async () => {
+test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup page joins but can never be matched", async () => {
   await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
     const site = "friends.help", number = "+12125550166";
     const browser = browserOn(w, site);
     const opened = await openConnection(w, site, browser, "teen");
     const rid = hiddenField(opened.html, "rid");
     await confirmPhone(w, browser, rid, number);
-    const joined = await submitSignup(browser, rid, { firstName: "Jo", age: "15" });
+    const joined = await submitSignup(browser, rid, { firstName: "Jo", birthdate: "2011-01-15" });
     expect(joined.status).toBe(200);
     expect(joined.html).toContain("Signup confirmed.");
     const person = await w.service.accounts.personFor(number);
@@ -368,12 +397,12 @@ test.skipIf(!pgAvailable)("ntwrk.party: the signup page requires an invitation a
     const consent = await confirmPhone(w, browser, rid, number);
     expect(finishSignupComesFirst(consent)).toBe(true);
 
-    const missing = await submitSignup(browser, rid, { firstName: "Ash", age: "33", invitation: "" });
-    expect(missing.form).toMatch(/name="invitation"[^>]*required/);
+    const missing = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "" });
+    expect(missing.form).toMatch(/<input\b(?=[^>]*\sname="invitation")(?=[^>]*\srequired)[^>]*>/);
     expect(missing.status).toBe(400);
     expect(missing.html).toContain("Enter a valid invitation for this app.");
 
-    const unknown = await submitSignup(browser, rid, { firstName: "Ash", age: "33", invitation: "A".repeat(43) });
+    const unknown = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "A".repeat(43) });
     expect(unknown.status).toBe(400);
     expect(unknown.html).toContain("Enter a current invitation for this app.");
     expect(await w.service.accounts.personFor(number)).toBeUndefined();

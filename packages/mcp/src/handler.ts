@@ -1,14 +1,4 @@
 import { setTimeout as waitForMs } from "node:timers/promises";
-// The remote MCP server and its OAuth 2.1 authorization server, as one fetch handler that the
-// service mounts next to the platform's /api/*. Each site's Worker forwards /mcp, /oauth/* and
-// /.well-known/oauth-* to the shared backend, so every site is its own issuer. ntwrk.party serves every app,
-// each at its own path (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path"):
-//   https://ntwrk.party/mcp             The Network; https://ntwrk.party/mcp/<app> each other app (the resource names the app)
-//   https://ntwrk.party/mcp/slop/openai  the same app on the OpenAI surface (ChatGPT, Codex)
-//   https://slop.date/mcp               an app site's own endpoint, for its own app only
-// Spec: MCP 2026-07-28 (Streamable HTTP, stateless, per-request _meta; initialize kept for 2025-03-26
-// to 2025-11-25 clients), OAuth 2.1 with PKCE S256, RFC 7591 (registration), RFC 8414 and RFC 9728
-// (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
 import { createHmac } from "node:crypto";
 import { devShortcutsAllowed, ipBucket, parseJoin, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
@@ -21,8 +11,9 @@ import {
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
-  type AuthPage, type AuthView, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
-  canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial, solveCheck,
+  type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
+  ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial,
+  signupClockDay, solveCheck,
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
@@ -314,7 +305,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
   }
   const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
-  const browserCookie = (a: McpApp) => (secureCookies(a) ? "__Host-mcp_auth" : "mcp_auth");
+  const browserCookie = (host: McpApp, app: McpAppId) => {
+    const name = host.id === app ? "mcp_auth" : `mcp_auth_${app}`;
+    return secureCookies(host) ? `__Host-${name}` : name;
+  };
   let lastSweep = 0;
 
   function resourceOf(issuer: string, host: McpAppId, app: McpAppId, surface: Surface): string {
@@ -324,7 +318,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
   const resourceFor = (c: Pick<Ctx, "issuer" | "host" | "app">, surface: Surface) => resourceOf(c.issuer, c.host.id, c.app.id, surface);
   const prmUrl = (resource: string) => { const u = new URL(resource); return `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`; };
-  /** RFC 8707: the canonical form of a resource parameter and the app it names, or undefined when it is not an MCP endpoint of this host. */
   function servedResource(raw: string, c: Pick<Ctx, "issuer" | "host">): { app: McpAppId; surface: Surface; resource: string } | undefined {
     let u: URL;
     try { u = new URL(raw); } catch { return undefined; }
@@ -548,14 +541,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       codeChallenge: challengeIn, scopes, resource, e164: null, personId: null, step: "phone" as const, createdAt: now(), expiresAt: now() + ttl.requestMs,
     };
     await store.putAuthRequest(r);
-    const cookie = `${browserCookie(c.host)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.host) ? "; Secure" : ""}`;
+    const cookie = `${browserCookie(c.host, r.app)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.host) ? "; Secure" : ""}`;
     const response = await authorizeEntry(c, r, client, false);
     response.headers.append("set-cookie", cookie);
     return response;
   }
 
   async function readAuthorizationSession(c: Ctx) {
-    try { return await o.platform.session?.(c.app.id, c.req); }
+    try { return await o.platform.session?.(c.app.id, c.req, c.host.id); }
     catch { return "unavailable" as const; }
   }
 
@@ -637,9 +630,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function liveRequest(c: Ctx, form: URLSearchParams) {
     const rid = form.get("rid") ?? "";
     const r = rid ? await store.getAuthRequest(rid) : undefined;
-    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host));
     if (!r) return undefined;
     const sameApp = r.app === c.app.id && canonicalResource(r.resource, c) === r.resource;
+    const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host, r.app));
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
     const bound = stepBrowser(browserInitial, { type: "bindBrowser", matchesDigest: safeEqual(sha256hex(browser), r.browserHash) });
     if (bound.phase !== "CheckingClient") return undefined;
@@ -729,8 +722,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (decision !== "open" && !(decision === "join" && exactForm)) return expired();
     const enrollment = await availableSignup(c, who);
     if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
-    const showSignup = (error?: string, prefill?: SignupPrefill) => {
-      const response = signupPage(c, r.id, { ...enrollment, signupView, error, prefill });
+    const showSignup = (error?: string, prefill?: SignupPrefill, birthdateError?: string) => {
+      const response = signupPage(c, r.id, { ...enrollment, signupView, error, prefill, birthdateError });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;
     };
@@ -741,12 +734,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const version = form.get("consentVersion");
     if (!browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version))
       return showSignup("Review and accept the current text message terms to continue.", sent);
-    const age = form.get("age") ?? "";
+    const typedBirthdate = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(form.get("birthdate") ?? "");
+    const birth: CalendarDate | undefined = typedBirthdate ? { year: Number(typedBirthdate[1]), month: Number(typedBirthdate[2]), day: Number(typedBirthdate[3]) } : undefined;
+    const today = calendarDateOfDay(signupClockDay(now()));
+    if (!birth || !birthdateAccepted(birth, today)) return showSignup(undefined, sent, "Enter your birthday. It must be a real date, not after today.");
     const input = parseJoin({
-      firstName: form.get("firstName"), age: /^[0-9]{1,3}$/.test(age) ? Number(age) : undefined,
+      firstName: form.get("firstName"), age: ageOnDate(birth, today),
       homeCity: form.get("homeCity"), consent: { sms: true, version },
     });
-    if (!input) return showSignup("Enter your first name, age and home city.", sent);
+    if (!input) return showSignup("Enter your first name, birthday and home city.", sent);
     const typedInvitation = form.get("invitation");
     const invitation = signupInvitation(c.app, typedInvitation);
     if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.", sent);
@@ -758,8 +754,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
-        const error = joined.error === "under_age" ? "You can’t join this app at the age entered."
-          : joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
+        if (joined.error === "under_age") return showSignup(undefined, sent, "You can’t join this app with the birthday entered.");
+        const error = joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
           : joined.error === "consent_wording" ? "The text message terms changed. Open signup again to review them."
           : "We couldn’t finish signup. Return to the connection page or try again later.";
         return showSignup(error, sent);
@@ -787,7 +783,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form || !live) return messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
     const { r, client, flow } = live;
     if (openAiUnavailable(c, client)) return messagePage(c, "Not available", "This assistant connection is not available on this site.", 403);
-    const clearCookie = `${browserCookie(c.host)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
+    const clearCookie = `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
 
     const approving = step === "consent" && form.get("decision") === "approve";
     const expired = () => messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
@@ -852,14 +848,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const verified = { ...r, e164, personId: who.personId, step: "consent" as const };
         if (!await store.advanceAuthRequest(r, verified, now)) return expired();
         const res = await verifiedConsentPage(c, verified, client, { e164, personId: who.personId });
-        const site = o.platform.createSession ? await o.platform.createSession(c.app.id, { e164, personId: who.personId }) : undefined;
+        const site = await o.platform.createSession?.(c.app.id, { e164, personId: who.personId }, c.host.id);
         if (site) res.headers.append("set-cookie", site);
         return res;
       });
     }
 
     if (action.phase === "CheckingConsentOwner" && r.e164) {
-      const current = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
+      const current = await o.platform.session?.(c.app.id, c.req, c.host.id);
       const owner = current === "unavailable" ? undefined : await o.platform.login(r.e164);
       const checked = stepBrowser(action, {
         type: "readConsentOwner",
@@ -905,7 +901,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   /** Validate Cloud authority before the atomic issuance so outages remain retryable. */
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
-    const clearCookie = `${browserCookie(c.host)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
+    const clearCookie = `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
     const issued = await issueConnectorGrant<Grant>(r, {
       now,
       makeGrant: at => ({
@@ -1230,8 +1226,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!m) return "invalid";
     const at = now();
     const t = await store.getToken(sha256hex(m[1]!));
-    // RFC 8707: a token minted for another resource (another site, another app's path, or the other surface) is refused.
-    // spec/connectorTools.md, "a grant covers only its own app"
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource
       || !grantServesApp(connectorApp[t.app], connectorApp[c.app.id])) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
@@ -1401,13 +1395,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
           }
         }
-        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
-        if (tool === "read_profile" && r.kind === "ok" && auth) {
+        const outcome = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
+        if (outcome.kind === "profile_refusal" || (tool === "read_profile" && outcome.kind === "ok" && auth)) {
           const live = await bearer(c, resource);
           if (live === "unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
-          if (!live || live === "invalid" || live.grant.id !== auth.grant.id || !tokenCovers(tool, live.token.scopes))
+          if (!auth || !live || live === "invalid" || live.grant.id !== auth.grant.id || !tokenCovers(tool, live.token.scopes))
             return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
+        const r = outcome.kind === "profile_refusal" ? await outcome.read() : outcome;
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "grant_unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
         if (r.kind === "invalid_grant" || r.kind === "grant_held") {
@@ -1434,7 +1429,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   async function signupDraft(c: Ctx, discard: boolean, body: Record<string, unknown> | undefined): Promise<Response> {
     if (!signupDraftAppEnabled(c.app.id)) return json(404, { error: "not_found" });
-    const who = await o.platform.session?.(c.app.id, c.req);
+    const who = await o.platform.session?.(c.app.id, c.req, c.host.id);
     if(who==="unavailable")return temporarilyUnavailable();
     if (!who) return json(401, { error: "sign_in_required" });
     const key = o.platform.phoneKey(who.e164);

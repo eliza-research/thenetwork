@@ -19,6 +19,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY, HOUR, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { appEndpointPath, appOpenAiEndpointPath } from "../../packages/core/src/generated/agentEntry.ts";
 import { INTERESTS } from "../../packages/engine/src/packs/network/vocabulary.ts";
 import { pairKey } from "../../packages/engine/src/world.ts";
 import { PolicyPersonaAgent, World } from "../../packages/sim/src/index.ts";
@@ -118,8 +119,8 @@ async function networkGates(b: Block) {
 
   await b.run("network-consent-5: after a probe \"no\", the pair is not probed again (no later opportunity holds the member and the person they declined)", () => {
     expect(rosterAtNo.size).toBeGreaterThan(5);
-    const started = new Set<string>();
-    const declined = new Map<string, string>();
+    const started = new Map<string, string>();
+    const declined = new Map<string, { id: string; at: number }>();
     const again: string[] = [];
     for (const l of R) {
       if (l.type !== "network_log") continue;
@@ -128,17 +129,17 @@ async function networkGates(b: Block) {
         const member = String(l.detail.memberId);
         expect(atNo.includes(member)).toBe(true);
         for (const peer of atNo) {
-          if (peer !== member) declined.set(pairKey(member, peer), String(l.detail.oppId));
+          if (peer !== member) declined.set(pairKey(member, peer), { id: String(l.detail.oppId), at: l.t });
         }
       }
       if ((l.kind !== "probe_started" && l.kind !== "probe_replaced") || l.detail.plan) continue;
       const { id, participants } = l.detail.proposal as { id: string; participants: MemberId[] };
-      if (l.kind === "probe_started") started.add(id);
+      if (l.kind === "probe_started") started.set(id, String(l.detail.origin));
       if (!started.has(id)) continue; // Plan replacements do not carry the plan flag.
       for (const [index, member] of participants.entries()) {
         for (const peer of participants.slice(index + 1)) {
           const source = declined.get(pairKey(member, peer));
-          if (source) again.push(`${source} -> ${id} (${member}, ${peer})`);
+          if (source) again.push(`${source.id} [${started.get(source.id)}] at ${source.at} -> ${id} [${started.get(id)}, ${l.kind}] at ${l.t} (${member}, ${peer})`);
         }
       }
     }
@@ -314,15 +315,22 @@ async function sitesGates(b: Block) {
       } finally { rmSync(copy, { recursive: true, force: true }); }
     });
 
-    await b.run("plugin-prototypes-26, platform-9: one SKILL.md per site, same backend, its own agent transport; STOP stops every app and \"leave <site>\" one, in the skill and the SMS terms", () => {
+    await b.run("plugin-prototypes-26, platform-9: each published skill uses its own connector path on the common host; STOP stops every app and \"leave <site>\" one", () => {
       for (const s of SITES) {
         const r = built[s.domain]!;
         const skill = readFileSync(join(r.out, "SKILL.md"), "utf8");
+        const siteEndpoint = `https://ntwrk.party${appEndpointPath(s.key)}`;
+        const openAiEndpoint = `https://ntwrk.party${appOpenAiEndpointPath(s.key)}`;
+        const skillEndpoints = new Set(skill.match(/https:\/\/[\w.-]+\/mcp(?:\/[\w-]+)*/g));
+        expect([s.domain, skillEndpoints.has(siteEndpoint)]).toEqual([s.domain, true]);
+        expect([s.domain, [...skillEndpoints].filter(endpoint => endpoint !== siteEndpoint && endpoint !== openAiEndpoint)]).toEqual([s.domain, []]);
         if (["friends", "slop", "ntwrk"].includes(s.app)) {
-          expect([s.domain, skill.includes(`https://${s.domain}/`) && skill.includes("/api/auth/otp/verify") && skill.includes("/api/me/export")]).toEqual([s.domain, true]);
-          expect(skill).not.toContain("In ChatGPT, add ");
-        } else expect([s.domain, skill.includes(`https://${s.domain}/mcp`)]).toEqual([s.domain, true]);
-        for (const o of SITES.filter(o => o.domain !== s.domain)) expect([s.domain, o.domain, skill.includes(`https://${o.domain}/mcp`)]).toEqual([s.domain, o.domain, false]);
+          expect(skill).toContain(`https://${s.domain}/api/app`);
+          expect(skill).toMatch(/native (?:connector )?OAuth (?:flow|handoff)/);
+          expect(skill).toContain("<!-- agentSignup: offerHandoff -->");
+          expect(skill).not.toMatch(/\/api\/(?:auth\/otp\/verify|me\/export)/);
+        }
+        expect(skill).toContain("help@ntwrk.party");
         expect([s.domain, readFileSync(join(r.out, "_worker.js"), "utf8").includes(DEFAULT_BACKEND_ORIGIN)]).toEqual([s.domain, true]);
         expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older/i.test(skill)]).toEqual([s.domain, true]);
         if (s.app === "ntwrk") continue;

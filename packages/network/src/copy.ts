@@ -79,6 +79,7 @@ export function copyFor(b: CopyBrand) {
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
     `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
+  bookingStartToCancel: "Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
   whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
   noBookingToCancel: "I couldn't find a matching upcoming meeting.",
   whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
@@ -91,6 +92,7 @@ export function copyFor(b: CopyBrand) {
   rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
+  probeTimeClarify: "Which of the offered times work for you? Reply with the letters or the times.",
   /** The member opted in to calendar free/busy (founder decision 4c); free/busy only, never event details. */
   calendarOptIn: "I’ve saved your choice. I’ll use only free/busy if you have an authorized calendar. Reply CALENDAR OFF anytime to stop.",
   calendarOff: "Done, I won't use your calendar.",

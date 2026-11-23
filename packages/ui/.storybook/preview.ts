@@ -1,4 +1,3 @@
-// theme.css imports brands.css. fonts.css is the @font-face of "Host Grotesk", the first family of `font.sans`.
 import "@thenetwork/design-system/fonts.css";
 import "@thenetwork/design-system/theme.css";
 

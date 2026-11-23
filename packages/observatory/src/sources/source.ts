@@ -8,7 +8,30 @@ import type {
  * Per-call view options. `reveal`: show this member's PII (an active, audited reveal grant). `truth`:
  * this staff member has the truth lens on (game mode; hidden truth, agent-private facets, the oracle).
  */
-export interface ViewOptions { reveal?: boolean; truth?: boolean }
+export interface HistoryCursor { at: string; id: string }
+export interface ViewOptions { reveal?: boolean; truth?: boolean; historyBefore?: { messages?: HistoryCursor; events?: HistoryCursor } }
+
+export function historyQuery(url: string): ViewOptions["historyBefore"] | null {
+  const params = new URL(url).searchParams;
+  function cursor(param: string): HistoryCursor | undefined {
+    const encoded = params.get(param);
+    if (encoded === null) return;
+    if (!/^[A-Za-z0-9_-]{1,512}$/.test(encoded)) throw new Error("Invalid history cursor");
+    const decoded: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (!Array.isArray(decoded) || decoded.length !== 2) throw new Error("Invalid history cursor");
+    const [at, id] = decoded as unknown[];
+    if (typeof at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(at) || !Number.isFinite(Date.parse(at))
+      || new Date(at).toISOString().slice(0, 19) !== at.slice(0, 19)
+      || typeof id !== "string" || !id || id.length > 256 || id.includes("\0")) throw new Error("Invalid history cursor");
+    if (param === "eventsBefore" && (!/^\d{1,19}$/.test(id) || BigInt(id) > 9223372036854775807n)) throw new Error("Invalid event cursor");
+    return { at, id };
+  }
+  try {
+    return { messages: cursor("messagesBefore"), events: cursor("eventsBefore") };
+  } catch {
+    return null;
+  }
+}
 
 export interface DataSource {
   readonly mode: Mode;

@@ -5,7 +5,7 @@
 // app. START opts in to one app. The ledger reads the last event per (e164, app) and per (e164, null);
 // a global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it.
 import { appMayText } from "../../core/src/generated/carrierConsent.ts";
-import { foldKeywordText as fold, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase } from "../../core/src/replies.ts";
+import { appLeaveNamesDomain, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase, readAppLeaveName, stopCourtesyLanguage, stopStatementIsDirect } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";
 
 export type ConsentState = "opted_in" | "opted_out";
@@ -61,17 +61,15 @@ const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopPolite]);
 const START_WORDS = new Set<string>(KEYWORDS.start);
 const HELP_WORDS = new Set<string>(KEYWORDS.help);
 const SPANISH_STOP_WORDS = new Set<string>(KEYWORDS.stopEs);
-// STOP (or STOP ALL) with only courtesy or urgency words around it, in any order: "PLS STOP NOW", "STOP RN",
-// "STOP ALL PLS". Only STOP: "cancel please" may mean a date, and "stop it" or "stop by" are not here.
 const STOP_TAIL = `(?:${KEYWORDS.stopTail.join("|")})`;
-const STOP_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP(?:(?: ${STOP_TAIL})* STOP)*(?: ${STOP_TAIL})*$`);
 const STOP_ALL_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP ?ALL(?:(?: ${STOP_TAIL})* STOP ?ALL)*(?: ${STOP_TAIL})*$`);
 const REPEATED_SPANISH_STOP = new RegExp(`^(${KEYWORDS.stopEs.join("|")})(?: \\1)+$`);
 
-function repeatedOrInsistedStop(key: string): "stop" | "stop_all" | undefined {
+function repeatedOrInsistedStop(key: string, text: string): "stop" | "stop_all" | undefined {
   const stop = key.replace(/^I (?:(?:ALREADY|JUST) )?SAID | I SAID$/g, "");
+  if (stop !== key && !stopStatementIsDirect(text)) return undefined;
   if (STOP_ALL_TAIL_RX.test(stop)) return "stop_all";
-  if (STOP_TAIL_RX.test(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
+  if (stopCourtesyLanguage(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
   return undefined;
 }
 
@@ -79,7 +77,7 @@ export type Keyword = "stop" | "stop_all" | "start" | "help";
 
 export function detectKeyword(text: string): Keyword | undefined {
   const k = keywordKey(text);
-  const repeated = repeatedOrInsistedStop(k);
+  const repeated = repeatedOrInsistedStop(k, text);
   if (repeated) return repeated;
   if (STOP_ALL_WORDS.has(k)) return "stop_all";
   // "STOPP", "STOOOP": a misspelt STOP is still a STOP.
@@ -94,28 +92,12 @@ export function optOutPhrase(text: string): boolean {
   return coreOptOutPhrase(text, t => leaveTarget(t) !== undefined);
 }
 
-/**
- * A courtesy or urgency word a person may end a request with. It never names an app, so it is stripped
- * before the app match: "leave slop now" and "unsubscribe from slop now" leave slop only.
- */
-const TRAILING_COURTESY = / (?:please|pls|thanks|thank you|now|right now|for now|asap|today|immediately)$/;
-
 /** "leave slop", "leave slop.date", "stop slop", "quit peon", "leave the network": the app to leave (that app only), or undefined. */
 export function leaveTarget(text: string, apps: Record<AppId, Pick<AppInfo, "id" | "domain" | "name">> = APPS): AppId | undefined {
-  const t = fold(text).toLowerCase().replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
-  // "leave slop", and the same with stop, quit, cancel, unsubscribe (from) or exit: that app only.
-  const m = /^(?:please )?(?:leave|quit|exit|stop|cancel|unsubscribe(?: from| me from)?) (.+)$/.exec(t);
-  if (!m) return undefined;
-  // Strip a trailing courtesy or urgency word before matching the app, so "leave slop now" stays a leave
-  // of slop. Without this the app does not match, the phrase is not a leave, and "unsubscribe from slop
-  // now" falls through to the free-text opt-out reader as a stop of every app.
-  let x = m[1]!.replace(/^the /, "").trim();
-  for (let i = 0; i < 3; i++) {
-    const next = x.replace(TRAILING_COURTESY, "").trim();
-    if (next === x) break;
-    x = next;
-  }
-  return Object.values(apps).find(a => x === a.id || x === a.domain || x === `www.${a.domain}` || x === a.name.toLowerCase().replace(/^the /, ""))?.id;
+  const leave = readAppLeaveName(text);
+  if (!leave) return undefined;
+  return Object.values(apps).find(a => leave.name === a.id || appLeaveNamesDomain(leave, a.domain)
+    || leave.name === a.name.toLowerCase().replace(/^the /, ""))?.id;
 }
 
 /** The consent event and the reply for a keyword received on an app's line. HELP writes no event. */

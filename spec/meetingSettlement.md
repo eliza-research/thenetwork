@@ -27,6 +27,21 @@ pure def lawConfirmedDoesNotRepeat(accepted: bool, bookingDelivered: bool, words
   not(confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation)
 ```
 
+### Release an expired booking reply before the next prompt
+
+An operations tick first releases an expired booking reply slot. The slot expires
+when its meeting starts or no longer has a start, or more than 48 hours after
+the booking prompt. Releasing the slot comes before deferred sends and attendance
+prompts. A booking whose reply slot is still open keeps that slot.
+
+```quint
+pure def releaseBookingReply(elapsedMs: int, hasMeeting: bool, meetingStarted: bool): bool =
+  not(hasMeeting) or meetingStarted or elapsedMs > confirmationWindowMs
+
+pure def lawFutureBookingKeepsReply(elapsedMs: int): bool =
+  elapsedMs <= confirmationWindowMs implies not(releaseBookingReply(elapsedMs, true, false))
+```
+
 ## Story: Hear about a booked meeting the day before
 
 > As a booked participant, I want a reminder early enough to plan for the meeting.
@@ -227,9 +242,94 @@ pure def lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: int, handledE
   not(meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs))
 ```
 
+### Use direct counterpart absence during attendance collection
+
+In a reply with a receipt for its exact feedback prompt, a direct statement that the sole accepted counterpart flaked, bailed on the participant, or did not show can provide attendance evidence for that booking. Use the known counterpart and direct first-hand phrasing. A quote, denial, or mention of a different person supplies no such evidence. The existing safety report rules apply separately.
+
+```quint
+pure def pairedFeedbackAbsence(attendanceOpen: bool, uniqueCounterpart: bool, directStatement: bool): bool =
+  attendanceOpen and uniqueCounterpart and directStatement
+
+pure def lawClosedAttendanceRejectsCounterpartAbsence(uniqueCounterpart: bool, directStatement: bool): bool =
+  not(pairedFeedbackAbsence(false, uniqueCounterpart, directStatement))
+
+pure def lawCounterpartAbsenceNeedsUniqueCounterpart(attendanceOpen: bool, directStatement: bool): bool =
+  not(pairedFeedbackAbsence(attendanceOpen, false, directStatement))
+```
+
+### Use the active roster in interaction history
+
+The history of a completed booking lists the members who still held accepted seats when the Network recorded feedback. It keeps each member's own check-in outcome, including a self-reported absence. Keep the original planned roster in the opportunity. For an older group feedback row, use the saved opportunity and its accepted seats only when the saved feedback author and opportunity match.
+
+```quint
+pure def feedbackHistorySeat(status: str): bool =
+  status == "yes"
+
+pure def lawWithdrawnSeatCannotEnterFeedbackHistory(status: str): bool =
+  (status == "dropped") implies not(feedbackHistorySeat(status))
+```
+
+### Learn a dating availability slot from the booked time
+
+Slop uses completed meeting evidence when it ranks future time options. Read the booked start in the meeting venue's time zone, or the zone of the planned meeting. Keep the time feedback was received for feedback history. An older interaction can use the booked start from its stored opportunity. The synthetic dating world uses UTC for its local calendar.
+
+```quint
+pure def completedMeetingSlot(localWeekday: int, localHour: int): int =
+  if (localWeekday < 0 or localWeekday > 6 or localHour < 0 or localHour > 23) -1
+  else if (localWeekday < 5) (if (localHour >= 17) localWeekday else -1)
+  else if (localWeekday == 5) (if (localHour >= 17) 6 else 5)
+  else if (localHour >= 17) 8 else 7
+
+pure def lawWeekdayMeetingSlotNeedsEvening(localWeekday: int, localHour: int): bool =
+  (localWeekday < 5 and localHour < 17) implies completedMeetingSlot(localWeekday, localHour) == -1
+```
+
+### Count one attendance outcome per person and booked date
+
+Slop counts each booked date once in a member's history, even when both people reply. It keeps each reply and learns the booked slot once per attendee. Count an absence only for a participant with direct attribution. An exact self-reported absence takes precedence over completed-date evidence for that participant and booking. For an older reply, use the saved opportunity, feedback author and self-reported attendance when they are available. An absence with no attribution does not affect either member. A simulated attendance outcome without the member's own evidence also leaves absence unattributed in the engine input. A standalone interaction without an opportunity ID uses its own record ID.
+
+```quint
+pure def slopCompletedDateCounts(completed: bool, exactAbsence: bool): bool =
+  completed and not(exactAbsence)
+
+pure def slopNoShowCounts(exactAttribution: bool, onRoster: bool): bool =
+  exactAttribution and onRoster
+
+pure def lawSlopCannotCountCompletionAndAbsence(completed: bool, exactAttribution: bool, onRoster: bool): bool =
+  not(slopCompletedDateCounts(completed, slopNoShowCounts(exactAttribution, onRoster)) and
+      slopNoShowCounts(exactAttribution, onRoster))
+
+pure def lawSlopUnattributedAbsenceCannotCount(onRoster: bool): bool =
+  not(slopNoShowCounts(false, onRoster))
+```
+
+### A liked date paces new proposals from its booked start
+
+Slop measures its existing post-date pause from the start of the completed date the member liked. A later feedback timestamp does not move that start. The pause ends at the configured age of the booking, ten days by default. An older engine record without a separate booking time keeps its recorded event time.
+
+```quint
+pure def completedDatePacingAt(knownBooking: bool, bookedAt: int, feedbackAt: int): int =
+  if (knownBooking) bookedAt else feedbackAt
+
+pure def lawKnownDatePacingUsesBooking(bookedAt: int, feedbackAt: int): bool =
+  completedDatePacingAt(true, bookedAt, feedbackAt) == bookedAt
+```
+
+### Pacing feedback follows its own date
+
+Slop reads the member's feedback about their latest completed date when it applies the proposal pause. When the feedback carries an opportunity ID, require the exact opportunity. For older feedback that has no opportunity ID, use the counterpart. The feedback must be at or after the booked start. Feedback about other dates remains part of the member's private feedback history.
+
+```quint
+pure def completedDateFeedbackMatches(feedbackAt: int, meetingAt: int, hasOpportunity: bool, sameOpportunity: bool, isCounterpart: bool): bool =
+  feedbackAt >= meetingAt and (if (hasOpportunity) sameOpportunity else isCounterpart)
+
+pure def lawFeedbackForAnotherDateCannotPace(feedbackAt: int, meetingAt: int, isCounterpart: bool): bool =
+  not(completedDateFeedbackMatches(feedbackAt, meetingAt, true, false, isCounterpart))
+```
+
 ### Classify each attendee from the available reports
 
-Only participants with an accepted invitation and a delivered booking count as booked. At settlement, use a positive receipt for the participant's exact current booking revision. A queued notice and an unresolved receipt are insufficient. A delayed positive receipt counts if available when attendance settles. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply.
+Only participants with an accepted invitation and a delivered booking count as booked. At settlement, use a positive receipt for the participant's exact current booking revision. A queued notice and an unresolved receipt are insufficient. A delayed positive receipt counts if available when attendance settles. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply. In a group, the report also identifies that participant directly or says that nobody else attended. An unnamed report and an older report without an exact attribution give no group reliability penalty. A name from a different clause or a quoted report supplies no attribution.
 
 ```quint
 type AttendanceMark = Attended | Absent | Ghosted | NoFinding
@@ -246,6 +346,12 @@ pure def attendanceBookingReceived(accepted: bool, exactReceipt: bool, receiptAt
 
 pure def lawAttendanceNeedsExactBookingReceipt(accepted: bool, receiptAt: int, settledAt: int): bool =
   not(attendanceBookingReceived(accepted, false, receiptAt, settledAt))
+
+pure def reportedAbsenceIdentifiesMember(pairMeeting: bool, identifiedInGroup: bool): bool =
+  pairMeeting or identifiedInGroup
+
+pure def lawUnnamedGroupReportDoesNotIdentifyAnyone(pairMeeting: bool): bool =
+  not(pairMeeting) implies not(reportedAbsenceIdentifiesMember(pairMeeting, false))
 
 pure def countAttendance(evidence: AttendanceEvidence): AttendanceFinding =
   val corroboratedMissing = evidence.reportedMissing and evidence.receivedFeedbackPrompt
@@ -281,7 +387,7 @@ pure def requestAttendanceSatisfied(requesterAttended: bool, anotherAttended: bo
 
 ### Verified value needs an independent attendance confirmation
 
-A worthwhile answer records the member's own experience during the open attendance period. At settlement, only another attendee's timely reply to their own delivered feedback prompt can corroborate that the meeting took place. The second member must explicitly confirm that the pair met or that the whole group attended. Positive sentiment by itself supplies no attendance confirmation. Count only receipt-backed attendees as confirmers and keep the existing ledger checks on vouch eligibility and relationships.
+A worthwhile answer records the member's own experience during the open attendance period. A standalone affirmative reply that says “we hit it off” records positive sentiment. A repeat meeting still requires [an explicit repeat request](repeatEncounter.md). At settlement, only another attendee's timely reply to their own delivered feedback prompt can corroborate that the meeting took place. The second member must explicitly confirm that the pair met or that the whole group attended. Positive sentiment by itself supplies no attendance confirmation. Count only receipt-backed attendees as confirmers and keep the existing ledger checks on vouch eligibility and relationships.
 
 ```quint
 pure def verifiedMeetingValueAllowed(attended: bool, worthwhile: bool, independentConfirmers: int): bool =

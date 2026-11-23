@@ -17,9 +17,14 @@
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
-import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
+import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
+import { historyOf, jobOf } from "../../packages/engine/src/packs/peon/profile.ts";
+import { slateCap } from "../../packages/engine/src/packs/peon/selection.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
+import { World } from "../../packages/engine/src/world.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
 import { appWiring } from "../../packages/network/service/packs.ts";
@@ -129,6 +134,289 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  const budgetRows = [];
+  for (const seed of [1, 2, 3]) for (const scenario of ["four-openings", "one-opening", "quiet", "paused", "probation", "probation-reset"] as const) {
+    const x = new SeatWorld(seed);
+    const onboard = async (id: string) => {
+      for (const text of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, text);
+    };
+    x.add("hm", "Rowan Abbott", 34, { verified: "Acme" });
+    await onboard("hm");
+    if (!scenario.startsWith("probation")) {
+      x.add("warm", "Casey Bell", 29, { candidate: true }); await onboard("warm");
+      // Establish the company's answered-application history through the actual consent flow.
+      await x.say("hm", POST.replace("2 openings", "1 opening")); await x.say("hm", "yes");
+      if (!await x.runUntil(() => x.net.reviewQueue().length > 0)) throw new Error("seat budget: no warm-up review");
+      const warm = x.net.reviewQueue()[0]!.oppId;
+      if (!x.net.review(warm, "approve", { reviewer: "sim_staff" })) throw new Error("seat budget: warm-up review refused");
+      if (!await x.runUntil(() => x.probedFor("warm", warm))) throw new Error("seat budget: no warm-up candidate probe");
+      await x.say("warm", "yes");
+      if (!await x.runUntil(() => x.probedFor("hm", warm))) throw new Error("seat budget: no warm-up manager probe");
+      await x.say("hm", "yes");
+      if (x.opp(warm)?.stage !== "scheduled") throw new Error("seat budget: warm-up intro not confirmed");
+      await x.say("hm", "We filled the data analyst role."); await x.say("hm", "yes");
+      // This candidate has a confirmed intro and withdraws their search; the intro history stays.
+      x.intents.find(i => i.memberId === "warm" && i.details === "peon:search")!.status = "closed";
+      x.restart();
+      const warmSeat = x.opp(warm)!.seat!.id;
+      if (!x.net.packInput(x.clock.now()).interactions?.some(r => r.outcome === "accepted"
+        && r.acceptedBy?.includes("warm") && r.acceptedBy.includes(warmSeat))) throw new Error("seat budget: no answered-application history");
+    }
+    const ids = ["c1", "c2", "c3", "c4"];
+    for (const id of ids) { x.add(id, `Candidate ${id}`, 29, { candidate: true }); await onboard(id); }
+    const openings = scenario === "one-opening" ? 1 : 4;
+    await x.say("hm", POST.replace("2 openings", `${openings} openings`)); await x.say("hm", "yes");
+    const seat = seatIdOf(x.saved.at(-1)!.id);
+    const state = scenario === "quiet" || scenario === "paused" ? scenario : "normal";
+    x.members.find(m => m.id === "hm")!.state = state;
+    x.restart(); await x.run(2 * DAY);
+    const queued = x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seat);
+    const probes = () => x.sent.filter(s => ids.includes(s.to) && s.meta.type === "probe");
+    const beforeReview = probes().length;
+    for (const q of queued) if (!x.net.review(q.oppId, "approve", { reviewer: "sim_staff" })) throw new Error("seat budget: review refused");
+    for (const q of queued) {
+      const id = x.opp(q.oppId)!.participants.find(p => p !== "hm")!;
+      if (!await x.runUntil(() => x.probedFor(id, q.oppId))) throw new Error("seat budget: no candidate probe");
+      await x.say(id, "no");
+    }
+    x.restart(); await x.run(2 * DAY); x.restart();
+    const beforeRenewal = probes().length;
+    let renewed = 0;
+    if (scenario === "probation-reset") {
+      await x.run(4 * DAY); x.restart();
+      const next = x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seat);
+      renewed = next.length;
+      for (const q of next) {
+        if (!x.net.review(q.oppId, "approve", { reviewer: "sim_staff" })) throw new Error("seat budget: renewal review refused");
+        const id = x.opp(q.oppId)!.participants.find(p => p !== "hm")!;
+        if (!await x.runUntil(() => x.probedFor(id, q.oppId))) throw new Error("seat budget: no renewed candidate probe");
+        await x.say(id, "no");
+      }
+    }
+    const input = x.net.packInput(x.clock.now());
+    const live = x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seat).length;
+    const managerProbes = x.sent.filter(s => s.to === "hm" && s.meta.type === "probe"
+      && x.opp(s.meta.probe?.key ?? "")?.seat?.id === seat).length;
+    const expected = scenario === "paused" ? 0 : scenario === "four-openings" ? 4 : scenario.startsWith("probation") ? 3 : 1;
+    const total = expected + (scenario === "probation-reset" ? 1 : 0);
+    const retainedState = input.members.find(m => m.id === "hm")?.state === state
+      && ids.every(id => input.members.find(m => m.id === id)?.state === "normal");
+    const distinct = new Set(probes().map(s => s.to)).size;
+    const correct = queued.length === expected && beforeRenewal === expected && probes().length === total && distinct === total
+      && renewed === (scenario === "probation-reset" ? 1 : 0)
+      && beforeReview === 0 && managerProbes === 0 && retainedState && live <= openings
+      && (scenario === "one-opening" || live === 0) && x.clock.now() - START < (scenario === "probation-reset" ? 12 : 7) * DAY;
+    budgetRows.push({ seed, scenario, openings, state, queued: queued.length, probes: probes().length,
+      distinct, beforeReview, beforeRenewal, renewed, managerProbes, retainedState, live, correct });
+  }
+  b.gate("a trusted job uses its opening slate without spending the manager's candidate budget", budgetRows.every(r => r.correct), JSON.stringify({ rows: budgetRows }));
+
+  await b.run("probation shares its weekly proposals across confirmed postings", async () => {
+    const w = new SeatWorld();
+    w.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+    w.add("colleague", "Sage Gray", 35, { verified: "Acme" });
+    for (const id of CANDIDATES) w.add(id, `Candidate ${id}`, 29, { candidate: true });
+    for (const { id } of w.members) {
+      for (const text of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(id, text);
+    }
+    await w.say("manager", POST.replace("2 openings", "4 openings"));
+    await w.say("manager", "yes");
+    await w.say("colleague", POST.replace("2 openings", "4 openings"));
+    await w.say("colleague", "yes");
+    expect(w.saved.length).toBe(2);
+    const seats = w.saved.map(p => seatIdOf(p.id));
+    const input = w.net.packInput(w.clock.now());
+    const run = (snapshot: typeof input) => runEngine(snapshot, PEON_ENGINE_CONFIG, { pack: peonPack });
+    const initial = (await run(input)).proposals;
+    expect(initial.length).toBe(3);
+    expect(new Set(initial.flatMap(p => p.participants.filter(id => seats.includes(id)))).size).toBe(2);
+    const recentProposals = initial.map((p, i) => ({
+      ...p, id: `previous-probe-${i}`, participants: [seats[0]!, `former-candidate-${i}`], createdAt: input.now - DAY,
+    }));
+    expect((await run({ ...input, recentProposals })).proposals.length).toBe(0);
+    expect((await run({ ...input, recentProposals: recentProposals.map(p => ({ ...p, createdAt: input.now - 7 * DAY })) })).proposals.length).toBe(3);
+  });
+
+  for (const scenario of ["resume after draft", "finish draft before probe", "two manager probes", "first applicant to answer during a draft"] as const) {
+    await b.run(`Peon manager reply slot: ${scenario}`, async () => {
+      const w = new SeatWorld();
+      w.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      w.add("c1", "Casey Lee", 29, { candidate: true });
+      const reverseOrder = scenario === "first applicant to answer during a draft";
+      const firstAnswerWaits = scenario === "finish draft before probe" || reverseOrder;
+      if (scenario === "two manager probes" || reverseOrder) w.add("c2", "Jordan West", 29, { candidate: true });
+      for (const member of w.members) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(member.id, answer);
+      await w.say("manager", POST);
+      await w.say("manager", "yes");
+      const count = w.members.length - 1;
+      expect(await w.runUntil(() => w.net.reviewQueue().length === count)).toBe(true);
+      const ids = w.net.reviewQueue().map(item => item.oppId);
+      if (reverseOrder) ids.reverse();
+      const [first, second] = ids as [string, string | undefined];
+      const candidate = (id: string) => w.opp(id)!.participants.find(p => p !== "manager")!;
+      for (const id of ids) expect(w.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+      for (const id of ids) expect(await w.runUntil(() => w.probedFor(candidate(id), id))).toBe(true);
+      const question = () => w.net.memberList().find(m => m.id === "manager")?.awaiting;
+      const questionsSent = () => w.to("manager").flatMap(send => send.meta.probe ? [send.meta.probe.key] : []);
+      const secondPost = "We're hiring a barista, 1 opening, $40k-$50k, onsite in Manhattan";
+      if (firstAnswerWaits) await w.say("manager", secondPost);
+      await w.say(candidate(first), "yes");
+      if (reverseOrder) await w.say(candidate(second!), "yes");
+      if (firstAnswerWaits) {
+        await w.run(HOUR);
+        expect(question()?.kind).toBe("posting");
+        expect(questionsSent()).toEqual([]);
+        w.restart();
+        await w.say("manager", "yes");
+        expect(w.saved.length).toBe(2);
+        expect(w.meetings.length).toBe(0);
+        expect(await w.runUntil(() => w.probedFor("manager", first))).toBe(true);
+      } else {
+        expect(await w.runUntil(() => w.probedFor("manager", first))).toBe(true);
+      }
+      const originalDelivery = question()?.probeReceiptId;
+      const originalSent = w.opp(first)?.sentAt?.manager;
+      if (scenario === "resume after draft") {
+        await w.say("manager", secondPost);
+        expect(question()?.kind).toBe("posting");
+        await w.say("manager", "no");
+        expect(w.meetings.length).toBe(0);
+        w.restart();
+        expect(await w.runUntil(() => w.probedFor("manager", first), 3 * HOUR)).toBe(true);
+        expect(question()?.probeReceiptId).not.toBe(originalDelivery);
+        expect(w.opp(first)?.sentAt?.manager).toBe(originalSent);
+      } else if (second) {
+        if (!reverseOrder) await w.say(candidate(second), "yes");
+        expect(questionsSent()).toEqual([first]);
+        expect(question()?.oppId).toBe(first);
+      }
+      w.restart();
+      await w.say("manager", "yes");
+      expect(w.meetings.map(meeting => meeting.proposalId)).toEqual([first]);
+      if (second) {
+        expect(await w.runUntil(() => w.probedFor("manager", second))).toBe(true);
+        await w.say("manager", "yes");
+        expect(w.meetings.map(meeting => meeting.proposalId)).toEqual([first, second]);
+      }
+    });
+  }
+
+  for (const attendance of ["candidate missed", "manager missed", "completed", "unanswered"] as const) {
+    await b.run(`seat capacity after a booked interview: ${attendance}`, async () => {
+      const world = new SeatWorld();
+      world.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const candidate of CANDIDATES) world.add(candidate, `Cand ${candidate.toUpperCase()}`, 29, { candidate: true });
+      for (const member of world.members) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) {
+        await world.say(member.id, answer);
+      }
+      await world.say("manager", POST.replace("2 openings", "1 opening"));
+      await world.say("manager", "yes");
+      const seat = seatIdOf(world.saved[0]!.id);
+      await world.say("manager", "We're hiring a barista, 5 openings, $40k-$50k, onsite in Manhattan");
+      await world.say("manager", "yes");
+      const otherSeat = seatIdOf(world.saved[1]!.id);
+      const matchWorld = () => new World(world.net.packInput(world.clock.now()), resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+      const otherSlateCap = (input: World) => slateCap(input, jobOf(input, otherSeat)!);
+      const queue = () => world.net.reviewQueue().filter(i => world.opp(i.oppId)?.seat?.id === seat);
+      const openings = () => world.net.packInput(world.clock.now()).facets
+        .find(facet => facet.id === `${seat}:openings`)?.tags.find(tag => tag.startsWith("peon:openings:"));
+      expect(await world.runUntil(() => queue().length === 1)).toBe(true);
+      const first = queue()[0]!.oppId;
+      const candidate = world.opp(first)!.participants.find(id => id !== "manager")!;
+      expect(world.net.review(first, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await world.runUntil(() => world.probedFor(candidate, first))).toBe(true);
+      await world.say(candidate, "yes");
+      expect(await world.runUntil(() => world.probedFor("manager", first))).toBe(true);
+      const acceptedAt = world.clock.now();
+      await world.say("manager", "yes");
+      expect(world.opp(first)?.stage).toBe("scheduled");
+      if (attendance === "completed") {
+        const interviewAt = world.opp(first)!.meetingAt!;
+        expect(interviewAt).toBeGreaterThan(world.clock.now());
+        const readHistory = () => {
+          const input = world.net.packInput(world.clock.now());
+          const matchWorld = new World(input, resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+          return {
+            at: input.interactions?.find(record => record.id === first + ":seat")?.at,
+            inFlight: historyOf(matchWorld, candidate).inFlight,
+            employerAnswered: historyOf(matchWorld, seat).answered,
+          };
+        };
+        const accepted = { at: acceptedAt, inFlight: 1, employerAnswered: 1 };
+        expect(readHistory()).toEqual(accepted);
+        world.restart();
+        expect(readHistory()).toEqual(accepted);
+        const current = world.net.exportState();
+        const older = structuredClone(current);
+        const booking = older.opps.find(opp => opp.id === first)!;
+        delete booking.seatAcceptedAt;
+        const sent = world.about(first).find(message => message.meta.booked?.proposalId === first)!;
+        world.net.importState(older);
+        expect(readHistory()).toEqual({ ...accepted, at: sent.t });
+        delete booking.bookedAt;
+        world.net.importState(older);
+        expect(readHistory()).toEqual({ at: interviewAt, inFlight: 0, employerAnswered: 0 });
+        world.net.importState(current);
+      }
+      expect(otherSlateCap(matchWorld())).toBe(5);
+      const respondent = attendance === "manager missed" ? "manager" : candidate;
+      expect(await world.runUntil(() => world.net.memberList().find(m => m.id === respondent)?.awaiting?.kind === "feedback", 7 * DAY)).toBe(true);
+      const feedbackAt = world.clock.now();
+      if (attendance !== "unanswered") await world.say(respondent, attendance === "completed" ? "We both showed up" : "I couldn't make it");
+      world.restart();
+      expect(world.opp(first)?.stage).toBe("done");
+      const released = attendance === "candidate missed" || attendance === "manager missed";
+      expect(openings()).toBe(released ? "peon:openings:1" : "peon:openings:0");
+      const history = matchWorld();
+      expect(historyOf(history, seat).answered).toBe(1);
+      expect(historyOf(history, candidate).inFlight).toBe(attendance === "unanswered" ? 1 : 0);
+      expect(otherSlateCap(history)).toBe(5);
+      const feedbackRows = () => matchWorld().interactions.filter(row => row.id.startsWith(`${first}:fb:`));
+      if (attendance !== "unanswered") {
+        expect(feedbackRows()).toMatchObject([{ hireAcceptedAt: acceptedAt, at: feedbackAt, outcome: released ? "no_show" : "completed" }]);
+      }
+      if (attendance === "completed") {
+        expect(await world.runUntil(() => world.net.memberList().find(m => m.id === "manager")?.awaiting?.kind === "feedback", DAY)).toBe(true);
+        const secondFeedbackAt = world.clock.now();
+        await world.say("manager", "We both showed up");
+        world.restart();
+        expect(feedbackRows().map(row => [row.hireAcceptedAt, row.at])).toEqual([[acceptedAt, feedbackAt], [undefined, secondFeedbackAt]]);
+        expect(historyOf(matchWorld(), seat).answered).toBe(1);
+
+        const current = world.net.exportState();
+        const older = structuredClone(current);
+        const booking = older.opps.find(opp => opp.id === first)!;
+        delete booking.seatAcceptedAt;
+        const legacyReceipt = world.about(first).find(message => message.meta.booked?.proposalId === first)!;
+        world.net.importState(older);
+        expect(feedbackRows()[0]?.hireAcceptedAt).toBe(legacyReceipt.t);
+        delete booking.bookedAt;
+        world.net.importState(older);
+        expect(feedbackRows()[0]?.hireAcceptedAt).toBe(booking.meetingAt);
+        world.net.importState(current);
+      }
+      await world.run(3 * DAY);
+      world.restart();
+      const replacement = queue()[0]?.oppId;
+      const prematureCloses = world.logs.filter(event => event.kind === "seat_ended" && event.detail.reason === "posting filled").length;
+      expect({ queued: queue().length, prematureCloses }).toEqual({ queued: released ? 1 : 0, prematureCloses: 0 });
+      if (replacement) {
+        const next = world.opp(replacement)!.participants.find(id => id !== "manager")!;
+        expect(next).not.toBe(candidate);
+        expect(world.about(replacement)).toEqual([]);
+        expect(openings()).toBe("peon:openings:0");
+        if (attendance === "manager missed") {
+          expect(world.net.review(replacement, "approve", { reviewer: "sim_staff" })).toBe(true);
+          expect(await world.runUntil(() => world.probedFor(next, replacement))).toBe(true);
+          await world.say(next, "yes");
+          expect(await world.runUntil(() => world.probedFor("manager", replacement))).toBe(true);
+          await world.say("manager", "yes");
+          expect(world.opp(replacement)?.stage).toBe("scheduled");
+        }
+      }
+    });
+  }
+
   // A manager may look for work while hiring. Their own seat must not win the sole opening
   // and then disappear in seatRoute, which correctly refuses to route a person to themself.
   const ownerRows = [];
@@ -194,6 +482,40 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   b.gate("a hiring candidate never consumes their own opening and can still join another employer", ownerRows.every(r =>
     r.selectedOwn === 0 && r.selectedExpected === 1 && r.queued === 1 && r.beforeReview && r.candidateFirst && r.managerAfterYes && r.result && r.restored), JSON.stringify({ rows: ownerRows }));
 
+  await b.run("a closed Peon application keeps the candidate and employer's own answers", async () => {
+    for (const employerDeclines of [true, false]) {
+      const world = new SeatWorld();
+      world.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      world.add("candidate", "Casey Bell", 29, { candidate: true });
+      for (const member of world.members) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) {
+        await world.say(member.id, answer);
+      }
+      await world.say("manager", POST.replace("2 openings", "1 opening"));
+      await world.say("manager", "yes");
+      expect(await world.runUntil(() => world.net.reviewQueue().length === 1)).toBe(true);
+      const id = world.net.reviewQueue()[0]!.oppId, seat = world.opp(id)!.seat!.id;
+      expect(world.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await world.runUntil(() => world.probedFor("candidate", id))).toBe(true);
+      await world.say("candidate", "yes");
+      world.restart();
+      expect(await world.runUntil(() => world.probedFor("manager", id))).toBe(true);
+      if (employerDeclines) await world.say("manager", "no");
+      expect(await world.runUntil(() => world.opp(id)?.stage === "closed")).toBe(true);
+      const expected = { outcome: employerDeclines ? "declined" : "expired", acceptedBy: ["candidate"],
+        declinedBy: employerDeclines ? [seat] : [], noResponse: undefined };
+      for (let restart = 0; restart < 2; restart++) {
+        const input = world.net.packInput(world.clock.now());
+        const records = input.interactions!.filter(r => r.id === id);
+        const view = new World(input, resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+        expect(records.map(({ outcome, acceptedBy, declinedBy, noResponse }) => ({ outcome, acceptedBy, declinedBy, noResponse }))).toEqual([expected]);
+        expect(historyOf(view, seat).answered).toBe(employerDeclines ? 1 : 0);
+        expect(historyOf(view, "candidate").inFlight).toBe(0);
+        expect(world.meetings).toEqual([]);
+        world.restart();
+      }
+    }
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     // No posting is stored yet: the lookup an update or close reads from finds nothing.
     const storedPosting = () => undefined;
@@ -202,7 +524,7 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     const step = readPostingText(POST, { postings: [], newId: "p-new", storedPosting })!;
     expect(step.ready).toBe(true);
     expect(step.text).toMatch(/Reply yes to post it/);
-    const noPay = readPostingText("We're hiring a barista, 1 opening", { postings: [], newId: "p-2", storedPosting })!;
+    const noPay = readPostingText("We're hiring a barista, 1 opening, onsite in Queens", { postings: [], newId: "p-2", storedPosting })!;
     expect(noPay.ready).toBe(false);
     expect(noPay.text).toBe(POSTING_COPY.askPay);
     const fixed = readPostingText("$40k-$50k", { draft: noPay.draft!, postings: [], newId: "p-3", storedPosting })!;
@@ -221,6 +543,20 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   w.add("c6", "Held Six", 31, { candidate: true });
   for (const id of ["hm1", "hm2", "hm3", ...CANDIDATES, "c5", "c6"]) for (const a of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(id, a);
   w.net.holdMember("c6", "sim_staff", "held for the gate");
+
+  await b.run("intake: an invalid stated opening count needs a correction before read-back", async () => {
+    const draftWorld = new SeatWorld();
+    draftWorld.add("manager", "Sam Patel", 34, { verified: "Acme" });
+    for (const answer of ["hi", "Work", "Weekends mostly", "One-on-one"]) await draftWorld.say("manager", answer);
+    for (const invalid of ["0", "1.5"]) {
+      await draftWorld.say("manager", POST.replace("2 openings", `${invalid} openings`));
+      expect(draftWorld.last("manager")).toMatch(/How many openings/);
+      expect(draftWorld.saved.length).toBe(0);
+    }
+    await draftWorld.say("manager", "two");
+    expect(draftWorld.last("manager")).toMatch(/2 openings.*Reply yes/);
+    expect(draftWorld.saved.length).toBe(0);
+  });
 
   await b.run("intake: read back first, saved only on the manager's yes", async () => {
     const m = w.mark();
@@ -259,7 +595,10 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
       expect(i.proposal.participants.some(p => p.startsWith("job:"))).toBe(false);
       const cand = i.proposal.participants.find(p => p !== "hm1")!;
       expect(CANDIDATES).toContain(cand);
-      expect(w.opp(i.oppId)?.seat).toEqual({ id: seat, manager: "hm1" });
+      const bound = w.opp(i.oppId)?.seat;
+      expect(bound).toMatchObject({ id: seat, manager: "hm1" });
+      expect(bound?.evidence?.search).toMatch(/^[a-f0-9]{64}$/);
+      expect(bound?.evidence?.posting).toMatch(/^[a-f0-9]{64}$/);
       expect(w.about(i.oppId, m).length).toBe(0);
     }
     A = items[0]!.oppId;
@@ -283,8 +622,10 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   });
 
   await b.run("restart: the item, the seat and the manager's pending review survive an export and import", async () => {
+    const bound = w.opp(A)?.seat;
+    expect(bound).toMatchObject({ id: seat, manager: "hm1" });
     w.restart();
-    expect(w.opp(A)?.seat).toEqual({ id: seat, manager: "hm1" });
+    expect(w.opp(A)?.seat).toEqual(bound);
     expect(w.probedFor("hm1", A)).toBe(true);
   });
 

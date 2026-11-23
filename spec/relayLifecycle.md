@@ -50,12 +50,18 @@ pure def sometimesDeliveryWaits(relay: RelayLifecycle): bool = relay.phase == De
 
 ### Staff review clears the held text
 
-A held item can be released or rejected once. A release may enter the send path only when the current policy permits rendered content. Erasure applies the rejection transition to the held item and clears its text.
+A held item can be released or rejected once. Before releasing held text, read the current canonical age, consent, and safety state of both parties. Staff can override a text content hold while both parties remain eligible. A safety hold on either party prevents this override. The current block decision and the send-time checks still apply. Erasure applies the rejection transition to the held item and clears its text.
 
 ```quint
 pure val storedHold: RelayLifecycle = { ...initial, phase: Held }
 
 pure def canReviewHold(relay: RelayLifecycle): bool = relay.phase == Held
+
+pure def staffMayReleaseHeldText(verdict: RelayVerdict, isText: bool, senderHeld: bool, recipientHeld: bool): bool =
+  verdict == Hold and isText and not(senderHeld or recipientHeld)
+
+pure def lawStaffTextReleaseRequiresBothPartiesClear(verdict: RelayVerdict, isText: bool, senderHeld: bool, recipientHeld: bool): bool =
+  staffMayReleaseHeldText(verdict, isText, senderHeld, recipientHeld) implies not(senderHeld or recipientHeld)
 
 pure def reviewHold(relay: RelayLifecycle, released: bool): RelayLifecycle =
   { phase: if (released) Released else Rejected, staffReviewed: true, retainsText: false }

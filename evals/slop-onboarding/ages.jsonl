@@ -68,3 +68,120 @@
 {"text":"i'm 13","minor":true,"age":13}
 {"text":"im in middle school","minor":true}
 {"text":"my mom wont let me date yet","minor":true}
+{"text":"I'm 3 and 0 this season","minor":false}
+{"text":"I am 3 and my record is 3-1.","minor":false}
+{"text":"I just turned 12 and I am undefeated.","minor":true,"age":12,"declined":false}
+{"text":"I just turned twelve and we won the tournament.","minor":true,"age":12,"declined":false}
+{"text":"I'm 12 and a half and I am undefeated.","minor":true,"age":12,"declined":false}
+{"text":"I am 12 and my team won.","minor":true,"age":12,"declined":false}
+{"text":"I am 12 years old and my team won.","minor":true,"age":12,"declined":true}
+{"text":"If I just turned 12 and we won, I would be happy.","minor":false}
+{"text":"She said \"I just turned 12 and we won.\"","minor":false}
+{"text":"I'm a 17 year old trans girl looking for guys","minor":true,"age":17}
+{"text":"32M seeking F 28-35","minor":false,"age":32}
+{"text":"29F seeking M 30-40","minor":false,"age":29}
+{"text":"looking for f 16-25","minor":false}
+{"text":"F 17","minor":true,"age":17}
+{"text":"I'm 17 and a half and want a gf","minor":true,"age":17}
+{"text":"i'm 16 and a half now","minor":true,"age":16}
+{"text":"I'm 17 and a half too","minor":true,"age":17}
+{"text":"i'm 17.5 now","minor":true,"age":17}
+{"text":"I'm 16.5 and bored","minor":true,"age":16}
+{"text":"I'm 15 and 3 months","minor":true,"age":15}
+{"text":"I'm 17 and 11 months","minor":true,"age":17}
+{"text":"I'm 17 and 3/4","minor":true,"age":17}
+{"text":"actually im 16 and a half lol","minor":true,"age":16}
+{"text":"i'm 16yrs","minor":true,"age":16}
+{"text":"I'm thirty-nine and looking for someone","minor":false,"age":39}
+{"text":"I'm 18 1/2 years old","minor":false,"age":18}
+{"text":"I'm 18.5 years old","minor":false,"age":18}
+{"text":"I'm 5.5","minor":false}
+{"text":"I'm 5 1/2, slim","minor":false}
+{"text":"i'm 6.5 and i work out","minor":false}
+{"text":"I'm 7.5 years old.","minor":true,"age":7,"declined":true}
+{"text":"I'm 5 1/2 years old.","minor":true,"age":5,"declined":true}
+{"text":"I'm 12 and 3 months old.","minor":true,"age":12,"declined":true}
+{"text":"I'm 12 years and 3 months old.","minor":true,"age":12,"declined":true}
+{"text":"I'm 17 years and 3 months old.","minor":true,"age":17}
+{"text":"I'm 14 and a quarter.","minor":true,"age":14}
+{"text":"I'm 16y.o. I live in NYC.","minor":true,"age":16}
+{"text":"I'm 16y.o., in two years.","minor":false}
+{"text":"I'm 5.5 feet tall.","minor":false}
+{"text":"I'm 12 and 3 months.","minor":false}
+{"text":"I'm 12 and 3 months sober.","minor":false}
+{"text":"I'm 12 years and 3 months sober.","minor":false}
+{"text":"I'm 12 and 3 months old, in two years.","minor":false}
+{"text":"I'm 12 years and 3 months old in two years.","minor":false}
+{"text":"He said \"I am 17 and 3 months old\".","minor":false}
+{"text":"When I turned 12 and 3 months old, I moved.","minor":false}
+{"text":"I'm 5.5 years old","minor":true,"age":5,"declined":true}
+{"text":"I'm 7 1/2 years old","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7 1/2","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7.5","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7.5 miles away","minor":false}
+{"text":"I just turned 7.5 in two years","minor":false}
+{"text":"My sister said \"I just turned 7.5\".","minor":false}
+{"text":"When I turned 7.5, I moved.","minor":false}
+{"text":"I'm 12.5 minutes away","minor":false,"declined":false}
+{"text":"I'm 5 and also my team won","minor":false,"declined":false}
+{"text":"I'm 12 and my record collection","minor":false,"declined":false}
+{"text":"I'm 12.5 y.o., in two years","minor":false,"declined":false}
+{"text":"I'm 15 and a quarter miles away","minor":false,"declined":false}
+{"text":"I'm 17 and a quarter years old tomorrow","minor":false,"declined":false}
+{"text":"I'm 12 and a half years old","minor":true,"declined":true,"age":12}
+{"text":"I'm 11 1/2 years old","minor":true,"declined":true,"age":11}
+{"text":"I'm 12 and 3 months old","minor":true,"declined":true,"age":12}
+{"text":"She said \"this is true. I'm 12.5 years old.\"","minor":false,"declined":false}
+{"text":"I'm 18 this Friday","minor":true,"age":17,"declined":false}
+{"text":"I'm 18 y.o. this Friday","minor":true,"age":17,"declined":false}
+{"text":"I'll be 18 in two years","minor":false,"declined":false}
+{"text":"I'm turning 18 in two years","minor":false,"declined":false}
+{"text":"I turn 18 in two years","minor":false,"declined":false}
+{"text":"I'm 21 years old. My brother is 18 this Friday.","minor":false,"age":21,"declined":false}
+{"text":"She said \"I'm in middle school\"","minor":false}
+{"text":"He told me \"I'm underage\"","minor":false}
+{"text":"She said \"I'm in 7th grade\"","minor":false}
+{"text":"She said \"I'm a high school freshman\"","minor":false}
+{"text":"She said \"I'm in high school\"","minor":false}
+{"text":"cant go 'cause my mom won't let me","minor":true}
+{"text":"I told her \"I'm underage\"","minor":true}
+{"text":"She said \"Hello. Age: 12.\"","minor":false,"declined":false}
+{"text":"She said \"First sentence. I am 16 years old.\"","minor":false,"declined":false}
+{"text":"She said \"Hello. 15f here.\"","minor":false,"declined":false}
+{"text":"He said \"She said ‘I’m in seventh grade.’\"","minor":false,"declined":false}
+{"text":"He said 'I’m in middle school.'","minor":false,"declined":false}
+{"text":"I'm in 7th grade.","minor":true,"age":12,"declined":false}
+{"text":"I'm underage.","minor":true,"declined":false}
+{"text":"She said 'I'm underage.'","minor":false}
+{"text":"I heard her say, \"I’m underage.\"","minor":false}
+{"text":"She said \"I am a minor","minor":false}
+{"text":"Can you check the dialogue: \"I’m underage.\"","minor":false}
+{"text":"Can you proofread this draft: \"Hello. Age: 15","minor":false}
+{"text":"One example: \"I’m in middle school.","minor":false}
+{"text":"I told her \"Mara said ‘I’m underage.’\"","minor":false}
+{"text":"I said “I’m 17.”","minor":false}
+{"text":"I just texted her “I’m underage.”","minor":true}
+{"text":"I’m quoting myself: “I’m underage.”","minor":true}
+{"text":"I told her \"I said ‘I’m underage.’\"","minor":true}
+{"text":"'cuz i'm underage","minor":true}
+{"text":"The character whispered, \"I’m in 7th grade.\"","minor":false}
+{"text":"Yesterday I told her “I’m underage.”","minor":true}
+{"text":"Yesterday, I told her “I’m underage.”","minor":true}
+{"text":"Earlier I told her “I’m underage.”","minor":true}
+{"text":"Yesterday I told her “I’m underage","minor":true}
+{"text":"Yesterday she told me “I’m underage.”","minor":false}
+{"text":"Yesterday I told her she said “I’m underage.”","minor":false}
+{"text":"Yesterday I told her “I’m 17.”","minor":false}
+{"text":"Yesterday I told her “Mara said ‘I’m underage.’”","minor":false}
+{"text":"Yesterday I read a draft: “I’m underage.”","minor":false}
+{"text":"ugh \"so tired. I'm in high school","minor":true}
+{"text":"I love \"the office. i'm 15","minor":false}
+{"text":"I love \"the office. anyway i'm in 10th grade","minor":true}
+{"text":"my nickname is \"the kid. i'm in high school btw","minor":true}
+{"text":"ive said \"i'm underage\"","minor":true}
+{"text":"\"i'm in 8th grade\"","minor":false}
+{"text":"“i'm in 8th grade”","minor":false}
+{"text":"😅 \"im in 8th grade\" 😅","minor":false}
+{"text":"She said \"For a meme: ‘I’m underage.’\"","minor":false}
+{"text":"Translate this: “I’m underage.”","minor":false}
+{"text":"Caption for the photo: \"Hello. Age: 15","minor":false}
