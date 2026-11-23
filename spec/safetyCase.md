@@ -268,6 +268,28 @@ pure def lawLongUnrelatedReplyKeepsSafety(competingPrompt: bool): bool =
   not(safetyQuestionResolves(false, competingPrompt, false, false, false))
 ```
 
+### A complete name or confirmation identifies one safety target
+
+A fixed affirmative prefix or courtesy suffix can accompany the full name. If the literal and qualified readings identify different people, the answer is ambiguous.
+
+A bare affirmative or a complete positive expression such as "him" or "that's her" can use the sole person offered only when no other prompt is waiting. A pronoun followed by another suggestion, a refusal, or a question cannot select the offered person.
+
+Shared-line routing requires a unique exact displayed name across the active app questions. An unnamed confirmation cannot choose the app.
+
+```quint
+pure def safetyQuestionUsesSoleOffer(soleOffer: bool, competingPrompt: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+  soleOffer and not(competingPrompt) and exactConfirmation and not(hasNamedMatch)
+
+pure def lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: bool, exactConfirmation: bool, hasNamedMatch: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, true, exactConfirmation, hasNamedMatch))
+
+pure def lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: bool, competingPrompt: bool, hasNamedMatch: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, false, hasNamedMatch))
+
+pure def lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: bool, competingPrompt: bool, exactConfirmation: bool): bool =
+  not(safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true))
+```
+
 ### A ban allows only carrier commands and app leave
 
 A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.

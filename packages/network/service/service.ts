@@ -32,7 +32,7 @@ import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } fr
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type Intent, type MemberId } from "@thenetwork/core";
-import { pendingReportReplyName, storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
+import { pendingReportReplyNames, storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import {
@@ -1755,19 +1755,19 @@ export class NetworkService implements RuntimeHost {
 
   private async sharedReportReply(e164: string, ev: Extract<ChannelEvent, { kind: "message" }>,
     memberships: readonly { app: AppId; memberId: MemberId }[]): Promise<SharedReportReply | undefined> {
-    const name = memberships.length > 1 ? pendingReportReplyName(ev.text) : undefined;
-    if (!name || this.inboundTurn()?.from !== e164) return;
+    const names = memberships.length > 1 ? pendingReportReplyNames(ev.text) : [];
+    if (!names.length || this.inboundTurn()?.from !== e164) return;
     const person = await this.accounts.personFor(e164);
     if (!person) return;
     const matches = (await Promise.all(memberships.map(async ({ app, memberId }) => {
       const membership = await this.people.getMembership(person.id, app);
       if (membership?.memberId !== memberId || membership.state !== "active" || membership.review !== null) return [];
       const rt = await this.runtimeOfMember(app, memberId);
-      const choices = await rt?.readState(net => net.pendingReportChoices(memberId, name, ev.receivedAt)) ?? [];
+      const choices = await rt?.readState(net => net.pendingReportChoices(memberId, names, ev.receivedAt)) ?? [];
       return choices.map(choice => ({ app, personId: person.id, memberId, choice }));
     }))).flat();
     switch (sharedReportRoute(true, matches.length)) {
-      case "UniqueReportRoute": return matches[0];
+      case "UniqueReportRoute": return matches[0]?.choice.routable ? matches[0] : undefined;
       case "AmbiguousReportRoute": return "ambiguous";
       case "NoReportRoute": return;
     }

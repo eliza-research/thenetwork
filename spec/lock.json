@@ -1280,6 +1280,10 @@
         "bd0375670fc2",
         "54c1a0d18207"
       ],
+      "Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target": [
+        "205cc0f318fc",
+        "19c535c3c418"
+      ],
       "Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave": [
         "a0068a169ab4",
         "c32f1cdc792e"

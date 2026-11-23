@@ -41,7 +41,7 @@ async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }
 
 const SECRET = "whsec_shared";
 const NETS = [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }, { id: "peon:nyc" }, { id: "friends:nyc" }];
-let phoneSeq = 40;
+let phoneSeq = 0;
 const newPhone = () => `+121255501${String(++phoneSeq).padStart(2, "0")}`;
 const HOSTS: Record<AppId, string> = { ntwrk: "localhost:5101", slop: "localhost:5102", peon: "localhost:5103", friends: "localhost:5104" };
 const dirs: string[] = [];
@@ -393,7 +393,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     };
     const probeStatus = (id: string) => s.runtimeFor("slop")!.readState(net =>
       net.exportState().opps.find(opp => opp.id === id)?.status.find(([member]) => member === slopAri)?.[1]);
-    const competingSlopProbe = async (id: string) => {
+    const competingSlopProbe = async (id: string, counterpart = slopBen) => {
       const now = clock.now();
       const deliveryId = `${id}.probe`;
       const body = "Are you open to a date?";
@@ -402,8 +402,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
         const meeting = state.opps.find(opp => opp.id === `slop.clarification-meeting.${slopBen}`)!;
         const reporter = state.members.find(member => member.id === slopAri)!;
         state.opps.push({ ...meeting, id, stage: "probing", meetingAt: undefined, bookedTold: undefined,
-          status: [[slopAri, "probing"], [slopBen, "probing"]], createdAt: now,
-          deadline: now + HOUR, contacted: [slopAri, slopBen] });
+          participants: [slopAri, counterpart], status: [[slopAri, "probing"], [counterpart, "probing"]], createdAt: now,
+          deadline: now + HOUR, contacted: [slopAri, counterpart] });
         reporter.awaiting = { kind: "probe", oppId: id, at: now, probeReceiptId: deliveryId, probeInboundCount: reporter.msgsIn };
         reporter.lastSent = { body, at: now, consentProbe: id };
         net.importState(state);
@@ -505,6 +505,86 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     }, T);
   }
 
+  // spec/safetyCase.md, "A complete name or confirmation identifies one safety target"
+  test("a qualified name answers a signed safety question without taking a competing probe", async ({ onTestFinished }) => {
+    const { s, askSlop, competingSlopProbe, pending, probeStatus, reports, signed, clock, slopBen } = await signedSafetyFixture(onTestFinished);
+    const cy = newPhone();
+    expect(await text(s, clock, cy, "slop")).toBe("join_asked");
+    expect(await text(s, clock, cy, "Cy, 31")).toBe("joined");
+    const cyId = (await memberOf("slop", cy))!.id;
+    await askSlop("ask-qualified-local");
+    const probe = "slop.competing-qualified-safety-probe";
+    await competingSlopProbe(probe, cyId);
+
+    expect(await signed("pending-local-pronoun", "him please", "slop")).toMatchObject({ app: "slop" });
+    expect(await pending("slop")).toMatchObject({ targets: [slopBen] });
+    expect(await reports("slop")).toEqual([]);
+    expect(await probeStatus(probe)).toBe("probing");
+
+    expect(await signed("answer-qualified-local", "Yes, Ben please", "slop")).toMatchObject({ app: "slop" });
+    expect(await pending("slop")).toBeUndefined();
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+    expect(await probeStatus(probe)).toBe("probing");
+  });
+
+  test("only one matching app can take a qualified shared safety answer", async ({ onTestFinished }) => {
+    const { askSlop, pending, reports, signed, clock, slopBen, peonAri } = await signedSafetyFixture(onTestFinished);
+    await askSlop("ask-qualified-shared-slop");
+    expect(await signed("ask-qualified-shared-peon", "Report him, he harassed me.", "peon")).toMatchObject({
+      outcome: "handled", app: "peon", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)],
+    });
+    clock.advance(MINUTE);
+    const competingPeon = async (id: string) => {
+      await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, type, status, opportunity_id, proactive, system, ts)
+        values ('peon', ${id}, ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.', 'probe',
+          'dry_run', 'peon.competing-qualified-safety-probe', true, false, ${new Date(clock.now())})`;
+      clock.advance(MINUTE);
+    };
+
+    await competingPeon("qualified-shared-probe-ambiguous");
+    expect(await signed("answer-qualified-shared-ambiguous", "Yes, Ben please")).toMatchObject({ outcome: "handled", replies: [] });
+    expect(await pending("slop")).toMatchObject({ targets: [slopBen] });
+    expect(await pending("peon")).toBeDefined();
+    expect(await reports("slop")).toEqual([]);
+    expect(await reports("peon")).toEqual([]);
+
+    expect(await signed("cancel-qualified-shared-peon", "Never mind", "peon")).toMatchObject({ app: "peon" });
+    await competingPeon("qualified-shared-probe-unique");
+    expect(await signed("answer-shared-pronoun", "him please")).toMatchObject({ app: "peon" });
+    expect(await pending("slop")).toMatchObject({ targets: [slopBen] });
+    expect(await signed("answer-qualified-shared-unique", "Yes, Ben please")).toMatchObject({ outcome: "handled", app: "slop" });
+    expect(await pending("slop")).toBeUndefined();
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+    expect(await reports("peon")).toEqual([]);
+  });
+
+  test("an affirmative-looking alternate name still makes a signed shared reply ambiguous", async ({ onTestFinished }) => {
+    const { competingSlopProbe, pending, reports, signed, clock } = await signedSafetyFixture(onTestFinished, ["Yeah\tYes", "Yes"]);
+    expect(await signed("ask-literal-app", "Report him, he harassed me.", "slop")).toMatchObject({
+      app: "slop", replies: [expect.stringMatching(/^Who do you mean: Yeah\s+Yes\?/)],
+    });
+    clock.advance(MINUTE);
+    expect(await signed("ask-qualified-app", "Report him, he harassed me.", "peon")).toMatchObject({
+      app: "peon", replies: [expect.stringMatching(/^Who do you mean: Yes\?/)],
+    });
+    clock.advance(MINUTE);
+    const slopQuestion = await pending("slop");
+    const peonQuestion = await pending("peon");
+
+    expect(await signed("ambiguous-literal-and-qualified", "Yeah Yes")).toMatchObject({ outcome: "handled", replies: [] });
+    expect(await reports("slop")).toEqual([]);
+    expect(await reports("peon")).toEqual([]);
+    expect(await pending("slop")).toEqual(slopQuestion);
+    expect(await pending("peon")).toEqual(peonQuestion);
+
+    await competingSlopProbe("slop.competing-bare-safety-affirmative");
+    expect(await signed("bare-affirmative", "Yes")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([]);
+    expect(await reports("peon")).toEqual([]);
+    expect(await pending("slop")).toEqual(slopQuestion);
+    expect(await pending("peon")).toEqual(peonQuestion);
+  }, T);
+
   test("a signed cancellation received before a dedicated app question cannot clear it", async ({ onTestFinished }) => {
     const { askSlop, pending, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
     await addDedicatedLine();
@@ -515,6 +595,21 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toEqual([]);
   }, T);
 
+  // spec/safetyCase.md, "A complete name or confirmation identifies one safety target"
+  test("an unmatched explicitly named safety reply cannot confirm a different offered person", async ({ onTestFinished }) => {
+    const { askSlop, reports, signed } = await signedSafetyFixture(onTestFinished);
+    await askSlop("unmatched-explicit-safety-name");
+    expect(await signed("answer-unmatched-safety-name", "I mean Yes", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([]);
+  }, T);
+
+  test("an explicit pronoun can still confirm the sole offered safety target", async ({ onTestFinished }) => {
+    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+    await askSlop("explicit-safety-pronoun");
+    expect(await signed("answer-explicit-safety-pronoun", "I mean him", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+  }, T);
+
   for (const name of ["Mara Sure", "Joey Pass", "Francis No"]) {
     test(`the exact full name ${name} still names the safety target`, async ({ onTestFinished }) => {
       const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished, [name, "Ben"]);
@@ -523,6 +618,13 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
     }, T);
   }
+
+  test("a complete explicit pronoun with courtesy confirms the sole offered safety target", async ({ onTestFinished }) => {
+    const { askSlop, reports, signed, slopBen } = await signedSafetyFixture(onTestFinished);
+    await askSlop("courtesy-with-explicit-safety-pronoun");
+    expect(await signed("answer-courtesy-with-explicit-safety-pronoun", "I mean him please", "slop")).toMatchObject({ app: "slop" });
+    expect(await reports("slop")).toEqual([expect.objectContaining({ subjectId: slopBen })]);
+  }, T);
 
   const safetyControlCases = [
     { name: "Nvm", reply: "nvm", probeReply: undefined },
@@ -540,6 +642,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     { name: "Hard Pass", reply: "Hard pass", probeReply: "unavailable" },
     { name: "Rather Not", reply: "Rather not", probeReply: "unavailable" },
     { name: "Not Interested", reply: "Not interested", probeReply: "unavailable" },
+    { name: "No", reply: "No thanks", probeReply: "unavailable" },
+    { name: "No", reply: "No, thanks", probeReply: undefined },
+    { name: "No", reply: "Okay, no", probeReply: "unavailable" },
+    { name: "Nah", reply: "Nah please", probeReply: "unavailable" },
+    { name: "Yes Thanks", reply: "Yes thanks", probeReply: "available" },
   ];
   for (const { name, reply, probeReply } of safetyControlCases) {
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"

@@ -374,6 +374,33 @@ export function lawLongUnrelatedReplyKeepsSafety(competingPrompt: boolean): bool
   return !safetyQuestionResolves(false, competingPrompt, false, false, false);
 }
 
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function safetyQuestionUsesSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean, hasNamedMatch: boolean): boolean {
+  return soleOffer && !competingPrompt && exactConfirmation && !hasNamedMatch;
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function lawCompetingPromptCannotUseSoleSafetyOffer(soleOffer: boolean, exactConfirmation: boolean, hasNamedMatch: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, true, exactConfirmation, hasNamedMatch);
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function lawSoleSafetyOfferRequiresExactConfirmation(soleOffer: boolean, competingPrompt: boolean, hasNamedMatch: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, false, hasNamedMatch);
+}
+
+/** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */
+//@ pure
+export function lawNamedSafetyAnswerCannotUseSoleOffer(soleOffer: boolean, competingPrompt: boolean, exactConfirmation: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionUsesSoleOffer(soleOffer, competingPrompt, exactConfirmation, true);
+}
+
 /** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */
 //@ pure
 export function inboundAllowedAfterBan(banned: boolean, compliance: boolean): boolean {
