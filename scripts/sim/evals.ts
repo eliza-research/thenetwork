@@ -327,7 +327,7 @@ function photoReadingView(r: PhotoReading): Record<string, unknown> {
     case "name_refused": return { kind: r.kind, reason: r.reason };
     case "delete": return { kind: r.kind, pick: r.result.pick, numbers: r.numbers };
     case "take_back": return { kind: r.kind, thread: r.threadId, numbers: r.numbers };
-    case "none": case "photos_ok": case "no_more_photos": return { kind: r.kind };
+    case "none": case "ambiguous_match": case "photos_ok": case "no_more_photos": return { kind: r.kind };
     default: { const _exhaustive: never = r; return _exhaustive; }
   }
 }

@@ -110,3 +110,6 @@
 {"ctx": "H", "text": "send her my first photo. yesterday was fun", "expect": {"kind": "send", "pick": "ProposePhotos", "numbers": [1]}}
 {"ctx": "H", "text": "Send him my number. Every time he asks, he can have my photo and my number.", "expect": {"kind": "none"}}
 {"ctx": "D1", "text": "yes send it and send him my number", "expect": {"kind": "draft", "yes": true, "no": false, "hasReference": false}}
+{"ctx": "Collision", "text": "Send Pat photo 1.", "expect": {"kind": "ambiguous_match"}}
+{"ctx": "Collision", "text": "Take back photo 1 from Pat.", "expect": {"kind": "ambiguous_match"}}
+{"ctx": "SelectedPat", "text": "Send Pat photo 1.", "expect": {"kind": "send", "pick": "ProposePhotos", "numbers": [1], "thread": "P1"}}

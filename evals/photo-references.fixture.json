@@ -11,12 +11,16 @@
   ],
   "threads": {
     "T1": { "threadId": "T1", "recipientMemberId": "slop_maya", "firstName": "Maya" },
-    "T2": { "threadId": "T2", "recipientMemberId": "slop_jordan", "firstName": "Jordan" }
+    "T2": { "threadId": "T2", "recipientMemberId": "slop_jordan", "firstName": "Jordan" },
+    "P1": { "threadId": "P1", "recipientMemberId": "slop_pat1", "firstName": "Pat" },
+    "P2": { "threadId": "P2", "recipientMemberId": "slop_pat2", "firstName": "Pat" }
   },
   "contexts": {
     "M": { "threads": ["T1", "T2"], "current": null, "draft": null },
     "H": { "threads": ["T1"], "current": null, "draft": null },
     "R": { "threads": ["T1", "T2"], "current": "T1", "draft": null },
+    "Collision": { "threads": ["P2", "P1"], "current": null, "draft": null },
+    "SelectedPat": { "threads": ["P2", "P1"], "current": "P1", "draft": null },
     "D1": { "threads": ["T1"], "current": null, "draft": { "recipient": "T1", "shown": [1, 2, 3, 4, 5, 6], "proposed": [1], "wantsSet": false, "listed": false } },
     "D2": { "threads": ["T1", "T2"], "current": null, "draft": { "recipient": "T1", "shown": [1, 2, 3, 4, 5, 6], "proposed": [1], "wantsSet": false, "listed": false } },
     "L14": { "threads": ["T1"], "current": null, "draft": { "recipient": "T1", "shown": [1, 4], "proposed": [], "wantsSet": false, "listed": true } },

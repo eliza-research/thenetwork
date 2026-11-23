@@ -239,7 +239,7 @@ test("an unselected named relay refuses two different counterparts with the same
   const [older, newer] = await namedRelaySams();
   await setNamedRelayMatches([
     { id: "same-name-text-old", other: older, dayOffset: 1 },
-    { id: "same-name-text-new", other: newer, dayOffset: 2 },
+    { id: "same-name-text-new", other: newer, dayOffset: 1 },
   ]);
   const outgoing = () => sql`select id from network.messages where app_id='friends' and direction='outbound' and type='relay' and body like '%shellfish%'`;
   const before = (await outgoing()).length;
