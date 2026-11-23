@@ -653,6 +653,11 @@ test.each([
   { label: "first-person near adult birthday on TURN", body: "I'm turning 18 next month", minor: true, incomingAge: 17 },
   { label: "first-person mid-teen birthday on TURN", body: "I'm turning 16 next month", minor: true, incomingAge: 15 },
   { label: "first-person school year on TURN", body: "I'm in seventh grade", minor: true, incomingAge: 13 },
+  { label: "adult teacher role", body: "I'm in 12th grade, as a teacher.", minor: false },
+  { label: "decimal measurement", body: "I'm turning 16.5 degrees", minor: false },
+  { label: "grouped measurement", body: "I'm almost 15,000 feet away", minor: false },
+  { label: "measurement beside genuine youth estimate", body: "I'm turning 16.5 degrees, but I'm almost 18.", minor: true, incomingAge: 17 },
+  { label: "grade followed by teacher attribution", body: "I'm in seventh grade, as a teacher told me.", minor: true, incomingAge: 13 },
   { label: "short birthday today", body: "turning 18 today", minor: true },
   { label: "short birthday this month", body: "turning 18 this month", minor: true },
   { label: "measurement in miles", body: "I'm almost 150 miles away.", minor: false },
@@ -699,6 +704,12 @@ test.each([
     expect(await service.runtimeFor("friends")!.unitOfWork(net =>
       net.exportState().opps.find(opp => opp.id === id)?.stage)).toBe("closed");
     expect((await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text })).status).toBe(403);
+    clock.advance(MINUTE);
+    const followupId = id + "-minor-followup";
+    const followup = await signed(TURN_PATH, followupId, JSON.stringify(turn(senderPhone, followupId, "tell Bo the coffee shop is open.")));
+    expect(await followup.json()).toMatchObject({ outcome: "handled" });
+    expect(await sql`select id from network.messages
+      where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`).toHaveLength(0);
     return;
   }
   expect(await open(senderPhone, messageId, text)).toBe(sender);
