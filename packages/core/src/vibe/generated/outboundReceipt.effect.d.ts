@@ -41,8 +41,10 @@ type Machine_shape = {
     readonly changes: Stream.Stream<T.ReceiptLifecycle>;
     /** The state as it is kept now. */
     get(): Effect.Effect<T.ReceiptLifecycle>;
-    /** An event already parsed; a value from outside goes through `receive`. */
-    send(event: T.Event): Effect.Effect<T.ReceiptLifecycle, Rejected>;
+    /** An event already parsed. An optional source check runs under the writer immediately before saving. A value from outside goes through `receive`. */
+    send(event: T.Event, isCurrent?: 
+    /** @throws {never} */
+    (state: T.ReceiptLifecycle) => boolean): Effect.Effect<T.ReceiptLifecycle, Rejected>;
     receive(input: unknown): Effect.Effect<T.ReceiptLifecycle, NotAnEvent | Rejected>;
 };
 declare const Machine_base: Context.ServiceClass<Machine, "thenetwork/spec/outboundReceipt.md#Machine", Machine_shape>;

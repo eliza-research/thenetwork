@@ -110,7 +110,9 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   /** The type a variant belongs to. */
   const ownerOf = (variant: string): Json => {
     const [base, alias] = variant.split("::").reverse();
-    return typedefs.find((d) => d.type.kind === "sum" && d.alias === alias && fields(d.type).some((f: Json) => f.fieldName === base)) ?? fail(`unknown variant ${variant}`);
+    const owners = typedefs.filter((d) => d.type.kind === "sum" && d.alias === alias && fields(d.type).some((f: Json) => f.fieldName === base));
+    const direct = (d: Json) => d.name.split("::").length === variant.split("::").length;
+    return owners.find((d) => d.module === module) ?? owners.find(direct) ?? owners[0] ?? fail(`unknown variant ${variant}`);
   };
 
   // --- spellings -------------------------------------------------------------
@@ -197,7 +199,10 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (tagged(t)) return `(${fields(t).slice(0, -1).map((f) => `${v}.tag === ${JSON.stringify(f.fieldName)} ? ${variant(f)} : `).join("")}${variant(fields(t).at(-1)!)})`;
     if (t.kind === "list" || t.kind === "set") return `${v}.map((${x}: any) => ${copy(x, t.elem, depth + 1)})`;
     if (t.kind === "rec") return `({ ${record(t).join(", ")} })`;
-    if (t.kind === "fun") return `Object.fromEntries(Object.entries(${v}).map(([k${depth}, ${x}]: [string, any]) => [k${depth}, ${copy(x, t.res, depth + 1)}]))`;
+    if (t.kind === "fun") {
+      const entries = `Object.fromEntries(Object.entries(${v}).map(([k${depth}, ${x}]: [string, any]) => [k${depth}, ${copy(x, t.res, depth + 1)}]))`;
+      return keyOf(t).kind === "sum" ? `(${entries} as ${tsType(t)})` : entries;
+    }
     return v;
   };
 

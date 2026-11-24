@@ -11,6 +11,7 @@ import * as runtime from "vibelang-runtime/internal";
 import { maxEngineAttempts, initial, inv, tickMayEnter, tickMayTryLock, lawBusyTickSkips, canRecordAction, recordAction, canRecordSave, recordSave, stepSaveFollowsAction, sometimesCanSave, canRecordLoad, recordLoad, canRecordRestore, recordRestore, tickMayStartBesideEngine, engineAttemptAllowed, lawComputingTickSkips, preparedRunUsable, preparedItemCommits, evidenceOwner, lawChangedOwnerNeverCommits, lawUnchangedItemOfUsableRunCommits, lawStaleRunNeverCommits, lawMemberEntryIsNeverShared, lawEventEntryIsItsOwnEvidence, matchingDisabledByRegistry, tickRepairsProjection, tickRunsFollowup, startupPlan, enabled, step, parseEvent, parseState, snapshot_runtimeUnit } from "./runtimeUnit.effect.vibe.pure.js";
 export { maxEngineAttempts, initial, inv, tickMayEnter, tickMayTryLock, lawBusyTickSkips, canRecordAction, recordAction, canRecordSave, recordSave, stepSaveFollowsAction, sometimesCanSave, canRecordLoad, recordLoad, canRecordRestore, recordRestore, tickMayStartBesideEngine, engineAttemptAllowed, lawComputingTickSkips, preparedRunUsable, preparedItemCommits, evidenceOwner, lawChangedOwnerNeverCommits, lawUnchangedItemOfUsableRunCommits, lawStaleRunNeverCommits, lawMemberEntryIsNeverShared, lawEventEntryIsItsOwnEvidence, matchingDisabledByRegistry, tickRepairsProjection, tickRunsFollowup, startupPlan, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import { PreventSchedulerYield } from "effect/References";
 /** The rules do not allow this event in this state. */
 export class Rejected extends TaggedError("Rejected") {
     static {
@@ -67,7 +68,7 @@ export class Machine extends runtime.$service("thenetwork/spec/runtimeUnit.md#Ma
 export function machineOver(load, keep) {
     return Effect_1.gen(function* machineOver() {
         const shown = yield* SubscriptionRef.make(snapshot_runtimeUnit(yield* load()));
-        function send(event) {
+        function send(event, isCurrent) {
             return Effect_1.gen(function* send() {
                 const input = snapshot_runtimeUnit({ event });
                 let completion_1 = runtime.$normal;
@@ -75,8 +76,14 @@ export function machineOver(load, keep) {
                     {
                         completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(shown, () => {
                                 return Effect_1.gen(function* () {
-                                    const next = yield* apply(snapshot_runtimeUnit(yield* orDie(load())), input.event);
-                                    yield* keep(snapshot_runtimeUnit(next));
+                                    const current = snapshot_runtimeUnit(yield* orDie(load()));
+                                    const next = yield* apply(current, input.event);
+                                    const save = Effect_1.gen(function* save() {
+                                        if (isCurrent && !isCurrent(snapshot_runtimeUnit(current)))
+                                            return yield* Effect_1.fail(new Rejected({ ...input, state: current }));
+                                        yield* keep(snapshot_runtimeUnit(next));
+                                    });
+                                    yield* (isCurrent ? Effect.provideService(save, PreventSchedulerYield, true) : save);
                                     return [snapshot_runtimeUnit(next), next];
                                 });
                             }) };

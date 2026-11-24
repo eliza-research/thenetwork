@@ -100,11 +100,11 @@ jobs:
         shell: bash
         env:
           TOOLS: ${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}
-          ACTION_TOOLS: ${{ hashFiles('tools/vibestack/vibestack/action.ts', 'tools/vibestack/vibestack/run.ts', 'tools/vibestack/vibestack/simulator.ts') }}
+          ACTION_TOOLS: ${{ hashFiles('tools/vibestack/vibestack/action.ts', 'tools/vibestack/vibestack/cache.ts', 'tools/vibestack/vibestack/installed.ts', 'tools/vibestack/vibestack/run.ts', 'tools/vibestack/vibestack/simulator.ts') }}
           RESTORE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.cold_formal_cache) || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
         run: |
-          printf '%s\n' "restore=$RESTORE" "complete=formal-full-complete-v3-$TOOLS-$ACTION_TOOLS-" \
-            "previous=formal-full-complete-v3-$TOOLS-" "complete_v2=formal-full-complete-v2-$TOOLS-" \
+          printf '%s\n' "restore=$RESTORE" "complete=formal-full-complete-v4-$TOOLS-$ACTION_TOOLS-" \
+            "previous=formal-full-complete-v4-$TOOLS-" "complete_v3=formal-full-complete-v3-$TOOLS-" "complete_v2=formal-full-complete-v2-$TOOLS-" \
             "checkpoint=formal-full-checkpoint-v2-$TOOLS-" "legacy=formal-full-actions-v1-$TOOLS-" >> "$GITHUB_OUTPUT"
       - &formal-retry
         name: Restore a previous attempt of this full check
@@ -139,6 +139,7 @@ jobs:
           key: ${{ steps.formal-keys.outputs.complete }}${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ steps.formal-keys.outputs.previous }}
+            ${{ steps.formal-keys.outputs.complete_v3 }}
             ${{ steps.formal-keys.outputs.complete_v2 }}
       - &formal-checkpoint
         name: Restore checkpoint or legacy formal actions
@@ -181,7 +182,7 @@ jobs:
           if [[ "$COLD" == true ]]; then
             test -z "$(find .spec-cache/formal -mindepth 1 -maxdepth 1 -print -quit)"
           fi
-          find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' |
+          find .spec-cache/formal -maxdepth 1 -type f \( -name 'action-*.json.zst' -o -name 'action-*.json.gz' \) -printf '%f\n' |
             sort > "$RUNNER_TEMP/formal-actions-before"
           echo "FORMAL_DEADLINE=$(( $(date +%s) + BUDGET ))" >> "$GITHUB_ENV"
       - name: Precompute the heavier formal shard on this runner
@@ -235,7 +236,11 @@ jobs:
           # Leave time to upload completed receipts before the job deadline.
           remaining=$(( FORMAL_DEADLINE - $(date +%s) ))
           (( remaining > 0 ))
-          timeout --kill-after=15s "${remaining}s" pnpm run check $PROFILE
+          args=()
+          if [[ -n "$PROFILE" ]]; then
+            args+=("$PROFILE")
+          fi
+          timeout --kill-after=15s "${remaining}s" pnpm run check "${args[@]}"
       - name: Prepare completed actions for upload
         if: ${{ !cancelled() && (steps.check.outcome == 'success' || steps.check.outcome == 'failure') }}
         id: ready
@@ -243,7 +248,7 @@ jobs:
         run: |
           # The toolkit publishes complete raw actions by atomic rename in this directory.
           find .spec-cache/formal -mindepth 1 -maxdepth 1 -regextype posix-extended \
-            ! \( -type f -regex '.*/action-[a-f0-9]{24}\.json\.gz' \) -exec rm -rf -- {} +
+            ! \( -type f -regex '.*/action-[a-f0-9]{24}\.json\.(zst|gz)' \) -exec rm -rf -- {} +
           find .spec-cache/formal -maxdepth 1 -type f -printf '%f\n' |
             sort > "$RUNNER_TEMP/formal-actions-after"
           if [[ -s "$RUNNER_TEMP/formal-actions-after" ]]; then
@@ -328,7 +333,7 @@ jobs:
           baseline=()
           if [[ -n "$SEEDED" ]]; then
             before="$RUNNER_TEMP/formal-peer-before"
-            find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' > "$before"
+            find .spec-cache/formal -maxdepth 1 -type f \( -name 'action-*.json.zst' -o -name 'action-*.json.gz' \) -printf '%f\n' > "$before"
             baseline=("$before")
           fi
           node scripts/precompute-formal-shard.ts 2 2

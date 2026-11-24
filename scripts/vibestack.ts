@@ -204,7 +204,7 @@ export async function runSpec(project: string, args: string[]): Promise<number> 
     const compiled = enableCompileCache();
     if (compiled.directory) process.env.NODE_COMPILE_CACHE ??= compiled.directory;
     const [{ withFormalCache }, { main }] = await Promise.all([
-      import("../tools/vibestack/vibestack/cache.ts"),
+      import("../tools/vibestack/vibestack/formal.ts"),
       import("../tools/vibestack/vibestack/pipeline.ts"),
     ]);
     const priorStatus = process.exitCode;
@@ -290,7 +290,7 @@ async function main([command, ...args]: string[]) {
     if (["check", "accept", "conformance"].includes(command)) earlierCounterexamples = projectConformance(project, module);
     if (module !== undefined) {
       if (args[1] === "--nightly") return await checkConformance(project, module, true);
-      const { withFormalCache } = await import("../tools/vibestack/vibestack/cache.ts");
+      const { withFormalCache } = await import("../tools/vibestack/vibestack/formal.ts");
       return await withFormalCache(formalCache, () => checkConformance(project, module, false));
     }
     if (studio) console.log(`Studio is editing a copy at ${join(project, "spec")}. The repository’s spec/ remains authoritative.`);

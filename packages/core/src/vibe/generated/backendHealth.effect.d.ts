@@ -41,8 +41,10 @@ type Machine_shape = {
     readonly changes: Stream.Stream<T.BackendHealth>;
     /** The state as it is kept now. */
     get(): Effect.Effect<T.BackendHealth>;
-    /** An event already parsed; a value from outside goes through `receive`. */
-    send(event: T.Event): Effect.Effect<T.BackendHealth, Rejected>;
+    /** An event already parsed. An optional source check runs under the writer immediately before saving. A value from outside goes through `receive`. */
+    send(event: T.Event, isCurrent?: 
+    /** @throws {never} */
+    (state: T.BackendHealth) => boolean): Effect.Effect<T.BackendHealth, Rejected>;
     receive(input: unknown): Effect.Effect<T.BackendHealth, NotAnEvent | Rejected>;
 };
 declare const Machine_base: Context.ServiceClass<Machine, "thenetwork/spec/backendHealth.md#Machine", Machine_shape>;

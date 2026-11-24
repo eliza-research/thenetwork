@@ -60,7 +60,7 @@ export const copyByHandText: string = "Copy the prompt, then paste it into your 
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const landingItems: LandingItem[] = ["BrandMarkItem", "HeadlineItem", "PromptItem", "CopyButtonItem", "AgentRowItem", "MessagesItem", "StatusItem", "PrivacyLinkItem", "TermsLinkItem"];
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
-export const neverOnLanding: LandingItem[] = ["SignInItem", "SettingsItem", "DashboardItem", "SafetyNoticeItem", "ComplianceItem", "ExplainerItem"];
+export const neverOnLanding: LandingItem[] = (["SignInItem", "SettingsItem", "DashboardItem", "SafetyNoticeItem", "ComplianceItem", "ExplainerItem"] as LandingItem[]);
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
 export const initial: Landing = { mounted: false, device: "NotDetected", copy: "CopyHidden", status: "StatusEmpty", messages: "MessagesIdle", messageCopied: false, agentFollowed: false, lastAgent: "ChatGpt", statusAgent: "ChatGpt" };
 /** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */

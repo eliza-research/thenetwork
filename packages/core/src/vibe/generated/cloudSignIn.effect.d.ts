@@ -41,8 +41,10 @@ type Machine_shape = {
     readonly changes: Stream.Stream<T.SignIn>;
     /** The state as it is kept now. */
     get(): Effect.Effect<T.SignIn>;
-    /** An event already parsed; a value from outside goes through `receive`. */
-    send(event: T.Event): Effect.Effect<T.SignIn, Rejected>;
+    /** An event already parsed. An optional source check runs under the writer immediately before saving. A value from outside goes through `receive`. */
+    send(event: T.Event, isCurrent?: 
+    /** @throws {never} */
+    (state: T.SignIn) => boolean): Effect.Effect<T.SignIn, Rejected>;
     receive(input: unknown): Effect.Effect<T.SignIn, NotAnEvent | Rejected>;
 };
 declare const Machine_base: Context.ServiceClass<Machine, "thenetwork/spec/cloudSignIn.md#Machine", Machine_shape>;

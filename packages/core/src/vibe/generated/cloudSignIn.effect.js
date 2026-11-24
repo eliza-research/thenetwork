@@ -11,6 +11,7 @@ import * as runtime from "vibelang-runtime/internal";
 import { homeHelpCloudPath, cloudClockSkewMs, cloudProofLifeMs, validHandoff, initial, inv, liveBeforeDeadline, canCheckHandoff, checkHandoff, lawAnExpiredHandoffIsNeverLive, homeHelpCloudReturnAllowed, homeHelpCloudFailurePath, lawHomeHelpCloudReturnIsExact, lawHomeHelpCloudFailureRequiresSameApp, lawHomeHelpCloudFailureIsFixed, cloudIssuedAtWithinSkew, cloudProofLifeValid, cloudSessionStartedAt, cloudIdentityTimesValid, lawSessionStartIsNeverFuture, canRecordExchange, recordExchange, canCheckIdentity, checkIdentity, lawCloudProofLivesAtMostOneHour, lawOneHourProofIsAcceptedWhenIssued, lawCloudIdentityNeedsFutureExpiry, lawCloudIdentityNeedsPositiveIssueTime, lawStoredSessionEndsByIdentityExpiry, canCheckPhone, checkPhone, canRecordSession, recordSession, alwaysSessionRequiresAcceptedHandoff, sometimesSignsIn, sometimesRejectsCallback, sometimesDeniesSignIn, sometimesCloudUnavailable, enabled, step, parseEvent, parseState, snapshot_cloudSignIn } from "./cloudSignIn.effect.vibe.pure.js";
 export { homeHelpCloudPath, cloudClockSkewMs, cloudProofLifeMs, validHandoff, initial, inv, liveBeforeDeadline, canCheckHandoff, checkHandoff, lawAnExpiredHandoffIsNeverLive, homeHelpCloudReturnAllowed, homeHelpCloudFailurePath, lawHomeHelpCloudReturnIsExact, lawHomeHelpCloudFailureRequiresSameApp, lawHomeHelpCloudFailureIsFixed, cloudIssuedAtWithinSkew, cloudProofLifeValid, cloudSessionStartedAt, cloudIdentityTimesValid, lawSessionStartIsNeverFuture, canRecordExchange, recordExchange, canCheckIdentity, checkIdentity, lawCloudProofLivesAtMostOneHour, lawOneHourProofIsAcceptedWhenIssued, lawCloudIdentityNeedsFutureExpiry, lawCloudIdentityNeedsPositiveIssueTime, lawStoredSessionEndsByIdentityExpiry, canCheckPhone, checkPhone, canRecordSession, recordSession, alwaysSessionRequiresAcceptedHandoff, sometimesSignsIn, sometimesRejectsCallback, sometimesDeniesSignIn, sometimesCloudUnavailable, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import { PreventSchedulerYield } from "effect/References";
 /** The rules do not allow this event in this state. */
 export class Rejected extends TaggedError("Rejected") {
     static {
@@ -67,7 +68,7 @@ export class Machine extends runtime.$service("thenetwork/spec/cloudSignIn.md#Ma
 export function machineOver(load, keep) {
     return Effect_1.gen(function* machineOver() {
         const shown = yield* SubscriptionRef.make(snapshot_cloudSignIn(yield* load()));
-        function send(event) {
+        function send(event, isCurrent) {
             return Effect_1.gen(function* send() {
                 const input = snapshot_cloudSignIn({ event });
                 let completion_1 = runtime.$normal;
@@ -75,8 +76,14 @@ export function machineOver(load, keep) {
                     {
                         completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(shown, () => {
                                 return Effect_1.gen(function* () {
-                                    const next = yield* apply(snapshot_cloudSignIn(yield* orDie(load())), input.event);
-                                    yield* keep(snapshot_cloudSignIn(next));
+                                    const current = snapshot_cloudSignIn(yield* orDie(load()));
+                                    const next = yield* apply(current, input.event);
+                                    const save = Effect_1.gen(function* save() {
+                                        if (isCurrent && !isCurrent(snapshot_cloudSignIn(current)))
+                                            return yield* Effect_1.fail(new Rejected({ ...input, state: current }));
+                                        yield* keep(snapshot_cloudSignIn(next));
+                                    });
+                                    yield* (isCurrent ? Effect.provideService(save, PreventSchedulerYield, true) : save);
                                     return [snapshot_cloudSignIn(next), next];
                                 });
                             }) };

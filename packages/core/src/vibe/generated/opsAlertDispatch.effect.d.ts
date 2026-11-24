@@ -41,8 +41,10 @@ type Machine_shape = {
     readonly changes: Stream.Stream<T.AlertDispatch>;
     /** The state as it is kept now. */
     get(): Effect.Effect<T.AlertDispatch>;
-    /** An event already parsed; a value from outside goes through `receive`. */
-    send(event: T.Event): Effect.Effect<T.AlertDispatch, Rejected>;
+    /** An event already parsed. An optional source check runs under the writer immediately before saving. A value from outside goes through `receive`. */
+    send(event: T.Event, isCurrent?: 
+    /** @throws {never} */
+    (state: T.AlertDispatch) => boolean): Effect.Effect<T.AlertDispatch, Rejected>;
     receive(input: unknown): Effect.Effect<T.AlertDispatch, NotAnEvent | Rejected>;
 };
 declare const Machine_base: Context.ServiceClass<Machine, "thenetwork/spec/opsAlertDispatch.md#Machine", Machine_shape>;
