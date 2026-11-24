@@ -549,6 +549,7 @@ const OPT_OUT_EN: RegExp[] = [
 const OPT_OUT_ES: RegExp[] = [
   /\b(?:deja|dejen|deje) de (?:enviarme|mandarme|escribirme|textearme|contactarme)\b/,
   /\bno (?:me )?(?:envies|envien|mandes|manden|escribas|escriban|contactes) mas\b/,
+  /^(?:por favor |porfavor )?no me (?:escribas|escriban|mandes|manden|envies|envien|contactes|contacten|textees|texteen|llames|llamen)(?: (?:mas|nunca|jamas))?(?: (?:por favor|porfavor|gracias|ahora|ya))*$/,
   /\bno (?:me )?(?:envies|envien|mandes|manden) (?:mas )?mensajes\b/,
   /\bno quiero (?:recibir )?(?:mas )?mensajes\b/,
   /\b(?:darme|dame|dar|denme) de baja\b/,

@@ -173,3 +173,17 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "no me escribas", "label": "stop", "lang": "es"}
+{"text": "no me mandes", "label": "stop", "lang": "es"}
+{"text": "no me envies", "label": "stop", "lang": "es"}
+{"text": "no me contactes", "label": "stop", "lang": "es"}
+{"text": "no me textees", "label": "stop", "lang": "es"}
+{"text": "no me llames", "label": "stop", "lang": "es"}
+{"text": "no me manden", "label": "stop", "lang": "es"}
+{"text": "no me escriban", "label": "stop", "lang": "es"}
+{"text": "no me textees mas", "label": "stop", "lang": "es"}
+{"text": "por favor no me escribas", "label": "stop", "lang": "es"}
+{"text": "no me mandes la direccion", "label": "not_stop", "lang": "es"}
+{"text": "no me llames a trabajar", "label": "not_stop", "lang": "es"}
+{"text": "no me textees a esta hora", "label": "not_stop", "lang": "es"}
+{"text": "no me escribas el informe", "label": "not_stop", "lang": "es"}
