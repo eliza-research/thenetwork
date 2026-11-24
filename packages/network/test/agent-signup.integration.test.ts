@@ -568,6 +568,11 @@ test.skipIf(!pgAvailable)("verified direct site signup keeps an exact 18-year-ol
     expect(await w.connector.store.sql`select birth_date from platform.people where id = ${olderPerson!.id}`).toEqual([{ birth_date: null }]);
 
     expect((await directSignup(teen, "2009-10-09")).status).toBe(200);
+    const staffPeerAge = await w.connector.store.sql.begin(async tx => {
+      await tx`set local role network_observatory_cross_app`;
+      return tx`select * from platform.observatory_person_ages where person_id = ${peerPerson!.id}`;
+    });
+    expect(staffPeerAge).toEqual([{ person_id: peerPerson!.id, age: expect.any(Number) }]);
     const teenPerson = (await w.service.accounts.personFor(teen))!;
     const runtime = w.service.runtimeFor("friends")!;
     const now = w.clock.now();

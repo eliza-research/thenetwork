@@ -274,7 +274,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await sql.begin(async tx => { await tx`set local role network_service`; return tx`select count(*)::int as n from platform.phone_identities`; }).then(() => "ok", e => String(e.message))).toBe("ok");
     });
 
-    test("0081 and 0082: birth readings, the teen pool bars, no teen confirmation table, the teen pool hold and pair tables, their grants and the nine matching-age columns", async () => {
+    test("birth readings, teen pool safety tables, and private age projection grants", async () => {
       const columns = async (table: string) => (await sql`select column_name from information_schema.columns
         where table_schema = 'platform' and table_name = ${table} order by ordinal_position`).map((r: any) => r.column_name as string);
       expect(await columns("people")).toEqual(expect.arrayContaining(["birth_date", "birth_lower", "birth_upper", "birth_youngest", "birth_first_exact"]));
@@ -284,12 +284,13 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await columns("teen_pool_bars")).toEqual(["phone_hash", "reason", "at"]);
       expect(await columns("teen_pool_holds")).toEqual(["phone_hash", "app_id", "at"]);
       expect(await columns("teen_pair_avoid")).toEqual(["phone_hash_a", "phone_hash_b", "at"]);
-      const nine = ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper", "floor_birth_youngest", "teen_pool_barred", "teen_pool_held"];
+      const internalAgeFacts = ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper",
+        "floor_birth_youngest", "teen_pool_barred", "teen_pool_held", "signup_minor_cap", "signup_age_observed"];
       const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
       for (const view of ["matching_ages", ...apps.map(app => `matching_ages_${app}`)]) {
         const cols = await columns(view);
         expect([view, cols.slice(0, 8)]).toEqual([view, ["app_id", "member_id", "age", "banned", "staff_held", "report_held", "minor_signal_at", "birth_date"]]);
-        expect([view, cols.slice(-9)]).toEqual([view, nine]);
+        expect([view, cols.slice(-internalAgeFacts.length)]).toEqual([view, internalAgeFacts]);
         expect([view, cols.includes("teen_confirmed_birth")]).toEqual([view, false]);
       }
       const can = async (role: string, table: string, privilege: string) =>
@@ -307,6 +308,9 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       }
       expect([await can("platform_service", "teen_pool_bars", "insert"), await can("platform_service", "teen_pool_bars", "delete")]).toEqual([true, false]);
       expect(await can("platform_service", "person_minor_signals", "delete")).toBe(false);
+      for (const role of ["public", "network_observatory", "network_observatory_cross_app", ...apps.map(app => `network_observatory_${app}`)]) {
+        expect([role, await can(role, "signup_eligibility", "select")]).toEqual([role, false]);
+      }
       expect(await columns("age_floor")).toContain("birth_first_exact");
       const readAs = (role: string, query: string) =>
         sql.begin(async tx => { await tx.unsafe(`set local role ${role}`); return tx.unsafe(query); }).then(() => "ok", e => String(e.message));

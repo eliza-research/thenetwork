@@ -4,13 +4,13 @@ do $$
 declare
   a text;
   service_clock text := 'coalesce(nullif(current_setting(''app.age_as_of'', true), '''')::timestamptz, transaction_timestamp())';
-  projection text := 'select m.app_id, m.id as member_id,
-    least(case when p.birth_upper is null and f.birth_upper is null then least(m.age, p.lowest_age, f.lowest_age)
+  effective_age text := 'least(case when p.birth_upper is null and f.birth_upper is null then %2$s
       else (to_char((%1$s at time zone ''UTC'') - interval ''12 hours'', ''YYYYMMDD'')::int -
         case when greatest(p.birth_lower, f.birth_lower) >= least(p.birth_upper, f.birth_upper)
           then greatest(p.birth_youngest, f.birth_youngest)
           else least(p.birth_upper, f.birth_upper) end) / 10000 end,
-      case when %1$s < se.eligible_at then se.initial_minor_age when p.birth_date is null and se.person_id is not null then 18 end) as age,
+      case when %1$s < se.eligible_at then se.initial_minor_age when p.birth_date is null and se.person_id is not null then 18 end)';
+  projection text := 'select m.app_id, m.id as member_id, %1$s as age,
     exists (select 1 from platform.bans b where (b.scope = ''person'' and b.person_id = p.id)
       or b.phone_hash = p.phone_hash) as banned,
     exists (select 1 from platform.staff_safety_holds h where h.person_id=p.id
@@ -21,7 +21,7 @@ declare
     f.birth_lower as floor_birth_lower, f.birth_upper as floor_birth_upper, f.birth_youngest as floor_birth_youngest,
     exists (select 1 from platform.teen_pool_bars t where t.phone_hash=p.phone_hash) as teen_pool_barred,
     exists (select 1 from platform.teen_pool_holds h where h.phone_hash=p.phone_hash and h.app_id <> m.app_id) as teen_pool_held,
-    case when %1$s < se.eligible_at then se.initial_minor_age when p.birth_date is null and se.person_id is not null then 18 end as signup_minor_cap,
+    case when %3$s < se.eligible_at then se.initial_minor_age when p.birth_date is null and se.person_id is not null then 18 end as signup_minor_cap,
     se.person_id is not null as signup_age_observed
     from network.members m
     left join platform.people p on p.id = m.person_id
@@ -29,9 +29,17 @@ declare
     left join platform.signup_eligibility se on se.person_id = p.id';
 begin
   execute 'create or replace view platform.matching_ages with (security_invoker=true) as '
-    || format(projection, service_clock, '(select s.at from platform.person_minor_signals s where s.person_id=p.id)');
+    || format(projection, format(effective_age, service_clock, 'least(m.age, p.lowest_age, f.lowest_age)'),
+        '(select s.at from platform.person_minor_signals s where s.person_id=p.id)', service_clock);
   for a in select id from platform.apps order by id loop
     execute format('create or replace view platform.%I with (security_barrier=true) as %s where m.app_id = %L',
-      'matching_ages_' || a, format(projection, 'transaction_timestamp()', 'null::timestamptz'), a);
+      'matching_ages_' || a, format(projection, format(effective_age, 'transaction_timestamp()', 'least(m.age, p.lowest_age, f.lowest_age)'),
+        'null::timestamptz', 'transaction_timestamp()'), a);
   end loop;
+  execute format('create or replace view platform.observatory_person_ages with (security_barrier=true) as
+    select p.id as person_id, %s as age
+    from platform.people p
+    left join platform.age_floor f on f.phone_hash = p.phone_hash
+    left join platform.signup_eligibility se on se.person_id = p.id',
+    format(effective_age, 'transaction_timestamp()', 'least(p.lowest_age, f.lowest_age)'));
 end $$;
