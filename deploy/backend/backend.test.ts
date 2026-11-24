@@ -7,7 +7,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
-import { migrate } from "../../packages/observatory/db/migrate.ts";
+import { migrate } from "../../packages/db/migrate.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";

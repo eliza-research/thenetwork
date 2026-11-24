@@ -42,7 +42,7 @@ Imported from `quint/profile_learning.qnt` at `30d950e`. See [model index](READM
 //   SV = packages/network/service/service.ts
 //   AC = packages/platform/src/accounts.ts, PG = packages/platform/src/pg-store.ts
 //   RT = packages/network/service/runtime.ts (forget)
-//   0039, 0040, 0052 = packages/observatory/db/migrations/0039_profile_suggestions.sql, 0040_...receipts.sql,
+//   0039, 0040, 0052 = packages/db/migrations/0039_profile_suggestions.sql, 0040_...receipts.sql,
 //   0052_profile_learning.sql
 //   ProfileSuggestions.disconnect (PS:343-359) has no caller in production code; it is not modeled.
 //

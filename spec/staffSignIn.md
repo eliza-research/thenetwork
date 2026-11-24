@@ -1,6 +1,6 @@
 # Staff sign-in to the console
 
-Staff get into the console (`packages/observatory/web`) with a staff token or with single sign-on through Cloudflare Access. This spec owns the browser's sign-in phases: the token in the address, the identity check, the token form, the single sign-on link, the refusals, the second factor and the end of a session. It also owns the server's start rule for the sign-in method. The server shell owns the token comparison, the Access assertion check, the Host and Origin check and the audit log. The [permissions spec](staffPermissions.md) owns which routes a role can use. The [navigation spec](consoleNavigation.md) owns the page that a signed-in viewer sees.
+Staff get into the console (`apps/observatory/web`) with a staff token or with single sign-on through Cloudflare Access. This spec owns the browser's sign-in phases: the token in the address, the identity check, the token form, the single sign-on link, the refusals, the second factor and the end of a session. It also owns the server's start rule for the sign-in method. The server shell owns the token comparison, the Access assertion check, the Host and Origin check and the audit log. The [permissions spec](staffPermissions.md) owns which routes a role can use. The [navigation spec](consoleNavigation.md) owns the page that a signed-in viewer sees.
 
 ## Story: Sign in as myself
 

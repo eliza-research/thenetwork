@@ -10,7 +10,7 @@ The validation layer is now:
 | Integration | `pnpm run test:integration` | Tests against real Postgres, real HTTP servers, several packages together or the full service. Includes the security suite (`pnpm run security` runs that subset alone). |
 | E2E | `pnpm run test:e2e` | `tests/e2e`: the platform and notify driven from the outside through the running service. |
 
-The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
+The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
 
 **No unit tests and no smoke tests.** A unit test checks one function with fakes. A smoke test checks that something starts or answers, or calls a live provider. Do not add either. A bug fix adds a sim gate, a scenario, a corpus row in `evals/`, or an integration or e2e case that fails before the fix.
 
@@ -42,16 +42,16 @@ The integration and e2e suites need the dev Postgres (`node --import tsx --env-f
 | `packages/network/test/store.test.ts` | State persistence: restart from stored state in the NYC world, `PgStore`, the tick lock | 8 pass |
 | `packages/notify/test/store-contract.test.ts` | The notify store contract on memory and Postgres | 10 pass |
 | `packages/notify/test/wiring.test.ts` | The Notifier on the real blooio outbound queue | 3 pass |
-| `packages/observatory/test/apps.test.ts` | The console for four apps on a running server and Postgres (RLS read login) | 14 pass |
-| `packages/observatory/test/consent.test.ts` | Game mode with Postgres parity | 9 pass |
-| `packages/observatory/test/migrations.test.ts` | The console roles on a real database | 5 pass |
-| `packages/observatory/test/real.test.ts` | Real mode against Postgres | 6 pass |
-| `packages/observatory/test/real-console.test.ts` | Admin-console data read back from Postgres | 8 pass |
-| `packages/observatory/test/real-fixes.test.ts` | Real mode read paths on Postgres, with a running server | 8 pass |
-| `packages/observatory/test/real-service.test.ts` | Real mode acting through the network service's staff API | 4 pass |
-| `packages/observatory/test/server.test.ts` | HTTP and WebSocket API in both modes | 6 pass |
-| `packages/observatory/test/staff.test.ts` | Staff access on the server, Postgres audit | 17 pass |
-| `packages/observatory/test/staff-apps.test.ts` | Per-role, per-app access on a running server | 9 pass |
+| `apps/observatory/test/apps.test.ts` | The console for four apps on a running server and Postgres (RLS read login) | 14 pass |
+| `apps/observatory/test/consent.test.ts` | Game mode with Postgres parity | 9 pass |
+| `apps/observatory/test/migrations.test.ts` | The console roles on a real database | 5 pass |
+| `apps/observatory/test/real.test.ts` | Real mode against Postgres | 6 pass |
+| `apps/observatory/test/real-console.test.ts` | Admin-console data read back from Postgres | 8 pass |
+| `apps/observatory/test/real-fixes.test.ts` | Real mode read paths on Postgres, with a running server | 8 pass |
+| `apps/observatory/test/real-service.test.ts` | Real mode acting through the network service's staff API | 4 pass |
+| `apps/observatory/test/server.test.ts` | HTTP and WebSocket API in both modes | 6 pass |
+| `apps/observatory/test/staff.test.ts` | Staff access on the server, Postgres audit | 17 pass |
+| `apps/observatory/test/staff-apps.test.ts` | Per-role, per-app access on a running server | 9 pass |
 | `packages/platform/test/api.test.ts` | The public API end to end, on memory and Postgres | 38 pass |
 | `packages/platform/test/photos.test.ts` | Private photos through the public API | 10 pass |
 | `packages/platform/test/proxy.test.ts` | Router signing, a local HTTP server and the public API | 4 pass |
@@ -73,9 +73,9 @@ The security suite is part of the integration suite. `pnpm run security` runs it
 | `deploy/backend/backend.test.ts` | The backend's "two logins" row-level security check |
 | `deploy/router.test.ts` | The site router strips client-sent proxy headers and signs its own |
 | `packages/network/test/shared-agent.integration.test.ts` | Signed `/internal/turn` calls: replay, isolation between people, STOP, deletion |
-| `packages/observatory/test/staff.test.ts` | Staff roles, Cloudflare Access, the per-member PII reveal and the audit log |
+| `apps/observatory/test/staff.test.ts` | Staff roles, Cloudflare Access, the per-member PII reveal and the audit log |
 
-Helpers: `packages/platform/test/pg.ts`, `packages/mcp/test/harness.ts`, `packages/observatory/test/pg.ts`.
+Helpers: `packages/platform/test/pg.ts`, `packages/mcp/test/harness.ts`, `apps/observatory/test/pg.ts`.
 
 The slop.date path gate is `packages/network/test/slop-date-path.integration.test.ts`: join by text, onboarding, review approval, a yes from both people, the booked date, the check-in, a report that reaches the safety queue, and the pair kept apart.
 
@@ -96,7 +96,7 @@ The original 2026-10-08 integration run against a private Postgres 16 cluster re
 ### Not restored: simulation-shaped (in-process world runs, covered by `pnpm run sim`)
 
 - `packages/network/test/network.test.ts` (ConsentNetwork arms and scenarios on the NYC world: the sim's `network` block), `packages/network/test/packs.test.ts` (the slop, peon and friends packs behind the ConsentNetwork: the `slop`, `peon`, `friends` blocks), `packages/network/test/flows.test.ts` and `staff.test.ts` (flows on the hand-built mini world with fakes).
-- `packages/observatory/test/console.test.ts`, `game.test.ts`, `projector.test.ts`, `world-stepping.test.ts` (game mode in process).
+- `apps/observatory/test/console.test.ts`, `game.test.ts`, `projector.test.ts`, `world-stepping.test.ts` (game mode in process).
 - `packages/engine/test/*-conformance.test.ts`, `conformance.ts`, `attention-sim.test.ts`, `plans-sim.test.ts`, `slop-golden.test.ts` and the goldens (ported to `scripts/sim/conformance.ts` and the sim blocks).
 - `packages/sim/test/*`, `packages/worlds/test/*` (the world, scheduler, oracle and app worlds: the sim blocks).
 
@@ -108,7 +108,7 @@ The original 2026-10-08 integration run against a private Postgres 16 cluster re
 - `packages/evals/test/*`, `packages/judge/test/*` (both packages were removed or merged)
 - `packages/network/test/{classify.golden,extract,units}.test.ts`, `slopworld.ts`
 - `packages/notify/test/notify.test.ts`
-- `packages/observatory/test/{scoring,scrub,web-escape,web-sinks}.test.ts`
+- `apps/observatory/test/{scoring,scrub,web-escape,web-sinks}.test.ts`
 - `packages/platform/test/{apps,body,consent,env,otp,phone,safety,sessions,turnstile}.test.ts` (in-memory, `createPublicApi` with fakes; the Postgres and HTTP paths are in `api.test.ts`, `db.test.ts` and `api-security.test.ts`), `fixtures/opt-out.jsonl` (now in `evals/`)
 - The former plugin package's tests (mock runtime). The plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`), and its tests live there. This repo keeps only the contract mirror in `packages/core/src/svc/`.
 - `packages/mcp/test/plugins.test.ts` (the plugin snapshots equal a fresh build: `node --import tsx --env-file-if-exists=.env plugins/build.ts --check` in CI does this)

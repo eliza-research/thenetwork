@@ -1,6 +1,6 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { allowed, rolesFor } from "../../observatory/src/staff.ts";
-import type { StaffRole, StaffUser } from "../../observatory/src/types.ts";
+import { allowed, rolesFor } from "../../../apps/observatory/src/staff.ts";
+import type { StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import {
   decideMemberInvitationReview, isMemberInvitationReviewId, listMemberInvitationReviews,

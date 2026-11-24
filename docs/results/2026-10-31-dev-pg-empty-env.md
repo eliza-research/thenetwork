@@ -9,7 +9,7 @@ reproduction is deterministic (a child process sees the exact empty values a cop
 ## The problem
 
 CONTRIBUTING.md section 4 says: `cp .env.example .env`, then
-`node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up`. `.env.example` lists every optional value as an
+`node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up`. `.env.example` lists every optional value as an
 EMPTY line (`OBSERVATORY_PG_PORT=`, `OBSERVATORY_PG_DIR=`, `PG_BIN_DIR=`), and section 5.1 says of
 these: "Optional. Leave the default." the former runtime loads the copied `.env` into the process, so the dev
 startup then reads these empty strings:
@@ -30,14 +30,14 @@ The new integration case runs the real CLI as a child process with exactly the v
 `.env.example` carries: `OBSERVATORY_PG_PORT=""`, `OBSERVATORY_PG_DIR=""`, `PG_BIN_DIR=""`.
 
 ```text
-pnpm exec vitest run --conditions eliza-source packages/observatory/test/dev-pg-env.integration.test.ts
+pnpm exec vitest run --conditions eliza-source apps/observatory/test/dev-pg-env.integration.test.ts
   (fail) ... : expected "exit 1: ... at devPgUp (dev-pg.ts:36:5) ... code: \"ENOENT\"" to be "exit 0: "
 ```
 
 On the command line, the same thing (any shell, base revision):
 
 ```text
-OBSERVATORY_PG_DIR= OBSERVATORY_PG_PORT= node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up
+OBSERVATORY_PG_DIR= OBSERVATORY_PG_PORT= node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up
   error: ... code: "ENOENT" ... at devPgUp (dev-pg.ts:36:5)
 ```
 
@@ -61,8 +61,8 @@ matches an existing repo idiom. A value with text still overrides exactly as bef
 
 | Metric | Before (a0ed7bc) | After | Command and seeds |
 |---|---|---|---|
-| New integration case (the documented command under the copied values) | 1 fail (exit 1: ENOENT) | 1 pass (exit 0, answers `localhost:54339/network`) | `pnpm exec vitest run --conditions eliza-source packages/observatory/test/dev-pg-env.integration.test.ts` |
-| `node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up` on the CLI with the copied values | ENOENT (or port 0) | starts/answers on the default 54339 | same values in the shell |
+| New integration case (the documented command under the copied values) | 1 fail (exit 1: ENOENT) | 1 pass (exit 0, answers `localhost:54339/network`) | `pnpm exec vitest run --conditions eliza-source apps/observatory/test/dev-pg-env.integration.test.ts` |
+| `node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up` on the CLI with the copied values | ENOENT (or port 0) | starts/answers on the default 54339 | same values in the shell |
 | `pnpm run sim --only pipeline` with the copied values | the block's Postgres helper fails, block records the tracked skip | `15/15 blocking gates pass` on base+fix (this branch: base main + this change) | `OBSERVATORY_PG_DIR= OBSERVATORY_PG_PORT= PG_BIN_DIR= pnpm run sim --only pipeline` |
 
 Model evidence: none; no model is called. Agent clients: not applicable — a developer-setup fix;

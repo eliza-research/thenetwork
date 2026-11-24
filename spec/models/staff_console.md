@@ -15,7 +15,7 @@ The production staff role projection and route admission use [Observatory staff 
 ```quint
 // quint-check: max-steps=14 max-samples=20000 verify-steps=6
 //
-// The staff console (packages/observatory) and its path to the Network service, as small machines in one
+// The staff console (apps/observatory) and its path to the Network service, as small machines in one
 // state record. Plan: docs/research/2026-11-07-state-machines.md section 6.15. Machine notes:
 // docs/research/state-machines/observatory.md (sections 2.1 to 2.13) and
 // docs/research/state-machines/gap-console-client.md (sections 2.1 to 2.9).

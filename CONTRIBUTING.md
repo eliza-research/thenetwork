@@ -103,7 +103,7 @@ You need Node 26 (see `.nvmrc`), Corepack 0.35.0, pnpm 10.24.0 and PostgreSQL 16
 cp .env.example .env                                   # never commit .env
 pnpm install --frozen-lockfile
 pnpm run spec:setup                                     # Node 26 with Corepack and pnpm 10.24.0
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up           # the dev Postgres on localhost:54339
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up           # the dev Postgres on localhost:54339
 pnpm run sim                                            # must pass before you start
 ```
 

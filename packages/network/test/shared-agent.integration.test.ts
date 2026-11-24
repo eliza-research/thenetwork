@@ -7,7 +7,7 @@ import {createHash, randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import type { CapitalEvent } from "../../capital/src/index.ts";
 import {SimClock, MINUTE, DAY} from "@thenetwork/core";
-import {applySchema, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
+import {applySchema, DEV_PG_PORT} from "../../db/dev-pg.ts";
 import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
