@@ -30,6 +30,8 @@ test.skipIf(!pgAvailable)("a named reviewer reads the probe and reveal copy of t
   try {
     await network.start();
     const app = APPS.friends;
+    const rt = network.runtimes.get(networkId)!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const names = ["Ari", "Blair", "Charlie", "Drew", "Elliot"];
     const members = [];
     for (const [index, firstName] of names.entries()) {
@@ -37,6 +39,9 @@ test.skipIf(!pgAvailable)("a named reviewer reads the probe and reveal copy of t
         firstName, age: 32, homeCity: "nyc", neighborhood: "Inwood", interests: ["hiking"], consent: { sms: true, wording: app.consent.text },
       });
       if (!joined.ok) throw new Error(`Fixture join refused for ${firstName}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await network.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       members.push({ id: joined.membership.memberId, name: firstName, age: 32 });
     }
     const ids = members.map(member => member.id);
@@ -51,7 +56,6 @@ test.skipIf(!pgAvailable)("a named reviewer reads the probe and reveal copy of t
       invited, alternates, partner: false, size: { min: 3, target: 3, max: 4 }, quorum: 3,
       probeDeadline: now + 3 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
-    const rt = network.runtimes.get(networkId)!;
     const id = await rt.unitOfWork(net => {
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members });
       return net["submitPlan"](plan, now)!.id;
