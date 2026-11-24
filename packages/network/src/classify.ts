@@ -631,26 +631,30 @@ export function extractProfile(body: string): Profile {
       nextPartOffset = partOffset + part.length;
       const neg = NEG_WANT.exec(part);
       const negAt = neg ? neg.index : Infinity;
+      // "anything but X" / "everything except X": the part after the split names what is excluded,
+      // not a new positive clause. The availability reader treats the same phrase as an exclusion.
+      const excluded = /(?:anything|everything|anyone|anybody|all)\s+(?:but|except)\s*$/i.test(x.slice(0, partOffset));
+      const effNegAt = excluded ? 0 : negAt;
       const wantCtx = WANT_CTX.test(part);
       if (neg && /\b(looking for|find|meet|anyone|anybody|someone|somebody|want|need|set me up|introduce|match|suggest)\w*\b/.test(part.slice(negAt))) negatedAsk = true;
       // What is not under a negation: the taxonomy-label pass below reads only this.
-      kept.push(part.slice(0, Number.isFinite(negAt) ? negAt : undefined));
+      kept.push(part.slice(0, Number.isFinite(effNegAt) ? effNegAt : undefined));
       for (const [id, rxs] of Object.entries(WANT_LEX)) for (const rx of rxs) {
         const m = rx.exec(part);
         if (!m) continue;
         // Negated before the want ("I don't want to meet founders"), or right after it ("dating isn't for me").
         const after = part.slice(m.index + m[0].length);
-        if (NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after)) notWanted.add(id);
+        if (excluded || NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after)) notWanted.add(id);
         else if (wantCtx || SELF_WANTS.has(id)) desires.add(id);
         break;
       }
       for (const [tag, rx] of Object.entries(INTEREST_LEX)) {
         const m = rx.exec(part);
-        if (m && !(m.index > negAt)) interests.add(tag);
+        if (m && !excluded && !(m.index > negAt)) interests.add(tag);
       }
       if (FIRST_PERSON.test(part)) for (const [tag, rx] of SKILL_LEX) {
         for (const m of part.matchAll(rx)) {
-          if (m.index <= negAt && learnableSkillAt(partOffset + m.index)) {
+          if (m.index <= effNegAt && learnableSkillAt(partOffset + m.index)) {
             skills.add(tag);
             break;
           }
@@ -659,7 +663,7 @@ export function extractProfile(body: string): Profile {
       // Taxonomy labels also occur in short profile answers such as "Senior product designer."
       for (const k of SKILLS) {
         const label = k.label.toLowerCase();
-        for (let at = part.indexOf(label); at >= 0 && at < negAt; at = part.indexOf(label, at + label.length)) {
+        for (let at = part.indexOf(label); at >= 0 && at < effNegAt; at = part.indexOf(label, at + label.length)) {
           if (learnableSkillAt(partOffset + at)) {
             skills.add(k.tag);
             break;
