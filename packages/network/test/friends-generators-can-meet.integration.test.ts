@@ -240,5 +240,30 @@ describe("Friends generator roster and meeting availability", () => {
       generator: "activity_partner", participants: ["p1", "p2"],
     }));
     expect(result.proposals.every(proposal => !proposal.participants.includes(away))).toBe(true);
+
+    const verificationTime = Date.UTC(2026, 10, 22, 6);
+    const failedAdultCheck: EngineInput = {
+      ...withFallback, now: verificationTime, teenIntros: true,
+      members: withFallback.members.map(m => m.id === away
+        ? { ...m, age: 18, birthKey: 20080701, birthExact: true, teenReady: true }
+        : m),
+      facets: withFallback.facets.map(f => f.memberId === away
+        ? { ...f, tags: f.tags.map(tag => tag === "verify:age:pass" ? "verify:age:fail" : tag) }
+        : f),
+      presence: withFallback.presence.filter(p => p.type === "home"),
+      interactions: withFallback.interactions?.map(i => ({ ...i, at: verificationTime - 10 * DAY })),
+    };
+    const teenPair: EngineInput = {
+      ...failedAdultCheck,
+      members: failedAdultCheck.members.map(m => m.id === "p1"
+        ? { ...m, age: 17, birthKey: 20090501, birthExact: true, teenReady: true }
+        : m),
+    };
+    expect((await run(teenPair)).proposals).toContainEqual(expect.objectContaining({
+      generator: "activity_partner", participants: [away, "p1"],
+    }));
+    expect((await run(failedAdultCheck)).proposals).toEqual([
+      expect.objectContaining({ generator: "activity_partner", participants: ["p1", "p2"] }),
+    ]);
   });
 });
