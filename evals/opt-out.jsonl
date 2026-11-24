@@ -173,3 +173,14 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "don't ever text me", "label": "stop", "lang": "en"}
+{"text": "Don't ever text me again", "label": "stop", "lang": "en"}
+{"text": "don't ever contact me", "label": "stop", "lang": "en"}
+{"text": "never ever text me", "label": "stop", "lang": "en"}
+{"text": "do not ever message me", "label": "stop", "lang": "en"}
+{"text": "please don't ever text me again", "label": "stop", "lang": "en"}
+{"text": "dont ever text me", "label": "stop", "lang": "en"}
+{"text": "don't ever text me the address", "label": "not_stop", "lang": "en"}
+{"text": "never ever text me the code", "label": "not_stop", "lang": "en"}
+{"text": "don't ever text me at work", "label": "not_stop", "lang": "en"}
+{"text": "don't ever forget me", "label": "not_stop", "lang": "en"}
