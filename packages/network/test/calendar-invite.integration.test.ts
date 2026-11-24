@@ -39,11 +39,13 @@ test.skipIf(!pgAvailable).each([
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, scenario === expiredBookingNotice ? 19 : 16, 16));
   const secret = "a-synthetic-calendar-invite-fixture-secret";
+  const safetyToken = "calendar-invite-friends-safety-fixture";
   const phones = ["+12125550288", "+12125550289"];
   const app = APPS.friends;
   const delivered: SendRequest[] = [];
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null,
+    tokens: `safety@friends:${safetyToken}`,
     adapter: (_net, runtime) => new BlooioAdapter({ app: runtime.app.id, city: runtime.city, clock, from: "+12125550160",
       env: {}, log: () => {}, provider: { kind: "sim", send: async request => {
         delivered.push(request);
@@ -79,12 +81,22 @@ test.skipIf(!pgAvailable).each([
       const name = i ? "Blair" : "Ari";
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
-      members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
+      const id = joined.membership.memberId;
+      for (const check of ["age", "liveness"]) {
+        const verified = await service.fetch(new Request(`http://localhost/apps/friends/members/${id}/verify`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${safetyToken}`, "content-type": "application/json" },
+          body: JSON.stringify({ check, result: "pass", note: "adult booking fixture" }),
+        }));
+        expect(await verified.json()).toEqual({ ok: true });
+      }
+      members.push({ id, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const rt = service.runtimes.get("friends:nyc")!;
     const world = new Mini(members, { app: "friends", plans: false, growth: false });
     world.clock.set(clock.now());
     const ids = members.map(member => member.id);
+    world.verify(...ids);
     await world.onboard(...ids);
     const id = world.propose(ids);
     expect(await world.runUntil(() => world.probed(ids[0]!), 2 * DAY)).toBe(true);
