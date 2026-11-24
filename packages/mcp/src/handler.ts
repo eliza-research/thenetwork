@@ -763,7 +763,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
-        if (joined.error === "under_age") return showSignup(undefined, "You can’t join this app with the birthday entered.");
+        if (joined.error === "under_age") {
+          const response = showSignup(undefined, "You can’t join this app with the birthday entered.");
+          if (r.personId === null) response.headers.append("set-cookie", `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`);
+          return response;
+        }
         const error = joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
           : joined.error === "consent_wording" ? "The text message terms changed. Open signup again to review them."
           : "We couldn’t finish signup. Return to the connection page or try again later.";

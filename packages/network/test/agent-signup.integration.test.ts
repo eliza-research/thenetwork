@@ -318,12 +318,17 @@ test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup pa
     expect(await w.service.people.ageFloor(w.service.accounts.phoneHash(number))).toBe(12);
     expect(await w.connector.store.sql`select first_name from platform.memberships where first_name = 'Kit'`).toEqual([]);
     expect(await w.connector.store.sql`select person_id from platform.signup_eligibility`).toEqual([]);
+    expect(await w.connector.store.sql`select e164 from platform.sessions where e164 = ${number}`).toEqual([]);
 
-    const retried = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "1996-01-15" });
+    w.clock.advance(HOUR);
+    const reopened = await openConnection(w, site, browser, "under-13-retry");
+    const retryRid = hiddenField(reopened.html, "rid");
+    await confirmPhone(w, browser, retryRid, number);
+    const retried = await submitSignup(browser, retryRid, { firstName: "Kit", birthdate: "1996-01-15" });
     expect(retried.status).toBe(400);
     expect(retried.html).toContain("You can’t join this app with the birthday entered.");
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
-    expect(await w.connector.store.sql`select id from oauth.grants where client_id=${opened.clientId}`).toEqual([]);
+    expect(await w.connector.store.sql`select id from oauth.grants where client_id in (${opened.clientId}, ${reopened.clientId})`).toEqual([]);
   });
 }, 60_000);
 

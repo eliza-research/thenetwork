@@ -404,7 +404,7 @@ export interface PhotoStore {
   /** Hide one photo of the person on this app; undefined when there is none. */
   hide(id: string, personId: string, app: AppId, at: number): Promise<PhotoRow | undefined>;
   /** Hide every photo of the person (on one app, or every app) under the person's row lock (an upload that holds it lands first). */
-  hideAll(personId: string, app: AppId | undefined, at: number): Promise<PhotoRow[]>;
+  hideAll(personId: string, app: AppId | undefined, at: number, opts?: { personLocked?: boolean }): Promise<PhotoRow[]>;
   /** Rows hidden before `before`: their step did not finish. */
   hidden(before: number): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
@@ -432,7 +432,12 @@ export class MemoryPhotoStore implements PhotoStore {
     r.deletedAt = at;
     return MemoryPhotoStore.out(r);
   }
-  async hideAll(personId: string, app: AppId | undefined, at: number) { const rows = this.live(personId, app); for (const r of rows) r.deletedAt = at; return rows.map(MemoryPhotoStore.out); }
+  async hideAll(personId: string, app: AppId | undefined, at: number) {
+    const rows = [...this.rows.values()].filter(r => r.personId === personId && (!app || r.app === app))
+      .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    for (const r of rows) if (r.deletedAt === null) r.deletedAt = at;
+    return rows.map(MemoryPhotoStore.out);
+  }
   async hidden(before: number) { return [...this.rows.values()].filter(r => r.deletedAt !== null && r.deletedAt < before).map(MemoryPhotoStore.out); }
   async delete(id: string) { this.rows.delete(id); }
 }
@@ -474,13 +479,17 @@ export class PgPhotoStore implements PhotoStore {
     const [r] = await this.sql`update platform.photos set deleted_at = ${new Date(at)} where id = ${id} and person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null returning *`;
     return r ? photoRow(r) : undefined;
   }
-  async hideAll(personId: string, app: AppId | undefined, at: number) {
+  async hideAll(personId: string, app: AppId | undefined, at: number, opts?: { personLocked?: boolean }) {
+    const run = async (q: SQL) => {
+      const rows = app
+        ? await q`update platform.photos set deleted_at = coalesce(deleted_at, ${new Date(at)}) where person_id = ${personId}::uuid and app_id = ${app} returning *`
+        : await q`update platform.photos set deleted_at = coalesce(deleted_at, ${new Date(at)}) where person_id = ${personId}::uuid returning *`;
+      return (rows as Record<string, any>[]).map(photoRow).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    };
+    if (opts?.personLocked) return run(this.sql);
     return this.sql.begin(async tx => {
       await tx`select id from platform.people where id = ${personId}::uuid for update`;
-      const rows = app
-        ? await tx`update platform.photos set deleted_at = ${new Date(at)} where person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null returning *`
-        : await tx`update platform.photos set deleted_at = ${new Date(at)} where person_id = ${personId}::uuid and deleted_at is null returning *`;
-      return (rows as Record<string, any>[]).map(photoRow).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+      return run(tx);
     });
   }
   async hidden(before: number) {
@@ -692,8 +701,8 @@ export class PhotoService {
   }
 
   /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a failed age check. */
-  async deleteFor(personId: string, app?: AppId): Promise<number> {
-    const rows = await this.o.meta.hideAll(personId, app, this.now());
+  async deleteFor(personId: string, app?: AppId, opts?: { personLocked?: boolean }): Promise<number> {
+    const rows = await this.o.meta.hideAll(personId, app, this.now(), opts);
     for (const r of rows) await this.end(r);
     if (rows.length) this.o.log?.(`[photos] deleted ${rows.length} photo(s)${app ? ` on ${app}` : ""}`);
     return rows.length;

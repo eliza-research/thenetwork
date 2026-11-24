@@ -1319,8 +1319,8 @@ export class NetworkService implements RuntimeHost {
     };
   }
 
-  private async removeMinorMedia(personId: string) {
-    await this.photos.deleteFor(personId);
+  private async removeMinorMedia(personId: string, opts?: { personLocked?: boolean }) {
+    await this.photos.deleteFor(personId, undefined, opts);
     await this.dropRatings(personId);
   }
 
@@ -1373,7 +1373,7 @@ export class NetworkService implements RuntimeHost {
       if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx })) throw new JoinReviewRequired();
       if (!await store.saveSignupAge(ctx.membership, ctx.e164, phoneHash, ctx.signupAge, tx)) throw new JoinReviewRequired();
       // The birth-derived date and app rows roll back if the existing minor-media cleanup fails.
-      await this.removeMinorMedia(ctx.person.id);
+      await this.removeMinorMedia(ctx.person.id, { personLocked: true });
     });
     // Enrollment is durable. The ordinary inbound path can still welcome a new member if projection fails.
     await this.welcomeBrowserJoin(rt, ctx).catch(() => this.log(`[join] browser welcome waits for inbound (${rt.id})`));
@@ -1428,7 +1428,7 @@ export class NetworkService implements RuntimeHost {
       }
       if (ctx.signupAge) {
         if (!await new PgPeopleStore(tx).saveSignupAge(ctx.membership, ctx.e164, accounts.phoneHash(ctx.e164), ctx.signupAge, tx)) throw new JoinReviewRequired();
-        await this.removeMinorMedia(ctx.person.id);
+        await this.removeMinorMedia(ctx.person.id, { personLocked: true });
       }
     });
     // The token is consumed and attribution is durable. A failed welcome can retry independently,
