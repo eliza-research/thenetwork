@@ -276,6 +276,8 @@ test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted of
   };
   try {
     const initial = await start();
+    const runtime = () => service!.runtimes.get(networkId)!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const recipients = [{ name: "Jo", e164: "+12125550431" }, { name: "Rae", e164: "+12125550432" }];
     const people = [];
     for (const { name, e164 } of recipients) {
@@ -283,6 +285,9 @@ test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted of
         firstName: name, age: 30, consent: { sms: true, wording: app.consent.text },
       });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await initial.verify(staff, runtime(), joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       people.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint" });
     }
     const [first, second] = people.map(person => person.id) as [string, string];
@@ -306,7 +311,6 @@ test.skipIf(!pgAvailable).each(scenarios)("a signed probe books only accepted of
       first, sentAt: { [first]: now - HOUR, [second]: now }, offered: { [first]: offered, [second]: offered },
       picks: { [first]: offered.map(slot => slot.start) },
     };
-    const runtime = () => service!.runtimes.get(networkId)!;
     await runtime().unitOfWork(net => net.importState({
       ...net.exportState(), opps: [opportunity], members: fixture.net.exportState().members.map(member =>
         member.id === second ? {
