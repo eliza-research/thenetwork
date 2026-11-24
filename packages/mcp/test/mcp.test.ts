@@ -267,4 +267,75 @@ describe("submit_profile (founder decision 10: the profile comes from the person
     expect((await call(env, PEON_MCP, "submit_profile", { about }, { token: d.token.access_token })).res.status).toBe(429);
     expect(n).toBe(5);
   });
+
+  test("refuses disguised phones, codes and emails on submit_profile and withholds disguised codes on read_profile", async () => {
+    const got: string[] = [];
+    const env = setup({
+      submitProfile: async (_personId, _app, _e164, text) => { got.push(text); return "accepted"; },
+    });
+    const person = await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const saved = (await env.people.getMembership(person, "peon"))!;
+    await env.people.putMembership({
+      ...saved,
+      profile: {
+        about: "my code is 482\u200B913 thanks",
+        neighborhood: "near ٤٨٢٩١ brooklyn",
+        interests: [
+          "climbing",
+          "code 482/913",
+          "code four eight two nine one three",
+          "pin 1\u20E3 2\u20E3 3\u20E3 4\u20E3 5\u20E3 6\u20E3",
+          "born in the 1990s",
+        ],
+        homeCity: "nyc",
+      },
+    });
+    await env.accounts.recordConsent({ e164: PHONE_A, app: "peon", state: "opted_in", source: "keyword:start", at: env.clock.t });
+    const c = await connect(env, "peon.biz", PHONE_A, { scope: "membership:read profile:write profile:read" });
+    for (const about of [
+      "my code is 482\u200B913 thanks",
+      "my code is 48\u200B291 thanks",
+      "my code is ４８２９１３ thanks",
+      "my code is ٤٨٢٩١٣ thanks",
+      "my code is ٤٨٢٩١ thanks",
+      "my code is 482/913 thanks",
+      "my code is 482_913 thanks",
+      "my code is four eight two nine one three thanks",
+      "text me at 1\u20E3 2\u20E3 3\u20E3 4\u20E3 5\u20E3 6\u20E3",
+      "call me at 415\u200B555\u200B01\u200B02 please",
+      "call me at ４１５－５５５－０１０２ please",
+      "call me at ٢١٢-٥٥٥-٠١٠٢ please",
+      "call me at 415_555_0102 anytime",
+      "call me at two one two five five five zero one zero two",
+      "my cell is (415) 555-ol02 thanks",
+      "email rae\u200B@example.org for my CV",
+      "reach me at rae[@]example[.]org for my CV",
+      "reach me at rae<at>example<dot>org for my CV",
+      "reach me at rae at example[.]org for my CV",
+      "reach me at rae_at_example_dot_org for my CV",
+      "reach me at rae . lee @ example . org for my CV",
+      "reach me at rae at gmail.",
+    ]) {
+      const r = await call(env, PEON_MCP, "submit_profile", { about }, { token: c.token.access_token });
+      expect([about, r.body!.result.isError]).toEqual([about, true]);
+    }
+    expect(got).toEqual([]);
+    const read = await call(env, PEON_MCP, "read_profile", { app: "peon" }, { token: c.token.access_token });
+    expect(read.res.status).toBe(200);
+    expect(read.body!.result.structuredContent).toEqual({
+      app: "peon",
+      profile: {
+        first_name: "Rae",
+        about: null,
+        neighborhood: null,
+        interests: ["climbing", "born in the 1990s"],
+        home_region: "nyc",
+      },
+    });
+    const clean = "Backend engineer, previously worked at stripe.com, near 11211 two blocks from park, 100-120 team, free 11/24, project_2025.";
+    env.clock.t += 61_000;
+    const ok = await call(env, PEON_MCP, "submit_profile", { about: clean }, { token: c.token.access_token });
+    expect(ok.body!.result.structuredContent).toMatchObject({ app: "peon", submitted: true });
+    expect(got).toEqual([clean]);
+  });
 });

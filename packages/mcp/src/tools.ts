@@ -16,6 +16,7 @@ import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSu
 import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
+import { CONTACT_PATTERNS, contactVariants } from "../../core/src/guard.ts";
 import { outputLeaks } from "./leaks.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"] as const;
@@ -194,6 +195,38 @@ type GrantRefusal = { kind: "invalid_grant" } | { kind: "grant_held" } | { kind:
 
 const NOT_AVAILABLE = "That app is not available here.";
 
+const PHONE_PATTERNS = CONTACT_PATTERNS.filter(p => p.name === "phone");
+const EMAIL_PATTERNS = CONTACT_PATTERNS.filter(p => p.name === "email" || p.name === "email_spelled");
+const EMAIL_CUE = /[@＠﹫]|[\[\(\{<]\s*(?:at|\.)\s*[\]\)\}>]|(?:^|[\s_\[\(\{<])(?:dot|punto)(?:$|[\s_\]\)\}>])/i;
+const SPELLED_CODE = /(?:\b(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)\b[\s.,/\-_]*){4,}/i;
+
+function digitFold(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/\p{Nd}/gu, c => {
+      if (c >= "0" && c <= "9") return c;
+      const cp = c.codePointAt(0)!;
+      let zero = cp;
+      while (/\p{Nd}/u.test(String.fromCodePoint(zero - 1)) && cp - zero < 9) zero--;
+      return String((cp - zero) % 10);
+    })
+    .replace(/⃣/g, "")
+    .replace(/[\u00b7\u2022\u2027\u2219\u22c5\u30fb\u3002]/g, ".");
+}
+
+function hasPattern(text: string, patterns: readonly { re: RegExp }[]): boolean {
+  for (const { re } of patterns) {
+    re.lastIndex = 0;
+    const hit = re.test(text);
+    re.lastIndex = 0;
+    if (hit) return true;
+  }
+  return false;
+}
+
 /** Validate the arguments against the tool's schema: only listed properties, enum values only. */
 /**
  * A phone number, an email address or a verification code in the profile text: refused, never stored.
@@ -203,17 +236,26 @@ const NOT_AVAILABLE = "That app is not available here.";
  * zip or bounded age range. Thus "1990s" is text, but "12 34 56" is a code.
  */
 export function contactOrCode(text: string): boolean {
-  if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(text)) return true;
-  // A phone touching letters or underscores is still a phone.
-  for (const m of text.matchAll(/\+?[\d(][\d\s().-]*\d/g)) {
-    const run = m[0];
-    const digits = run.replace(/\D/g, "").length;
-    if (digits >= 7) return true;
-    if (/^\(?\d{5}\)?$/.test(run)) continue;
-    const range = /^(\d{1,3})-(\d{1,3})$/.exec(run);
-    if (range && Number(range[1]) >= 1 && Number(range[1]) <= Number(range[2]) && Number(range[2]) <= 120) continue;
-    const alone = !/\w/.test(text[m.index! - 1] ?? "") && !/\w/.test(text[m.index! + run.length] ?? "");
-    if (alone && digits >= 4) return true;
+  const folded = digitFold(text);
+  const checkClosedEmail = EMAIL_CUE.test(text) || EMAIL_CUE.test(folded);
+  for (const v of contactVariants(text)) {
+    if (hasPattern(v, PHONE_PATTERNS)) return true;
+    if ((checkClosedEmail || !v.includes("@")) && hasPattern(v, EMAIL_PATTERNS)) return true;
+  }
+  for (const s of [text, folded]) {
+    if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(s)) return true;
+    if (SPELLED_CODE.test(s)) return true;
+    for (const m of s.matchAll(/\+?[\d(][\d\s().-]*\d/g)) {
+      const run = m[0];
+      const digits = run.replace(/\D/g, "").length;
+      if (digits >= 7) return true;
+      if (/^\(?\d{5}\)?$/.test(run) && text.includes(run)) continue;
+      const range = /^(\d{1,3})-(\d{1,3})$/.exec(run);
+      if (range && Number(range[1]) >= 1 && Number(range[1]) <= Number(range[2]) && Number(range[2]) <= 120) continue;
+      const alone = !/\w/.test(s[m.index! - 1] ?? "") && !/\w/.test(s[m.index! + run.length] ?? "");
+      if (alone && digits >= 4) return true;
+    }
+    if (/(?<![\w])(?:\d[\s/_]*){5}\d(?![\w])/.test(s)) return true;
   }
   return false;
 }
@@ -335,8 +377,8 @@ function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: s
   const safeText = (value: unknown, maxLength: number) => {
     if (typeof value !== "string" || value.length > maxLength) return null;
     const text = value.trim();
-    const normalized = text.normalize("NFKC");
-    return text && !/\b\d{4,8}\b/.test(normalized) && !contactOrCode(normalized)
+    const folded = digitFold(text);
+    return text && !/\b\d{4,8}\b/.test(folded) && !contactOrCode(text)
       && !outputLeaks(text, { forbidden, contacts: true }).length ? text : null;
   };
   const first_name = safeText(fields.firstName, 50);
