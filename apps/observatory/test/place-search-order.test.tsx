@@ -22,7 +22,7 @@ const member = (id: string, name: string, area: string): ObsMember => ({
   id, name, city: "nyc", area, state: "normal", joined: true, joinedAt: 1, minor: false, age: 30, counters: counters(),
 });
 const stats = (): ObsStats => ({
-  members: 2, joined: 2, byCity: { nyc: 2 }, byState: { joined: 2 }, messages: 0, inbound: 0, outbound: 0,
+  members: 4, joined: 4, byCity: { nyc: 4 }, byState: { joined: 4 }, messages: 0, inbound: 0, outbound: 0,
   proactive: 0, proposals: 0, proposalsBySource: {}, oppsByState: {}, invites: 0, accepts: 0, declines: 0,
   meetingsScheduled: 0, meetingsHeld: 0, attended: 0, noShows: 0, cancelledWithNotice: 0,
   enjoymentSum: 0, enjoymentN: 0, blocks: 0, optOuts: 0, adversarialAttempts: 0, invariantViolations: 0,
@@ -36,7 +36,7 @@ test("typing the exact place name Harlem offers Harlem first and Enter opens it"
       capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: false },
     },
     clock: clock(10), version: 10,
-    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea")],
+    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea")],
     edges: [], opportunities: [], feed: [], stats: stats(), engineRuns: [],
   };
   const api = await serveHttp({
@@ -117,9 +117,18 @@ test("typing the exact place name Harlem offers Harlem first and Enter opens it"
       await sleep(10);
     });
     expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "maya");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => (el.textContent ?? "").includes("Maya")), "member hits");
+    const memberOptions = [...window.document.querySelectorAll('[role="option"]')]
+      .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
+    expect(memberOptions[0]).toEqual("Maya · Greenwich Village");
   } finally {
     for (const socket of sockets) { socket.onclose = null; socket.close(); }
     globalThis.fetch = nativeFetch;
+    await act(async () => { await sleep(40); });
     restoreDom();
     await api.stop(true);
     await window.happyDOM.close();
