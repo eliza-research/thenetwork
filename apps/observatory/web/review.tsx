@@ -49,9 +49,10 @@ export function OppStateMark({ state }: { state: string }) {
   return <StatusMark tone={groupTone[stateGroupOf(state)]} label={stateLabel(state)} />;
 }
 
-/** The score parts of a proposal: a bar each, red for a cost. */
+/** The score parts of a proposal: a bar each, red for a cost. When the source carries no breakdown at all, say so instead of leaving the score unexplained. */
 export function ScoreParts({ c }: { c?: ScoreComponents }) {
-  if (!c || !hasScoreParts(c)) return null;
+  if (!c) return null;
+  if (!hasScoreParts(c)) return <p className="text-sm text-muted-foreground">no component breakdown for this source</p>;
   const rows: MeterRow[] = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
     key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], title: `${k}: ${c[k]}`, tone: COMPONENT_SIGN[k] < 0 ? "destructive" : "primary",
   }));
