@@ -22,7 +22,7 @@ The slop.date site keeps one page at `/photos/view`. It does one step: it shows 
 
 The page reads the fragment once, when it opens. Then it removes the fragment from the address with `history.replaceState`, before it sends any request. It keeps the token only in the memory of the page, never in storage, in the address, in a log or in the page state. A token that does not have the correct shape shows the "no longer available" step, and the page sends nothing.
 
-A well-formed token shows the tap step. The tap step does not name the sender and shows no photo. The page sends the open request only when the person taps. The first open binds the link to this browser, so a link preview or a page that a messaging app loads in the background must not bind it. While the open request runs, the page refuses a second tap.
+A well-formed token shows the tap step. The tap step does not name the sender and shows no photo. The page sends the open request only when the person taps. The first open binds the link to this browser, so a link preview or a page that a messaging app loads in the background must not bind it. While the open request runs, the page refuses a second tap. The proof showed that the tap step must be waiting for an open answer before the answer can change the page.
 
 The open answer goes to one of five steps. A good answer with 1 to 3 photos shows the photos and starts to load them. A bound link on another phone shows the "other phone" step. A gone link shows the "no longer available" step. A link that a newer link replaced shows the "replaced" step, which tells the person to use the newest link. A request that does not reach the server shows the tap step again with the "unreachable" error, and every other answer, also a good answer with a photo count outside 1 to 3, shows the tap step with the general error. From both errors the person can tap again.
 
@@ -91,7 +91,8 @@ pure def canTapToView(page: PhotosViewPage): bool =
 pure def tapToView(page: PhotosViewPage): PhotosViewPage =
   { ...page, pending: ViewOpeningLink, error: ViewNoError }
 
-pure def canAnswerViewOpen(page: PhotosViewPage): bool = page.pending == ViewOpeningLink
+pure def canAnswerViewOpen(page: PhotosViewPage): bool =
+  page.screen == ViewTap and page.pending == ViewOpeningLink
 
 pure def answerViewOpen(page: PhotosViewPage, openAnswer: ViewOpenAnswer): PhotosViewPage =
   val screen = viewScreenAfterOpen(openAnswer)
@@ -119,7 +120,7 @@ pure def alwaysRequestsNeedTheLink(page: PhotosViewPage): bool =
 
 ### The page loads each photo of the offer once and shows only what the server gives
 
-After a good open answer, the page asks for photo 1, then photo 2, up to the count, one at a time. Each image answer is one event. A photo that the server gives shows on the page. A photo that the server no longer has (`404 not_found`, for example after the sender took back one photo of the offer) is left out, and the page does not say that a photo is missing, so that the receiver does not learn of a take-back. When the server has none of the photos, the page shows the "no longer available" step. A bound link on another phone shows the "other phone" step, a gone link shows the "no longer available" step, and a replaced link shows the "replaced" step. A request that does not reach the server, and every other answer, releases the loaded photos and shows the tap step with its error, so the person can tap again. The page never shows more photos than the offer holds.
+After a good open answer, the page asks for photo 1, then photo 2, up to the count, one at a time. Each image answer is one event. A photo that the server gives shows on the page. A photo that the server no longer has (`404 not_found`, for example after the sender took back one photo of the offer) is left out, and the page does not say that a photo is missing, so that the receiver does not learn of a take-back. When the server has none of the photos, the page shows the "no longer available" step. A bound link on another phone shows the "other phone" step, a gone link shows the "no longer available" step, and a replaced link shows the "replaced" step. A request that does not reach the server, and every other answer, releases the loaded photos and shows the tap step with its error, so the person can tap again. The page never shows more photos than the offer holds. The proof showed that the photos step must be waiting for an image before the answer can change the page.
 
 ```quint
 type ViewImageAnswer = ImageShown | ImageMissing | ImageOtherDevice | ImageGone | ImageReplaced | ImageUnreachable | ImageFailed
@@ -129,7 +130,7 @@ pure val imageValues = Set(ImageShown, ImageMissing, ImageOtherDevice, ImageGone
 pure def viewLoadSettles(loaded: int, missing: int, count: int): bool = loaded + missing + 1 >= count
 
 pure def canAnswerViewImage(page: PhotosViewPage): bool =
-  page.pending == ViewLoadingPhotos and page.loaded + page.missing < page.count
+  page.screen == ViewShowing and page.pending == ViewLoadingPhotos and page.loaded + page.missing < page.count
 
 pure def answerViewImage(page: PhotosViewPage, image: ViewImageAnswer): PhotosViewPage =
   val settles = viewLoadSettles(page.loaded, page.missing, page.count)

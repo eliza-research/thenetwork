@@ -93,7 +93,7 @@ export function tapToView(page: PhotosViewPage): PhotosViewPage {
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
 //@ pure
 export function canAnswerViewOpen(page: PhotosViewPage): boolean {
-  return page.pending === "ViewOpeningLink";
+  return page.screen === "ViewTap" && page.pending === "ViewOpeningLink";
 }
 
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
@@ -184,7 +184,7 @@ export function viewLoadSettles(loaded: number, missing: number, count: number):
 /** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
 //@ pure
 export function canAnswerViewImage(page: PhotosViewPage): boolean {
-  return page.pending === "ViewLoadingPhotos" && exact_photosViewPage(page.loaded + page.missing) < page.count;
+  return page.screen === "ViewShowing" && page.pending === "ViewLoadingPhotos" && exact_photosViewPage(page.loaded + page.missing) < page.count;
 }
 
 /** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
@@ -249,6 +249,12 @@ export function alwaysConfirmHidesThePhotos(page: PhotosViewPage): boolean {
 //@ pure
 export function stepNoClockClosesThePhotos(before: PhotosViewPage, via: string, after: PhotosViewPage): boolean {
   return !(viewPhotosHeld(before) && !viewPhotosHeld(after)) || (via === "answerViewImage" || via === "askToReport" || via === "answerReport");
+}
+
+/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
+//@ pure
+export function canKeepViewing(page: PhotosViewPage): boolean {
+  return page.screen === "ViewConfirmReport" && page.pending === "ViewIdle";
 }
 
 /** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
@@ -357,12 +363,6 @@ export function askToReport(page: PhotosViewPage): PhotosViewPage {
   //@ ensures (inv(page) && canAskToReport(page)) ==> stepReportedOnlyFromTheServer(page, "askToReport", \result)
   //@ ensures (inv(page) && canAskToReport(page)) ==> stepEndsAreFinal(page, \result)
   return { ...page, screen: "ViewConfirmReport", error: "ViewNoError" };
-}
-
-/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
-//@ pure
-export function canKeepViewing(page: PhotosViewPage): boolean {
-  return page.screen === "ViewConfirmReport" && page.pending === "ViewIdle";
 }
 
 /** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
