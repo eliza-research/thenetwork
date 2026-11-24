@@ -66,13 +66,13 @@ export function openPhotoPage(page: PhotoUploadPage, tokenWellFormed: boolean): 
   //@ ensures (inv(page) && canOpenPhotoPage(page)) ==> stepSavedOnlyFromTheAnswer(page, "openPhotoPage", \result)
   //@ ensures (inv(page) && canOpenPhotoPage(page)) ==> stepLinkNeverReopens(page, \result)
   //@ ensures (inv(page) && canOpenPhotoPage(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "openPhotoPage", \result)
-  return tokenWellFormed ? ({ ...page, screen: "PhotoChecking", pending: "PhotoReading" } as PhotoUploadPage) : ({ ...page, screen: "PhotoBadLink", linkOpen: false } as PhotoUploadPage);
+  return tokenWellFormed ? ({ ...page, screen: "PhotoChecking", pending: "PhotoReading", chosen: 0 } as PhotoUploadPage) : ({ ...page, screen: "PhotoBadLink", linkOpen: false } as PhotoUploadPage);
 }
 
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
 //@ pure
 export function canAnswerLinkStatus(page: PhotoUploadPage): boolean {
-  return page.pending === "PhotoReading";
+  return page.screen === "PhotoChecking" && page.pending === "PhotoReading";
 }
 
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
@@ -145,7 +145,7 @@ export function answerLinkStatus(page: PhotoUploadPage, linkStatus: PhotoLinkSta
   //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepLinkNeverReopens(page, \result)
   //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "answerLinkStatus", \result)
   const local_0: PhotoUploadPage = { ...page, pending: "PhotoIdle" };
-  return linkStatus.kind === "LinkStatusOpen" ? ({ ...local_0, screen: "PhotoPick", linkOpen: true, consentAsked: linkStatus.consentRequired, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusClosed" ? ({ ...local_0, screen: "PhotoLinkClosed", linkOpen: false, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusUnreachable" ? ({ ...local_0, error: "PhotoUnreachable" } as PhotoUploadPage) : ({ ...local_0, error: "PhotoRequestFailed" } as PhotoUploadPage)));
+  return linkStatus.kind === "LinkStatusOpen" ? ({ ...local_0, screen: "PhotoPick", linkOpen: true, consentAsked: linkStatus.consentRequired, consentTicked: false, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusClosed" ? ({ ...local_0, screen: "PhotoLinkClosed", linkOpen: false, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusUnreachable" ? ({ ...local_0, error: "PhotoUnreachable" } as PhotoUploadPage) : ({ ...local_0, error: "PhotoRequestFailed" } as PhotoUploadPage)));
 }
 
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */

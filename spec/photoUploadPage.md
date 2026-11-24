@@ -20,6 +20,8 @@ The page reads the fragment once, when it opens. Then it removes the fragment fr
 
 An open status is not a promise: the upload can still answer that the link closed.
 
+The checking step starts with no chosen photos. It accepts a status answer only while it waits for the status. When an open status shows the picker, the consent box starts unticked.
+
 ```quint
 import photoPolicy.* from "./photoPolicy"
 
@@ -48,7 +50,7 @@ pure val tokenWellFormedValues = Set(true, false)
 pure def canOpenPhotoPage(page: PhotoUploadPage): bool = page.screen == PhotoOpening
 
 pure def openPhotoPage(page: PhotoUploadPage, tokenWellFormed: bool): PhotoUploadPage =
-  if (tokenWellFormed) { ...page, screen: PhotoChecking, pending: PhotoReading }
+  if (tokenWellFormed) { ...page, screen: PhotoChecking, pending: PhotoReading, chosen: 0 }
   else { ...page, screen: PhotoBadLink, linkOpen: false }
 
 type PhotoLinkStatusKind = LinkStatusOpen | LinkStatusClosed | LinkStatusUnreachable | LinkStatusFailed
@@ -62,12 +64,12 @@ pure val linkStatusValues = Set(
   { kind: LinkStatusFailed, consentRequired: true },
 )
 
-pure def canAnswerLinkStatus(page: PhotoUploadPage): bool = page.pending == PhotoReading
+pure def canAnswerLinkStatus(page: PhotoUploadPage): bool = page.screen == PhotoChecking and page.pending == PhotoReading
 
 pure def answerLinkStatus(page: PhotoUploadPage, linkStatus: PhotoLinkStatus): PhotoUploadPage =
   val idle = { ...page, pending: PhotoIdle }
   if (linkStatus.kind == LinkStatusOpen)
-    { ...idle, screen: PhotoPick, linkOpen: true, consentAsked: linkStatus.consentRequired, error: PhotoNoError }
+    { ...idle, screen: PhotoPick, linkOpen: true, consentAsked: linkStatus.consentRequired, consentTicked: false, error: PhotoNoError }
   else if (linkStatus.kind == LinkStatusClosed) { ...idle, screen: PhotoLinkClosed, linkOpen: false, error: PhotoNoError }
   else if (linkStatus.kind == LinkStatusUnreachable) { ...idle, error: PhotoUnreachable }
   else { ...idle, error: PhotoRequestFailed }
