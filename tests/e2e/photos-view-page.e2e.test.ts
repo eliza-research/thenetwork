@@ -26,7 +26,11 @@ const DAY = 86_400_000;
 describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machine against the site router and the backend)", () => {
   let st: Stack, sql: SQL;
   const realFetch = globalThis.fetch;
-  beforeAll(async () => { st = await startStack({ slopPhotoReviewer: true }); sql = new SQL({ url: st.url, max: 2 }); }, T);
+  const startPhotoStack = async () => {
+    st = await startStack({ slopPhotoReviewer: true });
+    sql = new SQL({ url: st.url, max: 2 });
+  };
+  beforeAll(startPhotoStack, T);
   afterEach(() => { globalThis.fetch = realFetch; });
   afterAll(async () => { globalThis.fetch = realFetch; await sql?.close(); await st?.close(); });
 
@@ -271,46 +275,6 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     expect(next.page.screen).toBe("ViewShowing");
   }, T);
 
-  test("a signed DELETE PHOTOS turn on Friends closes a live Slop photo and blocks a pending release", async () => {
-    const ready = await readyOffer("delete-ready");
-    const pending = await reviewOffer("delete-pending");
-    const preview = await previewItem(pending.itemId, "slop");
-    expect(preview.status).toBe(200);
-    await preview.arrayBuffer();
-    const reviewToken = preview.headers.get("x-network-photo-review-token");
-    expect(reviewToken).toBeTruthy();
-    expect((await previewItem(pending.itemId, "friends")).status).toBe(403);
-    expect((await releaseItem(pending.itemId, "friends", reviewToken)).status).toBe(403);
-
-    phoneOn(new Browser());
-    const first = new ViewPage(ready.token);
-    await first.tap();
-    expect([first.page.screen, first.page.loaded]).toEqual(["ViewShowing", 1]);
-    const erase = async (phone: string) => {
-      expect((await webJoin(st, "friends", phone, { age: 29, firstName: "Ari" })).res.status).toBe(200);
-      expect(await turn(phone, "DELETE PHOTOS", "friends")).toMatchObject({
-        outcome: "handled", reply: "I deleted your photo and the private rating made from it.",
-      });
-    };
-    await erase(ready.ari);
-    expect((await previewItem(pending.itemId, "slop")).status).toBe(200);
-    await erase(pending.ari);
-
-    const ended = new ViewPage(ready.token);
-    await ended.tap();
-    expect([ended.page.screen, ended.page.loaded]).toEqual(["ViewGone", 0]);
-    expect((await loadPhotoView(ready.token, 1)).url).toBeUndefined();
-    const erasedPreview = await previewItem(pending.itemId, "slop");
-    expect(erasedPreview.status).toBe(403);
-    expect(erasedPreview.headers.get("x-network-photo-review-token")).toBeNull();
-    expect(await erasedPreview.json()).toEqual({ ok: false, reason: "photo_unavailable" });
-    const erasedRelease = await releaseItem(pending.itemId, "slop", reviewToken);
-    expect(erasedRelease.status).toBe(409);
-    expect(await erasedRelease.json()).toEqual({ ok: false, reason: "not_held" });
-    expect(await sql`select 1 from platform.photo_relay_items where id = ${pending.itemId}`).toEqual([]);
-    expect(await sql`select 1 from network.messages where app_id = 'slop' and id = ${`photo-ready:${pending.offerId}`}`).toEqual([]);
-  }, T);
-
   test("a report that arrives after the sender took the photo back shows that the report did not go", async () => {
     const { ari, offerId, token } = await readyOffer("lost");
     phoneOn(new Browser());
@@ -348,5 +312,48 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     expect([p.page.screen, p.page.linkHeld]).toEqual(["ViewGone", false]);
     await p.tap();
     expect(sent).toHaveLength(0);
+  }, T);
+
+  test("a signed DELETE PHOTOS turn on Friends closes a live Slop photo and blocks a pending release", async () => {
+    await sql.close();
+    await st.close();
+    await startPhotoStack();
+    const ready = await readyOffer("delete-ready");
+    const pending = await reviewOffer("delete-pending");
+    const preview = await previewItem(pending.itemId, "slop");
+    expect(preview.status).toBe(200);
+    await preview.arrayBuffer();
+    const reviewToken = preview.headers.get("x-network-photo-review-token");
+    expect(reviewToken).toBeTruthy();
+    expect((await previewItem(pending.itemId, "friends")).status).toBe(403);
+    expect((await releaseItem(pending.itemId, "friends", reviewToken)).status).toBe(403);
+
+    phoneOn(new Browser());
+    const first = new ViewPage(ready.token);
+    await first.tap();
+    expect([first.page.screen, first.page.loaded]).toEqual(["ViewShowing", 1]);
+    const erase = async (phone: string) => {
+      expect((await webJoin(st, "friends", phone, { age: 29, firstName: "Ari" })).res.status).toBe(200);
+      expect(await turn(phone, "DELETE PHOTOS", "friends")).toMatchObject({
+        outcome: "handled", reply: "I deleted your photo and the private rating made from it.",
+      });
+    };
+    await erase(ready.ari);
+    expect((await previewItem(pending.itemId, "slop")).status).toBe(200);
+    await erase(pending.ari);
+
+    const ended = new ViewPage(ready.token);
+    await ended.tap();
+    expect([ended.page.screen, ended.page.loaded]).toEqual(["ViewGone", 0]);
+    expect((await loadPhotoView(ready.token, 1)).url).toBeUndefined();
+    const erasedPreview = await previewItem(pending.itemId, "slop");
+    expect(erasedPreview.status).toBe(403);
+    expect(erasedPreview.headers.get("x-network-photo-review-token")).toBeNull();
+    expect(await erasedPreview.json()).toEqual({ ok: false, reason: "photo_unavailable" });
+    const erasedRelease = await releaseItem(pending.itemId, "slop", reviewToken);
+    expect(erasedRelease.status).toBe(409);
+    expect(await erasedRelease.json()).toEqual({ ok: false, reason: "not_held" });
+    expect(await sql`select 1 from platform.photo_relay_items where id = ${pending.itemId}`).toEqual([]);
+    expect(await sql`select 1 from network.messages where app_id = 'slop' and id = ${`photo-ready:${pending.offerId}`}`).toEqual([]);
   }, T);
 });
