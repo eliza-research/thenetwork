@@ -1349,10 +1349,6 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const tail = t.slice(end);
     const refusal = REFUSES_OFFERED_TIME.exec(tail)?.[0];
     if (!refusal) return;
-    // A plain refusal ("Thursday doesn't work, Saturday works") is bound to its time the same
-    // way when a separate clause follows it: remember it too, so the rescan below reads the
-    // general answer without its words. A refusal that ends the reply is not remembered, so a
-    // bare refusal still leaves the probe open.
     if (!QUALIFIED_TIME_REFUSAL.test(tail) && !tail.slice(refusal.length).trim()) return;
     const clause = clauseAt(t, at, end - at);
     if (/\bif\b/.test(clause) || COND_RX.test(clause)) conditionalTimeRefusal = true;
