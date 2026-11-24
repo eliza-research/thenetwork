@@ -173,3 +173,16 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "don't call me", "label": "stop", "lang": "en"}
+{"text": "do not call me", "label": "stop", "lang": "en"}
+{"text": "never call me", "label": "stop", "lang": "en"}
+{"text": "don't call me again", "label": "stop", "lang": "en"}
+{"text": "please don't call me", "label": "stop", "lang": "en"}
+{"text": "don't ever call me", "label": "stop", "lang": "en"}
+{"text": "no more calls", "label": "stop", "lang": "en"}
+{"text": "no more calls please", "label": "stop", "lang": "en"}
+{"text": "no more robocalls", "label": "stop", "lang": "en"}
+{"text": "don't call me that", "label": "not_stop", "lang": "en"}
+{"text": "don't call me late", "label": "not_stop", "lang": "en"}
+{"text": "don't call me at night", "label": "not_stop", "lang": "en"}
+{"text": "call me maybe", "label": "not_stop", "lang": "en"}
