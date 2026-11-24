@@ -178,9 +178,9 @@ export interface OAuthStore {
   /** One draft per grant; no overwrite/replay. Grant liveness and scope checked atomically. */
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
   /** Recoverable read for the verified phone/app until deliberate discard or expiry. */
-  claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
+  claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, now: () => number): Promise<SignupDraftFields | undefined>;
   discardSignupDrafts(phoneKey: string, app: McpAppId, at: number): Promise<void>;
-  useSignupPrefill(ask: SignupPrefillAsk, at: number): Promise<SignupDraftFields | undefined>;
+  useSignupPrefill(ask: SignupPrefillAsk, now: () => number): Promise<SignupDraftFields | undefined>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
   /** Store observed acceptance, or release a claim only after intake explicitly refused it. */
@@ -266,7 +266,8 @@ export class MemoryOAuthStore implements OAuthStore {
       || this.signupDrafts.has(g.id)) return false;
     this.signupDrafts.set(g.id, structuredClone(d)); return true;
   }
-  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
+  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, now: () => number) {
+    const at = now();
     const drafts = [...this.signupDrafts.values()].filter(d => {
       if (!signupDraftRowReadable(d.phoneKey === phoneKey && d.app === app, d.consumedAt === null, d.expiresAt, at)) return false;
       const g = this.grants.get(d.grantId);
@@ -279,7 +280,8 @@ export class MemoryOAuthStore implements OAuthStore {
   async discardSignupDrafts(phoneKey: string, app: McpAppId, at: number) {
     for (const d of this.signupDrafts.values()) if (d.phoneKey === phoneKey && d.app === app) { d.fields = { firstName: "" }; d.consumedAt = at; }
   }
-  async useSignupPrefill(ask: SignupPrefillAsk, at: number) {
+  async useSignupPrefill(ask: SignupPrefillAsk, now: () => number) {
+    const at = now();
     const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
     const drafts = [...this.signupDrafts.values()].filter(d => {
       const g = this.grants.get(d.grantId);

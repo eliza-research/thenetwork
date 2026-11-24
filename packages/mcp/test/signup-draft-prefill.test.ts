@@ -278,15 +278,46 @@ test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also wh
     const e = setup({ store }), clientId = await draftFor(e, "friends.help", PHONE_A);
     const key = e.accounts.phoneHash(PHONE_A);
     const other = (await register(e, "friends.help")).body.client_id as string;
-    expect(await store.useSignupPrefill({ clientId: other, app: "friends", phoneKey: key, personId: null, ageAllowed: true }, e.clock.t)).toBeUndefined();
-    expect(await store.useSignupPrefill({ clientId, app: "friends", phoneKey: key, personId: null, ageAllowed: false }, e.clock.t)).toBeUndefined();
+    expect(await store.useSignupPrefill({ clientId: other, app: "friends", phoneKey: key, personId: null, ageAllowed: true }, () => e.clock.t)).toBeUndefined();
+    expect(await store.useSignupPrefill({ clientId, app: "friends", phoneKey: key, personId: null, ageAllowed: false }, () => e.clock.t)).toBeUndefined();
     const restarted = new PgOAuthStore(store.sql);
     const ask = { clientId, app: "friends" as const, phoneKey: key, personId: null, ageAllowed: true };
-    const pair = await Promise.all([store.useSignupPrefill(ask, e.clock.t), restarted.useSignupPrefill(ask, e.clock.t)]);
+    const pair = await Promise.all([store.useSignupPrefill(ask, () => e.clock.t), restarted.useSignupPrefill(ask, () => e.clock.t)]);
     expect(pair.filter(Boolean)).toEqual([{ firstName: "Ari", homeCity: "sf" }]);
     expect((await store.sql`select fields, consumed_at is not null as used from oauth.signup_drafts where phone_key=${key}`)).toEqual([{ fields: {}, used: true }]);
     expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
     const again = await draftFor(e, "friends.help", PHONE_A, { firstName: "Rae", homeCity: "nyc" });
     expect(shows((await openSignup(e, "friends.help", again, PHONE_A)).form, "Rae", "nyc")).toBe(true);
+  } finally { await store.close(); await dropTestDb(); }
+});
+
+test.skipIf(!pgAvailable).each(["grant", "draft"] as const)("a %s at its expiry is unavailable to both signup forms", async expiring => {
+  const store = new PgOAuthStore(await testDb());
+  try {
+    const e = setup({ store });
+    const clientId = await draftFor(e, "friends.help", PHONE_A);
+    const phoneKey = e.accounts.phoneHash(PHONE_A);
+    const [grant] = await store.grantsFor(phoneKey, "friends", e.clock.t);
+    const owner = await e.sessions.create("friends", PHONE_A, null);
+    const authorization = await authorize(e, "friends.help", clientId, PHONE_A);
+    const deadline = e.clock.t + 1_000;
+    if (expiring === "grant") await store.sql`update oauth.grants set expires_at=${new Date(deadline)} where id=${grant.id}`;
+    else await store.sql`update oauth.signup_drafts set expires_at=${new Date(deadline)} where grant_id=${grant.id}`;
+
+    const recover = () => e.fetch(new Request("https://friends.help/oauth/signup-draft", {
+      method: "POST",
+      headers: { origin: "https://friends.help", cookie: `sid_friends=${owner.token}`, "content-type": "application/json" },
+      body: "{}",
+    }));
+    expect(await (await recover()).json()).toMatchObject({ draft: { firstName: "Ari", homeCity: "sf" } });
+    e.clock.t = deadline;
+    const recovery = await recover();
+    expect(recovery.status).toBe(200);
+    expect(await recovery.json()).toMatchObject({ draft: null });
+
+    const prefill = await authorization.post("/oauth/authorize/signup", { decision: "open" });
+    expect(prefill.status).toBe(200);
+    expect(blank(await prefill.text())).toBe(true);
+    expect(await store.sql`select consumed_at as consumed from oauth.signup_drafts where grant_id=${grant.id}`).toEqual([{ consumed: null }]);
   } finally { await store.close(); await dropTestDb(); }
 });

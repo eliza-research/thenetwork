@@ -4,11 +4,11 @@ import { fileAt } from "../../core/src/runtime/files.ts";
 import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
-import { signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { signupPrefillAllowed, useSignupPrefill as markSignupPrefillUsed } from "../../core/src/generated/authorizationPages.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type SignupDraftFields, type SignupPrefillAsk, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -101,45 +101,49 @@ export class PgOAuthStore implements OAuthStore {
       return signupDraftUnique(rows.length);
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }
-  async claimSignupDraft(phoneKey: string, app: import("./apps.ts").McpAppId, personId: string | null, at: number) {
-    const started = performance.now();
+  private async currentSignupDrafts(tx: SQL, ask: Pick<SignupPrefillAsk, "app" | "phoneKey" | "personId">, now: () => number, clientId: string | null = null) {
+    const grants = new Map((await tx`select g.* from oauth.grants g join oauth.signup_drafts d on d.grant_id=g.id
+      where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and d.consumed_at is null
+      and g.app_id=${ask.app} and g.phone_key=${ask.phoneKey} and g.person_id is not distinct from ${ask.personId}
+      and (${clientId}::text is null or g.client_id=${clientId}) order by g.id for update of g`).map(row => [row.id as string, grant(row)]));
+    if (!grants.size) return { drafts: [], checkedAt: now() };
+
+    const rows = await tx`select grant_id,app_id,phone_key,fields,expires_at,consumed_at from oauth.signup_drafts
+      where grant_id in ${tx([...grants.keys()])} order by grant_id for update`;
+    const checkedAt = now();
+    const drafts = rows.flatMap(draft => {
+      const current = grants.get(draft.grant_id);
+      return current
+        && signupDraftGrantAllowed(current.app === draft.app_id && current.phoneKey === draft.phone_key,
+          current.expiresAt > checkedAt, current.revokedAt === null, current.scopes.includes("profile:write"))
+        && signupDraftRowReadable(draft.app_id === ask.app && draft.phone_key === ask.phoneKey,
+          draft.consumed_at === null, ms(draft.expires_at)!, checkedAt)
+        ? [{ draft, grant: current }] : [];
+    });
+    return { drafts, checkedAt };
+  }
+
+  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, now: () => number) {
     try { return await this.sql.begin(async tx => {
-      // Lock grants in the same order as revocation before taking draft rows.
-      const grants = await tx`select g.id from oauth.grants g join oauth.signup_drafts d on d.grant_id=g.id
-        where d.phone_key=${phoneKey} and d.app_id=${app} and d.consumed_at is null and d.expires_at>${new Date(at)}
-        and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
-        and g.revoked_at is null and g.expires_at>${new Date(at)} and 'profile:write'=any(g.scopes) order by g.id for update of g`;
-      if (!signupDraftUnique(grants.length)) return undefined;
-      const liveAt = at + Math.ceil(performance.now() - started);
-      const rows = await tx`select d.grant_id,d.fields from oauth.signup_drafts d join oauth.grants g on g.id=d.grant_id
-        where d.grant_id=${grants[0].id} and d.consumed_at is null and d.expires_at>${new Date(liveAt)}
-        and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
-        and g.revoked_at is null and g.expires_at>${new Date(liveAt)} and 'profile:write'=any(g.scopes) for update of d`;
-      if (!signupDraftUnique(rows.length)) return undefined;
-      return rows[0].fields as import("./store.ts").SignupDraftFields;
+      const { drafts } = await this.currentSignupDrafts(tx, { phoneKey, app, personId }, now);
+      return signupDraftUnique(drafts.length) ? drafts[0].draft.fields as SignupDraftFields : undefined;
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }
 
-  async useSignupPrefill(ask: import("./store.ts").SignupPrefillAsk, at: number) {
+  async useSignupPrefill(ask: SignupPrefillAsk, now: () => number) {
     try { return await this.sql.begin(async tx => {
-      const grants = (await tx`select g.* from oauth.grants g
-        join oauth.signup_drafts d on d.grant_id=g.id
-        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} and d.consumed_at is null
-        order by g.id for update of g`).map(grant);
-      const drafts = await tx`select d.grant_id,d.app_id,d.phone_key,d.fields,d.expires_at,d.consumed_at from oauth.signup_drafts d
-        join oauth.grants g on g.id=d.grant_id
-        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} and d.consumed_at is null for update of d`;
-      const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
-      const usable = drafts.filter(d => {
-        const g = grants.find(x => x.id === d.grant_id);
-        return !!g && signupDraftGrantAllowed(g.personId === ask.personId && g.app === d.app_id && g.phoneKey === d.phone_key, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
-          && signupPrefillAllowed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: d.consumed_at !== null, expiresAt: ms(d.expires_at)! }, request);
-      });
+      const { drafts, checkedAt } = await this.currentSignupDrafts(tx, ask, now, ask.clientId);
+      const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: checkedAt, ageAllowed: ask.ageAllowed };
+      const usable = drafts.map(({ draft, grant }) => ({
+        draft,
+        state: { client: grant.clientId, app: draft.app_id, phone: draft.phone_key, used: false, expiresAt: ms(draft.expires_at)! },
+      })).filter(({ state }) => signupPrefillAllowed(state, request));
       if (!signupDraftUnique(usable.length)) return undefined;
-      const d = usable[0]!, g = grants.find(x => x.id === d.grant_id)!;
-      if (!markSignupPrefillUsed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: false, expiresAt: ms(d.expires_at)! }, request).used) return undefined;
-      const used = await tx`update oauth.signup_drafts set fields='{}'::jsonb,consumed_at=${new Date(at)} where grant_id=${d.grant_id} and consumed_at is null returning grant_id`;
-      return signupDraftUnique(used.length) ? d.fields as import("./store.ts").SignupDraftFields : undefined;
+      const { draft, state } = usable[0]!;
+      if (!markSignupPrefillUsed(state, request).used) return undefined;
+      const used = await tx`update oauth.signup_drafts set fields='{}'::jsonb,consumed_at=${new Date(checkedAt)}
+        where grant_id=${draft.grant_id} and consumed_at is null returning grant_id`;
+      return signupDraftUnique(used.length) ? draft.fields as SignupDraftFields : undefined;
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }
 

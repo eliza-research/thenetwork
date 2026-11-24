@@ -307,8 +307,8 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(await oauth.getGrant(cloud)).toMatchObject({ phoneKey: oldKey, personId, cloudAuthority: authority, revokedAt: t.now() });
     expect(await oauth.getGrant(unbound)).toMatchObject({ phoneKey: oldKey, personId: null, revokedAt: t.now() });
     expect(await oauth.getGrant(retired)).toMatchObject({ phoneKey: oldKey, personId, revokedAt: at.getTime() });
-    expect(await oauth.claimSignupDraft(newKey, "friends", personId, t.now())).toEqual({ firstName: "Ana" });
-    expect(await oauth.claimSignupDraft(oldKey, "friends", personId, t.now())).toBeUndefined();
+    expect(await oauth.claimSignupDraft(newKey, "friends", personId, () => t.now())).toEqual({ firstName: "Ana" });
+    expect(await oauth.claimSignupDraft(oldKey, "friends", personId, () => t.now())).toBeUndefined();
     expect(await oauth.getToken(`${local}-token`)).toMatchObject({ revokedAt: null });
     for (const id of [cloud, unbound]) expect(await oauth.getToken(`${id}-token`)).toMatchObject({ revokedAt: t.now() });
     const ended = [cloud, unbound].sort();
