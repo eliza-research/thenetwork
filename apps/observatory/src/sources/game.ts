@@ -511,11 +511,11 @@ export class GameSource implements DataSource {
     const messages: OpportunityDetail["messages"] = [];
     for (const mid of o.participants) {
       const all = this.world.channel.messagesFor(mid);
-      const related = all.filter(x => x.meta?.proposalId === id || x.meta?.probe?.key === id);
-      const times = related.map(x => x.ts);
+      const oppOf = new Map(all.map(x => [x.id, x.meta?.proposalId ?? x.meta?.probe?.key]));
       for (const x of all) {
-        const near = x.direction === "inbound" && times.some(t => x.ts >= t && x.ts - t <= 2 * DAY);
-        if (x.meta?.proposalId === id || x.meta?.probe?.key === id || near) messages.push({ ...this.obsMessage(x), memberId: mid });
+        const direct = x.meta?.proposalId === id || x.meta?.probe?.key === id;
+        const reply = x.direction === "inbound" && x.meta?.inReplyTo !== undefined && oppOf.get(x.meta.inReplyTo) === id;
+        if (direct || reply) messages.push({ ...this.obsMessage(x), memberId: mid });
       }
     }
     messages.sort((a, b) => a.ts - b.ts);
