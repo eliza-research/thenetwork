@@ -460,6 +460,18 @@ export class RealSource implements DataSource {
         currentEdges.set(id, edge);
       }
     }
+    for (const r of members as any[]) {
+      if (!r.invited_by) continue;
+      const invitee = s.members.get(r.id);
+      if (!invitee?.joined || !s.members.has(r.invited_by)) continue;
+      const id = edgeId("invited_by", r.invited_by, r.id);
+      const edge: ObsEdge = { id, from: r.invited_by, to: r.id, type: "invited_by",
+        strength: 0.7, createdAt: ms(r.joined_at) ?? 0, origin: "graph" };
+      const prior = currentEdges.get(id);
+      if (!prior || edge.strength > prior.strength || (edge.strength === prior.strength && edge.createdAt > prior.createdAt)) {
+        currentEdges.set(id, edge);
+      }
+    }
     s.replaceEdges(currentEdges);
     const receipts = new Map<string, BookingReceiptView[]>();
     for (const receipt of bookedMsgs) {
