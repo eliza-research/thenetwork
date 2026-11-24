@@ -28,6 +28,7 @@ After the receiver's yes, each item starts in the automatic check (`screen`; the
 //   answer, screen (photoScreenVerdictFor, photoScreenOutcomeFor, screenSelection), review, expire, withdraw, settle,
 //   renewViewLinks. PhotoPages (packages/platform/src/photo-pages.ts): the view page open and its image calls
 //   (photoViewAllowed), and the confirmation after a filed report (photoPageReportConfirmed).
+//   Browser and object I/O can wait. The view actions represent the last current-authority check after that wait.
 //   The pure defs below have the names and the decisions of spec/photoRelayItem.md and spec/photoRelayReview.md.
 //   The phases are strings here. One draft and one offer slot stand for the newest draft of the sender and the
 //   newest offer of the pair.
@@ -666,6 +667,16 @@ module photo_relay_item {
     init.then(noMorePhotos).then(propose(Set(1))).then(consentYes)
       .expect(w.offer.phase == "declined" and w.offer.tell == "notTaken" and safety)
       .then(askReceiver).fail()
+
+  run waitingOpenCannotBindAfterRecipientStopsTest =
+    init.then(propose(Set(1))).then(consentYes).then(askReceiver).then(receiverYes).then(screen(1, "clean")).then(settle)
+      .expect(itemsCurrent(w) and not(w.offer.bound)).then(pairEnds(false))
+      .expect(w.offer.partyEnded and not(w.offer.bound)).then(openView).fail()
+
+  run waitingImageCannotReadAfterRecipientStopsTest =
+    init.then(propose(Set(1))).then(consentYes).then(askReceiver).then(receiverYes).then(screen(1, "clean")).then(settle)
+      .then(openView).expect(itemsCurrent(w) and w.offer.bound).then(pairEnds(false))
+      .expect(w.offer.partyEnded and g.views == 0).then(viewImage(1, true)).fail()
 
   run noViewBeforeCheckTest = init.then(propose(Set(1))).then(consentYes).then(askReceiver).then(receiverYes).then(openView).fail()
 

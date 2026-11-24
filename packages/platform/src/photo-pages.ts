@@ -81,13 +81,13 @@ export class PhotoPages {
     return { draft: same ? draft : undefined, same };
   }
 
-  private async live(link: PhotoPageLink, deviceHash: string | null): Promise<"live" | "expired"> {
+  private async live(link: PhotoPageLink, deviceHash: string | null, tx?: SQL): Promise<"live" | "expired"> {
     if (link.purpose === "check") return this.o.relay.linkLive(link, deviceHash, (await this.draftRevisionLive(link)).same) ? "live" : "expired";
     if (link.purpose === "mine") return this.o.relay.linkLive(link, deviceHash, true) ? "live" : "expired";
-    const offer = link.offerId ? await this.o.relay.offer(link.offerId) : undefined;
+    const offer = link.offerId ? await this.o.relay.offer(link.offerId, tx) : undefined;
     if (!offer || offer.recipientPersonId !== link.personId) return "expired";
     const bound = link.deviceHash !== null;
-    return this.o.relay.viewAllowed(offer, bound, bound && link.deviceHash === deviceHash, await this.o.relay.viewCurrent(offer)) ? "live" : "expired";
+    return this.o.relay.viewAllowed(offer, bound, bound && link.deviceHash === deviceHash, await this.o.relay.viewCurrent(offer, tx)) ? "live" : "expired";
   }
 
   private async open(link: PhotoPageLink, cookie: string | null): Promise<Response> {
@@ -101,7 +101,7 @@ export class PhotoPages {
     const bound = await this.o.sql.begin(async (tx: SQL): Promise<"bound" | "other_device" | "expired"> => {
       const locked = await this.o.relay.lockLink(tx, link.id);
       if (!locked || (fresh ? locked.deviceHash !== null : locked.deviceHash !== deviceHash)) return "other_device";
-      if (link.purpose === "view" && (await this.o.relay.offer(link.offerId!, tx))?.phase !== "ready") return "expired";
+      if (locked.purpose === "view" && await this.live(locked, deviceHash, tx) !== "live") return "expired";
       if (fresh && !(await this.o.relay.bindDevice(tx, link.id, this.o.relay.deviceId(fresh)))) return "other_device";
       return "bound";
     });
@@ -126,7 +126,9 @@ export class PhotoPages {
     const offer = await this.o.relay.offer(link.offerId!);
     if (!offer || offer.phase !== "ready") return fail(410, "link_expired");
     const items = await this.o.relay.viewItems(offer);
-    return privateJson(200, { ok: true, purpose: "view", fromFirstName: await this.o.relay.firstName(link.app, offer.senderMemberId), count: items.length }, extra);
+    const fromFirstName = await this.o.relay.firstName(link.app, offer.senderMemberId);
+    if (await this.live(link, deviceHash) !== "live") return fail(410, "link_expired");
+    return privateJson(200, { ok: true, purpose: "view", fromFirstName, count: items.length }, extra);
   }
 
   private async image(link: PhotoPageLink, deviceHash: string, n: number): Promise<Response> {
@@ -138,6 +140,7 @@ export class PhotoPages {
     if (link.purpose === "view") {
       const offer = await this.o.relay.offer(link.offerId!);
       value = offer && offer.phase === "ready" ? await this.o.relay.viewBytes(offer, n) : undefined;
+      if (await this.live(link, deviceHash) !== "live") return fail(410, "link_expired");
     } else value = await this.o.relay.ownBytes(link.personId, link.app, n, draft?.photoSetSha);
     if (!value) return fail(404, "not_found");
     if (check && !(await this.draftRevisionLive(link)).same) return fail(410, "link_expired");

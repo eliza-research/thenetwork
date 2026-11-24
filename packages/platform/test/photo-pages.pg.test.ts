@@ -31,7 +31,16 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
   let k = 0;
   async function world() {
     let now = Date.UTC(2026, 10, 22, 20);
-    const photos = new PhotoService({ people, meta: new PgPhotoStore(sql), storage: new LocalDiskPhotoStorage(dir), signingKey: "fixture-key", now: () => now, eligible: async () => true });
+    const storage = new LocalDiskPhotoStorage(dir);
+    const getFromDisk = storage.get.bind(storage);
+    let nextObjectRead: (() => Promise<void>) | undefined;
+    storage.get = async key => {
+      const beforeRead = nextObjectRead;
+      nextObjectRead = undefined;
+      await beforeRead?.();
+      return getFromDisk(key);
+    };
+    const photos = new PhotoService({ people, meta: new PgPhotoStore(sql), storage, signingKey: "fixture-key", now: () => now, eligible: async () => true });
     const person = async (age: number) => {
       const n = k++;
       const p = await people.createPerson({ id: crypto.randomUUID(), e164: `+1212555${String(3000 + n).padStart(4, "0")}`, method: "otp_sms", at: now, lowestAge: age });
@@ -45,13 +54,19 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const shaById = new Map((await photos.rows(sender, "slop")).map(r => [r.id, r.sha256]));
     const numberOf = (image: PhotoScreenImage) => ids.findIndex(id => shaById.get(id) === createHash("sha256").update(image.bytes).digest("hex")) + 1;
     let allowed = true;
+    let nextAuthorize: (() => void) | undefined;
     let verdict: (image: PhotoScreenImage) => PhotoScreenResult = () => CLEAN;
     const screened: number[] = [];
     const relay = new PhotoRelayService({
       store: new PgPhotoRelayStore(sql), photos, sql, signingKey: "fixture-key", hashKey: "fixture-hash-key", now: () => now,
       screen: simulatedPhotoScreen(image => { screened.push(numberOf(image)); return verdict(image); }),
       origin: app => `https://${APPS[app].domain}`,
-      authorize: async ({ threadId, senderPersonId }) => allowed && threadId === "thread_pages" && senderPersonId === sender ? binding : undefined,
+      authorize: async ({ threadId, senderPersonId }) => {
+        const notify = nextAuthorize;
+        nextAuthorize = undefined;
+        notify?.();
+        return allowed && threadId === "thread_pages" && senderPersonId === sender ? binding : undefined;
+      },
       threads: async () => [{ id: "thread_pages", label: "Robin" }],
     });
     const consents: [string, number][] = [], takeBacks: string[] = [];
@@ -110,6 +125,13 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     return {
       relay, pages, photos, draft, ask, yes, settle, itemsOf, access, sharedWith, noticesOf, withdraw, call, token, ready, sender, recipient, ids, consents, takeBacks, screened, numberOf,
       at: () => now,
+      beforeAuthorize: (notify: () => void) => { nextAuthorize = notify; },
+      beforeObjectRead: (notify: () => Promise<void>) => { nextObjectRead = notify; },
+      pauseRecipient: async () => {
+        const membership = await people.getMembership(recipient, "slop");
+        if (!membership) throw new Error("No Slop membership for the recipient");
+        await people.putMembership({ ...membership, state: "paused" });
+      },
       screenAs: (decide: (image: PhotoScreenImage) => PhotoScreenResult) => { verdict = decide; }, cut: () => { allowed = false; }, tick: (ms: number) => { now += ms; },
     };
   }
@@ -229,6 +251,51 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(await r.call("image", { token: r.token(reported.link), n: 1 }, rp)).toMatchObject({ status: 410, body: { error: "link_expired" } });
     expect(await r.call("open", { token: r.token(reported.link) }, rp)).toMatchObject({ status: 410, body: { error: "link_expired" } });
     expect(await r.relay.renewViewLinks(r.recipient, "slop")).toEqual([]);
+  }, T);
+
+  test("a recipient STOP during the first open refuses metadata and binds no browser", async () => {
+    const w = await world();
+    const { offerId, link } = await w.ready([1]);
+    const token = w.token(link);
+    const linkRow = (await w.relay.pageLink(token))!;
+    const locked = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const barrier = sql.begin(async tx => {
+      await w.relay.lockLink(tx, linkRow.id);
+      locked.resolve();
+      await release.promise;
+    });
+    await locked.promise;
+    const admitted = Promise.withResolvers<void>();
+    w.beforeAuthorize(admitted.resolve);
+    const opening = w.call("open", { token });
+    try {
+      await admitted.promise;
+      await w.pauseRecipient();
+      expect(await w.relay.offer(offerId)).toMatchObject({ phase: "ready", partyEnded: true });
+    } finally {
+      release.resolve();
+      await barrier;
+    }
+    expect(await opening).toMatchObject({ status: 410, body: { error: "link_expired" }, setCookie: null });
+    expect((await w.relay.pageLink(token))?.deviceHash).toBeNull();
+  }, T);
+
+  test("a recipient STOP during a bound image read returns no photo bytes", async () => {
+    const w = await world();
+    const { offerId, link } = await w.ready([1]);
+    const token = w.token(link);
+    const browser = (await w.call("open", { token })).cookie!;
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    w.beforeObjectRead(async () => { entered.resolve(); await release.promise; });
+    const image = w.call("image", { token, n: 1 }, browser);
+    try {
+      await entered.promise;
+      await w.pauseRecipient();
+      expect(await w.relay.offer(offerId)).toMatchObject({ phase: "ready", partyEnded: true });
+    } finally {
+      release.resolve();
+    }
+    expect(await image).toMatchObject({ status: 410, body: { error: "link_expired" }, bytes: undefined });
   }, T);
 
   test("the automatic check: a clean photo opens right after the receiver's yes; a flagged photo is never shown and waits for staff; an outage releases nothing", async () => {
