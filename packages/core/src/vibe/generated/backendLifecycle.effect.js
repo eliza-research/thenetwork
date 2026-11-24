@@ -11,6 +11,7 @@ import * as runtime from "vibelang-runtime/internal";
 import { initial, inv, canReleaseTick, releaseTick, stepNewTicksRequireServing, backendAcceptsWork, reserveTick, canReserveTick, startTimer, sometimesTimerStarts, canStartTimer, beginShutdown, canRecordListenerDrain, recordListenerDrain, ticksReleased, settleWorkDrain, canRecordBackendClose, recordBackendClose, shutdownWasClean, stepCleanDrainWaitsForListeners, sometimesClosesCleanly, sometimesClosesAfterGrace, canBeginShutdown, canSettleWorkDrain, stepDrainNeverReopens, stepCleanDrainHasNoTicks, enabled, step, parseEvent, parseState, snapshot_backendLifecycle } from "./backendLifecycle.effect.vibe.pure.js";
 export { initial, inv, canReleaseTick, releaseTick, stepNewTicksRequireServing, backendAcceptsWork, reserveTick, canReserveTick, startTimer, sometimesTimerStarts, canStartTimer, beginShutdown, canRecordListenerDrain, recordListenerDrain, ticksReleased, settleWorkDrain, canRecordBackendClose, recordBackendClose, shutdownWasClean, stepCleanDrainWaitsForListeners, sometimesClosesCleanly, sometimesClosesAfterGrace, canBeginShutdown, canSettleWorkDrain, stepDrainNeverReopens, stepCleanDrainHasNoTicks, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import { PreventSchedulerYield } from "effect/References";
 /** The rules do not allow this event in this state. */
 export class Rejected extends TaggedError("Rejected") {
     static {
@@ -67,7 +68,7 @@ export class Machine extends runtime.$service("thenetwork/spec/backendLifecycle.
 export function machineOver(load, keep) {
     return Effect_1.gen(function* machineOver() {
         const shown = yield* SubscriptionRef.make(snapshot_backendLifecycle(yield* load()));
-        function send(event) {
+        function send(event, isCurrent) {
             return Effect_1.gen(function* send() {
                 const input = snapshot_backendLifecycle({ event });
                 let completion_1 = runtime.$normal;
@@ -75,8 +76,14 @@ export function machineOver(load, keep) {
                     {
                         completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(shown, () => {
                                 return Effect_1.gen(function* () {
-                                    const next = yield* apply(snapshot_backendLifecycle(yield* orDie(load())), input.event);
-                                    yield* keep(snapshot_backendLifecycle(next));
+                                    const current = snapshot_backendLifecycle(yield* orDie(load()));
+                                    const next = yield* apply(current, input.event);
+                                    const save = Effect_1.gen(function* save() {
+                                        if (isCurrent && !isCurrent(snapshot_backendLifecycle(current)))
+                                            return yield* Effect_1.fail(new Rejected({ ...input, state: current }));
+                                        yield* keep(snapshot_backendLifecycle(next));
+                                    });
+                                    yield* (isCurrent ? Effect.provideService(save, PreventSchedulerYield, true) : save);
                                     return [snapshot_backendLifecycle(next), next];
                                 });
                             }) };

@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
+import { relative, sep } from "node:path"
 import js from "@eslint/js"
 import react from "@eslint-react/eslint-plugin"
 import tailwind from "eslint-plugin-better-tailwindcss"
@@ -9,21 +10,16 @@ import tseslint from "typescript-eslint"
 import vibelang from "vibelang/eslint"
 import { designSystem } from "./vibestack/design/eslint.ts"
 import { parseTokens } from "./vibestack/design/tokens.ts"
+import { withWorkspaceBarrels } from "./vibestack/eslint.ts"
 
 const stack = 'AGENTS.md, "The stack"'
 const monorepo = 'CONTRIBUTING.md, "The monorepo"'
 const banned = ["redux", "react-redux", "zustand", "mobx", "jotai", "recoil", "valtio", "xstate", "vue", "svelte", "jest"]
 const scopes = ["reduxjs", "angular", "xstate", "vue", "sveltejs", "jest"]
-// Each workspace package's `exports` beyond its root: "@repo/design-system/theme.css".
-const exported = readdirSync("packages").filter((dir) => existsSync(`packages/${dir}/package.json`)).flatMap((dir) => {
-  const { name, exports = {} } = JSON.parse(readFileSync(`packages/${dir}/package.json`, "utf8"))
-  return Object.keys(exports).filter((key) => key !== ".").map((key) => RegExp.escape(`${name}/${key.slice(2)}`))
-})
 const imports = {
   patterns: [
     // A package, its subpaths and its family: zustand/middleware, redux-saga, @angular/core.
     { regex: `^(?:@(?:${scopes.join("|")})/|(?:${banned.join("|")})(?:[/-]|$))`, message: `Not part of the stack: ${stack}.` },
-    { regex: `^(?!(?:${exported.join("|")})$)@repo/[^/]+/`, message: `Import a workspace package by a path its "exports" names: ${monorepo}.` },
   ],
 }
 const noReact = { patterns: [...imports.patterns, { regex: "^react(?:-dom)?(?:/|$)", message: `Tool and domain code does not import React: ${monorepo}.` }] }
@@ -32,11 +28,62 @@ const untyped = ["*.{js,ts}", "**/.storybook/**", "packages/design-system/**", "
 // Every React interface: Studio's page is built on the same theme (vibestack/studio/vite.config.ts).
 const tsx = ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}", "vibestack/studio/src/page/**/*.{ts,tsx}"]
 const design = "packages/design-system"
+const writing = 'AGENTS.md, "Writing code"'
+const citation = String.raw`spec\/\S+\.md, "[^"]+"`
+const suppressible = String.raw`(?!code\/|barrel\/|no-console\b)[\w@/-]+`
+const cited = new RegExp(String.raw`^\s*${citation}(?:; ${citation})*\s*$`)
+const suppression = new RegExp(String.raw`^ eslint-disable(?:-next-line|-line)? ${suppressible}(?:, ${suppressible})* -- \S`)
+const configs = [suppression, /^ eslint-enable\b/]
+const throwsType = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*`
+const throwsDirective = new RegExp(String.raw`^\*(?:[\s*]*@throws \{[ \t]*${throwsType}(?:[ \t]*\|[ \t]*${throwsType})*[ \t]*\})+[\s*]*$`)
+const directives = {
+  Line: [cited, suppression, /^@ (?:backend|requires|ensures|invariant|decreases|assert|pure|type|ghost)(?: |$)/, /^\/ <reference /, /^ @vitest-environment [\w-]+$/],
+  Block: [cited, ...configs, /^\*(?:[\s*]*@(?:model|design) \S+)+[\s*]*$/, throwsDirective],
+  Shebang: [/^/],
+}
+const inline = /^\s*(?:eslint(?:-[a-z]+)*|exported|globals?)(?:\s|$)/
+const guarded = (parser) => ({
+  meta: { name: `${parser.meta.name} with code/inline`, version: parser.meta.version },
+  parseForESLint: (text, options) => {
+    const parsed = parser.parseForESLint(text, options)
+    const loose = parsed.ast.comments.find((comment) => inline.test(comment.value) && !configs.some((form) => form.test(comment.value)))
+    if (loose) throw Object.assign(new SyntaxError(`Inline config here is only "eslint-disable[-next-line|-line] <rule>, … -- <reason>", never for code/*, barrel/* or no-console, and "eslint-enable" (${writing}).`), { lineNumber: loose.loc.start.line, column: loose.loc.start.column + 1 })
+    return parsed
+  },
+})
+const within = (node) => Boolean(node) && (/Function/.test(node.type) || within(node.parent))
+const documented = (context, comment) => context.options[0]?.jsdoc && comment.type === "Block" && comment.value.startsWith("*") && !within(context.sourceCode.getNodeByRangeIndex(comment.range[0]))
+const left = { type: "object", additionalProperties: { type: "integer", minimum: 1 } }
+const excess = (context, found) => found.length > (context.options[0]?.left?.[relative(context.cwd, context.filename).split(sep).join("/")] ?? 0) && found.forEach((problem) => context.report(problem))
+const comments = {
+  meta: { type: "problem", schema: [{ type: "object", properties: { jsdoc: { type: "boolean" }, left }, additionalProperties: false }] },
+  create: (context) => ({
+    Program: () => excess(context, context.sourceCode.getAllComments()
+      .filter((comment) => !directives[comment.type].some((directive) => directive.test(comment.value)) && !documented(context, comment))
+      .map((comment) => ({ loc: comment.loc, message: `No code comments: only spec citations and tool directives (${writing}).` }))),
+  }),
+}
+const uses = (names) => `:matches(Identifier[name=${names}]:not(ImportSpecifier[imported.name=${names}] > Identifier.local):not(ObjectExpression > Property[computed=false][shorthand=false] > Identifier.key), MemberExpression[computed=true] > Literal.property[value=${names}])`
+const scheduling = {
+  [uses(/^use(?:Layout|Insertion)?Effect$/)]: `No effect hooks: shared state lives in the spec-backed Machine (${writing}).`,
+  [uses(/^(?:setTimeout|setInterval|setImmediate|queueMicrotask|requestAnimationFrame|requestIdleCallback)$/)]: `No timers: wait with Effect in VibeLang, or let the Machine say when (${writing}).`,
+}
+const effects = {
+  meta: { type: "problem", schema: [{ type: "object", properties: { left }, additionalProperties: false }] },
+  create: (context) => {
+    const found = []
+    return { ...Object.fromEntries(Object.entries(scheduling).map(([selector, message]) => [selector, (node) => found.push({ node, message })])), "Program:exit": () => excess(context, found) }
+  },
+}
+const code = { rules: { comments, effects } }
+const own = ["apps/**", "packages/**"]
+const commented = { "apps/app/src/App.tsx": 5, "apps/app/src/greeter.vibe": 5, "apps/app/src/greeting.ts": 1, "apps/app/src/link.contract.ts": 2, "apps/app/src/link.ts": 3, "apps/app/test/app.browser.test.tsx": 5, "apps/app/test/app.test.vibe": 4, "apps/app/test/bombadil.ts": 4, "apps/app/test/drivers/app.ts": 5, "packages/ui/.storybook/preview.ts": 1, "packages/ui/src/components/Button.meta.tsx": 4, "packages/ui/src/components/Button.tsx": 1, "packages/ui/src/components/Card.meta.tsx": 1, "packages/ui/src/components/Dialog.meta.tsx": 2, "packages/ui/src/components/Progress.tsx": 1, "packages/ui/src/lib/cn.ts": 2, "packages/ui/vite.config.ts": 1, "packages/ui/vitest.config.ts": 1 }
+const scheduled = { "apps/app/src/App.tsx": 2 }
 
 // The tool reads Quint's JSON and the TypeScript compiler API as `any` at its boundaries; packages and apps stay strict.
 const loose = Object.fromEntries(["no-explicit-any", "no-unsafe-argument", "no-unsafe-assignment", "no-unsafe-call", "no-unsafe-member-access", "no-unsafe-return"].map((rule) => [`@typescript-eslint/${rule}`, "off"]))
 
-export default defineConfig(
+export default withWorkspaceBarrels(defineConfig(
   // Generated or disposable, and .claude/worktrees holds other checkouts of this repository.
   globalIgnores(["**/gen/", "!vibestack/gen/", "**/.vibe/", "**/dist/", "**/.cache/", "**/.spec-cache/", "**/generated/", "**/storybook-static/", "**/test/fixtures/", "vibestack/examples/", "vibestack/fixtures/", ".claude/", ".lemmascript/", ".studio/", ".turbo/", "_apalache-out/"]),
   { linterOptions: { reportUnusedDisableDirectives: "error", reportUnusedInlineConfigs: "error" } },
@@ -127,4 +174,8 @@ export default defineConfig(
       "no-restricted-syntax": ["error", { selector: "JSXOpeningElement[name.name=/^(input|textarea)$/]", message: "Use Input, Textarea or Checkbox from @repo/ui." }],
     },
   },
-)
+  { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(tseslint.parser) } },
+  { files: ["{apps,packages}/**/*.{vibe,vibex}"], languageOptions: { parser: guarded(vibelang) } },
+  { files: own, plugins: { code }, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
+  { files: ["packages/ui/src/components/**"], ignores: ["**/*.meta.tsx"], rules: { "code/comments": ["error", { jsdoc: true, left: commented }] } },
+), { root: import.meta.dirname })

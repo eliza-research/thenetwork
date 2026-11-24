@@ -94,10 +94,10 @@ export interface PlatformHooks {
   updates?(personId: string, app: McpAppId, assistant: AssistantKind, token?: string): Promise<PublicUpdate[]>;
   /** An assistant was connected (consent granted) or disconnected (grant revoked) for a person. */
   assistantLinked?(personId: string, assistant: AssistantKind, active: boolean): Promise<void>;
-  /** The person already signed in on this site (the site's session cookie), if any. */
-  session?(app: McpAppId, req: Request): Promise<SignedIn | "unavailable" | undefined>;
-  /** Start a site session after a verified code, so the person is signed in on the site too. Returns a Set-Cookie value. */
-  createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
+  /** The person's existing app session on the host serving this request, if any. */
+  session?(app: McpAppId, req: Request, host?: McpAppId): Promise<SignedIn | "unavailable" | undefined>;
+  /** Start an app session on this host after a verified code. Returns a Set-Cookie value. */
+  createSession?(app: McpAppId, who: SignedIn, host?: McpAppId): Promise<string | undefined>;
   /** The server's current eligibility and wording for this same-app verified browser. */
   signupEnrollment?(app: McpAppId, who: SignedIn): Promise<BrowserSignup | undefined>;
   joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string, signupAge?: SignupAge): Promise<BrowserSignupResult>;
@@ -113,7 +113,7 @@ export function publicStatus(state: MembershipState | undefined, review: string 
 }
 
 export interface PlatformParts {
-  authenticatedSiteSession?(app: AppInfo["id"], req: Request): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
+  authenticatedSiteSession?(app: AppInfo["id"], req: Request, browserCookieName?: string): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
   cloudAuthorityRequired?: PlatformHooks["cloudAuthorityRequired"];
   beginCloudOAuth?: PlatformHooks["beginCloudOAuth"];
   cloudGrantAuthority?: PlatformHooks["cloudGrantAuthority"];
@@ -160,9 +160,13 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if (app && !canJoinApp(age, app)) await draftCleanup?.(key, id);
     }
   };
-  const cookieName = p.cookieName ?? (() => "__Host-sid");
-  const siteCookie = (id: McpAppId, token: string) =>
-    `${cookieName(id)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${p.sessionMaxAge ?? 30 * 24 * 3600}${p.secureCookie === false ? "" : "; Secure"}`;
+  // The hub needs one cookie for each verified app. SessionService still checks the row's app.
+  const secure = p.secureCookie !== false;
+  const cookieName = (id: McpAppId, host?: McpAppId) => host === "ntwrk" && id !== host && !p.cloudAuthorityRequired?.(id)
+    ? `${secure ? "__Host-" : ""}mcp_sid_${id}`
+    : p.cookieName?.(id) ?? "__Host-sid";
+  const siteCookie = (name: string, token: string) =>
+    `${name}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${p.sessionMaxAge ?? 30 * 24 * 3600}${secure ? "; Secure" : ""}`;
   return {
     cloudAuthorityRequired: p.cloudAuthorityRequired,
     beginCloudOAuth: p.beginCloudOAuth,
@@ -265,10 +269,11 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const view = signupAccountView(id, p.accounts.phoneHash(who.e164), who.personId);
       return p.accounts.join(app, { e164: who.e164, personId: who.personId, ...(who.browserBinding ? { session: who.browserBinding } : {}) }, input, undefined, invitation, view, signupAge);
     },
-    session: p.sessions && (async (id, req) => {
+    session: p.sessions && (async (id, req, host) => {
       const app = p.app(id);
-      const token = cookieValue(req.headers.get("cookie"), cookieName(id));
-      const a = app && token ? await (p.authenticatedSiteSession ? p.authenticatedSiteSession(app.id,req) : p.sessions!.authenticate(app.id, token)) : undefined;
+      const name = cookieName(id, host);
+      const token = cookieValue(req.headers.get("cookie"), name);
+      const a = app && token ? await (p.authenticatedSiteSession ? p.authenticatedSiteSession(app.id, req, name) : p.sessions!.authenticate(app.id, token)) : undefined;
       if(a==="unavailable")return "unavailable";
       if (!a || (await p.accounts.held(a.session.e164))) return undefined;
       const personId = (await p.accounts.personFor(a.session.e164))?.id ?? null;
@@ -276,15 +281,15 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       return {
         e164: a.session.e164, personId, browserBinding: a.session.tokenHash,
         ...(a.session.rotatedFrom ? { rotatedFromBrowserBinding: a.session.rotatedFrom } : {}),
-        ...(a.rotated ? { setCookie: siteCookie(id, a.token) } : {}),
+        ...(a.rotated ? { setCookie: siteCookie(name, a.token) } : {}),
       };
     }),
-    createSession: p.sessions && (async (id, who) => {
+    createSession: p.sessions && (async (id, who, host) => {
       if(p.cloudAuthorityRequired?.(id))return undefined;
       const app = p.app(id);
       if (!app) return undefined;
       const { token } = await p.sessions!.create(app.id, who.e164, who.personId);
-      return siteCookie(id, token);
+      return siteCookie(cookieName(id, host), token);
     }),
   };
 }

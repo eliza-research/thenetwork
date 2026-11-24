@@ -22,6 +22,13 @@ export function appKeyOf(app: McpApp): AppKey {
   return connectorApp[app.id];
 }
 
+export type PageApp = McpApp | { app: McpApp; host: McpApp };
+
+export function pageAppOf(p: PageApp): { app: McpApp; siteOrigin: string } {
+  if (!("host" in p)) return { app: p, siteOrigin: "" };
+  return { app: p.app, siteOrigin: p.host.id === p.app.id ? "" : new URL(p.app.links.site).origin };
+}
+
 interface Respond { turnstileSiteKey?: string; formTargets?: string[]; status?: number }
 
 /** One server-rendered page: the shared React view in a document with the brand on <html>, the design-system CSS and a strict CSP. */
@@ -67,37 +74,42 @@ export type PhonePageOptions =
   | { error: CheckError; turnstileSiteKey: string; redirectOrigin?: string }
   | { error?: Exclude<PhoneError, CheckError>; turnstileSiteKey?: string; redirectOrigin?: string };
 
-export function phonePage(app: McpApp, rid: string, o: PhonePageOptions = {}) {
+export function phonePage(at: PageApp, rid: string, o: PhonePageOptions = {}) {
+  const { app, siteOrigin } = pageAppOf(at);
   const shown = pageFor(o.error ? phoneReplies[o.error] : "ReplyPhone", o.turnstileSiteKey !== undefined);
   // spec/authorizationPages.md, "The server reply selects the page view"
   if (!alwaysFieldErrorStaysOnItsPage(shown)) throw new Error(`The phone page cannot show "${o.error}" without the security check`);
-  const view = h(AuthPhoneView, { app: appKeyOf(app), rid, fieldError: shown.fieldError as PhoneFieldError, turnstileSiteKey: o.turnstileSiteKey });
+  const view = h(AuthPhoneView, { app: appKeyOf(app), siteOrigin, rid, fieldError: shown.fieldError as PhoneFieldError, turnstileSiteKey: o.turnstileSiteKey });
   return respond(app, "Sign in", view, { turnstileSiteKey: o.turnstileSiteKey, formTargets: o.redirectOrigin ? [o.redirectOrigin] : [], status: o.error ? 400 : 200 });
 }
 
 /** Why the handler refused a code, in the words the page shows. */
 export type CodeError = "That code did not work. Check the newest text and try again.";
 
-export function codePage(app: McpApp, rid: string, last4: string, o: { error?: CodeError; redirectOrigin?: string } = {}) {
+export function codePage(at: PageApp, rid: string, last4: string, o: { error?: CodeError; redirectOrigin?: string } = {}) {
+  const { app, siteOrigin } = pageAppOf(at);
   const shown = pageFor(o.error ? "ReplyCodeRejected" : "ReplyCode");
-  const view = h(AuthCodeView, { app: appKeyOf(app), rid, last4, fieldError: shown.fieldError as CodeFieldError });
+  const view = h(AuthCodeView, { app: appKeyOf(app), siteOrigin, rid, last4, fieldError: shown.fieldError as CodeFieldError });
   return respond(app, "Enter your code", view, { formTargets: o.redirectOrigin ? [o.redirectOrigin] : [], status: o.error ? 400 : 200 });
 }
 
 /** One pending OAuth connection, not an account page or a sign-in destination. */
-export function consentPage(app: McpApp, rid: string, clientName: string | null, redirectHost: string, redirectOrigin: string, scopes: Scope[],
+export function consentPage(at: PageApp, rid: string, clientName: string | null, redirectHost: string, redirectOrigin: string, scopes: Scope[],
   o: { unavailable?: boolean; canSignup?: boolean; signupSaved?: boolean; signupApproval?: string } = {}) {
+  const { app, siteOrigin } = pageAppOf(at);
   const shown = pageFor(o.unavailable ? "ReplyConsentRetry" : "ReplyConsent");
-  const view = h(ConsentView, { app: appKeyOf(app), view: shown.view === "ConsentRetryView" ? "ConsentRetryView" : "ConsentView", rid,
+  const view = h(ConsentView, { app: appKeyOf(app), siteOrigin, view: shown.view === "ConsentRetryView" ? "ConsentRetryView" : "ConsentView", rid,
     clientName, redirectHost, scopes, canSignup: o.canSignup, signupSaved: o.signupSaved, signupApproval: o.signupApproval });
   return respond(app, "Allow access", view, { formTargets: [redirectOrigin], status: o.unavailable ? 503 : 200 });
 }
 
-export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error" | "birthdateError">;
+export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error" | "birthdateError" | "prefill">;
+export type SignupPrefill = NonNullable<AuthSignupViewProps["prefill"]>;
 
 /** The verified browser's transient form for confirming the app's signup. */
-export function signupPage(app: McpApp, rid: string, options: SignupPageOptions) {
-  return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), rid, ...options }), { status: options.error || options.birthdateError ? 400 : 200 });
+export function signupPage(at: PageApp, rid: string, options: SignupPageOptions) {
+  const { app, siteOrigin } = pageAppOf(at);
+  return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), siteOrigin, rid, ...options }), { status: options.error || options.birthdateError ? 400 : 200 });
 }
 
 const messageReplies = {
@@ -121,9 +133,10 @@ function safeRetryPath(path: string | undefined): string | undefined {
   return path;
 }
 
-export function messagePage(app: McpApp, title: MessageTitle, text: string, status = 400, retryPath?: string) {
+export function messagePage(at: PageApp, title: MessageTitle, text: string, status = 400, retryPath?: string) {
+  const { app, siteOrigin } = pageAppOf(at);
   const view = (title === "Sign in first" ? load(consentsInitial, "LoadedSignedOut", 0).view : pageFor(messageReplies[title]).view) as AuthMessage;
-  return respond(app, title, h(AuthMessageView, { app: appKeyOf(app), view, text, retryHref: safeRetryPath(retryPath) }), { status });
+  return respond(app, title, h(AuthMessageView, { app: appKeyOf(app), siteOrigin, view, text, retryHref: safeRetryPath(retryPath) }), { status });
 }
 
 /**
@@ -131,7 +144,8 @@ export function messagePage(app: McpApp, title: MessageTitle, text: string, stat
  * the page then asks the person to confirm the removal of that grant. `removal` is the result of a confirmed removal,
  * and `grants` are the grants that stay after it.
  */
-export function consentsPage(app: McpApp, grants: Array<Grant & { clientName: string | null }>, fmt: (ms: number) => string, o: { confirmation?: { grantId: string; proof: string }; removal?: Extract<RemoveReply, "Removed" | "NothingRemoved"> } = {}) {
+export function consentsPage(at: PageApp, grants: Array<Grant & { clientName: string | null }>, fmt: (ms: number) => string, o: { confirmation?: { grantId: string; proof: string }; removal?: Extract<RemoveReply, "Removed" | "NothingRemoved"> } = {}) {
+  const { app, siteOrigin } = pageAppOf(at);
   // spec/connectedAssistants.md, "A confirmed removal shows its result"
   const before = load(consentsInitial, "LoadedList", grants.length + (o.removal === "Removed" ? 1 : 0));
   const asked = canChooseRemoval(before) ? chooseRemoval(before) : before;
@@ -140,6 +154,7 @@ export function consentsPage(app: McpApp, grants: Array<Grant & { clientName: st
     : canConfirmRemoval(asked, grants.length) ? confirmRemoval(asked, o.removal, grants.length) : load(consentsInitial, "LoadedList", grants.length);
   const view = h(ConnectedAssistantsView, {
     app: appKeyOf(app),
+    siteOrigin,
     view: shown.view,
     grants: grants.map(g => ({ id: g.id, clientName: g.clientName, allowedOn: fmt(g.createdAt), scopes: g.scopes })),
     notice: shown.notice,

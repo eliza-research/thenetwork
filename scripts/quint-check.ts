@@ -162,37 +162,48 @@ function stepsFor(file: string, text: string, verify: boolean, safetyCap: number
   return { steps, problems };
 }
 
-async function checkModel(file: string, verify: boolean, typecheckOnly: boolean, safetyCap: number, run: ReturnType<typeof pool>): Promise<string[]> {
+async function checkModel(file: string, verify: boolean, typecheckOnly: boolean, safetyCap: number, run: ReturnType<typeof pool>, streamProgress: boolean): Promise<string[]> {
   const text = readFileSync(join(ROOT, file), "utf8");
   const lines: string[] = [];
   const failures: string[] = [];
+  const report = (line: string) => {
+    if (streamProgress) console.log(line);
+    else lines.push(line);
+  };
+  const progress = (phase: "start" | "fallback", name: string) => {
+    if (streamProgress) console.log(`${phase} ${file} ${name}`);
+  };
   const record = (name: string, ok: boolean, out: string, ms: number) => {
-    lines.push(`${ok ? "ok  " : "FAIL"} ${file} ${name} (${(ms / 1000).toFixed(1)}s)`);
+    report(`${ok ? "ok  " : "FAIL"} ${file} ${name} (${(ms / 1000).toFixed(1)}s)`);
     if (!ok) {
       failures.push(`${file} ${name}`);
-      lines.push(out.split("\n").slice(-40).join("\n"));
+      report(out.split("\n").slice(-40).join("\n"));
     }
   };
   const scratch = typecheckOnly ? undefined : scratchFor(text);
   try {
     const compiled = await run(async () => {
       const t0 = performance.now();
+      progress("start", `typecheck (${scratch ? "compile" : "Quint CLI"})`);
       if (scratch && await compileModel(file, scratch)) {
         record("typecheck", true, "", performance.now() - t0);
         return scratch;
       }
+      if (scratch) progress("fallback", "typecheck (Quint CLI)");
       const r = await command([QUINT, "typecheck", file]);
       record("typecheck", r.code === 0, r.out, performance.now() - t0);
     });
     if (!failures.length && !typecheckOnly) {
       const exec = (step: Step) => run(async () => {
         const t0 = performance.now();
+        progress("start", `${step.name} (${compiled && step.simulation ? "compiled evaluator" : "Quint CLI"})`);
         const simulated = compiled && step.simulation ? await compiledSimulation(file, step.simulation, compiled) : undefined;
         if (simulated === (step.expectViolation ? "violation" : "safe")) {
           record(step.name, true, "", performance.now() - t0);
           return;
         }
         // Use the same CLI result and diagnostics on errors, safety failures and unreached witnesses.
+        if (compiled && step.simulation) progress("fallback", `${step.name} (Quint CLI)`);
         const r = await command([QUINT, ...step.args]);
         const ok = step.expectViolation ? r.code !== 0 && /invariant violated/i.test(r.out)
           : r.code === 0 && (step.expectRun === undefined || r.out.includes(`${step.expectRun} passed 1 test(s)`));
@@ -211,7 +222,7 @@ async function checkModel(file: string, verify: boolean, typecheckOnly: boolean,
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
-  console.log(lines.join("\n"));
+  if (!streamProgress) console.log(lines.join("\n"));
   return failures;
 }
 
@@ -249,7 +260,8 @@ if (import.meta.main) {
   const typecheckOnly = argv.includes("--typecheck-only");
   const t0 = performance.now();
   const run = pool(jobs);
-  const failures = (await Promise.all(files.map((f) => checkModel(f, verify, typecheckOnly, safetyCap, run)))).flat();
+  const streamProgress = files.length === 1;
+  const failures = (await Promise.all(files.map((f) => checkModel(f, verify, typecheckOnly, safetyCap, run, streamProgress)))).flat();
   console.log(`\n${files.length} models, ${failures.length} failures, ${jobs} jobs, ${((performance.now() - t0) / 1000).toFixed(0)}s`);
   for (const f of failures) console.log(`  ${f}`);
   process.exit(failures.length ? 1 : 0);

@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import ts from "typescript";
+import type * as TS from "typescript";
 import { readSpecs, isStd, bareQuint as bare, heading, type Import, type Spec, type Story, type Rule } from "./parse.ts";
-import { short, readSrc, indent, writeWhole, citations, type Citation } from "./util.ts";
+import { short, readSrc, indent, writeWhole, citations, tsApi } from "./util.ts";
 import { DECLASSIFY } from "./gen/secrecy.ts";
 
 /**
@@ -152,14 +152,30 @@ const readLock = (root: string, file: string, locks: Map<string, Lock>): Lock =>
 /** The ledger key an item to reconcile is recorded under. */
 export const pendingKey = (p: Pending) => p.rule?.key ?? (p.story ? storyKey(p.story) : p.where.includes("  ") ? p.where.slice(p.where.indexOf("  ") + 2) : "@document");
 
+export function citationLookup(root: string) {
+  let byRule: Map<string, string[]> | undefined;
+  return (file: string, title: string) => {
+    if (!byRule) {
+      const rows = citations(root);
+      byRule = new Map();
+      for (const { spec, heading, at } of rows) {
+        const key = `${spec}\0${heading}`;
+        const locations = byRule.get(key);
+        if (locations) locations.push(at);
+        else byRule.set(key, [at]);
+      }
+    }
+    return byRule.get(`${file}\0${title}`)?.slice() ?? [];
+  };
+}
+
 /**
  * Stories and rules to reconcile since `accept`. A rule's model is its own Quint and that of every rule it relies
  * on (see `dependencies`), so a change to a helper, a type or an imported definition flags every rule that uses it.
  */
-export function pending(root: string, spec: ReviewSpec, specs: readonly ReviewSpec[] = readSpecs(root), locks = new Map<string, Lock>()): Pending[] {
+export function pending(root: string, spec: ReviewSpec, specs: readonly ReviewSpec[] = readSpecs(root), locks = new Map<string, Lock>(), citedAt = citationLookup(root)): Pending[] {
   const lock = readLock(root, spec.file, locks);
   const out: Pending[] = [];
-  let cites: Citation[] | undefined;
   const document = proseFingerprint(spec.preamble);
   if (lock["@document"]?.[0] !== document && (spec.preamble.trim() || lock["@document"]))
     out.push({ where: spec.file, status: "document changed", lines: [spec.preamble.trim()] });
@@ -170,8 +186,8 @@ export function pending(root: string, spec: ReviewSpec, specs: readonly ReviewSp
   }
   for (const rule of spec.rules) {
     const [prose, code] = fingerprint(rule);
-    const deps = dependencies(spec, rule, specs);
     const was = lock[rule.key];
+    const deps = was ? dependencies(spec, rule, specs) : [];
     const prosed = was && was[0] !== prose;
     const relied = was && was[2] !== dependencyFingerprint(deps);
     const modelled = was && (was[1] !== code || relied);
@@ -188,7 +204,7 @@ export function pending(root: string, spec: ReviewSpec, specs: readonly ReviewSp
     const outlet = rule.defs.filter((d) => DECLASSIFY.test(d));
     if (status && outlet.length) note = `${note ?? ""}, and declassifies a secret through ${outlet.join(", ")}`;
     // A rule whose meaning moved is read again with the tests and shell code that cite it, in every package.
-    const cited = status?.includes("changed") ? (cites ??= citations(root)).filter((c) => c.spec === spec.file && c.heading === heading(rule)).map((c) => c.at) : [];
+    const cited = status?.includes("changed") ? citedAt(spec.file, heading(rule)) : [];
     if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status, note, ...cited.length ? { cited } : {} });
   }
   for (const key of Object.keys(lock))
@@ -240,8 +256,9 @@ export function acceptAllReviews(root: string, specs: Spec[], src = readSrc(root
  * annotation after code on the same line; source validation rejects occurrences in strings or block comments.
  */
 function contractOf(file: string, code: string): string[] {
+  const ts = tsApi();
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
-  const named = (n: ts.Node): string | undefined =>
+  const named = (n: TS.Node): string | undefined =>
     // A local variable is not a declaration a contract is about; a constant of the file is.
     ts.isVariableStatement(n) ? (ts.isSourceFile(n.parent) ? n.declarationList.declarations.map((d) => d.name.getText(sf)).join(", ") : undefined)
     : (ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n) || ts.isClassDeclaration(n) || ts.isInterfaceDeclaration(n) || ts.isTypeAliasDeclaration(n)
@@ -249,8 +266,8 @@ function contractOf(file: string, code: string): string[] {
   /** The names of the declarations around a position, outermost first; a comment belongs to the declaration it leads. */
   const owners = (at: number): string[] => {
     const chain: string[] = [];
-    for (let n: ts.Node | undefined = sf; n; ) {
-      const inner: ts.Node | undefined = n.getChildren(sf).find((c) => c.getFullStart() <= at && at < c.getEnd());
+    for (let n: TS.Node | undefined = sf; n; ) {
+      const inner: TS.Node | undefined = n.getChildren(sf).find((c) => c.getFullStart() <= at && at < c.getEnd());
       const name = inner && named(inner);
       if (name) chain.push(name);
       n = inner;

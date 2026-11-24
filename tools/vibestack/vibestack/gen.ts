@@ -25,10 +25,11 @@ export interface Model extends Roles {
   imports: string[]; // other specs this one imports, in order
   /**
    * The module as the prover reads it, under a prefix for proof bundles; `docs = false` omits spec comments for cache
-   * keys. It differs from `ts`, which Node runs, only where `ts` checks at run time what the proof takes as given
-   * (Scope.proof in gen/print.ts).
+   * keys. Its bundle supplies its imports and omits the runtime guards the proof takes as given (Scope.proof in gen/print.ts).
    */
   render: (prefix: string, docs?: boolean) => string;
+  /** The type of a constant beside another proof unit, in the scope that declared it. */
+  proofTypeOfConstant: (name: string) => string | undefined;
   /** Events the spec declares fair (`fair_<event>`), each "weak" or "strong". */
   fair: Map<string, Fairness>;
   /** `leadsTo` rules that must also be met within a number of events (`within_<rule>`). */
@@ -48,22 +49,27 @@ export interface Model extends Roles {
   exports: { types: string[]; values: string[]; variants: string[]; visible: Json[]; samples: { name: string; elem: Json }[] };
   ts: string;
   harness: string;
+  guardHarness: string;
+  guideNames: readonly string[];
   witness?: { harness: string; lengths: Map<string, number> };
+  refusal?: { harness: string; guards: ReadonlySet<string> };
 }
 
 /** Where a definition came from in the spec, for doc comments and ordering. */
 export interface Origin { rule: string; line: number }
 
-/** Names a spec may not bind: the generated code, the harness, Dafny's standard library (Std) or the proof library (ProofLib) use them, or TypeScript reserves them. */
+/** Names a spec may not bind: the generated code, the harness, Dafny's standard library (Std) or the proof library (ProofLib) use them, TypeScript reserves them, or Dafny does and LemmaScript passes them on unchanged. */
 const TAKEN = new Set([...EMITTED, ...HARNESS, ...`
   Std ProofLib Number Math Object Array JSON Record Set Map String Boolean Symbol Error RangeError undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
   eval arguments implements interface package private protected public
+  assigned least greatest older hide
 `.split(/\s+/).filter(Boolean)]);
 const RULE_OR_GUARD = new RegExp(`^(${[...ROLES, "can"].join("|")})[A-Z]`);
 const GENERATED = new RegExp(`^(${[...HELPERS, "eval", "Out", "set", "opaque", "table", "else"].join("|")})_|^x\\d+$|__\\d+$`);
 const WITNESS_PREFIX = "eval_witness_";
+const REFUSAL_PREFIX = "eval_refuse_";
 
 function concreteWitnesses(defs: Json[], roles: Roles, at: (name: string) => string): Map<string, WitnessStep[]> {
   const tuple = (value: Json): Json[] | undefined => value.kind === "app" && value.opcode === "Tup" ? value.args : undefined;
@@ -136,9 +142,11 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // sample sets, they never reach TypeScript.
   const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair|within)_/.test(d.name));
   const examples = defs.filter((d) => d.qualifier === "pureval" && d.name.startsWith(WITNESS_PREFIX));
-  const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d) && !examples.includes(d));
+  const refusalExamples = defs.filter((d) => d.qualifier === "pureval" && d.name.startsWith(REFUSAL_PREFIX));
+  const guides = [...examples, ...refusalExamples];
+  const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d) && !guides.includes(d));
   /** Names only the simulator reads; a definition that used one would refer to nothing in TypeScript. */
-  const simulatorOnly = new Set([...ownSamples, ...settings, ...examples, ...links.flatMap((l) => l.exports.samples.map((s) => ({ name: qualify(l.alias, s.name) })))].map((d) => d.name as string));
+  const simulatorOnly = new Set([...ownSamples, ...settings, ...guides, ...links.flatMap((l) => l.exports.samples.map((s) => ({ name: qualify(l.alias, s.name) })))].map((d) => d.name as string));
   // `const f: (A, B) => R` is an opaque function: no body, only the laws stated with it (SPEC.md, "Opaque functions").
   const consts = decls.filter((d) => d.kind === "const");
   for (const d of consts) if (d.typeAnnotation?.kind !== "oper" || !d.typeAnnotation.args.length) fail(`${d.name}: a \`const\` is an opaque function, written \`const ${d.name}: (A, B) => R\` on one line`);
@@ -153,7 +161,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
       : owner ? fail(`\`${n}\` cannot be used as a name: names beginning ${owner}_ are how the generated code refers to that module`)
       : n;
   };
-  [...defs, ...localTypedefs, ...consts].forEach((d) => bind(d.name, examples.includes(d)));
+  [...defs, ...localTypedefs, ...consts].forEach((d) => bind(d.name, guides.includes(d)));
 
   // --- types: the module's own, and those of what it imports under the names it knows them by ---
   /** A type from a module imported under a name, with the types it mentions renamed the same way. */
@@ -189,6 +197,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   };
   const bySpecOrder = (x: Json, y: Json) => (origin(x.name)?.line ?? 0) - (origin(y.name)?.line ?? 0);
   const vals = code.filter((d) => d.qualifier === "pureval");
+  const constantIds = new Map<string, number>(vals.map((value) => [value.name, value.id]));
   const funs = code.filter((d) => d.qualifier === "puredef").sort(bySpecOrder);
   for (const d of funs) if (d.expr.kind !== "lambda") fail(`${d.name}: a \`pure def\` takes parameters; for a constant write \`pure val ${d.name} = …\``);
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
@@ -236,6 +245,16 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     ...links.map(importLine),
     ...typeOnly.map((m) => `import { ${[...new Set(typedefs.filter((d) => d.module === m).map((d) => d.base as string))].map((b) => `type ${b} as ${m}_${b}`).join(", ")} } from "./${m}.ts";`),
   ];
+  const bundleHeader = links.length || typeOnly.length ? [""] : header;
+  const proofTypes = typeWalks(typedefs, name, `${name}_`);
+  const proofTypeOfConstant = (constant: string) => {
+    const id = constantIds.get(constant);
+    return id === undefined ? undefined : proofTypes.tsType(typeOf(id));
+  };
+  const importedConstantType = (reference: string) => {
+    const module = cameFrom.get(reference);
+    return module === undefined ? undefined : deps.get(module)!.proofTypeOfConstant(reference.split("::").pop()!);
+  };
   /** The module's TypeScript with its own top-level names under a prefix. */
   const render = (prefix: string, docs = true, proof = true): string => {
     const local = (n: string) => prefix + n;
@@ -243,20 +262,47 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     // A definition from another module is spelled <module>_<name>, however it was imported.
     const ref = (n: string) => (localNames.has(n) ? local(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n.split("::").pop()}` : n);
     const scoped = typeWalks(typedefs, name, prefix);
-    const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), simulatorOnly, proof });
-    return typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local, source }, roles, scoped, print, helper);
+    const print = printer({ types: scoped, inferred, importedConstantType, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), simulatorOnly, proof });
+    return typescript({ header: proof ? bundleHeader : header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local, source }, roles, scoped, print, helper);
   };
   const ts = render("", true, false);
 
-  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair });
+  const refusals = new Map<string, string>();
+  for (const example of refusalExamples) {
+    const guard = example.name.slice(REFUSAL_PREFIX.length);
+    const definition = funs.find((f) => f.name === guard);
+    if (!definition || !roles.transitions.some((t) => t.guard === guard))
+      fail(`${at(example.name)}: name a transition guard after \`${REFUSAL_PREFIX}\``);
+    if (opaques.length) fail(`${at(example.name)}: an initial refusal example requires a model without opaque functions`);
+    const params = sig(definition).params.slice(1);
+    const value = example.expr;
+    if (value.kind !== "app" || value.opcode !== "Rec" || !params.length || value.args.length !== 2 * params.length)
+      fail(`${at(example.name)}: give a record with one field for each argument of ${guard} after its state`);
+    const fields = new Map<string, Json>();
+    for (let i = 0; i < value.args.length; i += 2) fields.set(value.args[i].value, value.args[i + 1]);
+    for (const { name, type } of params) {
+      const field = fields.get(name);
+      if (!field) fail(`${at(example.name)}: the refusal record needs the argument ${name} of ${guard}`);
+      if (types.shape(typeOf(field.id)) !== types.shape(type))
+        fail(`${at(example.name)}: the refusal argument ${name} does not have the type expected by ${guard}`);
+    }
+    refusals.set(guard, example.name);
+  }
+  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair, refusals });
+  for (const [guard, declaration] of refusals) {
+    const evaluation = run.evals.find((e) => e.name === guard);
+    if (evaluation?.params[0]?.from !== "state" || !evaluation.params.slice(1).every((p) => p.from === "pick"))
+      fail(`${at(declaration)}: ${guard} must be a sampled guard of the current state and its arguments`);
+  }
   const witnesses = concreteWitnesses(examples, roles, at);
   const witness = witnesses.size ? {
     harness: harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair }, witnesses).text,
     lengths: new Map([...witnesses].map(([goal, steps]) => [goal, steps.length])),
   } : undefined;
+  const refusal = run.refusalHarness ? { harness: run.refusalHarness, guards: new Set(refusals.keys()) } : undefined;
   return {
-    name, source, imports, ...roles, fair, within, evals: run.evals, uncompared: run.uncompared, harness: run.text, witness,
-    ts, render, decode: types.decode, canon: types.canon,
+    name, source, imports, ...roles, fair, within, evals: run.evals, uncompared: run.uncompared, harness: run.text, guardHarness: run.guardHarness, guideNames: guides.map((d) => d.name), witness, refusal,
+    ts, render, proofTypeOfConstant, decode: types.decode, canon: types.canon,
     shape: roles.stateType ? types.comparison(roles.stateType) : undefined,
     outputShape: roles.output ? types.comparison(roles.output.out) : undefined,
     exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames], variants: localVariants, visible: typedefs, samples: ownSamples },

@@ -566,13 +566,16 @@ packages:
 
   vibelang-runtime@0.0.13:
     resolution: {integrity: sha512-E7Yn+k8ElL9ZYGj5aT1e1h60Zb3W3nZZPlgJgJC+Ce7IQkxH2uTRLotApVuOQpD2U+p9AbrMzXWjQPi5zMKb3g==}
-    engines: {node: ^22.22.3 || >=24.11.1}
+    engines: {bun: '>=1.4', node: ^22.22.3 || >=24.11.1}
     peerDependencies:
       '@effect/platform-browser': 4.1.1
+      '@effect/platform-bun': 4.1.1
       '@effect/platform-node': 4.1.1
       effect: 4.1.1
     peerDependenciesMeta:
       '@effect/platform-browser':
+        optional: true
+      '@effect/platform-bun':
         optional: true
       '@effect/platform-node':
         optional: true

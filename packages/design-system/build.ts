@@ -2,6 +2,7 @@
 import { mkdirSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { type AccentTokens, type AppKey, accentTokens, appKeys, brandFor } from "../core/src/generated/brandIdentity.ts"
 import { buildTokenProject, checkTokenProject, writeTextIfChanged } from "../../tools/vibestack/vibestack/design/project.ts"
 import { type BrandId, brandIds } from "./src/brands.ts"
 
@@ -52,6 +53,28 @@ function keySetIssues(): string[] {
   })
 }
 
+const brandOfApp: Record<AppKey, BrandId> = { Ntwrk: "network", Slop: "slop", Peon: "peon", Friends: "friends" }
+
+const accentToken: Record<keyof AccentTokens, [scheme: "light" | "dark", name: "primary" | "primary-foreground"]> = {
+  light: ["light", "primary"],
+  lightInk: ["light", "primary-foreground"],
+  dark: ["dark", "primary"],
+  darkInk: ["dark", "primary-foreground"],
+}
+
+function accentIssues(): string[] {
+  return appKeys.flatMap((app) => {
+    const brand = brandOfApp[app]
+    const color = (JSON.parse(read(join(brandDir(brand), "tokens.json"))) as { color: Record<"light" | "dark", Record<string, string>> }).color
+    const accent = accentTokens(brandFor(app).accent)
+    return (Object.keys(accentToken) as (keyof AccentTokens)[]).flatMap((key) => {
+      const [scheme, name] = accentToken[key]
+      const token = color[scheme][name]
+      return token === accent[key] ? [] : [`${brand}: color.${scheme}.${name} is ${token}, but accentTokens(${brandFor(app).accent}).${key} is ${accent[key]} (spec/brandIdentity.md)`]
+    })
+  })
+}
+
 /** The declarations of one top-level rule of a generated tokens.css. */
 function declarations(css: string, selector: string, brand: BrandId): string[] {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -98,7 +121,7 @@ function themeCss(): string {
 }
 
 function build(): string[] {
-  const issues = [...directoryIssues(), ...keySetIssues()]
+  const issues = [...directoryIssues(), ...keySetIssues(), ...accentIssues()]
   if (issues.length) return issues
   const failed = brandIds.flatMap((brand) => runBrand(brand, "build"))
   if (failed.length) return failed
@@ -111,7 +134,7 @@ function build(): string[] {
 function check(): string[] {
   const issues = directoryIssues()
   if (issues.length) return issues
-  return [...keySetIssues(), ...brandIds.flatMap((brand) => runBrand(brand, "check"))]
+  return [...keySetIssues(), ...accentIssues(), ...brandIds.flatMap((brand) => runBrand(brand, "check"))]
 }
 
 const [command = "build"] = process.argv.slice(2)

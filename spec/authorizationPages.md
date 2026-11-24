@@ -258,6 +258,83 @@ pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
   not(showsSignupConfirmation(view, false))
 ```
 
+### A new person sees Finish signup as the main action on the consent page
+
+When the server offers signup on the consent page, the signed-in phone has no membership in this app yet, or it has only an invitation. Then "Finish signup" is the main action and it comes first. "Allow" and "Don't allow" come after it and have less emphasis, so that a new person does not give access before signup by mistake. When the server does not offer signup, "Allow" is the main action. On the retry consent page, "Try again" is the main action. The order does not change what each action does: only "Allow" or "Try again" sends the approval. After a successful signup the server does not offer signup again, so "Allow" is the main action on the confirmed consent page. A page that is not a consent page has no main consent action.
+
+```quint
+type ConsentPrimary = PrimaryFinishSignup | PrimaryAllow | PrimaryTryAgain | NoConsentPrimary
+
+pure def consentPrimaryAction(view: AuthView, signupAvailable: bool): ConsentPrimary =
+  if (offersSignupConfirmation(view, signupAvailable)) PrimaryFinishSignup
+  else if (view == ConsentView) PrimaryAllow
+  else if (view == ConsentRetryView) PrimaryTryAgain
+  else NoConsentPrimary
+
+pure def lawNewPersonSeesFinishSignupFirst(view: AuthView, signupAvailable: bool): bool =
+  offersSignupConfirmation(view, signupAvailable) implies consentPrimaryAction(view, signupAvailable) == PrimaryFinishSignup
+
+pure def lawMemberConsentKeepsAllowFirst(view: AuthView): bool =
+  (view == ConsentView) implies consentPrimaryAction(view, false) == PrimaryAllow
+
+pure def lawRetryConsentKeepsTryAgainFirst(signupAvailable: bool): bool =
+  consentPrimaryAction(ConsentRetryView, signupAvailable) == PrimaryTryAgain
+
+pure def lawOnlyConsentPagesHaveAPrimaryAction(view: AuthView, signupAvailable: bool): bool =
+  not(isConsentView(view)) implies consentPrimaryAction(view, signupAvailable) == NoConsentPrimary
+```
+
+### The signup form shows the draft that the person approved in the agent
+
+An assistant that has a live grant with profile write access can save a signup draft before the person signs up (the [MCP signup draft spec](mcpSignupDraft.md)). The draft holds only the first name and the home city that the person approved in the agent. It never holds a phone number, a code or an age. When the person opens "Finish signup", the form shows the fields of that draft, so that the person does not type them again. The person can change each field. The person always types the birthday, because no tool takes an age or a birth date. The text consent box is never ticked before the person ticks it. "Finish signup" is the one main action of the form.
+
+The form shows a draft only when all of these conditions are true: the grant that saved the draft has the same client, the same app and the same phone as this authorization request, the draft is not used and not expired, and the age guard of the phone allows the signup. The first form that shows the draft uses it, so a reload, another request or another client gets an empty form. A wrong, used, expired or other-app draft gives an empty form and no error. When the server refuses a submitted form, the form shows again with the first name and the home city that the person sent, and the birthday field and the consent box are empty. The lowest stated age still applies when the person submits: a lower age that the phone already has is the age that counts, and an age below 13 is refused.
+
+When the assistant has no grant before the browser step (a connector that the person adds for the first time), there is no draft and the form is empty.
+
+```quint
+type SignupDraftBinding = { client: str, app: str, phone: str, used: bool, expiresAt: int }
+type SignupPrefillRequest = { client: str, app: str, phone: str, asOf: int, ageAllowed: bool }
+
+pure def signupPrefillAllowed(d: SignupDraftBinding, r: SignupPrefillRequest): bool =
+  not(d.used) and d.client == r.client and d.app == r.app and d.phone == r.phone and r.asOf < d.expiresAt and r.ageAllowed
+
+pure def useSignupPrefill(d: SignupDraftBinding, r: SignupPrefillRequest): SignupDraftBinding =
+  if (signupPrefillAllowed(d, r)) { ...d, used: true } else d
+
+pure def signupConsentStartsTicked(prefilled: bool): bool = false
+
+pure def lawPrefillOnlyForItsClientAppAndPhone(d: SignupDraftBinding, r: SignupPrefillRequest): bool =
+  signupPrefillAllowed(d, r) implies (d.client == r.client and d.app == r.app and d.phone == r.phone)
+
+pure def lawPrefillAtMostOnce(d: SignupDraftBinding, r: SignupPrefillRequest, later: SignupPrefillRequest): bool =
+  signupPrefillAllowed(d, r) implies not(signupPrefillAllowed(useSignupPrefill(d, r), later))
+
+pure def lawExpiredPrefillIsEmpty(d: SignupDraftBinding, r: SignupPrefillRequest): bool =
+  (r.asOf >= d.expiresAt) implies not(signupPrefillAllowed(d, r))
+
+pure def lawAgeGuardRefusesPrefill(d: SignupDraftBinding, r: SignupPrefillRequest): bool =
+  not(r.ageAllowed) implies not(signupPrefillAllowed(d, r))
+
+pure def lawConsentNeverPreTicked(prefilled: bool): bool = not(signupConsentStartsTicked(prefilled))
+
+pure val dValues = Set(
+  { client: "c1", app: "friends", phone: "+15550100", used: false, expiresAt: 10 },
+  { client: "c1", app: "friends", phone: "+15550100", used: true, expiresAt: 10 },
+  { client: "c2", app: "friends", phone: "+15550100", used: false, expiresAt: 10 },
+  { client: "c1", app: "ntwrk", phone: "+15550101", used: false, expiresAt: 5 })
+
+pure val rValues = Set(
+  { client: "c1", app: "friends", phone: "+15550100", asOf: 1, ageAllowed: true },
+  { client: "c1", app: "friends", phone: "+15550100", asOf: 1, ageAllowed: false },
+  { client: "c1", app: "friends", phone: "+15550100", asOf: 10, ageAllowed: true },
+  { client: "c2", app: "friends", phone: "+15550100", asOf: 1, ageAllowed: true },
+  { client: "c1", app: "ntwrk", phone: "+15550101", asOf: 1, ageAllowed: true },
+  { client: "c1", app: "friends", phone: "+15550101", asOf: 1, ageAllowed: true })
+
+pure val laterValues = rValues
+```
+
 ### The signup form takes the birthday and counts the age on the Clock date
 
 The signup form asks for the birthday (the label is "Birthday"), not for the age. The person types it in the browser as a date (`yyyy-mm-dd`). The form never shows a birthday before the person types it, and it never shows the sent birthday again after the server refuses the form. A hint below the field tells the person that a member under 18 is never matched for dates or for work and that today nobody under 18 is introduced to anyone. It also tells the person that friendship is the only kind of introduction that can open to people under 18, only with people within 2 years of their own age. The hint does not promise an introduction.

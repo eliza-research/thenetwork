@@ -58,7 +58,7 @@ export function LandingView({ brand, links, state, promptRef, onCopy, onChooseAg
             promptRef={promptRef}
           />
         )}
-        {landingShows("AgentRowItem") && <AgentRow className="mt-3.5" links={links} mounted={state.mounted} device={state.device} onChoose={onChooseAgent} />}
+        {landingShows("AgentRowItem") && <AgentRow className="mt-3.5" app={brand.app} links={links} mounted={state.mounted} device={state.device} onChoose={onChooseAgent} />}
         {landingShows("MessagesItem") && (
           <div className="mt-7">
             <MessagesButton href={links.messagesHref} onClick={onChooseMessages} />

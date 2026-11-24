@@ -38,7 +38,7 @@ export function releaseTick(s: BackendLifecycle, tickKey: string): BackendLifecy
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepDrainNeverReopens(s, \result)
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepCleanDrainHasNoTicks(s, \result)
-  return { ...s, ticking: s.ticking.filter((set_x: string) => ![tickKey].includes(set_x)) };
+  return { ...s, ticking: s.ticking.filter((set_x: string) => !([tickKey] as string[]).includes(set_x)) };
 }
 
 /** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
@@ -60,7 +60,7 @@ export function reserveTick(s: BackendLifecycle, tickKey: string): BackendLifecy
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepDrainNeverReopens(s, \result)
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepCleanDrainHasNoTicks(s, \result)
-  return { ...s, ticking: s.ticking.concat([tickKey].filter((set_x: string) => !s.ticking.includes(set_x))) };
+  return { ...s, ticking: s.ticking.concat(([tickKey] as string[]).filter((set_x: string) => !s.ticking.includes(set_x))) };
 }
 
 /** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */

@@ -117,7 +117,7 @@ export type { MemberParticipation } from "./public-types.ts";
 export interface PeerInfo { requestIP(req: Request): { address: string } | null }
 
 export interface PublicApi {
-  authenticatedSiteSession(app: AppId, req: Request): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
+  authenticatedSiteSession(app: AppId, req: Request, browserCookieName?: string): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
   /** Internal MCP continuation; request ID is server-generated and browser-bound by the OAuth owner. */
   beginCloudOAuth(app: AppId, requestId: string): Promise<{url:string;setCookie:string}|undefined>;
   cloudAuthorityRequired(app: AppId): boolean;
@@ -810,8 +810,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       if(!productionCloud || requestId.length!==22 || !/^[A-Za-z0-9_-]{22}$/.test(requestId))return;
       return startCloudHandoff(app,`/oauth/cloud-return?rid=${requestId}`);
     },
-    async authenticatedSiteSession(app, req) {
-      const jar=parseCookies(req.headers.get("cookie")),token=jar.get(cookieName(app));
+    async authenticatedSiteSession(app, req, browserCookieName = cookieName(app)) {
+      const jar=parseCookies(req.headers.get("cookie")),token=jar.get(browserCookieName);
       if(!token)return;
       const status=await cloudSessionStatus(app,jar,token);
       if(status==="unavailable")return "unavailable";
