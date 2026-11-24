@@ -83,6 +83,16 @@ async function text(s: NetworkService, clock: SimClock, from: string, body: stri
 }
 const staff = (s: NetworkService, token: string, method: string, path: string, b?: unknown, headers: Record<string, string> = {}) =>
   s.fetch(new Request(`http://127.0.0.1:4848${path}`, { method, headers: { authorization: `Bearer ${token}`, ...(b ? { "content-type": "application/json" } : {}), ...headers }, ...(b ? { body: JSON.stringify(b) } : {}) }));
+async function verifyFriendsAdults(s: NetworkService, ...memberIds: string[]) {
+  for (const memberId of memberIds) {
+    for (const check of ["age", "liveness"]) {
+      const res = await staff(s, "saf-tok", "POST", `/apps/friends/members/${memberId}/verify`, {
+        check, result: "pass", note: "adult booking fixture",
+      });
+      expect(await res.json()).toEqual({ ok: true });
+    }
+  }
+}
 const memberOf = async (app: AppId, e164: string) =>
   (await sql`select m.id, m.account_status from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = ${app} and ph.e164 = ${e164}`)[0] as { id: string; account_status: string } | undefined;
 
@@ -1542,6 +1552,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
         { id: second, name: otherName, age: 30, area: "Greenpoint", interests: ["hiking"] }],
         { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
       world.clock.set(clock.now());
+      world.verify(first, second);
       await world.onboard(first, second);
       const opportunityId = world.propose([first, second]);
       await world.answerProbes([first, second]);
@@ -1550,6 +1561,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(opportunity.stage).toBe("scheduled");
       return { state, opportunity };
     };
+    await verifyFriendsAdults(s, former, reporter);
     const booked = await bookedPair(former, reporter, "Blair");
     await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: booked.state.members, opps: booked.state.opps }));
     expect(await text(s, clock, reporterPhone, "report Ari, he was rude and kept texting me")).toBe("handled");
@@ -1594,6 +1606,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
     const active = restarted.s.runtimeFor("friends")!, adapter = active.adapter as BlooioAdapter;
     const peer = (await memberOf("friends", peerPhone))!.id;
+    await verifyFriendsAdults(restarted.s, current, peer);
     await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
     const queueBookingReply = async (id: string) => {
       const next = await bookedPair(current, peer, "Casey");
@@ -1734,12 +1747,14 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     }
     const slopId = (await memberOf("slop", phone))!.id;
     const peerId = (await memberOf("friends", phone))!.id, recipient = (await memberOf("friends", recipientPhone))!.id;
+    await verifyFriendsAdults(s, peerId, recipient);
     const rt = s.runtimeFor("friends")!;
     const adapter = rt.adapter as BlooioAdapter;
     const world = new Mini([{ id: peerId, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
       { id: recipient, name: "Blair", age: 30, area: "Greenpoint", interests: ["hiking"] }],
       { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
     world.clock.set(clock.now());
+    world.verify(peerId, recipient);
     await world.onboard(peerId, recipient);
     const opportunityId = world.propose([peerId, recipient]);
     await world.answerProbes([peerId, recipient]);
