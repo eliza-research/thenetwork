@@ -178,6 +178,41 @@ pure def lawOnlyCloudAnswerUsesCloud(lookup: AuthLookup): bool =
   (authModeFor(lookup) == CloudMode) iff (lookup == ModeCloud)
 ```
 
+### The phone step shows its parts from the sign-in mode
+
+The phone step gets the three flags above and whether a request runs. The number field shows while the form waits and with the text-code sign-in, but never with the cloud sign-in. The security check shows only with the text-code sign-in. The step is busy while the form waits or a request runs, and a busy step sends nothing. The button says that the sign-in loads while the form waits. With the cloud sign-in, the button continues to the cloud sign-in. Otherwise the button asks for a code. The component library keeps the words of the button.
+
+```quint
+type PhoneButton = PhoneButtonWaiting | PhoneButtonOpening | PhoneButtonCloud | PhoneButtonSending | PhoneButtonSend
+type PhoneSubmit = NoPhoneSubmit | ContinueWithCloud | SendTheNumber
+type PhoneStepParts = { numberField: bool, check: bool, busy: bool, button: PhoneButton, submit: PhoneSubmit }
+
+pure def phoneStepParts(formWaiting: bool, numberForm: bool, cloudButton: bool, loading: bool): PhoneStepParts =
+  val busy = loading or formWaiting
+  {
+    numberField: not(cloudButton) and (numberForm or formWaiting),
+    check: numberForm and not(cloudButton),
+    busy: busy,
+    button:
+      if (formWaiting) PhoneButtonWaiting
+      else if (cloudButton) (if (loading) PhoneButtonOpening else PhoneButtonCloud)
+      else if (loading) PhoneButtonSending
+      else PhoneButtonSend,
+    submit: if (busy) NoPhoneSubmit else if (cloudButton) ContinueWithCloud else SendTheNumber,
+  }
+
+pure def lawCloudSignInShowsNoNumberField(formWaiting: bool, numberForm: bool, loading: bool): bool =
+  val parts = phoneStepParts(formWaiting, numberForm, true, loading)
+  not(parts.numberField) and not(parts.check)
+
+pure def lawBusyPhoneStepSendsNothing(numberForm: bool, cloudButton: bool): bool =
+  phoneStepParts(true, numberForm, cloudButton, false).submit == NoPhoneSubmit
+    and phoneStepParts(false, numberForm, cloudButton, true).submit == NoPhoneSubmit
+
+pure def lawCheckNeedsTheNumberForm(formWaiting: bool, numberForm: bool, cloudButton: bool, loading: bool): bool =
+  phoneStepParts(formWaiting, numberForm, cloudButton, loading).check implies (numberForm and not(cloudButton))
+```
+
 ### The page sends a number only when it is valid and the security check passed
 
 The page refuses a number that is not a 10-digit US mobile number, and shows "invalid phone". While the security check runs, the page refuses to send and asks the person to wait. When the check failed, the page refuses to send and asks the person to refresh. A check that fails while the phone step shows replaces an empty error, "wait for the check" or "check failed". A check that passes clears "wait for the check" and "check failed". It keeps other errors, including a refused check or "confirm the check" after a resend. A passed check can expire, and then it runs again. A code request starts only when the check passed, or when the site has no check.

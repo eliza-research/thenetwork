@@ -1,7 +1,7 @@
 // spec/authorizationPages.md, "The server reply selects the page view"
 import { createElement as h, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { type AuthPage, type Reply, alwaysFieldErrorStaysOnItsPage, initial, showReply } from "../../core/src/generated/authorizationPages.ts";
+import { type AuthPage, type Reply, alwaysFieldErrorStaysOnItsPage, initial, isPhoneFieldReply, showReply } from "../../core/src/generated/authorizationPages.ts";
 import type { AppKey } from "../../core/src/generated/brandIdentity.ts";
 import { type RemoveReply, canChooseRemoval, canConfirmRemoval, chooseRemoval, confirmRemoval, initial as consentsInitial, load } from "../../core/src/generated/connectedAssistants.ts";
 import { brandIdFor } from "../../ui/src/brand/landing.ts";
@@ -56,38 +56,33 @@ function respond(app: McpApp, title: string, view: ReactElement, o: Respond = {}
 /** The page model after the server reply. */
 const pageFor = (reply: Reply, turnstileOn = false): AuthPage => showReply(reply, { ...initial, turnstileOn });
 
-const phoneReplies = {
-  "Please complete the check and try again.": "ReplyCheckFailed",
-  "Enter a US or Canada phone number.": "ReplyPhoneInvalid",
-  "Too many codes were asked for. Please wait and try again.": "ReplyTooManyCodes",
-  "Sign-in is not available for this app right now.": "ReplySendUnavailable",
-} as const satisfies Record<string, Reply>;
-
-/** Why the handler refused a phone number, in the words the page shows. */
-export type PhoneError = keyof typeof phoneReplies;
-
-type CheckError = "Please complete the check and try again.";
+export type PhoneError = Extract<Reply, "ReplyCheckFailed" | "ReplyPhoneInvalid" | "ReplyTooManyCodes" | "ReplySendUnavailable">;
 
 /** A failed security check is shown only when the page has the check. */
-export type PhonePageOptions = { error: CheckError; turnstileSiteKey: string } | { error?: Exclude<PhoneError, CheckError>; turnstileSiteKey?: string };
+export type PhonePageOptions = { reply: "ReplyCheckFailed"; turnstileSiteKey: string } | { reply?: Exclude<PhoneError, "ReplyCheckFailed">; turnstileSiteKey?: string };
+
+const phoneSendErrors = ["ReplyPhoneInvalid", "ReplyTooManyCodes", "ReplySendUnavailable"] as const satisfies readonly PhoneError[];
+
+export function phoneSendError(reply: Reply): Exclude<PhoneError, "ReplyCheckFailed"> {
+  const found = isPhoneFieldReply(reply) ? phoneSendErrors.find(e => e === reply) : undefined;
+  if (!found) throw new Error(`The phone page cannot show ${reply}`);
+  return found;
+}
 
 export function phonePage(at: PageApp, rid: string, o: PhonePageOptions = {}) {
   const { app, siteOrigin } = pageAppOf(at);
-  const shown = pageFor(o.error ? phoneReplies[o.error] : "ReplyPhone", o.turnstileSiteKey !== undefined);
+  const shown = pageFor(o.reply ?? "ReplyPhone", o.turnstileSiteKey !== undefined);
   // spec/authorizationPages.md, "The server reply selects the page view"
-  if (!alwaysFieldErrorStaysOnItsPage(shown)) throw new Error(`The phone page cannot show "${o.error}" without the security check`);
+  if (!alwaysFieldErrorStaysOnItsPage(shown)) throw new Error(`The phone page cannot show ${o.reply} without the security check`);
   const view = h(AuthPhoneView, { app: appKeyOf(app), siteOrigin, rid, fieldError: shown.fieldError as PhoneFieldError, turnstileSiteKey: o.turnstileSiteKey });
-  return respond(app, "Sign in", view, { turnstileSiteKey: o.turnstileSiteKey, status: o.error ? 400 : 200 });
+  return respond(app, "Sign in", view, { turnstileSiteKey: o.turnstileSiteKey, status: o.reply ? 400 : 200 });
 }
 
-/** Why the handler refused a code, in the words the page shows. */
-export type CodeError = "That code did not work. Check the newest text and try again.";
-
-export function codePage(at: PageApp, rid: string, last4: string, o: { error?: CodeError } = {}) {
+export function codePage(at: PageApp, rid: string, last4: string, o: { reply?: Extract<Reply, "ReplyCodeRejected"> } = {}) {
   const { app, siteOrigin } = pageAppOf(at);
-  const shown = pageFor(o.error ? "ReplyCodeRejected" : "ReplyCode");
+  const shown = pageFor(o.reply ?? "ReplyCode");
   const view = h(AuthCodeView, { app: appKeyOf(app), siteOrigin, rid, last4, fieldError: shown.fieldError as CodeFieldError });
-  return respond(app, "Enter your code", view, { status: o.error ? 400 : 200 });
+  return respond(app, "Enter your code", view, { status: o.reply ? 400 : 200 });
 }
 
 /** One pending OAuth connection, not an account page or a sign-in destination. */

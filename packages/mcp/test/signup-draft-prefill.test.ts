@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
@@ -51,6 +51,31 @@ const shows = (html: string, firstName: string, city: string) =>
   new RegExp(`name="firstName"[^>]*value="${firstName}"`).test(html) && html.includes(`<option value="${city}" selected="">`);
 const blank = (html: string) => !/name="firstName"[^>]*value="/.test(html) && !/<option value="(nyc|sf)" selected/.test(html);
 const neverPrefilledAgeOrConsent = (html: string) => !/name="age"/.test(html) && !/name="birthdate"[^>]*value="/.test(html) && !/name="smsConsent"[^>]*checked/.test(html);
+
+test("a signup form from another request expires before reading the phone session", async ({ onTestFinished }) => {
+  const e = setup();
+  const registration = await register(e, "friends.help");
+  const client = registration.body.client_id;
+  if (typeof client !== "string") throw new Error("no registered client");
+  const other = await openSignup(e, "friends.help", client, PHONE_A);
+  const current = await openSignup(e, "friends.help", client, PHONE_A);
+  const sessionReads = vi.spyOn(e.sessions, "authenticate");
+  onTestFinished(() => { sessionReads.mockRestore(); });
+
+  for (const decision of ["join", "skip"]) {
+    const response = await current.post("/oauth/authorize/signup", { decision, signupView: field(other.form, "signupView") });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("This page has expired");
+  }
+  expect(sessionReads.mock.calls.length).toBe(0);
+
+  const back = await current.post("/oauth/authorize/signup", { decision: "skip", signupView: field(current.form, "signupView") });
+  expect(back.status).toBe(200);
+  expect(await back.text()).toContain('action="/oauth/authorize/consent"');
+  expect(sessionReads.mock.calls.length).toBe(1);
+  expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
+  expect((await e.store.auditRows()).filter(row => row.kind === "consent_granted")).toEqual([]);
+});
 
 async function draftFor(e: Env, domain: string, phone: string, fields: Record<string, unknown> = { firstName: "Ari", homeCity: "sf" }) {
   const c = await connect(e, domain, phone, { scope: "membership:read profile:write" });

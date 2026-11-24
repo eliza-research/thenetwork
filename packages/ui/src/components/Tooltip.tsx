@@ -21,7 +21,7 @@ export function Tooltip({ content, side = "top", align, className, children, ...
             side={side}
             align={align}
             sideOffset={4}
-            className={cn("z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-sm", className)}
+            className={cn("z-50 max-w-xs rounded-md bg-inverse px-2 py-1 text-xs text-inverse-foreground shadow-sm", className)}
           >
             {content}
           </TooltipPrimitive.Content>

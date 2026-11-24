@@ -80,6 +80,11 @@ describe("one ntwrk.party connector endpoint for every app", () => {
       expect(status.body!.result.structuredContent, app).toMatchObject({ app, status: "active" });
       const tools = (await rpc(env, endpoint(app), "tools/list", {}, { token: token.access_token })).body!.result.tools;
       expect(tools.find((t: any) => t.name === "check_status").inputSchema.properties.app.enum, app).toEqual([app]);
+      for (const name of ["check_status", "get_updates"]) {
+        const description = tools.find((t: any) => t.name === name).description as string;
+        expect(description, `${app} ${name}`).toContain("allows access on ntwrk.party");
+        if (app !== "ntwrk") expect(description, `${app} ${name}`).not.toContain(`on ${names[app].domain}`);
+      }
     }
   });
 
@@ -177,6 +182,20 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     const minor = await browserFlow(env, "slop.date", adult.client.client_id, PHONE_B, opts);
     expect(minor.location).toBeNull();
     expect(minor.status).toBe(403);
+  });
+
+  test("Peon membership status sends a new member to the app's browser join page", async () => {
+    const env = setup();
+    const flow = await consentFor(env, "peon", PHONE_B, { redirect: CHATGPT, openai: true });
+    expect(flow.consentStatus).toBe(200);
+    expect(flow.consent).not.toContain('action="/oauth/authorize/signup"');
+    const response = await flow.post("/oauth/authorize/signup", { decision: "open" });
+    expect(response.status).toBe(400);
+    const token = await approve(env, flow);
+    const status = await call(env, endpoint("peon", true), "check_status", { app: "peon" }, { token: token.access_token });
+    expect(status.body?.result.structuredContent).toMatchObject({
+      app: "peon", status: "not_joined", next_step: expect.stringContaining("https://peon.biz/join?via=agent"),
+    });
   });
 
   test("The Network stays invite-only on the ntwrk.party endpoint: signup without an invitation creates no membership", async () => {

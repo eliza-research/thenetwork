@@ -87,6 +87,18 @@ export function chooseEntry(flow: BrowserFlow, session: EntrySession, cloudRequi
 
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 //@ pure
+export function storedPageOf(stepWord: string): StoredPage {
+  return stepWord === "phone" ? "PhonePage" : (stepWord === "code" ? "CodePage" : (stepWord === "consent" ? "ConsentPage" : (stepWord === "enrolled" ? "EnrolledConsentPage" : "SignupEnrollmentPending")));
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserFormOf(form: string): BrowserForm {
+  return form === "phone" ? "PhoneForm" : (form === "code" ? "CodeForm" : (form === "consent" ? "ConsentForm" : "CancelForm"));
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
 export function canReadBrowserForm(flow: BrowserFlow): boolean {
   return flow.phase === "BrowserBound";
 }
@@ -95,6 +107,27 @@ export function canReadBrowserForm(flow: BrowserFlow): boolean {
 //@ pure
 export function browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPhone: boolean): boolean {
   return flow.phase === "BrowserBound" && page === "PhonePage" && !hasPhone;
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawOnlyThePhoneStepCanResume(stepWord: string): boolean {
+  //@ ensures \result === true
+  return (storedPageOf(stepWord) === "PhonePage") === (stepWord === "phone");
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawUnknownStepExpiresEveryForm(stepWord: string): boolean {
+  //@ ensures \result === true
+  return !(stepWord !== "phone" && stepWord !== "code" && stepWord !== "consent" && stepWord !== "enrolled") || storedPageOf(stepWord) === "SignupEnrollmentPending";
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawPostedRouteIsNeverACloudReturn(form: string): boolean {
+  //@ ensures \result === true
+  return browserFormOf(form) !== "CloudReturn";
 }
 
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */

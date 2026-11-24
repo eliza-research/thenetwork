@@ -766,9 +766,18 @@ function directRelayLead(prefix: string): boolean {
     .split(RELAY_SENTENCE).at(-1)!;
   if (DIRECT_RELAY_LEAD.test(clause)) return true;
   const comma = clause.lastIndexOf(",");
+  if (comma < 0) return false;
   const aside = clause.slice(0, comma);
-  return comma >= 0 && RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)
-    && DIRECT_RELAY_LEAD.test(clause.slice(comma + 1).replace(/^\s*(?:but|however)\b/i, ""));
+  const afterComma = clause.slice(comma + 1).replace(/^\s*(?:and|but|then|however)\b/i, "");
+  if (!DIRECT_RELAY_LEAD.test(afterComma)) return false;
+  if (RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)) return true;
+  return /^\s*(?:please\s+)?(?:tell|ask|let)\s/i.test(aside)
+    && !/[,:;]/.test(aside)
+    && !/\b(?:said|says|say|told|tells|texted|wrote|joking|kidding|jk|hypothetically|imagine|lol)\b/i.test(aside)
+    && !/\b(?:if|when(?:ever)?|once|until|till|unless|after|first|wait|later|yet|not|no|ready|only)\b|n't\b/i.test(aside)
+    && !INCOMPLETE_RELAY_ASIDE.test(aside)
+    && !/^\s*(?:(?:hold|hang)\s+on|wait|scratch that)\b/i.test(aside)
+    && !new RegExp(`^\\s*(?:${PRIVATE_CONDITION_MARKER})\\b`, "iu").test(aside);
 }
 
 // spec/relayDecision.md, "A member can take back a pending number swap"
@@ -1058,7 +1067,8 @@ export function parseRelayRequest(text: string): RelayRequest {
     const bodyStart = t.length - payload.length;
     const delegates = (candidate: RegExpMatchArray) => TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(bodyStart, start + candidate.index!));
     // An outer delegation does not subsume a later direct request. A declarative text body is separate.
-    if (!contacts.some(delegates) && !photos.some(delegates)) {
+    const envelopeHolds = !!privateRequest && /\b(?:if|when(?:ever)?|once|until|till|unless|after|first|wait|later|yet|not|no|ready|only)\b|n't\b/i.test(t.slice(bodyStart, start + privateRequest.index!));
+    if (!contacts.some(delegates) && !photos.some(delegates) && (!privateRequest || envelopeHolds)) {
       const declarative = envelope[1]!.toLowerCase() !== "ask" && /^(?:i\b|we\b|my\b|our\b)/i.test(payload);
       const body = (modal && declarative ? payload.replace(/\?$/, "") : payload).trim();
       const target = envelope[2]!;
