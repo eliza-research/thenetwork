@@ -4127,9 +4127,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
       this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
       for (const id of still) this.sendBookedCancellation(o, id, copy.dropNotice(m.first, false));
-      // The requester still wants it (another member called it off): the request waits again, and the standing retry looks again.
-      const r = o.requester && o.status.get(o.requester) === "yes" ? this.requests.find(x => x.oppId === o.id && x.memberId === o.requester && x.outcome === "booked") : undefined;
-      if (r) { r.oppId = undefined; r.outcome = "none"; this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "waiting", reason: "participant dropped" }); }
       const booked = still.filter(id => o.bookedAt?.[id] !== undefined && o.bookedTold?.includes(id));
       // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
       if (canTryGroupReplacement({

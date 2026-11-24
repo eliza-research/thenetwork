@@ -302,7 +302,7 @@ describe("QSM ported network & core fixes", () => {
     expect(w.to("b", mark).some(m => m.meta.type === "cancellation")).toBe(true);
   });
 
-  test("SD-139 & SD-267: partner drop reopens booked request and setMatchingEnabled resets retry window", async () => {
+  test("SD-267: setMatchingEnabled resets retry window on waiting people requests", async () => {
     const w = new Mini([person("a", "Ana Diaz", { wants: [] }), person("b", "Ben Ito")], { review: "auto", plans: false, matchingEnabled: false });
     await w.onboard("a", "b");
     await w.say("a", "Can you find me a climbing partner?");
@@ -310,13 +310,6 @@ describe("QSM ported network & core fixes", () => {
     w.net.setMatchingEnabled(true, "admin");
     const req = w.net.exportState().requests[0]!;
     expect(req.openFrom).toBe(w.clock.now());
-
-    const w2 = new Mini([person("a", "Ana Diaz", { wants: [] }), person("b", "Ben Ito")], { review: "auto", plans: false });
-    await w2.onboard("a", "b");
-    await w2.say("a", "Can you find me a climbing partner?");
-    await w2.answerProbes(["a", "b"]);
-    await w2.say("b", "I have to cancel");
-    expect(w2.net.exportState().requests[0]?.outcome).toBe("none");
   });
 
   test("SD-296 & SD-223: packInput propagates held managers to job seats and declined slop pairs to avoid edges", () => {
