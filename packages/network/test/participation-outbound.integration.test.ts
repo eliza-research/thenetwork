@@ -42,15 +42,21 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   };
   try {
     await service.start();
+    const rt = service.runtimes.get("friends:nyc")!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const members: Spec[] = [];
     for (const [index, e164] of phones.entries()) {
       const name = index === 0 ? "Ari" : "Blair";
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await service.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const [first, second] = members.map(m => m.id);
     const w = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
+    w.verify(first!, second!);
     await w.onboard(first!, second!);
     const oppId = w.propose([first!, second!], { category: "hobby" });
     expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === oppId), 2 * DAY)).toBe(true);
@@ -58,7 +64,6 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     expect(await w.runUntil(() => w.probed(first!), DAY)).toBe(true);
     await w.say(first!, "yes");
     expect(await w.runUntil(() => w.probed(second!), DAY)).toBe(true);
-    const rt = service.runtimes.get("friends:nyc")!;
     const before = calls.length;
     await adapter.queue.setLineSafety("review");
     await rt.unitOfWork(net => {
@@ -97,6 +102,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     // A current day-before reminder sends. A pending copy for the other participant expires at the end of its window.
     const pair = new Mini(members, { app: app.id, inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
     pair.clock.set(clock.now());
+    pair.verify(first!, second!);
     await pair.onboard(first!, second!);
     const planId = pair.propose([first!, second!]);
     await pair.answerProbes([first!, second!]);
