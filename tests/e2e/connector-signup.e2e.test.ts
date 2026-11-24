@@ -65,7 +65,7 @@ const banPhone = (phone: string) => st.svc.people.ban({
   id: crypto.randomUUID(), scope: "phone", personId: null, phoneHash: st.svc.publicApi.accounts.phoneHash(phone),
   reason: "owned fixture", reportId: null, bannedBy: "fixture", at: st.clock.now(),
 });
-const adult = { firstName: "Ari", age: "29", homeCity: "nyc" };
+const adult = { firstName: "Ari", birthdate: "1997-01-15", homeCity: "nyc" };
 const DEV_PLATFORM_HASH_KEY = "dev-only-platform-hash-key";
 const memberIdOf = async (phone: string, app: AppId) => ((await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
   where m.app_id = ${app} and ph.e164 = ${phone}`)[0] as { id: string } | undefined)?.id;
@@ -176,14 +176,21 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     expect(await memberships(phone)).toEqual(["slop"]);
   }, T);
 
-  test("a 15-year-old joins and is never matched; an under-13 person is declined with nothing stored, also on a retry", async () => {
+  test("a verified teen joins without adult matches; an under-13 birthday retains only a numeric floor", async () => {
     const teen = newPhone(), tb = new Browser();
     const t = await authorize("friends", tb);
     await confirmPhone("friends", tb, t.rid, teen);
-    const joined = await finishSignup("friends", tb, t.rid, { ...adult, firstName: "Kai", age: "15" });
+    const joined = await finishSignup("friends", tb, t.rid, { ...adult, firstName: "Kai", birthdate: "2011-01-15" });
     expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
-    const member = (await sql`select m.id, m.age from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'friends' and ph.e164 = ${teen}`)[0] as { id: string; age: number };
-    expect(member.age).toBe(15);
+    const [member] = await sql<{ id: string; recorded_age: number | null; effective_age: number; birth_date: number }[]>`
+      select m.id, m.age as recorded_age, a.age as effective_age, p.birth_date from network.members m
+      join platform.phone_identities ph on ph.person_id = m.person_id
+      join platform.people p on p.id = m.person_id
+      join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
+      where m.app_id = 'friends' and ph.e164 = ${teen}`;
+    if (!member) throw new Error("The verified signup created no Friends member");
+    expect(member).toMatchObject({ recorded_age: null, effective_age: 15, birth_date: 20110115 });
+    expect(joined.html).not.toMatch(/2011-01-15|20110115/);
     const rt = [...st.svc.runtimes.values()].find(r => r.app.id === "friends")!;
     expect(rt.net.member(member.id as never).minor).toBe(true);
 
@@ -213,25 +220,25 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     expect(opportunities.length).toBeGreaterThan(0);
     for (const o of opportunities) expect(o.parts).not.toContain(member.id);
     expect((await sql`select 1 from network.participations where member_id = ${member.id}`).length).toBe(0);
-    expect(rt.net.packInput(st.clock.now()).members.map(m => m.id)).not.toContain(member.id);
 
     const child = newPhone(), cb = new Browser();
     const c = await authorize("friends", cb);
     await confirmPhone("friends", cb, c.rid, child);
-    const declined = await finishSignup("friends", cb, c.rid, { ...adult, firstName: "Mo", age: "12" });
+    const declined = await finishSignup("friends", cb, c.rid, { ...adult, firstName: "Mo", birthdate: "2014-01-15" });
     expect(declined.res.status).toBe(400);
-    expect(declined.html).toContain("You can’t join this app at the age entered.");
+    expect(declined.html).toContain("You can’t join this app with the birthday entered.");
     const reopened = await st.site("friends", "/oauth/authorize/signup", { browser: cb, form: { rid: c.rid, decision: "open" } });
     expect(reopened.status).toBe(400);
     expect(await reopened.text()).toContain("This page has expired");
     const retry = await authorize("friends", cb);
     expect(retry.html).toContain('action="/oauth/authorize/phone"');
     expect((await confirmPhone("friends", cb, retry.rid, child)).html).toContain('action="/oauth/authorize/signup"');
-    const older = await finishSignup("friends", cb, retry.rid, { ...adult, firstName: "Mo", age: "25" });
+    const older = await finishSignup("friends", cb, retry.rid, { ...adult, firstName: "Mo", birthdate: "2001-01-15" });
     expect(older.res.status).toBe(400);
-    expect(older.html).toContain("You can’t join this app at the age entered.");
+    expect(older.html).toContain("You can’t join this app with the birthday entered.");
     expect(await personOf(child)).toBeUndefined();
     expect(await memberships(child)).toEqual([]);
+    expect(await st.svc.people.ageFloorRecord(st.svc.accounts.phoneHash(child))).toMatchObject({ age: 12 });
   }, T);
 
   test("a banned number gets no code; a ban after the code ends the signup with nothing stored", async () => {
@@ -343,11 +350,11 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
       expect(member.first_name).toBe("Rae");
     }, T);
 
-    test("a 15-year-old's draft is used when they join, and they are never matched", async () => {
+    test("a 15-year-old's draft is used when they join and the runtime keeps their minor status", async () => {
       const phone = newPhone(), b = new Browser();
       await saveDraft("friends", phone, b);
       const again = await authorize("friends", b);
-      const joined = await finishSignup("friends", b, again.rid, { ...adult, firstName: "Kai", age: "15" });
+      const joined = await finishSignup("friends", b, again.rid, { ...adult, firstName: "Kai", birthdate: "2011-01-15" });
       expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
       expect(await draftRows(phone, "friends")).toBe(0);
       const member = (await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'friends' and ph.e164 = ${phone}`)[0] as { id: string };
@@ -359,9 +366,9 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
       const phone = newPhone(), b = new Browser();
       await saveDraft("friends", phone, b);
       const again = await authorize("friends", b);
-      const declined = await finishSignup("friends", b, again.rid, { ...adult, age: "12" });
+      const declined = await finishSignup("friends", b, again.rid, { ...adult, birthdate: "2014-01-15" });
       expect(declined.res.status).toBe(400);
-      expect(declined.html).toContain("You can’t join this app at the age entered.");
+      expect(declined.html).toContain("You can’t join this app with the birthday entered.");
       expect(await draftRows(phone, "friends")).toBe(0);
       expect(await personOf(phone)).toBeUndefined();
     }, T);
