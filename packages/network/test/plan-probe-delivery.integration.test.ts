@@ -49,10 +49,15 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
   };
   try {
     await service.start();
+    const rt = service.runtimes.get(networkId)!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const members = [];
     for (const { name, e164 } of recipients) {
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await service.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       members.push({ id: joined.membership.memberId, name, age: 30 });
       await adapter.engaged(e164);
     }
@@ -61,7 +66,6 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     const now = clock.now();
     fixture.clock.set(now);
     await fixture.onboard(...invited);
-    const rt = service.runtimes.get(networkId)!;
     const plan: plans.Plan = {
       id: "reviewed_group_probe", city: "nyc", activityId: "day_hike", venueId: "inwood-hill",
       place: { name: "Inwood Hill Park", area: "Inwood" }, window: { start: now + 5 * DAY, end: now + 5 * DAY + 2 * HOUR },
