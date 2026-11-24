@@ -25,7 +25,7 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
   // The mounted API and MCP must share the staged cookie namespace and session owner.
   Object.defineProperty(st.svc,'publicApi',{value:api,configurable:true});
   const mcpLog: string[] = [];
-  mcp=await createServiceMcp(st.svc,{env,databaseUrl:st.url,migrate:false,now:()=>st.clock.now(),log:line=>mcpLog.push(line)});
+  mcp=await createServiceMcp(st.svc,{env:{...env,MCP_CUSTOM_CHATGPT_SLOP:'on',MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS:person.id},databaseUrl:st.url,migrate:false,now:()=>st.clock.now(),log:line=>mcpLog.push(line)});
   server=await serveHttp({hostname:'127.0.0.1',port:0,async fetch(req){
    const edge=await normalizeEdge(req,secret,config.hostMap,st.clock.now());
    if (!edge.edge) return new Response("edge_required", {status:421});
