@@ -1154,7 +1154,7 @@
     },
     "spec/consoleNavigation.md": {
       "@document": [
-        "320dd9dfef33"
+        "9a08e503b7cf"
       ],
       "## Story: Know which page I am on": [
         "5b3e8f66ba3d"
@@ -1317,7 +1317,7 @@
     },
     "spec/consoleWorkspace.md": {
       "@document": [
-        "e6f98cfc2dc7"
+        "b00d1e9da9c6"
       ],
       "## Story: Work only in the panels my role and mode allow": [
         "2d935c034ccc"
@@ -1425,7 +1425,7 @@
     },
     "spec/consolePanels.md": {
       "@document": [
-        "2c43ca6982b8"
+        "0bef481c4f31"
       ],
       "## Story: Use the analysis panels only where my mode and role allow": [
         "108a83a6ec16"
@@ -4916,7 +4916,7 @@
     },
     "spec/staffSignIn.md": {
       "@document": [
-        "b5931e687984"
+        "bde59f12df92"
       ],
       "## Story: Sign in as myself": [
         "6a212b841682"
