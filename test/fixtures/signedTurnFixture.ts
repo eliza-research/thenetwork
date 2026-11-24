@@ -19,6 +19,7 @@ export type SignedTurnFixture = {
   clock: SimClock;
   service: NetworkService;
   createMember(about?: Partial<Record<FixtureApp, string>>, signup?: FixtureSignup): Promise<FixtureMember>;
+  verifyFriendsAdult(member: FixtureMember): Promise<void>;
   sendTurn(phone: string, text: string, options?: Partial<FixtureTurn>): Promise<{ response: TurnResponse; receivedAt: number; messageId: string; request: TurnRequest }>;
   replayTurn(request: TurnRequest): Promise<Response>;
   sendReceipt(input: TurnReceiptRequest): Promise<Response>;
@@ -34,6 +35,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
 async function serveFixture(url: string, run: (fixture: SignedTurnFixture) => Promise<void>, options: FixtureOptions) {
   const secret = "synthetic-signed-turn-journey-secret";
   const reviewer = "synthetic-friends-review-journey-token";
+  const safety = "synthetic-friends-safety-journey-token";
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
   const hosts = { slop: "localhost:5102", friends: "localhost:5104" };
   let phoneCounter = 0;
@@ -51,7 +53,7 @@ async function serveFixture(url: string, run: (fixture: SignedTurnFixture) => Pr
       { id: "slop:nyc", matchingEnabled: false },
       { id: "friends:nyc", matchingEnabled: options.friendsReview === true },
     ],
-    ...(options.friendsReview ? { devMatching: ["friends:nyc"], tokens: `reviewer@friends:${reviewer}` } : {}),
+    ...(options.friendsReview ? { devMatching: ["friends:nyc"], tokens: `reviewer@friends:${reviewer},safety@friends:${safety}` } : {}),
     network: { seed: 1, ...(options.friendsReview ? { maxNewPerDay: 0, plans: false, growth: false } : {}) },
     publicApi: { minStartMs: 0, minVerifyMs: 0, otp: { name: "fixture", send: async () => ({ code: "314159" }) } },
     adapter: () => new DryRunAdapter(() => { adapterCalls++; }),
@@ -97,6 +99,21 @@ async function serveFixture(url: string, run: (fixture: SignedTurnFixture) => Pr
       return { phone, personId: person.id };
     }
 
+    async function verifyFriendsAdult({ personId }: FixtureMember) {
+      const member = await app.people.getMembership(personId, "friends");
+      if (!member) throw new Error("The fixture member did not join Friends");
+      for (const check of ["age", "liveness"]) {
+        const response = await fetch(new URL(`/apps/friends/members/${encodeURIComponent(member.memberId)}/verify`, http.url), {
+          method: "POST", signal: AbortSignal.timeout(10_000),
+          headers: { authorization: `Bearer ${safety}`, "content-type": "application/json" },
+          body: JSON.stringify({ check, result: "pass", note: "Adult Friends conformance fixture" }),
+        });
+        if (!response.ok || !(await response.json() as { ok: boolean }).ok) {
+          throw new Error(`Friends ${check} verification failed (${response.status})`);
+        }
+      }
+    }
+
     async function sendTurn(phone: string, text: string, options: Partial<FixtureTurn> = {}) {
       clock.advance(1000);
       const input: TurnRequest = {
@@ -135,7 +152,7 @@ async function serveFixture(url: string, run: (fixture: SignedTurnFixture) => Pr
     }
 
     await run({
-      clock, service: app, createMember, sendTurn,
+      clock, service: app, createMember, verifyFriendsAdult, sendTurn,
       replayTurn: input => postSigned(TURN_PATH, input.messageId, input),
       sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input),
       reviewQueue: () => review(""), decideReview: ({ oppId, revision }, decision, reason) => review(`/${encodeURIComponent(oppId)}`, { decision, reason, revision }),
