@@ -69,3 +69,6 @@
 {"text": "I can't delete my account so remove my number", "match": "likely"}
 {"text": "I don't want to delete my account, just remove my number", "match": "likely"}
 {"text": "I said delete my number", "match": "likely"}
+{"text": "She said, delete my number. I agree, delete my number", "match": "likely"}
+{"text": "my wife said, unsubscribe. unsubscribe me", "match": "likely"}
+{"text": "He told me, delete it. Delete my number", "match": "likely"}

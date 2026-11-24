@@ -186,3 +186,7 @@
 {"text": "I can't delete my account so remove my number", "label": "stop", "lang": "en"}
 {"text": "the app won't delete my info so delete my number", "label": "stop", "lang": "en"}
 {"text": "I said delete my number", "label": "stop", "lang": "en"}
+{"text": "She said, delete my number. I agree, delete my number", "label": "stop", "lang": "en"}
+{"text": "my wife said, unsubscribe. unsubscribe me", "label": "stop", "lang": "en"}
+{"text": "He told me, delete it. Delete my number", "label": "stop", "lang": "en"}
+{"text": "I asked to unsubscribe. Unsubscribe from slop", "label": "not_stop", "lang": "en"}

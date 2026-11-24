@@ -440,6 +440,9 @@ function splitOptOutParts(text: string): string[] {
   return parts;
 }
 
+const REPORTER_TAIL = /\b(?:said|says|told(?: me)?|asked(?: me)?)(?: to)?$/;
+const DIRECT_REPORTER_TAIL = /^i (?:(?:already|just) )?said$/;
+
 function optOutClauses(
   text: string,
   norm: (value: string) => string,
@@ -451,9 +454,12 @@ function optOutClauses(
   const hasReported = REPORTED_OR_INSTRUCTIONAL_STOP.test(t) && !isDirectReportedStop(t);
   if (!hasNegated && !hasReported) return [t];
   const parts = splitOptOutParts(text);
-  if (hasReported && !parts.some(part => REPORTED_OR_INSTRUCTIONAL_STOP.test(norm(part)))) return [];
-  return parts.flatMap(part => {
+  return parts.flatMap((part, i) => {
     if (isLeave(part)) return [];
+    if (i > 0) {
+      const prev = norm(parts[i - 1]);
+      if (REPORTER_TAIL.test(prev) && !DIRECT_REPORTER_TAIL.test(prev)) return [];
+    }
     const clause = norm(part);
     if (!clause) return [];
     if (REPORTED_OR_INSTRUCTIONAL_STOP.test(clause) && !isDirectReportedStop(clause)) return [];
@@ -494,8 +500,7 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
     || LIKELY_EN.exec(clause)?.index === 0 || LIKELY_ES.exec(clause)?.index === 0);
   if (clauses.some(clause => readsTextRefusal(clause) || LIKELY_EN.test(clause) || LIKELY_ES.test(clause))) return { match: "likely", scope: "all", lang };
   if (clauses.length === 1 && clauses[0] === t && courtesyLang && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
-  if (!/\?\s*$/.test(raw.trim()) && ((clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)))
-    || clauses.some(clause => /^(?:stop|unsubscribe|para|basta)$/.test(clause)))) return { match: "likely", scope: "all", lang };
+  if (clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
 
