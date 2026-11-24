@@ -170,3 +170,11 @@
 {"text":"Yes, Saturday and Sunday don't work, everything else works","answer":"yes","keys":["a"]}
 {"text":"Yes, Saturday and Sunday don't work, I'm free","answer":"yes","keys":["a"]}
 {"text":"Yes, Saturday and Sunday don't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, the rest do not work","answer":"unclear","keys":[]}
+{"text":"Yes, I'm open to meeting, Saturday and Sunday don't work, the rest don't work","answer":"unclear","keys":[]}
+{"text":"Yes, I'm free, Saturday and Sunday don't work, the rest don't work","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are bad","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are tough","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are rough","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are packed","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are full","answer":"unclear","keys":[]}

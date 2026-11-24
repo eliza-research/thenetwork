@@ -12,7 +12,7 @@ import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { hasOrElseThreat } from "../../core/src/abuse.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { clarifiedBroadTimeChoiceAllowed, historicalProbeTimeClause, mayRetryCounter, pickedTimes, probeExclusionAlternative, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
+import { clarifiedBroadTimeChoiceAllowed, historicalProbeTimeClause, mayRetryCounter, pickedTimes, probeExclusionAlternative, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification, yesBooksRefusedRemainder } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearning.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
@@ -868,7 +868,7 @@ const ALL_WEAK = /\b(?:either|both)\b(?:\s+of\s+(?:them|(?:those|these)(?:\s+(?:
 const REMAINDER_PHRASE = /\b(?:the\s+rest|everything\s+else|the\s+other(?:s| ones?| days?| options?| times?| slots?))\b/;
 const REMAINDER_POSITIVE = /\b(?:works?|will work|fine|good|ok(?:ay)?|great|perfect|do|does)\b/;
 const REMAINDER_NEGATED = /\b(?:don'?t|doesn'?t|do not|does not|isn'?t|aren'?t|not|never|can'?t|couldn'?t|won'?t|no)\b/;
-const REMAINDER_UNAVAILABLE = /\b(?:busy|unavailable|booked(?:\s+up)?|taken|out|no\s+good)\b/;
+const REMAINDER_UNAVAILABLE = /\b(?:busy|unavailable|booked(?:\s+up)?|taken|out|no\s+good|bad|tough|rough|packed|full)\b/;
 const GENERAL_AVAILABILITY = /\bi'?m\s+(?:free|available|around|open)\b/;
 const BOTH_TIME_LEAD = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?both\b/;
 const OFFERED_PAIR_AFFIRMATIVE = String.raw`(?:works?|will work|would work)(?:\s+for\s+(?:me|us))?|(?:are|would be)\s+(?:fine|good|great|okay)|please`;
@@ -1249,7 +1249,7 @@ function separateUnboundProbeTimes(text: string): { current: string; unbound: bo
 }
 
 function remainderAffirmed(t: string): boolean {
-  if (GENERAL_AVAILABILITY.test(t)) return true;
+  if (GENERAL_AVAILABILITY.test(t) && !remainderRefused(t)) return true;
   const phrase = REMAINDER_PHRASE.exec(t);
   if (!phrase) return false;
   const tail = t.slice(phrase.index + phrase[0].length).split(/[.!?;\n]/, 1)[0]!;
@@ -1265,7 +1265,7 @@ function remainderRefused(t: string): boolean {
   const tail = t.slice(phrase.index + phrase[0].length).split(/[.!?;\n]/, 1)[0]!;
   const positive = REMAINDER_POSITIVE.exec(tail);
   const negated = REMAINDER_NEGATED.exec(tail);
-  if (negated && (!positive || negated.index < positive.index)) return true;
+  if (negated && (!positive || negated.index <= positive.index)) return true;
   const unavailable = REMAINDER_UNAVAILABLE.exec(tail);
   return !!unavailable && (!positive || unavailable.index < positive.index);
 }
@@ -1559,7 +1559,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   if (past || refusedGroup && !/^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/.test(t)) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
-  if (c.answer === "yes" && (neg.size === 0 || remainderAffirmed(t) || !remainderRefused(t))) return { answer: "yes", keys: open, why: c.why };
+  if (c.answer === "yes" && (neg.size === 0 || yesBooksRefusedRemainder(remainderRefused(t), remainderAffirmed(t)))) return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;
 }
