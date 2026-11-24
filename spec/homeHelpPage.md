@@ -105,9 +105,6 @@ pure def helpScreenOf(status: HelpStatus): HelpScreen =
   else if (status == StatusClosed) HelpClosed
   else HelpChoose
 
-pure def helpSignedIn(p: HomeHelpPage, status: HelpStatus): HomeHelpPage =
-  { ...p, screen: helpScreenOf(status), role: helpRoleOf(status), notice: NoStepNotice }
-
 pure def lawHelperNeverGetsTheForm(status: HelpStatus): bool =
   helpRoleOf(status) == HelpRoleHelper implies helpScreenOf(status) != HelpAddress
 pure def lawStatusGivesTheAddressToNobody(status: HelpStatus): bool = helpScreenOf(status) != HelpRevealed
@@ -116,7 +113,7 @@ pure def lawOnlyAClosedStatusCloses(status: HelpStatus): bool = (helpScreenOf(st
 pure def canHomeHelpLoaded(p: HomeHelpPage): bool = p.screen == HelpLoading
 
 pure def homeHelpLoaded(p: HomeHelpPage, session: StepSession, status: HelpStatus, cloudReturn: CloudReturn): HomeHelpPage =
-  if (session == SessionSignedIn) helpSignedIn(p, status)
+  if (session == SessionSignedIn) { ...p, screen: helpScreenOf(status), role: helpRoleOf(status), notice: NoStepNotice }
   else { ...p, screen: HelpSignIn, notice: noticeOnOpen(session, cloudReturn) }
 
 pure def helpWaiting(p: HomeHelpPage): bool =
@@ -158,7 +155,7 @@ The page reads the session after a verified code. A signed-in session asks for t
 pure def canHomeHelpSessionRead(p: HomeHelpPage): bool = p.screen == HelpChecking
 
 pure def homeHelpSessionRead(p: HomeHelpPage, session: StepSession, status: HelpStatus): HomeHelpPage =
-  if (session == SessionSignedIn) helpSignedIn(p, status)
+  if (session == SessionSignedIn) { ...p, screen: helpScreenOf(status), role: helpRoleOf(status), notice: NoStepNotice }
   else { ...p, screen: HelpSignIn, signIn: signInAgain(p.signIn), linkKept: false,
     notice: if (session == SessionUnreadable) StepUnreachable else StepSessionEnded }
 ```

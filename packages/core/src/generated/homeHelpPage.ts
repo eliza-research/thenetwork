@@ -27,7 +27,6 @@ export type HelpVenueAnswer = "VenueStored" | "VenueRevealed" | "VenueRemoved" |
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "openHomeHelpPage"; source: HelpLinkSource; wellFormed: boolean }
-  | { type: "helpSignedIn"; status: HelpStatus }
   | { type: "homeHelpLoaded"; session: oneStepPage_StepSession; status: HelpStatus; cloudReturn: oneStepPage_CloudReturn }
   | { type: "moveSignIn"; attempt: oneStepPage_SignInAttempt }
   | { type: "homeHelpSessionRead"; session: oneStepPage_StepSession; status: HelpStatus }
@@ -135,23 +134,6 @@ export function helpScreenOf(status: HelpStatus): HelpScreen {
 
 /** Story: Open the home-help step from my link / The page reads the session and shows the choice step or the sign-in step (spec/homeHelpPage.md) */
 //@ pure
-export function helpSignedIn(p: HomeHelpPage, status: HelpStatus): HomeHelpPage {
-  //@ ensures (inv(p)) ==> alwaysNoRequestWithoutLink(\result)
-  //@ ensures (inv(p)) ==> alwaysSignInConsistent(\result)
-  //@ ensures (inv(p)) ==> alwaysKeptOnlyForCloud(\result)
-  //@ ensures (inv(p)) ==> alwaysAddressFormOnlyForAdder(\result)
-  //@ ensures (inv(p)) ==> alwaysAddressOnlyWhenRevealed(\result)
-  //@ ensures (inv(p)) ==> alwaysRequestBelongsToItsScreen(\result)
-  //@ ensures (inv(p)) ==> alwaysActionsFitTheRole(\result)
-  //@ ensures (inv(p)) ==> stepBadLinkIsFinal(p, \result)
-  //@ ensures (inv(p)) ==> stepLinkKeptOnlyWhenLeavingForCloud(p, "helpSignedIn", \result)
-  //@ ensures (inv(p)) ==> stepAddressRevealedOnlyByReveal(p, "helpSignedIn", \result)
-  //@ ensures (inv(p)) ==> stepOneRequestAtATime(p, \result)
-  return { ...p, screen: helpScreenOf(status), role: helpRoleOf(status), notice: "NoStepNotice" };
-}
-
-/** Story: Open the home-help step from my link / The page reads the session and shows the choice step or the sign-in step (spec/homeHelpPage.md) */
-//@ pure
 export function lawHelperNeverGetsTheForm(status: HelpStatus): boolean {
   //@ ensures \result === true
   return !(helpRoleOf(status) === "HelpRoleHelper") || helpScreenOf(status) !== "HelpAddress";
@@ -179,12 +161,6 @@ export function canHomeHelpLoaded(p: HomeHelpPage): boolean {
 
 /** Story: Open the home-help step from my link / The page reads the session and shows the choice step or the sign-in step (spec/homeHelpPage.md) */
 //@ pure
-export function helpWaiting(p: HomeHelpPage): boolean {
-  return p.screen === "HelpOpening" || p.screen === "HelpLoading" || p.screen === "HelpChecking";
-}
-
-/** Story: Open the home-help step from my link / The page reads the session and shows the choice step or the sign-in step (spec/homeHelpPage.md) */
-//@ pure
 export function homeHelpLoaded(p: HomeHelpPage, session: oneStepPage_StepSession, status: HelpStatus, cloudReturn: oneStepPage_CloudReturn): HomeHelpPage {
   //@ ensures (inv(p) && canHomeHelpLoaded(p)) ==> alwaysNoRequestWithoutLink(\result)
   //@ ensures (inv(p) && canHomeHelpLoaded(p)) ==> alwaysSignInConsistent(\result)
@@ -197,7 +173,13 @@ export function homeHelpLoaded(p: HomeHelpPage, session: oneStepPage_StepSession
   //@ ensures (inv(p) && canHomeHelpLoaded(p)) ==> stepLinkKeptOnlyWhenLeavingForCloud(p, "homeHelpLoaded", \result)
   //@ ensures (inv(p) && canHomeHelpLoaded(p)) ==> stepAddressRevealedOnlyByReveal(p, "homeHelpLoaded", \result)
   //@ ensures (inv(p) && canHomeHelpLoaded(p)) ==> stepOneRequestAtATime(p, \result)
-  return session === "SessionSignedIn" ? helpSignedIn(p, status) : ({ ...p, screen: "HelpSignIn", notice: oneStepPage_noticeOnOpen(session, cloudReturn) } as HomeHelpPage);
+  return session === "SessionSignedIn" ? ({ ...p, screen: helpScreenOf(status), role: helpRoleOf(status), notice: "NoStepNotice" } as HomeHelpPage) : ({ ...p, screen: "HelpSignIn", notice: oneStepPage_noticeOnOpen(session, cloudReturn) } as HomeHelpPage);
+}
+
+/** Story: Open the home-help step from my link / The page reads the session and shows the choice step or the sign-in step (spec/homeHelpPage.md) */
+//@ pure
+export function helpWaiting(p: HomeHelpPage): boolean {
+  return p.screen === "HelpOpening" || p.screen === "HelpLoading" || p.screen === "HelpChecking";
 }
 
 /** Story: Confirm my number on the home-help page / The page signs the person in with the shared sign-in steps and keeps the link for Cloud sign-in (spec/homeHelpPage.md) */
@@ -262,7 +244,7 @@ export function homeHelpSessionRead(p: HomeHelpPage, session: oneStepPage_StepSe
   //@ ensures (inv(p) && canHomeHelpSessionRead(p)) ==> stepLinkKeptOnlyWhenLeavingForCloud(p, "homeHelpSessionRead", \result)
   //@ ensures (inv(p) && canHomeHelpSessionRead(p)) ==> stepAddressRevealedOnlyByReveal(p, "homeHelpSessionRead", \result)
   //@ ensures (inv(p) && canHomeHelpSessionRead(p)) ==> stepOneRequestAtATime(p, \result)
-  return session === "SessionSignedIn" ? helpSignedIn(p, status) : ({ ...p, screen: "HelpSignIn", signIn: oneStepPage_signInAgain(p.signIn), linkKept: false, notice: session === "SessionUnreadable" ? "StepUnreachable" : "StepSessionEnded" } as HomeHelpPage);
+  return session === "SessionSignedIn" ? ({ ...p, screen: helpScreenOf(status), role: helpRoleOf(status), notice: "NoStepNotice" } as HomeHelpPage) : ({ ...p, screen: "HelpSignIn", signIn: oneStepPage_signInAgain(p.signIn), linkKept: false, notice: session === "SessionUnreadable" ? "StepUnreachable" : "StepSessionEnded" } as HomeHelpPage);
 }
 
 /** Story: Add or remove my address as the requester / The choice step offers only the actions that the role allows (spec/homeHelpPage.md) */
@@ -685,7 +667,6 @@ export function sometimesCloudSignInRefused(p: HomeHelpPage): boolean {
 //@ pure
 export function enabled(current: HomeHelpPage, event: Event): boolean {
   if (event.type === "openHomeHelpPage") return canOpenHomeHelpPage(current);
-  if (event.type === "helpSignedIn") return true;
   if (event.type === "homeHelpLoaded") return canHomeHelpLoaded(current);
   if (event.type === "moveSignIn") return canMoveSignIn(current, event.attempt);
   if (event.type === "homeHelpSessionRead") return canHomeHelpSessionRead(current);
@@ -704,7 +685,6 @@ export function step(current: HomeHelpPage, event: Event): HomeHelpPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "openHomeHelpPage") return canOpenHomeHelpPage(current) ? openHomeHelpPage(current, event.source, event.wellFormed) : current;
-  if (event.type === "helpSignedIn") return helpSignedIn(current, event.status);
   if (event.type === "homeHelpLoaded") return canHomeHelpLoaded(current) ? homeHelpLoaded(current, event.session, event.status, event.cloudReturn) : current;
   if (event.type === "moveSignIn") return canMoveSignIn(current, event.attempt) ? moveSignIn(current, event.attempt) : current;
   if (event.type === "homeHelpSessionRead") return canHomeHelpSessionRead(current) ? homeHelpSessionRead(current, event.session, event.status) : current;
@@ -733,7 +713,6 @@ export function parseEvent(x: unknown): Event | undefined {
   const is_oneStepPage_SignInAttempt = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && (v.kind === "AttemptReadMode" || v.kind === "AttemptSubmitNumber" || v.kind === "AttemptAnswerStart" || v.kind === "AttemptSubmitCode" || v.kind === "AttemptAnswerVerify" || v.kind === "AttemptResend" || v.kind === "AttemptAnswerResend" || v.kind === "AttemptChangeNumber" || v.kind === "AttemptContinueCloud" || v.kind === "AttemptAnswerCloud" || v.kind === "AttemptSettleCheck" || v.kind === "AttemptExpireCheck") && (v.lookup === "SignInLookupFailed" || v.lookup === "SignInLookupOtp" || v.lookup === "SignInLookupCloud") && typeof v.checkOn === "boolean" && typeof v.valid === "boolean" && Number.isSafeInteger(v.digits) && (v.answer === "SignInAnswerOk" || v.answer === "SignInAnswerRateLimited" || v.answer === "SignInAnswerCheckRejected" || v.answer === "SignInAnswerWrongCode" || v.answer === "SignInAnswerFailed") && typeof v.retryKnown === "boolean" && typeof v.passed === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "openHomeHelpPage" && (raw.source === "LinkFromAddress" || raw.source === "LinkFromKept" || raw.source === "LinkMissing") && typeof raw.wellFormed === "boolean") return { type: "openHomeHelpPage", source: raw.source, wellFormed: raw.wellFormed };
-  if (raw.type === "helpSignedIn" && (raw.status === "StatusRequester" || raw.status === "StatusRequesterSaved" || raw.status === "StatusHelper" || raw.status === "StatusClosed" || raw.status === "StatusUnknown")) return { type: "helpSignedIn", status: raw.status };
   if (raw.type === "homeHelpLoaded" && (raw.session === "SessionSignedIn" || raw.session === "SessionSignedOut" || raw.session === "SessionUnreadable") && (raw.status === "StatusRequester" || raw.status === "StatusRequesterSaved" || raw.status === "StatusHelper" || raw.status === "StatusClosed" || raw.status === "StatusUnknown") && (raw.cloudReturn === "CloudReturnNone" || raw.cloudReturn === "CloudReturnExpired" || raw.cloudReturn === "CloudReturnRefused" || raw.cloudReturn === "CloudReturnUnavailable")) return { type: "homeHelpLoaded", session: raw.session, status: raw.status, cloudReturn: raw.cloudReturn };
   if (raw.type === "moveSignIn" && is_oneStepPage_SignInAttempt(raw.attempt)) return { type: "moveSignIn", attempt: ({ kind: raw.attempt.kind, lookup: raw.attempt.lookup, checkOn: raw.attempt.checkOn, valid: raw.attempt.valid, digits: raw.attempt.digits, answer: raw.attempt.answer, retryKnown: raw.attempt.retryKnown, passed: raw.attempt.passed }) };
   if (raw.type === "homeHelpSessionRead" && (raw.session === "SessionSignedIn" || raw.session === "SessionSignedOut" || raw.session === "SessionUnreadable") && (raw.status === "StatusRequester" || raw.status === "StatusRequesterSaved" || raw.status === "StatusHelper" || raw.status === "StatusClosed" || raw.status === "StatusUnknown")) return { type: "homeHelpSessionRead", session: raw.session, status: raw.status };

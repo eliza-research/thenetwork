@@ -8,7 +8,7 @@
 import { expect, test } from "vitest";
 import type { SendRequest } from "../../packages/blooio/src/types.ts";
 import { MINUTE, SimClock } from "../../packages/core/src/clock.ts";
-import { enabled, type Event, type HomeHelpPage, initial, step } from "../../packages/core/src/generated/homeHelpPage.ts";
+import { enabled, type Event, type HomeHelpPage, initial, parseEvent, step } from "../../packages/core/src/generated/homeHelpPage.ts";
 import type { StepSession } from "../../packages/core/src/generated/oneStepPage.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
@@ -21,6 +21,7 @@ import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../packages/platform/test/pg.ts";
 import { addressCheckOf, helpStatusOf, type HomeHelpLink, parseHomeHelpLink, type VenueAction, venueAnswerOf, venueBody } from "../../packages/ui/src/api/homeHelp.ts";
 import type { StepAnswer } from "../../packages/ui/src/api/stepPages.ts";
+import { startStack } from "./harness.ts";
 
 class FakeOtp implements OtpProvider {
   readonly name = "fake";
@@ -154,6 +155,7 @@ test("the page refuses a link that the conversation cannot send, and keeps a goo
   const stopped = run(initial, { type: "openHomeHelpPage", source: missing.source, wellFormed: missing.wellFormed });
   expect(stopped.screen).toBe("HelpBadLink");
   expect(enabled(stopped, { type: "homeHelpLoaded", session: "SessionSignedIn", status: "StatusUnknown", cloudReturn: "CloudReturnNone" })).toBe(false);
+  expect(parseEvent({ type: "helpSignedIn", status: "StatusUnknown" })).toBeUndefined();
   expect(addressCheckOf("  ")).toBe("AddressEmpty");
   expect(addressCheckOf("15 Fictional Street\nApt 2")).toBe("AddressBadChars");
   expect(addressCheckOf("15 Fictional Street Apt 2")).toBe("AddressBadChars");
@@ -166,6 +168,35 @@ test("the page refuses a link that the conversation cannot send, and keeps a goo
   expect(venueAnswerOf("reveal", { reached: true, status: 200, code: "", data: { ok: true }, retryAfterSeconds: undefined })).toEqual({ answer: "VenueFailed" });
   expect(venueAnswerOf("submit", { reached: true, status: 503, code: "proxy_not_configured", data: {}, retryAfterSeconds: undefined })).toEqual({ answer: "VenueUnreachable" });
 });
+
+test.skipIf(!pgAvailable || !process.env.PLAYWRIGHT_MODULE)("a missing or invalid Home Help link sends no browser API request", async ({ onTestFinished }) => {
+  const { chromium } = await import(process.env.PLAYWRIGHT_MODULE!);
+  const stack = await startStack();
+  onTestFinished(() => stack.close());
+  const browser = await chromium.launch({ headless: true });
+  onTestFinished(() => browser.close());
+  const context = await browser.newContext();
+  await context.route("https://**/*", (route: { abort(): Promise<void> }) => route.abort());
+  const origin = stack.sites.ntwrk.origin;
+  const url = `${origin}/home-help`;
+  const requests: string[] = [];
+  context.on("request", (request: { url(): string }) => {
+    const destination = new URL(request.url());
+    if (destination.origin === origin && destination.pathname.startsWith("/api/")) requests.push(destination.pathname);
+  });
+  for (const suffix of ["", "#invalid-plan-1"]) {
+    const page = await context.newPage();
+    await page.goto(url + suffix);
+    await page.getByRole("heading", { name: "This link does not work" }).waitFor();
+    expect(page.url()).toBe(url);
+    expect(requests).toEqual([]);
+    await page.close();
+  }
+  const valid = await context.newPage();
+  await valid.goto(`${url}#hh_${"abcdefghijklmnop".repeat(2)}-1`);
+  await valid.getByRole("button", { name: "Text me a code" }).waitFor();
+  expect(requests).toEqual(["/api/me", "/api/auth/mode"]);
+}, 180_000);
 
 test.skipIf(!pgAvailable)("the requester saves and removes the address and the helper reads it, through the link from the conversation", async () => {
   const world = await homeHelpWorld("home_help_page_flow");
