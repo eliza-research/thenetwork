@@ -1,6 +1,7 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { createPublicApi } from "../../platform/src/api.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
 import { MemoryOAuthStore } from "../src/store.ts";
 import { pkceS256 } from "../src/util.ts";
@@ -293,4 +294,39 @@ test.skipIf(!pgAvailable).each(["grant", "draft"] as const)("a %s at its expiry 
     expect(blank(await prefill.text())).toBe(true);
     expect(await store.sql`select fields from oauth.signup_drafts where grant_id=${grant.id}`).toEqual([{ fields: { firstName: "Ari", homeCity: "sf" } }]);
   } finally { await store.close(); await dropTestDb(); }
+});
+
+test('a saved lower age stays effective when optional draft cleanup fails (spec/mcpSignupDraft.md, "A recorded age that the app does not allow deletes the draft at once")', async () => {
+  const store = new MemoryOAuthStore();
+  const e = setup({ store });
+  const person = await e.accounts.createPerson(PHONE_A, "otp_sms", 29);
+  const { token } = await prepareDraft(e, "friends.help", PHONE_A);
+  const owner = await e.sessions.create("friends", PHONE_A, person.id);
+  const lowered: { personId: string; age: number }[] = [];
+  const api = createPublicApi({
+    store: e.people, otp: e.provider, hashKey: "test-hash-key", sessionSecret: "test-session-secret",
+    now: () => e.clock.t, env: { PLATFORM_ENV: "dev" }, onAgeLowered: event => { lowered.push(event); },
+  });
+  const deletion = vi.spyOn(store, "deleteSignupDrafts").mockRejectedValue(new Error("controlled draft cleanup failure"));
+  try {
+    await expect(api.accounts.recordAge(PHONE_A, person, 12)).resolves.toBeUndefined();
+    expect(await e.people.ageFloorRecord(e.accounts.phoneHash(PHONE_A))).toMatchObject({ age: 12 });
+    expect(await e.people.getPerson(person.id)).toMatchObject({ lowestAge: 12 });
+    expect(lowered).toEqual([{ personId: person.id, age: 12 }]);
+    expect(e.logs).toContain("[mcp] signup draft age cleanup failed for friends");
+    expect(store.signupDrafts.size).toBe(1);
+    const result = await call(e, "https://friends.help/mcp", "prepare_signup", { firstName: "Ari" }, { token });
+    expect(result.body!.result.isError).toBe(true);
+  } finally {
+    deletion.mockRestore();
+  }
+
+  const recovery = await e.fetch(new Request("https://friends.help/oauth/signup-draft", {
+    method: "POST",
+    headers: { origin: "https://friends.help", cookie: "sid_friends=" + owner.token, "content-type": "application/json" },
+    body: "{}",
+  }));
+  expect(recovery.status).toBe(200);
+  expect(await recovery.json()).toMatchObject({ draft: null });
+  expect(store.signupDrafts.size).toBe(0);
 });

@@ -260,11 +260,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
   const store = o.store ?? new MemoryOAuthStore();
   const now = o.now ?? Date.now;
-  o.platform.setSignupAgeCleanup?.((key, app) => store.deleteSignupDrafts(key, app));
   const ttl = { ...TTL, ...o.ttl };
   const lim = { ...LIMITS, ...o.limits };
   const registerOverride: Record<RegisterBucket, number | undefined> = { AssistantRegisterBucket: o.limits?.registerAssistantPerIpHour, AddressRegisterBucket: o.limits?.registerPerIpHour };
   const log = o.log ?? (s => console.log(s));
+  o.platform.setSignupAgeCleanup?.(async (key, app) => {
+    try {
+      await store.deleteSignupDrafts(key, app);
+    } catch {
+      log(`[mcp] signup draft age cleanup failed for ${app}`);
+    }
+  });
   /** Recompute the affected assistant from all of the person's grants after an OAuth change. */
   async function reconcileAssistantSignal(grant: Grant | undefined) {
     const personId = grant?.personId;
