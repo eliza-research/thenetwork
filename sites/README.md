@@ -139,4 +139,3 @@ hand, deploys need founder approval and go through `scripts/wrangler.sh` with `N
 All four projects are in the ntwrk.party Cloudflare account (its id is `CLOUDFLARE_ACCOUNT_ID`, from
 the environment or the CI variable). Each answers on `<project>.pages.dev`, which the backend accepts as that app's host; slop.date
 and friends.help DNS (another account) point there. Details: [docs/deploy.md](../docs/deploy.md).
-

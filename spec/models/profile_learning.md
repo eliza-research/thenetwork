@@ -816,7 +816,7 @@ module profile_learning {
   // source proof came before the Cloud event. (SD-172, fixed: both sides of the comparison are Cloud time.)
   val inv_cutoffRespected = not(touchedAfterCutoff)
 
-  // INV-10. retainFalseGone: copy "If Google is disconnected: remove these accepted facts" and 
+  // INV-10. retainFalseGone: copy "If Google is disconnected: remove these accepted facts" and
   // "disconnect honors retention": after V1 disconnect, no retain=false fact whose source proof came
   // before the revocation stays (J-4). (SD-172, fixed)
   val inv_retainFalseGone = v1Done.forall(x => x._2 != "disconnect" or ITEMS.forall(i =>
