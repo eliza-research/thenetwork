@@ -1100,6 +1100,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await text(s, clock, di.phone, "DELETE PHOTOS")).toBe("handled");
     expect(directs.filter(d => d.to === di.phone).at(-1)?.body).toBe("I deleted your photo and the private rating made from it.");
     expect([await photosOf(di.id), await ratingsOf(di.id)]).toEqual([0, 0]);
+    expect(readdirSync(dir)).toHaveLength(0);
     const bo = await joined("Bo");
     const sixteen = earliestDayKeyOf(clock.now()) - 160000;
     await sql`update platform.people p set lowest_age = 16, birth_lower = ${sixteen - 10000}, birth_upper = ${sixteen}, birth_youngest = ${sixteen}

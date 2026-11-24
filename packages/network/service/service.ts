@@ -2157,7 +2157,7 @@ export class NetworkService implements RuntimeHost {
     const ownText = !banned && e164 && !kw && !profileRead && !intentCommand ? e164 : undefined;
     if (ownText && (await this.photoIntake.consentAnswer(ownText, ev.text, rowId, route.app))) return "handled";
     if (ownText && !ev.mediaUrls?.length && (await this.photoIntake.addRequest(ownText, ev.text, rowId, route.app))) return "handled";
-    if (ownText && !ev.mediaUrls?.length && (await this.photoIntake.deleteRequest(ownText, ev.text, rowId, route.app))) return "handled";
+    if (ownText && !ev.mediaUrls?.length && (await this.photoIntake.deleteRequest(ownText, ev.text, rowId))) return "handled";
     if (!banned && e164 && ev.mediaUrls?.length && !profileRead && !intentCommand &&
         textPhotoLineAllowed(route.shared, route.app === PHOTO_APP)) {
       // A provider retry of the same message takes no photo twice.

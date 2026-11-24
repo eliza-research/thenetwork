@@ -139,11 +139,11 @@ export class PhotoIntake {
     return true;
   }
 
-  async deleteRequest(e164: string, text: string, ref: string, app: AppId): Promise<boolean> {
-    if (app !== PHOTO_APP || !photoDeleteRequest(text)) return false;
+  async deleteRequest(e164: string, text: string, ref: string): Promise<boolean> {
+    if (!photoDeleteRequest(text)) return false;
     const person = await this.d.accounts.personFor(e164);
     if (!person) return false;
-    const n = await this.d.photos.deleteFor(person.id, app);
+    const n = await this.d.photos.deleteFor(person.id);
     await this.d.reply(e164, n ? PHOTO_TEXT.deleted(n) : PHOTO_TEXT.noneToDelete, `sys:${ref}`);
     return true;
   }
