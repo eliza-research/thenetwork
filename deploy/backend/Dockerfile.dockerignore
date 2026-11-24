@@ -5,6 +5,7 @@
 !pnpm-workspace.yaml
 !tsconfig.json
 !packages/
+!apps/observatory/
 !deploy/
 !evals/relay/clef-relay-weights.json
 !tools/vibestack/vibestack/design/

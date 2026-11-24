@@ -1,19 +1,19 @@
 // Real signed HTTP on Cloud's wire (RelaySendRequest, x-ntwrk-svc-id "<messageId>:relay") -> POST /internal/relay
 // -> the ConsentNetwork relay desk (engine relay policy, rules only) -> network.messages / network.relay_records;
 // the staff held queue; a restart. Needs the dev Postgres on
-// :54339 (pnpm exec tsx packages/observatory/db/dev-pg.ts up). No live call: the adapter is a dry run and no
+// :54339 (pnpm exec tsx packages/db/dev-pg.ts up). No live call: the adapter is a dry run and no
 // Cloudflare token is set, so the classifier is rules only.
 import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock,MINUTE,DAY,HOUR} from "@thenetwork/core";
-import {applySchema} from "../../observatory/db/dev-pg.ts";
+import {applySchema} from "../../db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
-import {ServiceClient} from "../../observatory/src/sources/service.ts";
+import {ServiceClient} from "../../../apps/observatory/src/sources/service.ts";
 import type {NetworkState} from "../src/network.ts";
 
 const db=`network_relay_${randomUUID().replaceAll("-","")}`;
@@ -113,7 +113,7 @@ test("a scam is held for staff; staff list it (audited, app-scoped), reject it, 
   expect((await staff("/staff/relay/held?app=friends","nobody")).status).toBe(401);
   const list=await (await staff("/staff/relay/held?app=friends","rev-tok")).json() as any;
   expect(list.items).toHaveLength(1);expect(list.items[0]).toMatchObject({app:"friends",from:ari,memberId:ari,kind:"text"});
-  // The console's HeldText shape (packages/observatory/src/sources/service.ts): `id` is the item; no recipient id that the console would mask as a phone.
+  // The console's HeldText shape (apps/observatory/src/sources/service.ts): `id` is the item; no recipient id that the console would mask as a phone.
   expect(list.items[0].id).toBe(list.items[0].itemId);expect(list.items[0]).not.toHaveProperty("to");
   expect(JSON.stringify(list)).not.toMatch(/score|rating/i);
   const id=list.items[0].itemId as string;

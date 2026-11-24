@@ -10,7 +10,7 @@ The completion score differs even though the stored data is identical.
 Set the test wall clock to the simulated snapshot time before starting the database reader.
 Restore the clock during cleanup. Production code and scorecard rules do not change.
 
-Command: `pnpm exec vitest run --testTimeout 300000 packages/observatory/test/real-console.test.ts`.
+Command: `pnpm exec vitest run --testTimeout 300000 apps/observatory/test/real-console.test.ts`.
 Seed: 1. Scenario: `spam_wave`. Duration: five simulated days. Runtime: the former runtime 1.4.2 and local PostgreSQL.
 
 Before: 7 pass, 1 fail, 1064 assertions. Completion is 0.5 in game mode and 0.313 in database mode.

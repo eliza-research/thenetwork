@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { memberInviteWindowMs } from "../../core/src/generated/memberInvitation.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { staffUser } from "../../observatory/src/staff.ts";
+import { staffUser } from "../../../apps/observatory/src/staff.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import {
   findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable, memberInvitationReviewId, memberInvitationReviewStatus,

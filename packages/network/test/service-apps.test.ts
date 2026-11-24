@@ -1,6 +1,6 @@
 // The service with several apps (platform plan 4.4, 6.1): text joins, keywords per app, the person
 // cap, per-app live flags, per-app staff roles, and the public API mounted on the service. Postgres in
-// a database of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is
+// a database of its own per test process (the apps/observatory/test/pg.ts pattern). Nothing is
 // sent: the adapters are dry-run (or Blooio with a fake provider), and OTP codes come from a fake.
 import { setTimeout as sleep } from "node:timers/promises";
 import { findExecutable } from "../../core/src/runtime/process.ts";
@@ -10,7 +10,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";

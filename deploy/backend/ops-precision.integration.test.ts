@@ -7,10 +7,10 @@ import { afterAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR, SimClock } from "../../packages/core/src/index.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
-import { rowsFromGame, writeRows } from "../../packages/observatory/db/writer.ts";
-import { GameSource } from "../../packages/observatory/src/sources/game.ts";
-import type { ControlCommand } from "../../packages/observatory/src/types.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../packages/observatory/test/pg.ts";
+import { rowsFromGame, writeRows } from "../../apps/observatory/db/writer.ts";
+import { GameSource } from "../../apps/observatory/src/sources/game.ts";
+import type { ControlCommand } from "../../apps/observatory/src/types.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../apps/observatory/test/pg.ts";
 import { collectNetwork, runtimeProbe } from "./ops.ts";
 
 describe.skipIf(!pgAvailable)("ops precision (Postgres)", () => {

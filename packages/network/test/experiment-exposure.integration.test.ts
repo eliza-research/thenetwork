@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DAY, type RunRecord } from "@thenetwork/core";
-import { rowsFromGame, writeRows } from "../../observatory/db/writer.ts";
-import { createServer, type ObservatoryServer } from "../../observatory/src/server.ts";
-import type { GameSource } from "../../observatory/src/sources/game.ts";
-import type { ObsState } from "../../observatory/src/types.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { rowsFromGame, writeRows } from "../../../apps/observatory/db/writer.ts";
+import { createServer, type ObservatoryServer } from "../../../apps/observatory/src/server.ts";
+import type { GameSource } from "../../../apps/observatory/src/sources/game.ts";
+import type { ObsState } from "../../../apps/observatory/src/types.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { runArm } from "../harness/experiment.ts";
 
 test.skipIf(!pgAvailable)("experiment and Observatory reports measure proactive messages over observed member time", async () => {
@@ -59,7 +59,7 @@ test.skipIf(!pgAvailable)("experiment and Observatory reports measure proactive 
     expect((await switched.json()).ok).toBe(true);
     const rs = await state();
     expect(rs.env.error).toBeUndefined();
-    const p = spawnProcess([process.execPath, "--import", "tsx", "--conditions", "eliza-source", "packages/observatory/src/report.ts",
+    const p = spawnProcess([process.execPath, "--import", "tsx", "--conditions", "eliza-source", "apps/observatory/src/report.ts",
       "--days", "7", "--seed", "1", "--personas", "80", "--network", "stub"],
       { cwd: fileURLToPath(new URL("../../../", import.meta.url)), stdout: "pipe", stderr: "pipe" });
     const [exit, stdout, stderr] = await Promise.all([p.exited, new Response(p.stdout).text(), new Response(p.stderr).text()]);

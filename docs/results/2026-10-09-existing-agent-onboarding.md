@@ -126,7 +126,7 @@ node --version
 pnpm install --frozen-lockfile
 export OBSERVATORY_PG_PORT=54359
 export OBSERVATORY_PG_DIR="$PWD/runs/pg-existing-agent-review"
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up
 REQUIRE_PG=1 pnpm run test:e2e
 REQUIRE_PG=1 pnpm run test:integration
 pnpm run typecheck

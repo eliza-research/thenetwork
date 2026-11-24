@@ -208,7 +208,7 @@ The shared design system uses these commands.
 | `packages/notify` | The single inbox and the delivery scheduler ([README](packages/notify/README.md)) |
 | `packages/platform` | The shared backend for the four apps: people, phones, memberships, consent, blocks, login and the public API ([README](packages/platform/README.md)) |
 | `packages/mcp` | The remote MCP server and its OAuth for agent-first sign-up ([README](packages/mcp/README.md)) |
-| `packages/observatory` | The admin console, the simulator visualizer, the dev Postgres and the migrations ([design](docs/observatory.md)) |
+| `apps/observatory` | The admin console, the simulator visualizer, the dev Postgres and the migrations ([design](docs/observatory.md)) |
 | `packages/core/src/svc` | Byte-identical mirror of the Eliza service contract. The Eliza side is `@elizaos/plugin-network` in elizaOS/eliza |
 | `sites/` | The four app sites and their `SKILL.md` files ([README](sites/README.md)) |
 | `plugins/` | The Claude and OpenAI agent plugins, generated from `sites/` ([README](plugins/README.md)) |
@@ -223,7 +223,7 @@ Copy `.env.example` to `.env` for local work. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for variables and real-agent evidence.
 
 ```bash
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up
 pnpm run typecheck
 pnpm run sim
 pnpm run test:integration

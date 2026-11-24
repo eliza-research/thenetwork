@@ -19,7 +19,7 @@ The browser calls [Observatory detail and photo reads](../consoleMemberView.md) 
 // console_views: the Observatory staff console, person views, on the browser side.
 //
 // WHAT THIS MODELS
-//   The browser state of the member panel and the drawer in packages/observatory/web:
+//   The browser state of the member panel and the drawer in apps/observatory/web:
 //   - Detail reads (useLive in panels.tsx, Search in main.tsx). A read starts, the server answers
 //     late, out of order, more than once, or never. A dependency change cancels the reads that started.
 //     A credential change (authEpoch) also takes the data off the screen.
@@ -29,7 +29,7 @@ The browser calls [Observatory detail and photo reads](../consoleMemberView.md) 
 //   - Game proposals (ProposeTray in main.tsx). Picks, store age changes, a person that the store
 //     forgets, sparks and the game end.
 //   - The everyone-yes counts (KpiGrid in panels.tsx).
-//   Each LemmaScript step function in packages/observatory/web/logic/views.ts is a pure def here with
+//   Each LemmaScript step function in apps/observatory/web/logic/views.ts is a pure def here with
 //   the same name and the same decision. Each shell event is an action that calls it. The server is
 //   a nondeterministic environment.
 //

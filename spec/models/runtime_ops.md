@@ -55,7 +55,7 @@ Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md)
 //   M-141 backend-tick-loop      deploy/backend/backend.ts:423-457 (tickSet "backend"), serve.ts:131-149 ("serve")
 //   M-142 backend-process-lifecycle deploy/backend/backend.ts:459-481, server.ts:132-140
 //   M-143 backend-boot           deploy/backend/server.ts:37-63, backend.ts:486-513
-//   M-144 migration-runner       packages/observatory/db/migrate.ts:78-112
+//   M-144 migration-runner       packages/db/migrate.ts:78-112
 //   M-147 cf-backend-cutover     deploy/cloudflare/worker.ts
 //   M-149 wrangler-deploy-guard  scripts/wrangler.sh:56-129
 //   M-150 alert-dispatcher       deploy/backend/ops.ts:200-232, 285-320, 438-489, 574-592

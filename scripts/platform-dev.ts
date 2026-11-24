@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { SQL } from "../packages/core/src/runtime/postgres.ts";
 import { createBackend, ipOf, loadConfig, type Logger } from "../deploy/backend/backend.ts";
-import { applySchema, DEV_PG_URL, devPgUp } from "../packages/observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_URL, devPgUp } from "../packages/db/dev-pg.ts";
 import { APP_IDS } from "../packages/platform/src/apps.ts";
 import { DevConsoleProvider } from "../packages/platform/src/otp.ts";
 import { isProduction } from "../packages/platform/src/env.ts";
