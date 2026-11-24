@@ -730,7 +730,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function signupPrefillFor(c: Ctx, r: AuthRequest, who: SignedIn): Promise<SignupPrefill | undefined> {
     const key = o.platform.phoneKey(who.e164);
     try {
-      const use = (ageAllowed: boolean) => store.useSignupPrefill({ clientId: r.clientId, app: c.app.id, phoneKey: key, personId: r.personId, ageAllowed }, now());
+      const use = (ageAllowed: boolean) => store.useSignupPrefill({ clientId: r.clientId, app: c.app.id, phoneKey: key, personId: r.personId, ageAllowed }, now);
       const fields = o.platform.withSignupAgePolicy ? await o.platform.withSignupAgePolicy(key, c.app.id, use) : await use(false);
       return fields?.firstName ? { firstName: fields.firstName, ...(fields.homeCity ? { homeCity: fields.homeCity } : {}) } : undefined;
     } catch { return undefined; }
@@ -1508,7 +1508,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const decision = signupDraftClaimRoute(status, allowed, await o.platform.grantIsBanned(key, who.personId));
       if (decision === "DiscardDraft") await store.deleteSignupDrafts(key, c.app.id);
       if (decision === "RefuseClaim") return json(403, { error: "not_allowed" });
-      const draft = decision === "ReadDraft" ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;
+      const draft = decision === "ReadDraft" ? await store.claimSignupDraft(key, c.app.id, who.personId, now) : undefined;
       const response = json(200, { draft: draft ?? null, signupView }, { "cache-control": "no-store" });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;

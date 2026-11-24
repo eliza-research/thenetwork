@@ -175,8 +175,8 @@ export type AssistantGrantCandidate = { grant: Grant; client: OAuthClient };
 export interface OAuthStore {
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
   /** Recoverable read for the verified phone/app until deliberate discard or expiry. */
-  claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
-  useSignupPrefill(ask: SignupPrefillAsk, at: number): Promise<SignupDraftFields | undefined>;
+  claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, now: () => number): Promise<SignupDraftFields | undefined>;
+  useSignupPrefill(ask: SignupPrefillAsk, now: () => number): Promise<SignupDraftFields | undefined>;
   deleteSignupDrafts(phoneKey: string, app: McpAppId): Promise<void>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
@@ -269,7 +269,8 @@ export class MemoryOAuthStore implements OAuthStore {
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
     for (const [id, d] of this.signupDrafts) if (d.phoneKey === phoneKey && d.app === app) this.signupDrafts.delete(id);
   }
-  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
+  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, now: () => number) {
+    const at = now();
     const drafts = [...this.signupDrafts.values()].filter(d => {
       if (!signupDraftRowReadable(d.phoneKey === phoneKey && d.app === app, true, d.expiresAt, at)) return false;
       const g = this.grants.get(d.grantId);
@@ -279,7 +280,8 @@ export class MemoryOAuthStore implements OAuthStore {
     if (!signupDraftUnique(drafts.length)) return undefined;
     return structuredClone(drafts[0].fields);
   }
-  async useSignupPrefill(ask: SignupPrefillAsk, at: number) {
+  async useSignupPrefill(ask: SignupPrefillAsk, now: () => number) {
+    const at = now();
     const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
     const drafts = [...this.signupDrafts.values()].filter(d => {
       const g = this.grants.get(d.grantId);

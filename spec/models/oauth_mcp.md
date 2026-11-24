@@ -780,7 +780,8 @@ module oauth_mcp {
    * signupPrefillFor and the store's useSignupPrefill: the signup form of request `r` (a person who
    * has not joined the request's app) shows the one live draft of the same client, app, phone key and person, under
    * the age policy (withSignupAgePolicy: an under-13 person gets no prefill). The store deletes the draft
-   * in the same transaction that reads its fields. The grant keeps its one-write flag. No draft, two drafts
+   * in the same transaction that reads its fields. This atomic action represents the deadline checks
+   * made after the row locks. The grant keeps its one-write flag. No draft, two drafts
    * or a refusal give an empty form.
    */
   action openSignup(r: int): bool = all {
