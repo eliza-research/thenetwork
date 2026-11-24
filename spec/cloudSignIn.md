@@ -34,6 +34,35 @@ pure def lawAnExpiredHandoffIsNeverLive(expiresAt: int): bool =
   not(liveBeforeDeadline(expiresAt, expiresAt))
 ```
 
+### The Home Help callback returns to the same Network site
+
+On ntwrk.party the public start accepts the exact `/home-help` path. It stores that path with the routed app in the sealed pending cookie. Cloud still receives only the app, state, challenge and realm or the configured local site origin. Cloud returns to its existing app callback. The site returns a successful callback to `/home-help`. The same-app pending cookie must name `/home-help` before the server can return a failure to that page. A wrong state, missing or malformed code, or expired handoff sends `sign_in_expired`. A refused exchange, invalid identity, or held phone sends `sign_in_refused`. A Cloud or storage error sends `sign_in_unavailable`. A missing, invalid or other-app cookie produces the ordinary callback error. The path and the error have fixed values. The plan fragment and address stay out of the Cloud handoff.
+
+```quint
+pure val homeHelpCloudPath: str = "/home-help"
+
+pure def homeHelpCloudReturnAllowed(app: str, path: str): bool = app == "ntwrk" and path == homeHelpCloudPath
+
+pure def homeHelpCloudFailurePath(callbackApp: str, pendingApp: str, path: str, status: int): str =
+  if (callbackApp != pendingApp or not(homeHelpCloudReturnAllowed(callbackApp, path))) ""
+  else if (status == 400) "/home-help?error=sign_in_expired"
+  else if (status == 403) "/home-help?error=sign_in_refused"
+  else if (status == 503) "/home-help?error=sign_in_unavailable"
+  else ""
+
+pure def lawHomeHelpCloudReturnIsExact(app: str, path: str): bool =
+  homeHelpCloudReturnAllowed(app, path) iff (app == "ntwrk" and path == "/home-help")
+
+pure def lawHomeHelpCloudFailureRequiresSameApp(callbackApp: str, pendingApp: str, path: str, status: int): bool =
+  (callbackApp != pendingApp or not(homeHelpCloudReturnAllowed(callbackApp, path))) implies
+    homeHelpCloudFailurePath(callbackApp, pendingApp, path, status) == ""
+
+pure def lawHomeHelpCloudFailureIsFixed(callbackApp: str, pendingApp: str, path: str, status: int): bool =
+  val target = homeHelpCloudFailurePath(callbackApp, pendingApp, path, status)
+  target == "" or target == "/home-help?error=sign_in_expired"
+    or target == "/home-help?error=sign_in_refused" or target == "/home-help?error=sign_in_unavailable"
+```
+
 ### Cloud must accept the exchange and return a live identity
 
 The authority must accept the app-bound code exchange. The returned identity contains verified account and phone fields and a valid timestamp window. At the time of the check, its expiry must be in the future and its positive issue time may be at most 30 seconds ahead of the local clock (`cloudIdentityTimesValid`). Session start uses the earlier of issue time and local time. A successful exchange with no identity returns an unavailable response. An exchange refusal or an invalid identity returns a denial.

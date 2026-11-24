@@ -32,6 +32,8 @@ export type Event = {
 } | {
     type: "recordSession";
 };
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+export declare const homeHelpCloudPath: string;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare const cloudClockSkewMs: number;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
@@ -48,6 +50,16 @@ export declare function canCheckHandoff(signIn: SignIn): boolean;
 export declare function checkHandoff(signIn: SignIn, handoffFacts: HandoffFacts): SignIn;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export declare function lawAnExpiredHandoffIsNeverLive(expiresAt: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+export declare function homeHelpCloudReturnAllowed(app: string, path: string): boolean;
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+export declare function homeHelpCloudFailurePath(callbackApp: string, pendingApp: string, path: string, status: number): string;
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+export declare function lawHomeHelpCloudReturnIsExact(app: string, path: string): boolean;
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+export declare function lawHomeHelpCloudFailureRequiresSameApp(callbackApp: string, pendingApp: string, path: string, status: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+export declare function lawHomeHelpCloudFailureIsFixed(callbackApp: string, pendingApp: string, path: string, status: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare function cloudIssuedAtWithinSkew(issuedAtMs: number, asOf: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */

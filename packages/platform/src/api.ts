@@ -18,7 +18,7 @@ import { phoneChangeRetryAfter } from "../../core/src/generated/phoneChange.ts";
 import { initial as enrollmentInitial, joinAgeInputAllowed, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
-import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { cloudIdentityTimesValid, cloudSessionStartedAt, homeHelpCloudFailurePath, homeHelpCloudPath, homeHelpCloudReturnAllowed, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
   type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck, cloudCachePublication,
@@ -283,9 +283,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // Secure (and the __Host- prefix) outside dev, like the session cookie. Cloud auth runs only in dev today;
   // this keeps the cookies safe if the gate is ever widened.
   const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
-  const cloudReturnPath = (path: unknown): path is string => path === "/join" || oauthReturnPath(path);
+  const cloudReturnPath = (app: AppId, path: unknown): path is string =>
+    typeof path === "string" && (path === "/join" || homeHelpCloudReturnAllowed(app, path) || oauthReturnPath(path));
   const startCloudHandoff = async (app: AppId, returnPath: string, prefill?: ReturnType<typeof readJoinPrefill>) => {
-    const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
+    const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(app, returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");
     const challenge=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier));
     const receipt = prefill ? randomBytes(16).toString("hex") : undefined;
@@ -493,7 +494,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "POST /api/auth/cloud/start": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
         const returnPath = b.returnPath === "/join" || b.returnPath === "/join.html" ? "/join"
-          : null;
+          : typeof b.returnPath === "string" && homeHelpCloudReturnAllowed(appId, b.returnPath) ? homeHelpCloudPath : null;
         if (!returnPath) return json(400, {ok: false, error: "invalid"});
         const handoff=await startCloudHandoff(appId,returnPath,appId === "peon" ? readJoinPrefill(b.prefill) : undefined);
         if(!handoff)return json(404,{ok:false,error:"not_found"});
@@ -501,13 +502,20 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       }
       case "GET /api/auth/cloud/callback": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
-        const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
         const pending = unseal("cloud-pending", cookies.get(pendingName));
         const verifier = pending?.verifier;
         const returnPath = pending?.returnPath;
+        const clearedPending = pendingCookie("", 0);
+        const reject = (status: number) => {
+          const destination = typeof pending?.app === "string" && typeof returnPath === "string"
+            ? homeHelpCloudFailurePath(appId, pending.app, returnPath, status) : "";
+          return destination
+            ? new Response(null, { status: 303, headers: { location: destination, "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": clearedPending } })
+            : json(status, { ok: false, error: "cloud_auth_unavailable" }, { "set-cookie": clearedPending });
+        };
         const code = url.searchParams.get("code");
         const bound = pending?.app === appId && pending.state === url.searchParams.get("state") && typeof verifier === "string";
-        const allowedReturnPath = cloudReturnPath(returnPath);
+        const allowedReturnPath = cloudReturnPath(appId, returnPath);
         const handoff = allowedReturnPath && typeof verifier === "string" && code ? { verifier, code, returnPath } : undefined;
         try {
           const result = await completeCloudSignIn({
@@ -545,7 +553,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (!productionCloud) publishCloudValidation(sessionHash, now() + VALIDATION_TTL_MS);
           const delegatedIdentity = seal("cloud-identity", {...identity, app: appId, sessionHash});
           const responseHeaders = new Headers({location: result.returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
-          responseHeaders.append("set-cookie", pendingCookie("", 0));
+          responseHeaders.append("set-cookie", clearedPending);
           responseHeaders.append("set-cookie", cookie(appId, token, age));
           responseHeaders.append("set-cookie", identityCookie(appId, delegatedIdentity, age));
           if (appId === "peon" && result.returnPath === "/join" && typeof pending?.receipt === "string" && typeof pending.until === "number") {

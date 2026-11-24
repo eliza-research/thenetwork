@@ -1,5 +1,7 @@
 // Generated from spec/cloudSignIn.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import * as M from "./cloudSignIn.js";
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) @throws {never} */
+export const homeHelpCloudPath = M.homeHelpCloudPath;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export const cloudClockSkewMs = M.cloudClockSkewMs;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) @throws {never} */
@@ -16,6 +18,16 @@ export function canCheckHandoff(signIn) { return M.canCheckHandoff(signIn); }
 export function checkHandoff(signIn, handoffFacts) { return M.checkHandoff(signIn, handoffFacts); }
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) @throws {never} */
 export function lawAnExpiredHandoffIsNeverLive(expiresAt) { return M.lawAnExpiredHandoffIsNeverLive(expiresAt); }
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) @throws {never} */
+export function homeHelpCloudReturnAllowed(app, path) { return M.homeHelpCloudReturnAllowed(app, path); }
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) @throws {never} */
+export function homeHelpCloudFailurePath(callbackApp, pendingApp, path, status) { return M.homeHelpCloudFailurePath(callbackApp, pendingApp, path, status); }
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) @throws {never} */
+export function lawHomeHelpCloudReturnIsExact(app, path) { return M.lawHomeHelpCloudReturnIsExact(app, path); }
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) @throws {never} */
+export function lawHomeHelpCloudFailureRequiresSameApp(callbackApp, pendingApp, path, status) { return M.lawHomeHelpCloudFailureRequiresSameApp(callbackApp, pendingApp, path, status); }
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) @throws {never} */
+export function lawHomeHelpCloudFailureIsFixed(callbackApp, pendingApp, path, status) { return M.lawHomeHelpCloudFailureIsFixed(callbackApp, pendingApp, path, status); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudIssuedAtWithinSkew(issuedAtMs, asOf) { return M.cloudIssuedAtWithinSkew(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */

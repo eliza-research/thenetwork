@@ -7,12 +7,144 @@ import { PgPeopleStore } from "../src/pg-store.ts";
 import type {PeopleStore} from "../src/store.ts";
 import { dropDb, migratedDb, pgAvailable } from "./pg.ts";
 import { handle as routerHandle } from "../../../deploy/router.ts";
+import { NETWORK_LOGIN_PATH, networkTarget } from "../../core/src/svc/network-delegation.ts";
+import { networkDelegationService, networkDelegationServiceRequest, type NetworkBridgeRow } from "../../mcp/test/fixtures/cloud-authorization-producer.ts";
 
 const HOST: Record<AppId, string> = {ntwrk: "localhost:5101", slop: "localhost:5102", peon: "localhost:5103", friends: "localhost:5104"};
 describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
   let url: string, store: PeopleStore;
   beforeAll(async () => {url = await migratedDb("cloud_auth"); store = new PgPeopleStore(url);}, 120_000);
   afterAll(async () => {await (store as PgPeopleStore)?.close(); if (url) await dropDb(url);});
+  test("signed Cloud handoff returns only to the same-app Home Help page", async () => {
+    const phone = "+12125550163";
+    const secret = "local-signed-cloud-provider-fixture".repeat(2);
+    const proxySecret = "local-signed-cloud-proxy-fixture";
+    const target = networkTarget("ntwrk");
+    const other = networkTarget("friends");
+    let now = Date.UTC(2026, 10, 20, 17);
+    const issuedAt = Math.floor(now / 1000) - 11 * 60;
+    let calls = 0;
+    let unavailable = false;
+    const rows = new Map<string, NetworkBridgeRow>();
+    const produce = networkDelegationService({ secret, now: () => now,
+      verifyBearer: async token => token === "verified-fixture"
+        ? { userId: "home-help-steward", issuedAt, expiration: Math.floor(now / 1000) + 3600 } : null,
+      primaryOwner: async () => ({ userId: "11111111-1111-4111-8111-111111111111", organizationId: "22222222-2222-4222-8222-222222222222",
+        stewardUserId: "home-help-steward", e164: phone, agentId: "personal:33333333-3333-4333-8333-333333333333", expiresAt: now + 3_600_000 }),
+      blockedByLogout: async () => false,
+      insert: async row => rows.set(row.code_hash, row),
+      claim: async hash => { const row = rows.get(hash); rows.delete(hash); return row; },
+    });
+    const transport: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const raw = await request.text();
+      expect(await networkDelegationServiceRequest(request, secret, raw, now)).toBe(true);
+      expect(request.headers.get("origin")).toBe(target.origin);
+      expect(new URL(request.url).origin).toBe("https://api.eliza.app");
+      calls++;
+      if (unavailable) throw new DOMException("Local transport timeout", "TimeoutError");
+      const body = JSON.parse(raw);
+      expect(body.target).toEqual(target);
+      if (new URL(request.url).pathname === `${NETWORK_LOGIN_PATH}/exchange`) {
+        expect(Object.keys(body).sort()).toEqual(["code", "codeVerifier", "target"]);
+        const answer = await produce.exchange(body.target, body.code, body.codeVerifier);
+        return Response.json(answer ?? { ok: false }, { status: answer ? 200 : 403 });
+      }
+      expect(Object.keys(body).sort()).toEqual(["proof", "target"]);
+      const identity = await produce.validate(body.target, body.proof);
+      return Response.json(identity ? { ok: true, identity } : { ok: false }, { status: identity ? 200 : 403 });
+    };
+    const api = createPublicApi({ store, proxySecret, now: () => now, hashKey: secret, sessionSecret: secret,
+      env: { PLATFORM_ENV: "production", NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_MODE: "production-v1",
+        NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud.eliza.app", NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api.eliza.app", SERVICE_TURN_SECRET: secret },
+      cloudAuthFetch: transport, cloudValidationTtlMs: 0, turnstile: { verify: async () => false },
+      otp: { name: "local-fixture", send: async () => { throw new Error("Cloud handoff sends no OTP"); } },
+    });
+    const call = (origin: string, path: string, body?: object, cookie?: string) => {
+      const site = new URL(origin);
+      const app = site.origin === target.origin ? "ntwrk" : "friends";
+      return routerHandle(new Request(`${site.origin}${path}`, {
+        method: body ? "POST" : "GET",
+        headers: { ...(body ? { origin: site.origin, "content-type": "application/json" } : {}), ...(cookie ? { cookie } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      }), { ASSETS: { fetch: async () => new Response(null, { status: 404 }) }, BACKEND_ORIGIN: "http://127.0.0.1:8790",
+        APP_ID: app, SITE_HOST: site.host, PLATFORM_PROXY_SECRET: proxySecret,
+      }, (async (input, init) => (await api.fetch(new Request(input, init)))!) as typeof fetch, () => now);
+    };
+    const person = await api.accounts.createPerson(phone, "inbound_message", 30);
+    const membership = { app: "ntwrk" as const, personId: person.id, memberId: "existing_home_help_cloud", state: "active" as const,
+      review: null, firstName: "Existing Member", profile: {}, joinedAt: now, leftAt: null };
+    await store.putMembership(membership);
+
+    const begin = async (wrongVerifier = false) => {
+      const start = await call(target.origin, "/api/auth/cloud/start", { returnPath: "/home-help" });
+      expect(start.status).toBe(200);
+      const authorize = new URL((await start.json()).url);
+      expect(authorize.origin + authorize.pathname).toBe("https://cloud.eliza.app/network/sign-in");
+      expect([...authorize.searchParams.keys()].sort()).toEqual(["app", "challenge", "realm", "state"]);
+      expect(authorize.searchParams.get("app")).toBe(target.app);
+      expect(authorize.searchParams.get("realm")).toBe(target.realm);
+      const state = authorize.searchParams.get("state")!;
+      const challenge = wrongVerifier ? "0".repeat(64) : authorize.searchParams.get("challenge")!;
+      const minted = await produce.mint("verified-fixture", target, challenge, state);
+      const callback = new URL(minted!.url);
+      expect(callback.origin + callback.pathname).toBe(target.callback);
+      expect([...callback.searchParams.keys()].sort()).toEqual(["code", "state"]);
+      return { path: callback.pathname + callback.search, pending: start.headers.getSetCookie()[0]!.split(";")[0]!, state };
+    };
+    const failed = (response: Response, error: string) => {
+      expect(response.status).toBe(303);
+      expect(response.headers.get("location")).toBe(`/home-help?error=${error}`);
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(response.headers.getSetCookie()).toEqual([expect.stringMatching(/^__Secure-cloud_pending=;.*Max-Age=0/)]);
+    };
+
+    const success = await begin();
+    expect((await call(other.origin, success.path, undefined, success.pending)).status).toBe(400);
+    expect((await call(target.origin, success.path)).status).toBe(400);
+    expect((await call(target.origin, success.path, undefined, success.pending + "tampered")).status).toBe(400);
+    failed(await call(target.origin, success.path.replace(success.state, "wrong"), undefined, success.pending), "sign_in_expired");
+    expect(calls).toBe(0);
+    const completed = await call(target.origin, success.path + "&returnPath=https://evil.example/", undefined, success.pending);
+    expect(completed.status).toBe(303);
+    expect(completed.headers.get("location")).toBe("/home-help");
+    expect(completed.headers.get("referrer-policy")).toBe("no-referrer");
+    const cookies = completed.headers.getSetCookie().map(value => value.split(";")[0]!).filter(value => value.startsWith("__Host-")).join("; ");
+    const token = parseCookies(cookies).get("__Host-sid")!;
+    const session = (await api.sessions.authenticate("ntwrk", token))!.session;
+    expect(session.startedAt).toBe(issuedAt * 1000);
+    expect(session.personId).toBe(person.id);
+    expect(api.sessions.fresh(session)).toBe(false);
+    expect((await call(target.origin, "/api/me", undefined, cookies)).status).toBe(200);
+    expect((await call(other.origin, "/api/me", undefined, cookies)).status).toBe(401);
+    expect((await call(target.origin, "/api/me/phone/start", { phone: "+12125550164" }, cookies)).status).toBe(409);
+    expect((await call(target.origin, "/api/me/phone/confirm", { code: "123456" }, cookies)).status).toBe(409);
+    expect(await store.memberships(person.id)).toEqual([membership]);
+
+    for (const returnPath of ["/home-help#hh_canary-1", "/home-help?address=Canary", "//evil.example/home-help", "/phone", "/oauth/cloud-return?rid=aaaaaaaaaaaaaaaaaaaaaa"]) {
+      expect((await call(target.origin, "/api/auth/cloud/start", { returnPath })).status).toBe(400);
+    }
+    expect((await call(other.origin, "/api/auth/cloud/start", { returnPath: "/home-help" })).status).toBe(400);
+    expect((await call(target.origin, "/api/auth/cloud/start", { returnPath: "/home-help", app: "friends" })).status).toBe(400);
+
+    failed(await call(target.origin, success.path, undefined, success.pending), "sign_in_refused");
+    const wrongVerifier = await begin(true);
+    failed(await call(target.origin, wrongVerifier.path, undefined, wrongVerifier.pending), "sign_in_refused");
+    const held = await begin();
+    await store.setPhoneHold(phone, "recycled_number", now);
+    failed(await call(target.origin, held.path, undefined, held.pending), "sign_in_refused");
+    await store.setPhoneHold(phone, null, now);
+    const timeout = await begin();
+    unavailable = true;
+    failed(await call(target.origin, timeout.path, undefined, timeout.pending), "sign_in_unavailable");
+    unavailable = false;
+    const expired = await begin();
+    now += 300_000;
+    const beforeExpired = calls;
+    failed(await call(target.origin, expired.path, undefined, expired.pending), "sign_in_expired");
+    expect(calls).toBe(beforeExpired);
+    expect(await store.memberships(person.id)).toEqual([membership]);
+  });
   test("local Cloud handoff binds state, PKCE, app and live delegated identity; legacy apps retain OTP", async () => {
     const phone = "+12125550161";
     let now = Date.UTC(2026, 9, 9, 15);

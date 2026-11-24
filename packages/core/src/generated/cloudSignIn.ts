@@ -17,6 +17,8 @@ export type Event =
   | { type: "checkPhone"; phoneAllowed: boolean }
   | { type: "recordSession" };
 
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+export const homeHelpCloudPath: string = "/home-help";
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export const cloudClockSkewMs: number = exact_cloudSignIn(30 * 1000);
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
@@ -55,6 +57,40 @@ export function checkHandoff(signIn: SignIn, handoffFacts: HandoffFacts): SignIn
 export function lawAnExpiredHandoffIsNeverLive(expiresAt: number): boolean {
   //@ ensures \result === true
   return !liveBeforeDeadline(expiresAt, expiresAt);
+}
+
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+//@ pure
+export function homeHelpCloudReturnAllowed(app: string, path: string): boolean {
+  return app === "ntwrk" && path === homeHelpCloudPath;
+}
+
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+//@ pure
+export function homeHelpCloudFailurePath(callbackApp: string, pendingApp: string, path: string, status: number): string {
+  return callbackApp !== pendingApp || !homeHelpCloudReturnAllowed(callbackApp, path) ? "" : (status === 400 ? "/home-help?error=sign_in_expired" : (status === 403 ? "/home-help?error=sign_in_refused" : (status === 503 ? "/home-help?error=sign_in_unavailable" : "")));
+}
+
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+//@ pure
+export function lawHomeHelpCloudReturnIsExact(app: string, path: string): boolean {
+  //@ ensures \result === true
+  return homeHelpCloudReturnAllowed(app, path) === (app === "ntwrk" && path === "/home-help");
+}
+
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+//@ pure
+export function lawHomeHelpCloudFailureRequiresSameApp(callbackApp: string, pendingApp: string, path: string, status: number): boolean {
+  //@ ensures \result === true
+  return !(callbackApp !== pendingApp || !homeHelpCloudReturnAllowed(callbackApp, path)) || homeHelpCloudFailurePath(callbackApp, pendingApp, path, status) === "";
+}
+
+/** Story: Use my Cloud identity to sign in to this app / The Home Help callback returns to the same Network site (spec/cloudSignIn.md) */
+//@ pure
+export function lawHomeHelpCloudFailureIsFixed(callbackApp: string, pendingApp: string, path: string, status: number): boolean {
+  //@ ensures \result === true
+  const local_1 = homeHelpCloudFailurePath(callbackApp, pendingApp, path, status);
+  return local_1 === "" || local_1 === "/home-help?error=sign_in_expired" || local_1 === "/home-help?error=sign_in_refused" || local_1 === "/home-help?error=sign_in_unavailable";
 }
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
@@ -105,8 +141,8 @@ export function canCheckIdentity(signIn: SignIn): boolean {
 //@ pure
 export function checkIdentity(signIn: SignIn, identityAvailable: boolean, identityValid: boolean): SignIn {
   //@ ensures (inv(signIn) && canCheckIdentity(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
-  const local_1 = identityAvailable && identityValid;
-  return { ...signIn, identityAccepted: local_1, phase: !identityAvailable ? "CloudUnavailable" : (local_1 ? "AwaitingPhone" : "DenySignIn") };
+  const local_2 = identityAvailable && identityValid;
+  return { ...signIn, identityAccepted: local_2, phase: !identityAvailable ? "CloudUnavailable" : (local_2 ? "AwaitingPhone" : "DenySignIn") };
 }
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
