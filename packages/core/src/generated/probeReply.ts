@@ -55,6 +55,26 @@ export function pickedTimes(chosen: string[], offered: string[]): string[] {
   return chosen.length > 0 ? chosen : offered;
 }
 
+/** Story: Make a choice about a proposed opportunity / A yes that refuses the remainder as well does not book it (spec/probeReply.md) */
+//@ pure
+export function yesBooksRefusedRemainder(refusedRemainder: boolean, affirmedRemainder: boolean): boolean {
+  return !refusedRemainder || affirmedRemainder;
+}
+
+/** Story: Make a choice about a proposed opportunity / A yes that refuses the remainder as well does not book it (spec/probeReply.md) */
+//@ pure
+export function lawAYesThatRefusesTheRemainderBooksNothing(refusedRemainder: boolean): boolean {
+  //@ ensures \result === true
+  return !refusedRemainder || !yesBooksRefusedRemainder(refusedRemainder, false);
+}
+
+/** Story: Make a choice about a proposed opportunity / A yes that refuses the remainder as well does not book it (spec/probeReply.md) */
+//@ pure
+export function lawAnAffirmedRemainderBooksTheRest(refusedRemainder: boolean): boolean {
+  //@ ensures \result === true
+  return !refusedRemainder || yesBooksRefusedRemainder(refusedRemainder, true);
+}
+
 /** Story: Make a choice about a proposed opportunity / A direct ordinal selects that position in the offer (spec/probeReply.md) */
 //@ pure
 export function probeOrdinalIndex(ordinal: number, optionCount: number): number {

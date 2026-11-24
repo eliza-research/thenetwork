@@ -73,19 +73,19 @@ pure def pickedTimes(chosen: List[str], offered: List[str]): List[str] =
   if (chosen.length() > 0) chosen else offered
 ```
 
-### A yes that only refuses named times does not book the rest
+### A yes that refuses the remainder as well does not book it
 
-A yes that refuses one or more offered times, without choosing a remaining time, does not book the times the member never affirmed: the probe stays open and the member is asked again. A phrase that affirms the remainder ("the rest work", "everything else is fine", "I'm free") still books the times that were not refused.
+A yes that refuses named times still books the times that were not refused ("yes, not Sunday though" picks the other two). But when the reply also refuses the remainder itself ("the rest don't work", "the rest are busy"), the refused remainder is never booked: the probe stays open and the member is asked again. A phrase that affirms the remainder ("the rest work", "everything else is fine", "I'm free") still books the times that were not refused.
 
 ```quint
-pure def yesBooksUnmentionedTimes(refusedOffered: bool, affirmedRemainder: bool): bool =
-  not(refusedOffered) or affirmedRemainder
+pure def yesBooksRefusedRemainder(refusedRemainder: bool, affirmedRemainder: bool): bool =
+  not(refusedRemainder) or affirmedRemainder
 
-pure def lawAYesThatOnlyRefusesBooksNothing(refusedOffered: bool): bool =
-  refusedOffered implies not(yesBooksUnmentionedTimes(refusedOffered, false))
+pure def lawAYesThatRefusesTheRemainderBooksNothing(refusedRemainder: bool): bool =
+  refusedRemainder implies not(yesBooksRefusedRemainder(refusedRemainder, false))
 
-pure def lawAnAffirmedRemainderBooksTheRest(refusedOffered: bool): bool =
-  refusedOffered implies yesBooksUnmentionedTimes(refusedOffered, true)
+pure def lawAnAffirmedRemainderBooksTheRest(refusedRemainder: bool): bool =
+  refusedRemainder implies yesBooksRefusedRemainder(refusedRemainder, true)
 ```
 
 ### A direct ordinal selects that position in the offer
