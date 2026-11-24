@@ -17,7 +17,7 @@ The server closed two earlier gaps (page contracts addendum of 2026-11-22): a re
 
 ### The page reads the session when it opens
 
-The page opens and shows a loading step while it reads the session. A signed-in session goes to the new-number step. A signed-out session goes to the sign-in step. When the page cannot read the session, it goes to the sign-in step and shows that the server cannot be reached. When a Cloud sign-in came back with an error, the sign-in step shows the notice of that error (`noticeOnOpen`). After the session read, the page asks for the sign-in mode, also when it is signed in, because the result of the change depends on the mode.
+The page opens and shows a loading step while it reads the session. The first session answer starts with no phone change in progress. A signed-in session goes to the new-number step. A signed-out session goes to the sign-in step. When the page cannot read the session, it goes to the sign-in step and shows that the server cannot be reached. When a Cloud sign-in came back with an error, the sign-in step shows the notice of that error (`noticeOnOpen`). After the session read, the page asks for the sign-in mode, also when it is signed in, because the result of the change depends on the mode.
 
 ```quint
 import oneStepPage.* from "./oneStepPage"
@@ -38,7 +38,8 @@ pure def openPhonePage(p: PhonePage): PhonePage = { ...p, screen: PhoneLoading }
 
 pure def canPhoneLoaded(p: PhonePage): bool = p.screen == PhoneLoading
 pure def phoneLoaded(p: PhonePage, session: StepSession, cloudReturn: CloudReturn): PhonePage =
-  { ...p, screen: if (session == SessionSignedIn) PhoneNewNumber else PhoneSignIn, notice: noticeOnOpen(session, cloudReturn) }
+  { ...p, screen: if (session == SessionSignedIn) PhoneNewNumber else PhoneSignIn, notice: noticeOnOpen(session, cloudReturn),
+    changeStarted: false }
 
 pure def phoneScreenWaiting(p: PhonePage): bool =
   p.screen == PhoneOpening or p.screen == PhoneLoading or p.screen == PhoneChecking
@@ -46,7 +47,7 @@ pure def phoneScreenWaiting(p: PhonePage): bool =
 
 ### The sign-in step confirms the current number and then reads the session again
 
-The sign-in step embeds the shared sign-in. The page reads the sign-in mode on any screen after loading. The other sign-in events come only on the sign-in step. A verified code shows a checking step, and the page reads the session again. A signed-in session goes to the new-number step and clears the notice. A signed-out session starts the sign-in again and says that the session ended. A session that the page cannot read starts the sign-in again and says that the server cannot be reached. The Cloud sign-in leaves the page and comes back to `/phone`, where the page opens again and reads the new session. The simulator tries the sign-in attempts of the library (`attemptValues`).
+The sign-in step embeds the shared sign-in. The page reads the sign-in mode on any screen after loading and stays on that screen. The other sign-in events come only on the sign-in step. A successful code verification answer shows a checking step, and the page reads the session again. A signed-in session goes to the new-number step and clears the notice. A signed-out session starts the sign-in again and says that the session ended. A session that the page cannot read starts the sign-in again and says that the server cannot be reached. The Cloud sign-in leaves the page and comes back to `/phone`, where the page opens again and reads the new session. The simulator tries the sign-in attempts of the library (`attemptValues`).
 
 ```quint
 pure def canMoveSignIn(p: PhonePage, attempt: SignInAttempt): bool =
@@ -55,7 +56,7 @@ pure def canMoveSignIn(p: PhonePage, attempt: SignInAttempt): bool =
 
 pure def moveSignIn(p: PhonePage, attempt: SignInAttempt): PhonePage =
   val s = signInMove(p.signIn, attempt)
-  { ...p, signIn: s, screen: if (s.stage == SignInVerified) PhoneChecking else p.screen }
+  { ...p, signIn: s, screen: if (attempt.kind == AttemptAnswerVerify and s.stage == SignInVerified) PhoneChecking else p.screen }
 
 pure def phoneSignInAgain(notice: StepNotice, p: PhonePage): PhonePage =
   { ...p, screen: PhoneSignIn, signIn: signInAgain(p.signIn), pending: PhoneIdle, error: PhoneNoError,

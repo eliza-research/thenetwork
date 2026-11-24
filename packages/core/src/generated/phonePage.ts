@@ -82,7 +82,7 @@ export function phoneLoaded(p: PhonePage, session: oneStepPage_StepSession, clou
   //@ ensures (inv(p) && canPhoneLoaded(p)) ==> alwaysRequestBelongsToItsScreen(\result)
   //@ ensures (inv(p) && canPhoneLoaded(p)) ==> stepMoveOnlyFromConfirm(p, "phoneLoaded", \result)
   //@ ensures (inv(p) && canPhoneLoaded(p)) ==> stepOneRequestAtATime(p, \result)
-  return { ...p, screen: session === "SessionSignedIn" ? "PhoneNewNumber" : "PhoneSignIn", notice: oneStepPage_noticeOnOpen(session, cloudReturn) };
+  return { ...p, screen: session === "SessionSignedIn" ? "PhoneNewNumber" : "PhoneSignIn", notice: oneStepPage_noticeOnOpen(session, cloudReturn), changeStarted: false };
 }
 
 /** Story: Change my number from the link in my conversation / The page reads the session when it opens (spec/phonePage.md) */
@@ -112,7 +112,7 @@ export function moveSignIn(p: PhonePage, attempt: oneStepPage_SignInAttempt): Ph
   //@ ensures (inv(p) && canMoveSignIn(p, attempt)) ==> stepMoveOnlyFromConfirm(p, "moveSignIn", \result)
   //@ ensures (inv(p) && canMoveSignIn(p, attempt)) ==> stepOneRequestAtATime(p, \result)
   const local_0: oneStepPage_StepSignIn = oneStepPage_signInMove(p.signIn, attempt);
-  return { ...p, signIn: local_0, screen: local_0.stage === "SignInVerified" ? "PhoneChecking" : p.screen };
+  return { ...p, signIn: local_0, screen: attempt.kind === "AttemptAnswerVerify" && local_0.stage === "SignInVerified" ? "PhoneChecking" : p.screen };
 }
 
 /** Story: Change my number from the link in my conversation / The sign-in step confirms the current number and then reads the session again (spec/phonePage.md) */
