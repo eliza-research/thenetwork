@@ -141,6 +141,7 @@ import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type Photo
 import { APPEARANCE_PREFIX, appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { memberExportFacetAllowed, memberExportGatheringsAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { fetchMediaCapped, PHOTO_APP, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
+import { PhotoUploadLinks } from "../../platform/src/photo-upload-link.ts";
 import { textPhotoLineAllowed } from "../../core/src/generated/photoPolicy.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
@@ -412,6 +413,7 @@ export class NetworkService implements RuntimeHost {
   private readonly photoDeliveryOrigin?: string;
   /** Photos sent by text (photoIntake.ts). */
   readonly photoIntake: PhotoIntake;
+  readonly photoLinks: PhotoUploadLinks;
   /** Review items already alerted for passing their app's SLA (this instance). */
   private readonly slaAlerted = new Set<string>();
   private readonly photoBaseUrl?: string;
@@ -512,8 +514,16 @@ export class NetworkService implements RuntimeHost {
       authorize: (input, tx) => this.photoRelayParties(input, tx),
       threads: (app, personId) => this.photoRelayThreads(app, personId),
     });
+    this.photoLinks = new PhotoUploadLinks({
+      sql: this.sql, photos: this.photos, hashKey: this.hashKey, now: () => this.clock.now(), log: this.log,
+      origin: app => stagingSiteOrigins(this.env)[app] ?? `https://${this.apps[app].domain}`,
+      held: async (personId, app, tx) => {
+        const hold = await currentStaffHold(tx, app, personId);
+        return hold.local !== null || hold.global !== null;
+      },
+    });
     this.photoIntake = new PhotoIntake({
-      people: this.people, accounts: this.accounts, photos: this.photos, phoneKey: e164 => this.phoneKey(e164), now: () => this.clock.now(),
+      people: this.people, accounts: this.accounts, photos: this.photos, links: this.photoLinks, phoneKey: e164 => this.phoneKey(e164), now: () => this.clock.now(),
       fetchMedia: o.fetchMedia ?? fetchMediaCapped, log: this.log,
       reply: async (e164, text, key) => { const rt = this.runtimeFor("slop"); if (rt) await this.direct(rt, e164, text, key, "reply"); },
     });
@@ -1702,7 +1712,7 @@ export class NetworkService implements RuntimeHost {
     this.api ??= createPublicApi({
       store: this.people, turnstile: this.apiOptions?.turnstile ?? turnstileFromEnv(this.env),
       hashKey: this.hashKey, apps: this.apps, env: this.env,
-      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos, photoRelay: this.photoRelay,
+      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos, photoRelay: this.photoRelay, photoLinks: this.photoLinks,
       participation: ctx => this.memberParticipation(ctx.app, ctx.memberId),
       onResume: ctx => this.resumeMember(ctx.app, ctx.memberId),
       home: ctx => this.memberHome(ctx),
@@ -1969,6 +1979,8 @@ export class NetworkService implements RuntimeHost {
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
+    if (!banned && e164 && !kw && !profileRead && !intentCommand && !ev.mediaUrls?.length &&
+        await this.photoIntake.addRequest(e164, ev.text, rowId, route.app)) return "handled";
     if (!banned && e164 && !kw && !profileRead && !intentCommand && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
     if (!banned && e164 && ev.mediaUrls?.length && !profileRead && !intentCommand &&
         textPhotoLineAllowed(route.shared, route.app === PHOTO_APP)) {

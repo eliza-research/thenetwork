@@ -439,7 +439,7 @@ export class PgPhotoStore implements PhotoStore {
 // ------------------------------------------------------------------------------------ service
 export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member" | "photo_set_changed";
 /** Membership states in which a member may be rated (left or removed: never). */
-const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
+export const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
 
 function ratingRows(rows: PhotoRow[]): PhotoRow[] {
@@ -497,14 +497,15 @@ export class PhotoService {
     return this.adult(personId, app, tx);
   }
 
-  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined): Promise<PhotoResult<{ id: string }>> {
+  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, authorizeLink?: PhotoAdmission): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     let change = stepPhotoChange(photoChangeInitial, {
       type: "beginUpload", appAllowed: PHOTO_APPS.includes(app), consentCurrent: consentVersion === PHOTO_CONSENT.version,
     });
     if (change.phase === "UnsupportedApp") return { ok: false, reason: "app_not_allowed" };
     if (change.phase === "ConsentMissing") return { ok: false, reason: "consent_required" };
-    const who = await this.mayTake(personId, app);
+    const admit: PhotoAdmission = async tx => (await this.mayTake(personId, app, tx)) ?? await authorizeLink?.(tx);
+    const who = await admit();
     change = stepPhotoChange(change, { type: "checkUploader", eligible: who === undefined });
     if (!canScreenFile(change)) return { ok: false, reason: who ?? "adults_only" };
     const tooLarge = input.length > PHOTO_MAX_BYTES;
@@ -527,7 +528,7 @@ export class PhotoService {
     const refused = await this.o.meta.publish({
       id, personId, app, storageKey: key, contentType: type, bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now(),
-    }, tx => this.mayTake(personId, app, tx));
+    }, admit);
     if (refused) {
       await this.o.storage.delete(key);
       return { ok: false, reason: refused };

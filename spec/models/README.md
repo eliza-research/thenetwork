@@ -59,6 +59,7 @@ entire imported model.
 | [peon_manager_questions](peon_manager_questions.md) | Manager posting and introduction questions | [Peon hire dispatch](../peonHireDispatch.md) |
 | [phone_identity](phone_identity.md) | Phone number identity | [Phone change lifecycle](../phoneChange.md) |
 | [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | [Selected-photo request and review](../photoRelayReview.md), [selected-photo claim and fetch](../photoRelayItem.md) |
+| [photo_upload_entry](photo_upload_entry.md) | Browser photo upload link | [One-time upload token](../photoUploadLink.md), [photo upload and retention](../photoRetention.md) |
 | [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md), [upload and retention](../photoRetention.md), [asynchronous rating lifecycle](../photoRating.md) |
 | [plan_crew](plan_crew.md) | Crew invitations and sessions | [Crew offer state machine](../crewOffer.md), [formation rules](../planDecision.md), [Friends weekly pass reservations](../friendsWeek.md) |
 | [plan_run](plan_run.md) | Group plans and fallback | [Reviewed group journey](../reviewedGroupJourney.md), [Single-slot plan formation](../planFormation.md), [plan reply, fallback and allowance](../planDecision.md), [plan dispatch](../planDispatch.md), [Friends weekly pass reservations](../friendsWeek.md), [Friends partner time choices](../friendsPlanTimeChoice.md), [booked meeting settlement](../meetingSettlement.md) |
