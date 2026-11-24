@@ -1468,6 +1468,26 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const ordinals = completeProbeOrdinals(t, directOrdinals.refusals);
   const joinedRefusals = joinedProbeRefusals(t, [...mentions, ...ordinals], memberChoiceAt);
   const joinedRefusalClauses = new Set([...joinedRefusals].map(m => clauseAt(t, m.at, m.end - m.at)));
+  // "either" is the negative twin of "too": once the reply refuses an offered time,
+  // "Sunday either" means Sunday does not work either, not that Sunday works. A bare
+  // "either" ("either works for me") still means any of them, and "either X or Y" is a
+  // choice between two days, so only an "either" glued to one named day joins the refusal.
+  const refusedElsewhere = mentions.some(m => memberChoiceAt(m.at)
+    && (probeTimeIsRefused(t, m.at, m.end) || joinedRefusals.has(m)));
+  const eitherRefusalAt = (m: TimeMention) => {
+    if (!refusedElsewhere || !m.day && !m.group) return -1;
+    // The "either" belongs to the whole list when the clause names another day that
+    // was not refused ("sun and sat either but not sunday" keeps Saturday): only a
+    // lone named day in its clause joins the refusal.
+    const clause = clauseAt(t, m.at, m.end - m.at);
+    if (mentions.some(other => other !== m && clauseAt(t, other.at, other.end - other.at) === clause
+      && matchingOffered(other).some(key => !neg.has(key)))) return -1;
+    const trailing = /^\s*,?\s*(?:(?:too|also|as\s+well)\s*,?\s*)?either\b(?!\s+(?:way|one|option|time|or)\b)/.exec(t.slice(m.end));
+    if (trailing) return m.end + trailing.index + trailing[0].lastIndexOf("either");
+    const leading = /\beither\s*$/.exec(t.slice(0, m.at));
+    if (leading && !new RegExp(`^\\s+or\\s+(?:${DAY_TOKEN})\\b`).test(t.slice(m.end))) return leading.index;
+    return -1;
+  };
   let weakOrdinalMissing = false;
   for (const ordinal of ordinals) {
     if (!memberChoiceAt(ordinal.at)) continue;
@@ -1523,7 +1543,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       && CURRENT_PROBE_CHOICE.test(t.slice(m.end).replace(/[.!]\s*$/, ""));
     if (clarifiedTimes && !currentAlternative && probeTimeIsRecurring(t, m.at, m.end)) continue;
     const matching = matchingOffered(m);
-    const refused = exclusion || probeTimeIsRefused(t, m.at, m.end) || joinedRefusals.has(m);
+    const eitherAt = eitherRefusalAt(m);
+    const refused = exclusion || probeTimeIsRefused(t, m.at, m.end) || joinedRefusals.has(m) || eitherAt >= 0;
     if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
       unresolved.push(m);
     } else if (refused) {
@@ -1532,7 +1553,19 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       contradictedExclusion ||= exclusion && (NEG_AFTER.test(t.slice(m.end)) || REFUSES_OFFERED_TIME.test(t.slice(m.end)));
       refusedGroup ||= !!m.group;
       rememberQualifiedTimeRefusal(m.at, m.end);
-      refuse(matching, exclusion ? undefined : clauseAt(t, m.at, m.end - m.at));
+      // An either-refusal records no clause: its clause is shared with the other
+      // days in the list ("sat and sun either"), and recording it would make the
+      // weak branch read the unrefused day's pick as refused too.
+      refuse(matching, exclusion || eitherAt >= 0 ? undefined : clauseAt(t, m.at, m.end - m.at));
+      // A comma can put the "either" in its own clause ("Sunday, either"): mark that
+      // clause refused too, so the weak "either" branch sees the refusal instead of
+      // falling through to booking the times that were never mentioned. Only when the
+      // clause names no other time, so a shared clause ("sat and sun either") keeps
+      // picking the day that was not refused.
+      if (eitherAt >= 0) {
+        const eitherClause = clauseAt(t, eitherAt, "either".length);
+        if (!mentions.some(m => clauseAt(t, m.at, m.end - m.at) === eitherClause)) refusedClauses.add(eitherClause);
+      }
       if (exclusion) for (const key of matching) namedExcluded.add(key);
     } else if (unbound && !m.day || !matching.length || !m.group && matching.length > 1 && (explicitTimesOnly || !m.part)
       || m.part && !m.day && !m.group && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
@@ -1593,7 +1626,18 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const weakCues = (explicitTimesOnly && !clarifiedTimes) || strongAll ? [] : [...t.matchAll(ALL_WEAK)].filter(cue => {
     const clause = clauseAt(t, cue.index!, cue[0].length);
     const refusalOnly = joinedRefusalClauses.has(clause) && !pickedClauses.has(clause);
-    return memberChoiceAt(cue.index!) && !(refusalOnly && picked.length > 0);
+    // An "either" glued to refused days is spent as the refusal's "also": it is not
+    // a broad pick for the other days ("Sunday either, or Thursday" asks again). But
+    // when the clause also names a day that was not refused ("sat and sun either but
+    // not sunday"), the cue still picks that day, so only a clause whose every named
+    // day is refused spends the cue.
+    const clauseFrom = Math.max(0, ...[...t.slice(0, cue.index!).matchAll(CLAUSE_START)].map(m => m.index! + m[0].length));
+    const clauseEnd = t.slice(cue.index! + cue[0].length).search(/[.,;!?\\n]|\\bbut\\b/);
+    const clauseTo = clauseEnd < 0 ? t.length : cue.index! + cue[0].length + clauseEnd;
+    const clauseDays = mentions.filter(m => m.at >= clauseFrom && m.at < clauseTo);
+    const eitherSpent = cue[0].startsWith("either") && clauseDays.length > 0
+      && clauseDays.every(m => matchingOffered(m).every(key => neg.has(key)));
+    return memberChoiceAt(cue.index!) && !(refusalOnly && picked.length > 0) && !eitherSpent;
   });
   const weakAt = weakCues[0];
   const weakRefusal = weakCues.some(cue => refusedClauses.has(clauseAt(t, cue.index!, cue[0].length)));
