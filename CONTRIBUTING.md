@@ -508,13 +508,4 @@ Write every issue and PR so that a person who is not technical can understand it
 
 ## 14. Development rules
 
-- Network code reads time only from `Clock`. Do not use `Date.now()`, `new Date()` with no argument, or `Math.random()` in Network code (PRD 31.1).
-- Network code never reads hidden persona truth. Only the simulator, the oracle and the judges can read it.
-- Every outbound message goes through the leak guard (`packages/core/src/guard.ts`). Every opportunity, whatever its origin, gets one recorded approval before any member is contacted: the review judge, or a named staff member for an item the judge holds (owner decisions D15 to D17 of 2026-11-22). A held item expires unsent at its deadline. Simulator runs use a deterministic stand-in judge (`simulatedReviewJudge`). Say so when you report a run.
-- Members under 18 get friendship introductions only, on friends.help and in the ntwrk Friend lane, under `teenFriendAgeRule` ([friendIntroAge](spec/friendIntroAge.md)). They never get dates, work, photos, a looks rating, a number relay or a photo relay. slop.date and peon.biz never match a minor. Nobody aged 19 or more is ever connected to a minor.
-- Every person in a teen introduction is teen ready and aged 13 to 18. Birth dates are at most 2 calendar years apart.
-- The review judge approves a teen introduction with the strict rubric, or staff approve an item that the judge holds.
-- A group plan, table or crew with a minor is on friends.help only (`teenGroupPlanApp`). An ntwrk Friend circle can also hold a minor. Every group with a minor has 2 to 6 people (`teenRosterSizeAllowed`), and every pair with a minor passes the rule. A friends.help group with a minor meets at an all-ages public place.
-- Teen introductions are on by default. One staff member can stop them on every app (`teenStop`).
-- Use `defaultLLM()`, `judgeLLM()` and `recommenderLLM()` in `packages/core/src/llm.ts`. Do not add a new LLM client or provider.
-- Do not commit `.env`, `runs/` or real member data.
+Follow the [product policies](spec/product/policies.md), the [pilot validation rules](spec/product/pilot.md) and the linked executable specs. Do not commit `.env`, `runs/` or real member data.

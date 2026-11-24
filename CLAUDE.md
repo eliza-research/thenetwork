@@ -1,281 +1,186 @@
-# AGENTS.md
+# Operating procedure for agents
 
-Read this file, [README.md](README.md), [SPEC.md](SPEC.md), and
-[CONTRIBUTING.md](CONTRIBUTING.md) before working. Keep `AGENTS.md` and `CLAUDE.md` byte-identical.
+Start at the [product specification](spec/product/README.md) for the stories,
+rules and links to their Quint models. `gen/` is derived from the specs. Keep
+the spec true to what the user wants and `pnpm check` green.
 
-This procedure applies the [Vibestack agent guide](tools/vibestack/AGENTS.md)
-to The Network.
-
-The Network is a [Slop](https://slop.cash) bounty repository. The monthly
-pool is 1,000 USDC. Maintainers accept outcomes on GitHub. Slop scores
-accepted merges and pays after maintainer review. There is no escrow.
-
-## Before you start
-
-1. Star and fork the repository with the contributor's own GitHub account.
-   Open every PR from your fork into `develop`, the repository's main branch.
-2. Read the [product specification](spec/product/README.md) and the affected
-   Vibestack stories and rules. The product specification owns launch scope.
-   The [founder decision history](spec/product/source/founder-decisions.md)
-   records the source decisions.
-3. Read the affected package's README or design document and its latest
-   [result](docs/results/SUMMARY.md).
-4. Use the [sync skill](.agents/skills/sync/SKILL.md) when editing a story,
-   rule, model, or production code that uses generated logic. Use the
-   [design skill](.agents/skills/design/SKILL.md) for approved changes to
-   anything a person sees.
-
-## Sources of behavior
-
-- `spec/<name>.md` holds a story, its rules, and the Quint each rule means.
-  Put pure decisions there and have the existing package call the generated
-  code. Keep I/O, text parsing, and storage in the shell.
-- `spec/models/` holds the existing action-based Quint flow models. They
-  preserve behavior and trace coverage while each flow moves into the
-  Vibestack generator's supported subset.
-- `gen/` is disposable output. The production build imports generated
-  TypeScript published by `pnpm run spec:sync` into
-  `packages/core/src/generated/`. Commit those copies with their specs.
-  The same command compiles the serving shells under
-  `packages/core/src/vibe/`. Commit emitted JavaScript and declarations
-  with each shell and spec. Keep generated code free of manual edits.
-- Change the model and implementation together. Compare their states, guards,
-  writes, retries, leases, limits, and invariants. Follow the
-  [top-level stories](spec/product/stories.md), executable rules, and
-  [whole-flow models](spec/models/README.md) exactly. Verify that the
-  approved behavior is fully implemented and integrated through the
-  application's real entry points.
-- The [signup handoff](spec/agentPhoneHandoff.md) gives the person one
-  app-bound link to verify their phone and authorize profile access. The person
-  enters the code on the app's site. Keep the code and browser session outside
-  the assistant conversation.
-- The [Eliza wire contract](packages/core/src/svc/contract.ts) mirrors upstream
-  byte for byte. The [signing file](packages/core/src/svc/svc-auth.ts) has a
-  local opening comment and mirrors the upstream implementation. Land wire and
-  signing changes upstream first. Use `pnpm run check:mirror` to compare them.
-
-## The Network contribution rules
-
-[CONTRIBUTING.md](CONTRIBUTING.md) defines the full workflow.
-
-- Star and fork first. Work from the fork.
-- Stay within the launch scope in the [product specification](spec/product/README.md). Get written maintainer approval for new scope.
-- Accepted: reproduced bugs, matching-algorithm and simulation validation, measured hill-climbing, security, and tests that prove real behavior (CONTRIBUTING.md section 3).
-- Not accepted: UI, style or copy changes, preference refactors, speculative features, busywork tests, mock-only proof, placeholders or TODOs, unverified claims, duplicates and secrets.
-- A UI change must fix a broken user flow. Include before and after
-  screenshots and recordings.
-- For every code change, show before and after results with the same inputs.
-  Use real model calls for changes to model-backed behavior.
-- Test changed agent flows in the affected clients. Report the client,
-  version, provider, model, and result for each (CONTRIBUTING.md section 8).
-- Keep the diff focused. Remove low-quality output, unnecessary files, dead
-  or redundant code, and superseded implementations.
-- Run the [full validation suite](CONTRIBUTING.md#6-the-validation-layer)
-  for every PR. Quint, Dafny, Bombadil, and all other required checks must
-  pass before merge. For a bug fix, add a sim gate, scenario, corpus row,
-  integration case, or e2e case that fails before the fix.
-- Defend the design: give two other implementations.
-- Before opening or marking a PR ready, complete its `## Evidence` section.
-  Include change types, test results and proof of the change. Add before and
-  after UI screenshots and recordings, redacted non-UI logs, benchmarks, or
-  on-device results for the affected paths. Follow the
-  [evidence policy](CONTRIBUTING.md#evidence).
-- Maintainers close submissions that fail to prove a useful change or add
-  complexity to unlikely paths without proof of reachability and material impact.
-  Eligible Slop.cash submissions incur a Points debit under the published policy.
-- Write in ASD-STE100 Simplified Technical English (CONTRIBUTING.md section 13).
-
-**Security suite** (`pnpm run security`, also part of `pnpm run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
-
-**Postgres in the simulations.** The safety, ops, pipeline, pipeline-slop and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/observatory/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
-
-## Code invariants
-
-Do not break these. `pnpm run sim` checks them in every simulated run.
-
-- Network code reads time only from `Clock` (`packages/core`). No `Date.now()`, no `new Date()` without an argument, no `Math.random()`. Randomness comes from the seeded RNG.
-- Network code never reads hidden persona truth (`Persona.hidden`, the oracle, `hidden_truth.jsonl`). Only `packages/sim` and the judges that run inside the simulator can read it.
-- Every opportunity, whatever its origin, gets one recorded approval before any member is contacted: the review judge (`gpt-6-luna`, strict rubric when the roster has a minor) or, for an item the judge holds, a named staff member. A held item expires unsent at its deadline. Simulator runs use a deterministic stand-in judge; say so. (Owner decisions D15 to D17 of 2026-11-22, [automated review](spec/automatedReview.md): no staff reviewer reads an approved introduction. The judge holds an item it flags, is unsure about or cannot run on; staff approve only a held item, reject any open item and can stop an approved item before its reveal through the staff API, `/review`. The simulator's `StubNetwork` has no review.)
-- Every outbound message must go through the leak check. **Status:** the ConsentNetwork send path and the Blooio outbound queue run the leak guard (`packages/core/src/guard.ts`) on every message; the MCP server withholds any inbox update that fails its output gate (`packages/mcp/src/leaks.ts`). The simulator's `StubNetwork` (the push baseline) has no leak check.
-- Age policy (`packages/core/src/policy.ts`; [memberAge](spec/memberAge.md), [friendIntroAge](spec/friendIntroAge.md), [matchLane](spec/matchLane.md); owner decision 2026-11-22):
-  - Under 13 cannot join. The agent declines kindly. A verified browser refusal keeps only the numeric age floor under the enrollment rule.
-  - Age comes from the stored birth date at the Clock day. The youngest reading wins.
-  - After verified browser enrollment, keep the exact birth date privately when it serves teen readiness. Keep the date in the platform age authority. Profiles, judge packets and staff responses get only the age facts their rules allow.
-  - A member aged 13-17 can use the agent for themselves (chat, events, things to do).
-  - A minor gets friendship introductions only, on friends.help and in the ntwrk Friend lane (`teenFriendAgeRule`). A minor never gets dates, work, slop.date or peon.biz matching, photos, a looks rating, or a number or photo relay.
-  - The other person is aged 13 to 18, with a birth date at most 2 calendar years from the minor's. Every person in the roster is teen ready: an exact birth date, no age conflict, no open minor signal or report, and no bar. Nobody aged 19 or more is introduced to, grouped with, shown to or relayed to a minor.
-  - A teen introduction is sent only after the review judge approves it with the strict rubric, or staff approve an item that the judge holds.
-  - A group plan, table or crew with a minor is on friends.help only (`teenGroupPlanApp`). An ntwrk Friend circle can also hold a minor.
-  - A group with a minor (a friends.help group or an ntwrk Friend circle) has 2 to 6 people (`teenRosterSizeAllowed`), and every pair with a minor passes the rule. A friends.help group with a minor meets at an all-ages public place for an all-ages activity.
-  - Teen introductions are on from the start. One staff member can stop them on every app that offers them (`teenStop`). Each `teenStop` step writes an audit row. While they are stopped, a minor is single-player.
-  - Use `canJoin`, `isMinor`, `canBeMatched` and the generated `groupAgeAllowed`. Do not hard-code ages.
-- Canary leaks, invariant violations, and minor contacts that break `teenFriendAgeRule` are always 0. While teen introductions are stopped, that is every minor contact. The teen gates are also always 0: `teen_adult_contact`, `teen_gap_contact`, `teen_lane_contact`, `teen_unready_contact`, `teen_switch_off_contact`, `teen_relay_contact`, `teen_group_contact`, `teen_place_contact` and `teen_stop_equals_pre_feature` (the stopped teen world equals the world with no teen-ready member, metrics and outbound log). A change that makes any of them non-zero is wrong, whatever else it improves. One known judge issue: the single allowed 14-day re-engagement message shows as a `two_unanswered` violation in runs longer than about 14 days ([docs/network.md](docs/network.md) section 11). Any other violation is real.
-
-## LLMs
-
-- Use `defaultLLM()`, `judgeLLM()` or `recommenderLLM()` from `packages/core/src/llm.ts`. Every use is `gpt-6-luna` on Surplus Intelligence. OpenAI (same model IDs) is used when there is no `SURPLUS_API_KEY`, and as the fallback when Surplus returns 429 / 5xx / a timeout. Use `endpointsFor(provider)` to check whether a provider has a key. Do not add a new LLM client or provider.
-- Requests time out after 60 s by default (`LLM_TIMEOUT_MS`) and retry at most 4 times (`LLM_MAX_RETRIES`). One call, retries included, stops at `LLM_DEADLINE_MS` (default 3x the timeout; 0 disables). Pass `fallback: false` to a call or client to turn off the OpenAI fallback; every fallback is logged and reported to `onFallback`.
-- `pnpm run sim` never calls a model: it clears the provider keys before it starts. The one exception is `--llm`, which keeps them for the onboarding LLM arm (tracked gates only).
-- PR evidence needs real LLM calls. The real-LLM commands are in CONTRIBUTING.md section 7.2. The review judge and the engine judge are always on in staging and production; each has a daily budget and request limit per app (`NETWORK_REVIEW_JUDGE_BUDGET_USD`, `NETWORK_REVIEW_JUDGE_MAX_REQUESTS`, `NETWORK_ENGINE_JUDGE_BUDGET_USD`, `NETWORK_ENGINE_JUDGE_MAX_REQUESTS`; [the service README](packages/network/service/README.md#review-judge-and-engine-judge)). Qualify the review judge on the live corpus with `pnpm run review-eval --live`. The sim adapter still does not supply an LLM to the engine.
-- Judge prompts write the explanation before the verdict.
-- Recommendations and judges use the same model (`gpt-6-luna`) with a different prompt or pass. Use a different judge model for audits only, and a cross-family audit needs founder approval (it sends data to another provider).
-
-## Commands
-
-```bash
-pnpm install --frozen-lockfile
-pnpm run spec:setup
-pnpm run spec:sync             # generate and publish the application rule modules
-pnpm run check                 # check the selected compiler inputs
-pnpm run spec:check-generated  # compare the published copies with fresh output
-pnpm run sim                  # the validation layer: evals, onboard, network, slop, relay, peon, friends, clef, safety, ops, pipeline, audit (pinned seeds; exits 1 on a blocking gate)
-pnpm run sim --only network   # one block (the names above, or capital); repeatable
-pnpm run sim --quick          # fewer seeds, shorter runs; quality gates become tracked
-pnpm run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
-pnpm run typecheck
-node --import tsx --env-file-if-exists=.env plugins/build.ts --check
-pnpm run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
-pnpm run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
-pnpm run security             # the security subset of the integration suite (11 files; list below)
-pnpm run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
-pnpm run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI
-
-# Shared design and UI
-pnpm run design:build
-pnpm run design:check
-pnpm run ui:gen
-pnpm run ui:storybook
-pnpm run ui:test
-pnpm --filter @thenetwork/ui run test:browser
-pnpm run lint:ui
-
-# The ConsentNetwork on the NYC world (docs/runbook-simulation.md)
-node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --days 21 --seed 1
-node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts [scenario_id]
-
-# The simulated world and its scenarios (pass^k)
-node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
-node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
-
-# Per-app worlds (full tables; pnpm run sim runs their official gates)
-node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
-  --population '{"catfish":0.005,"bodyTypes":true}' --world '{"verification":true,"relay":true,"review":3,"widen":true,"checkin":true,"photos":1,"rater":true}'
-node --import tsx --env-file-if-exists=.env packages/sim/src/apps/peon/cli.ts --seeds 13-16
-node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8
-
-# Observatory (prints http://127.0.0.1:4747/#token=...)
-pnpm run observatory
-pnpm run observatory:db       # local Postgres on :54339 with a 14-day simulated run
-
-# The four apps on one backend (docs/runbook-platform.md): dry-run sends only
-pnpm run db:migrate           # migrations (network and platform schemas), local hosts only
-NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<your db> pnpm run platform:dev   # service :4848, API :8790, sites :5101-5104
-pnpm run sites:dev            # the four sites only, /api/* proxied to :8790
-```
-
-## Environment
-
-- Copy `.env.example` to `.env`. Never commit `.env` or anything in `runs/`. CONTRIBUTING.md section 5 lists every variable that testing needs, taken from the code.
-- Never set `NETWORK_CHANNEL` locally. It alone makes sends real, for every app; without it every send is dry-run.
-- The local dev Postgres for the Observatory is on port **54339**. Do not touch port 54329; another tool uses it.
-- `packages/observatory/db/seed.ts` refuses non-local hosts. Do not pass `--allow-remote` unless a human asks.
-- Cloudflare work for ntwrk.party goes through `scripts/wrangler.sh` only. It refuses `deploy` (except `--dry-run`) and other commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set. Do not set it without the founder's approval.
-
-## Results
-
-Write experiment results to `docs/results/YYYY-MM-DD-<topic>.md`. Include the command, the seed, the model, the request settings, the sample size, and confidence intervals or significance tests for small differences. Say what is hand-written and what is generated.
+**Read this file in full before doing any work.**
+The spec format, naming rules and everything the tools accept are in
+[SPEC.md](SPEC.md); what a task needs beyond it is in
+[Where the rest is](#where-the-rest-is).
 
 ## Working on a task
 
-Restate the goal and the smallest change that meets it. Carry the goal into
-subagent briefs and the pull request. Identify the data shape and the
-boundary that owns it before writing code. For novel designs that cross
-function boundaries, use the [architect skill](.agents/skills/architect/SKILL.md)
-to compare independent approaches before implementing. Use the
-[why skill](.agents/skills/why/SKILL.md) to trace ownership and layering
-decisions back to their rationale. Carry out authorized, reversible work.
+- **Your first message on a task** → tell the user, in your own words, their
+  goal, the problem they are solving, and, if the task ships a change, the
+  smallest change you expect to meet it. Don't wait for confirmation. If the
+  evidence rules out the change the user asked for, show it and stop. Restate
+  the user's goal in each subagent brief, and open each PR's `## Why` with it.
+  Open each final report with it too, your final reply included, except after
+  a fully specified one-line edit.
+- **Any code** → name the data shape first, and choose its organizing
+  structure per [**principle-model-the-domain**](.agents/skills/principle-model-the-domain/SKILL.md).
+- **Code crossing a function boundary** → the
+  [**architect** skill](.agents/skills/architect/SKILL.md), parallel design
+  exploration before implementing.
+- **Just do it.** Use any available MCP tool within its permissions. Reversible
+  work and authorized external actions (team chat, ticket updates, kicking off
+  evals) proceed without asking for confirmation.
+- **Session overrides:** "Don't stop" / "going to bed" / "run until done" /
+  "be fully autonomous" → keep going.
+- **No is an acceptable answer.** Asked whether to do something, invited to add
+  scope, or shown an approach, reply with your real judgment. Decline, push
+  back, or say "this doesn't earn its place" when true. A recommendation is a
+  judgment, not a validation. Agreement is not the default, candor over
+  sycophancy.
 
 ## Loading skills
 
-The canonical skills and their bundled references live in
-[`.agents/skills/`](.agents/skills/). Claude Code reads them through the
-project-relative `.claude/skills` link and reads settings through
-`.claude/settings.json`. A name and description
-help select the skill. Read its `SKILL.md` in full and open the relevant
-references before using it. Resolve repository links from the project root
-and relative links in a skill from its own directory. Clients without
-repository skill discovery can read these files directly.
+The canonical skill files are committed in `.agents/skills/`, including
+`sync`, `shell`, `prove`, `design`, `architect` and the [principles](#principles).
+Edit them there. `pnpm install` (via `vibestack link`) and `vibestack init`
+create project-relative skill links for Claude, Cursor, Muse, Grokbot and the
+other supported agents. Keep the tracked `CLAUDE.md` byte-identical to
+`AGENTS.md`. Use `vibestack upgrade` to refresh managed skills and docs when
+upgrading Vibestack.
+These generated paths are ignored by Git; `.claude/` contains no committed files.
 
-| Read | Before |
-|---|---|
-| [Spec reference](SPEC.md) and [sync](.agents/skills/sync/SKILL.md) | Changing a story, rule, model, generated-code caller, or resolving a failed spec stage |
-| [Shell](.agents/skills/shell/SKILL.md) | Designing an effectful boundary, including input decoding, storage, retries, and the Vibestack Machine adapter |
-| [Prove](.agents/skills/prove/SKILL.md) | Writing a proof file or a `//@` contract, or working on a failed proof |
-| [Design](.agents/skills/design/SKILL.md) | Making an approved change to anything a person sees |
-| [Architect](.agents/skills/architect/SKILL.md), [arena](.agents/skills/arena/SKILL.md), and [why](.agents/skills/why/SKILL.md) | Comparing designs or changing existing ownership |
-| [Benchmark checklist](.agents/skills/benchmark-checklist/SKILL.md) | Measuring performance |
-| [TypeScript best practices](.agents/skills/typescript-best-practices/SKILL.md) | Reading or writing TypeScript |
+A skill's name and description are only its discovery metadata. Before
+the work listed in [Where the rest is](#where-the-rest-is), read the matching
+`SKILL.md` in full and follow its relevant linked references. In ChatGPT or
+another client without repository skill discovery, open those files
+explicitly. Resolve repository paths from the repository root and a skill's
+relative links from its own directory. If the client cannot read repository
+files, ask for the relevant instructions before doing that work.
 
-The architect skill uses Arena for parallel exploration. When its runners
-are unavailable, use independent subagents and the skill's
-[runner prompt](.agents/skills/architect/references/runner-prompt.md).
-Screen and synthesize the designs before implementing.
+Apply imported skills within this repository's stack, hard rules and test policy.
 
-## The stack
+Architect uses [`arena`](.agents/skills/arena/SKILL.md) for parallel design
+exploration and [`why`](.agents/skills/why/SKILL.md) to trace the rationale
+for existing ownership or layering when a design changes it. If the client
+cannot run Arena's runners, use its parallel subagents for at least two
+independent design sketches with the architect's
+[`runner-prompt.md`](.agents/skills/architect/references/runner-prompt.md).
+Screen and synthesize the sketches as the architect skill directs before
+implementing.
 
-The application, tests, and vendored Vibestack toolchain use Node 26
-and pnpm. Use the Node patch version in `.nvmrc`. Pure rules, transitions and
-validation types come from Quint. Existing services consume its generated
-TypeScript at their boundaries. Backend health, shutdown, and alert
-dispatch use compiled VibeLang shells. The public sites, connector authorization, and staff console use React 19
-and the shared design system. Put brand tokens in `packages/design-system`
-and shared components in `packages/ui`. Each brand sets `data-brand` on
-an ancestor. Use the existing theme classes and token utilities.
-Read the [Network command map](README.md#commands) when an imported skill
-refers to the standalone template commands, VibeLang, or Vitest.
+Use [`benchmark-checklist`](.agents/skills/benchmark-checklist/SKILL.md)
+when measuring performance. For other referenced skills, see the
+[upstream pstack skills at the imported revision](https://github.com/cursor/plugins/tree/bf0c7cd80abdbf7fe47b634978a7d1b4071f71a7/pstack/skills).
 
 ## Who does what
 
-`pnpm run check` reports where the executable spec requires attention. Use
-the [sync skill](.agents/skills/sync/SKILL.md) to translate between stories,
-rules, Quint, and implementation. Read each rule beside its Quint. Use
-`pnpm run spec:sync` to publish the generated TypeScript for application
-callers. The product owner runs `pnpm run accept` to record review.
+`pnpm check` detects; you translate: story → rules, rule → Quint, changed
+Quint → prose, counterexample → rule. That is your work in this session; it
+needs no other program or account.
+
+**Whenever `spec/` or `src/` has changed, follow
+[.agents/skills/sync/SKILL.md](.agents/skills/sync/SKILL.md)**: the loop, what
+each failure asks of you, and what to report. Read the skill before following
+its loop.
+
+The user signs off with `pnpm accept`.
+
+## The stack
+
+Every project built here uses this, and nothing beside it:
+
+| For | Use | Never |
+|---|---|---|
+| Runtime | Node 26 | an older Node |
+| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([SPEC.md](SPEC.md#one-spec-tree)) | npm, yarn, bun; a second task runner |
+| Rules and state | the spec, and the code `gen/` derives from it | a second model of the same state |
+| Shell: effects, services, I/O, async | [VibeLang](.agents/skills/shell/SKILL.md) (`.vibe`) on Effect 4 | plain TypeScript for effectful code; Redux, Zustand or another state library |
+| User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
+| UI state | React hooks over the generated machine's `Machine` service | state kept in a component that the spec owns |
+| Styling | Tailwind CSS v4 with the project's design tokens, shadcn/ui conventions on Radix primitives | hard-coded colors, a second token set, global CSS beyond the token file |
+| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.{vibe,tsx}`; a driver for a shell that keeps a machine's state; Bombadil exploring each page | Jest, `node --test` for a new test |
+
+- **Every interface is React**: an application's, an example's and Studio's.
+- **Reuse before adding.** Find the component, token or service that exists
+  and extend it; add one only when none fits.
+- **TypeScript stays** for `gen/`, for verified `//@` logic
+  ([prove skill](.agents/skills/prove/SKILL.md)), for React components and for the tools.
+
+## Where the rest is
+
+Read each before the work it covers, whether loaded as a skill or opened
+directly. See the [Vibestack repository](https://github.com/lalalune/vibestack) for the
+toolkit's own contribution and installation guides.
+
+| Read | Before |
+|---|---|
+| [SPEC.md](SPEC.md) | writing or reading a spec: its format, the Quint it accepts, the generated code, review and conformance |
+| [`sync` skill](.agents/skills/sync/SKILL.md) | any change to `spec/` or `src/`, and whenever `pnpm check` shows a `✗` |
+| [`shell` skill](.agents/skills/shell/SKILL.md) | writing `src/` or a test: VibeLang, the Effect adapter, the React interface, building and running |
+| [`prove` skill](.agents/skills/prove/SKILL.md) | a `proof` stage `✗`, writing a `.proof.dfy`, or a `//@` file |
+| [`design` skill](.agents/skills/design/SKILL.md) | anything a person looks at: layout, components, stories and tokens |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | repository contributions, validation and PR evidence |
+| [README.md](README.md#commands) | repository commands, Studio and configuration |
 
 ## Hard rules
 
-- Edit the source specs and proof files. Treat `gen/`, the published
-  `packages/core/src/generated/`, `.spec-cache/`, `.studio/`, and the
-  review ledger `spec/lock.json` as tool-owned.
-- Keep each rule at its intended strength. Investigate a failing model,
-  simulation, replay, or proof and trace it to the source. Report any
-  proposed rule change or unresolved proof obligation with its evidence.
-- Put pure business decisions in the spec as `pure def`. Keep dependencies,
-  I/O, input parsing and persistence in the owning package. Preserve the
-  Eliza wire contract and existing product safety guards.
-- Put proof lemmas beside the source spec or contract. Use the
-  [prove skill](.agents/skills/prove/SKILL.md) for permitted proof constructs.
-  Run `pnpm run accept` only at the product owner's request after reviewing
-  each listed rule. Simulated-only approval (`pnpm run accept unproved`) also
-  requires that request.
-- Use the shared instructions and product spec as the home for rules. Keep
-  the existing guides and guides' skill references up to date.
+- Never create new Markdown documents. Update the existing rules and spec as
+  needed so guidance stays in one place and does not go stale.
+- Always avoid `useEffect`, `setTimeout`, and similar workarounds. Keep shared
+  application state in the spec-backed `Machine` service.
+- Never edit `gen/`, `.spec-cache/`, `.studio/` or `spec/lock.json`, and never add a
+  `lemmascript.json`. The tools own them; a change there could make a check
+  pass that should not.
+- Never run `pnpm accept unproved` unless the user asks. It lowers the
+  listed obligations from proved to simulated.
+- Run `pnpm accept` only when the user asks, and only after reading each
+  rule `review` lists and finding that its prose and Quint say the same thing.
+- Never weaken or delete a rule (`always`, `step`, `sometimes`, `leadsTo` or `law`) to
+  make a check pass without telling the user which rule and why.
+- Proving obligations is your work, in `spec/<path>.proof.dfy` or
+  `src/<path>.proof.dfy` ([prove skill](.agents/skills/prove/SKILL.md)). Satisfy a check;
+  never get past it: no trust or skip annotations, no edits to the tools or
+  what they generate, no workaround for what a proof file may not contain.
+- Verified logic belongs in the spec as `pure def`. Hand-write code in `src/`
+  only for what Quint cannot express (TypeScript with proved `//@` contracts)
+  or what touches the outside world (VibeLang, and React for what a person
+  sees).
+- Never work around the stack above: no other package manager, UI framework,
+  state library or test runner, and no effectful shell code outside VibeLang.
+- **Fix the root cause.** Investigate before making a fix. Trace the problem
+  to its source and fix it there. Avoid patches that only hide symptoms.
 
 ## Writing code
 
-- **One path.** Migrate callers to the generated decision and remove the
-  replaced logic. Preserve required operational configuration.
-- **Reuse.** Extend existing components, types, services and tests.
-- **Boundaries.** Parse external input at entry. Let the generated types
-  and guards constrain internal transitions.
-- **Clarity.** Use domain names and readable structure. Keep code free of
-  comments. Put explanations in the spec or documentation. Use comment
-  syntax only for required tool directives such as `//@` proof contracts.
-- **Speed.** Keep checks focused while working. Run the full suite before merge.
-- **Review.** Reread the wiring and its corresponding rule on a second pass.
+Check each point before you write, and again after.
+
+- **Design.** Anything a person looks at follows
+  [.agents/skills/design/SKILL.md](.agents/skills/design/SKILL.md).
+- **One path.** Replace old code; do not keep it beside its replacement. No
+  feature flags, environment variables or settings for a change.
+- **Reuse.** Search for existing code and types first. Extend and share; no
+  duplicates or one-offs.
+- **Barrel exports.** Expose a workspace package's code only through its root
+  barrel (`"."` in `exports`), plus explicit non-code static assets (`.css`,
+  `.json`, etc.); no subpath code routes or wildcards. Import workspace packages
+  by package name or declared static asset path. `pnpm lint:js` enforces both
+  (`barrel/exports` and `barrel/no-subpath-imports`) without inline disables.
+- **Compact.** Reread for needless branches, `try` blocks, wrappers and
+  indirection. Shorter, if it reads as well.
+- **No code comments.** Use clear names and structure to make the code readable.
+  Use comment syntax only for required tool directives that need it, such as
+  `//@` contracts, spec citations and Vitest environment directives, and a doc
+  comment only where a generator reads it: on a `@repo/ui` component and its
+  props. This holds for the project's own code, tests, scripts and proof files;
+  `packages/vibestack/`, `packages/studio/` and vendored checkouts are upstream's. In `apps/` and
+  `packages/`, `pnpm lint:js` enforces it, with no effect hooks, timers or
+  `console`. An `eslint-disable` there names its rules, never `code/*`,
+  `barrel/*` or `no-console`, and says why; any other inline config fails the
+  lint.
+- **Scripts and tests.** Extend existing ones before adding; no new scripts.
+  Delete code that becomes unused. Tests follow "Tests" below.
+- **Speed.** Keep checks and CI fast: a small change reruns only what it
+  touches; a full run is as quick as it can be.
+- **Passes.** The first version is a draft. Review it two or three times
+  against these points.
 
 ## Principles
-
 
 Read the leaf skill in full for any principle you apply. Each entry names when
 it applies. Each leaf is the **`principle-<title>`** skill, with the title in
@@ -353,7 +258,7 @@ its name.
 
 Read the [`typescript-best-practices` skill](.agents/skills/typescript-best-practices/SKILL.md)
 before reading or editing `.ts` or `.tsx` files. Adapt the
-[TypeScript type reference](tools/vibestack/vibestack/reference/typereferences.md)
+[TypeScript type reference](.agents/skills/typescript-best-practices/references/patterns.md)
 to the repository's schema library. Validate that a duration is nonnegative
 when it represents an ordered range.
 
@@ -394,49 +299,102 @@ over proliferating handlers.
 | Real tests | Use real framework test primitives with leak and disposal checks, and verify UI in a running build. Mock only services you can't run locally, following the rules below. |
 | Structured telemetry | Use structured logger diagnostics with enough context to debug from an ID. No `console.log` in shipped code. |
 
-## Design from the spec
-
-Follow the [design skill](.agents/skills/design/SKILL.md) within the approvals
-and public interface rules in [CONTRIBUTING.md](CONTRIBUTING.md#9-public-interface-changes).
-Inventory the actions and information each story requires. Compare three
-directions and choose the clearest hierarchy with the fewest elements.
-Use visuals, position and weight where they carry the meaning. Give each
-view one main heading and keep the words required for actions, safety,
-consent, accessibility, and policy. Use shared tokens for colors, type, radii,
-shadows and focus. Use the project's declared scales for text size, weight,
-line height, tracking and stacking order. Keep names distinct where scales
-share a utility. Use a single type pairing, an accent and a spacing scale.
-Retain accessible names
-for visuals and WCAG AA contrast, with at least 3:1 contrast for focus
-indicators. Review the content and layout across two or three passes.
-
 ## Tests
 
-- Exercise a full journey or a real integration when input parsing, HTTP,
-  storage, queues, or interface wiring carry behavior outside the model.
-  Cite the relevant story or rule and extend its existing journey first.
-- Use real local services and their reset support. Simulate an external
-  provider at its boundary when it costs money, cannot be reset, or has
-  irreversible effects.
-- Assert behavior an end user can observe. Leave proved guards and
-  transitions to the model except where a journey exercises them. Treat
-  safety or consent wording as behavior when its story requires the words.
-- Run the Network's integration and end-to-end lanes for application
-  evidence. A Vibestack conformance driver uses the app's own entry point
-  and imports the generated machine's types only.
-  [Conformance reference](SPEC.md#conformance)
-- A Vibestack page served by a package's local `start` or `dev` can use
-  Bombadil's `explore` stage. Write properties in `test/bombadil.ts` and
-  cite their rules. Keep browser exploration on a local fixture with dry-run
-  sends. [Exploration reference](SPEC.md#exploring-the-page)
+The spec proves the rules for every state and input; a test covers only what
+`pnpm check`'s other stages cannot see: hand-written code meeting the
+outside world. Write one only when its failure would be a bug a user meets
+and nothing else would catch it.
+
+| Earns a test | Never a test |
+|---|---|
+| A whole user journey, or an integration with a real service, through the real shell: input parsing, storage, HTTP, UI wiring | A guard, transition, rule or law the spec already proves, except as a step of a journey |
+| Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots and screenshots: no test compares pictures |
+| A shell bug that was found: one more step in the journey it broke | That a function was called; what the `types` stage already checks |
+
+- **Journeys.** A test walks a story end to end, is named after it, and uses
+  the required spec citation described below. A story whose path never leaves
+  the verified core needs none.
+- **Real services.** Run the real database, server, queue and filesystem,
+  started and reset by the `test` script or the runner's setup: an in-process
+  database such as PGlite, a container, a local emulator, a provider's test
+  mode. Fake only a service that costs money, cannot
+  be undone, or cannot be run and reset locally; fake it once, at its network
+  boundary, shared by every test. No mocks of your own code.
+- **Search, then extend before adding.** Search the tests for the citation of
+  the story or rule first, and extend the journey that has it: a step or
+  assertion in an existing journey before a new test; a new test before a new
+  file. A test that repeats another's setup to assert one more thing belongs
+  inside it.
+- **Compact.** Shared helpers over repeated setup, one assertion of a whole
+  value over one per field.
+- **One command.** `pnpm check` runs the package's `test` script, which
+  runs the tests and never the package's own check (a tool's journeys may check
+  scratch projects, as Studio's do). No other test scripts, and nothing a
+  person must set to run them; the config a runner or service needs is fine.
+- **Size.** One file per package and runner is the norm, and 5,000 lines is fine. At
+  15,000 lines, consolidate and simplify; split only at 20,000.
+- **Never weaken a test to pass.** Fix the code. If the spec now asks for
+  something else, change the assertion and name it and its rule in your
+  report. Propose deleting a test; never delete one yourself.
+
+How `pnpm check` runs them, in its `tests` stage:
+
+- **The run.** It runs the package's `test` script in the package's directory,
+  with the package manager `packageManager` or the nearest lock file names.
+  The exit code decides; a failure shows the runner's list of failures, at
+  most 200 lines of it. A pass is remembered until something the tests read
+  changes, and a complete passing Vitest run records a receipt that lets `check`
+  reuse the same result. Filtered or failed runs supply no receipt; acceptance
+  and nightly checks always run afresh.
+- **One configuration.** The `test` script is `vitest run`, on
+  `project({ root: import.meta.dirname })` from `vibestack/testing/vitest`, as
+  `vibestack init` writes it; a package with `test/` and no `test` script gets
+  both from `check`. It runs `test/**/*.test.{ts,tsx,vibe}` in Node (a test
+  that needs a DOM says `// @vitest-environment happy-dom`), and
+  `*.browser.test.*` in Chromium, by `vitest run --project browser` (the
+  `test:browser` script). Before each run it writes the
+  [generated property tests](CONTRIBUTING.md#6-the-validation-layer) of
+  every `src/**/*.schema.*` and `src/**/*.contract.*`; a module that yields
+  none fails the run, with why. A package with no tests passes.
+- **Citations.** A test, or a shell file in `src/`, in VibeLang or
+  TypeScript, names the story or rule it serves by its heading, on one line:
+  `// spec/index.md, "A payment never exceeds the balance"`, or
+  `// spec/index.md, "Story: Check out"` for a story; several may share a line,
+  separated by `;`. The path is the spec's from the root of the spec tree,
+  in an owner's code too: `// spec/app/index.md, "…"`. Cite each `it` or
+  `test` in its title or in the enclosing `describe` title, for example
+  `'Check out (spec/index.md, "Story: Check out")'`. `check` fails on an
+  uncited test or a citation with a missing heading. When a rule changes,
+  `review` lists the code that cites it.
+- **Past the generated code.** A test that reaches nothing but `gen/` and
+  test libraries, through the helpers of its own file, fails: it restates
+  what the spec proves. Route it through `src/`, or propose deleting it.
+- **Drivers are not tests.** `test/drivers/` is run by the `traces` stage
+  ([SPEC.md, Conformance](SPEC.md#conformance)), and imports `gen/` as types only; `check`
+  fails on a driver that imports its code.
+- **The page is explored.** The `explore` stage serves a package's
+  `index.html` with its `start` or `dev` script and lets Bombadil drive it,
+  checking `test/bombadil.ts`, or Bombadil's defaults, in every state
+  ([SPEC.md, "Exploring the page"](SPEC.md#exploring-the-page)). A property
+  there cites its rule as a test does.
+- **Notes**, never failures: two test files for one runner and language, a
+  test file of 15,000 lines, and a spec of the package that no test cites and
+  no driver, trace or `driver:` script checks.
+- **Monorepos.** The root's `check` runs the tests of the root and of each
+  owner (SPEC.md, "One spec tree"), each in its own directory; a package with its own
+  `spec/` runs its own `check` and tests (`pnpm test:models` for all;
+  `pnpm --filter <name> check` for one). A test cannot start a check of the
+  project that is running it. A journey that crosses packages is tested in
+  the package that owns it, usually the app.
 
 ## Definition of done
 
-Verify the generated snapshots against the source specs. Verify that the
-running application fully implements and integrates the approved stories,
-rules, and models. Every required check must pass. Resolve open proof
-obligations before merge. Meet all [Vibestack requirements](SPEC.md) and
-[TypeScript conventions](#typescript-best-practices). Submit the
-[PR evidence](CONTRIBUTING.md#122-evidence-checklist). The product owner
-records sign-off after reviewing the changed requirements and their formal
-meaning.
+- `pnpm check` is where step 3 of the sync skill's loop stops: what is
+  left waits on the user.
+- In the vibestack repository, if you changed `packages/vibestack/`,
+  `packages/studio/` or `packages/create-vibestack/`, `pnpm selftest`
+  passes, with a new case for each new kind of mistake the change catches,
+  and each new kind of `✗` has its row in the sync skill.
+- What you wrote has had its passes under "Writing code".
+- Your summary follows "When you stop" in the sync skill.

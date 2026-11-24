@@ -29,7 +29,7 @@ The first pilot covers age-safe signup and progressive profiling, private settin
 
 ## Deferred scope
 
-Expansion beyond New York City, live matching for friends and peon, native app experiences, device location or proximity, hosted assistant features beyond approved signup and access, other messaging channels, payment flows, refundable deposits, home hosting, childcare, custody, regulated services, marketplaces and broader data imports require later scope. The [historical scope table](source/prd.md#284-explicitly-not-in-mvp-and-what-it-builds-on) records prerequisites. The bounded safety rule for a member's help request remains in [F14](stories.md#story-f14--ask-for-bounded-help).
+Expansion beyond New York City, native app experiences, device location or proximity, hosted assistant features beyond approved signup and access, other messaging channels, payment flows, refundable deposits, home hosting, childcare, custody, regulated services, marketplaces and broader data imports require later scope. The [historical scope table](source/prd.md#284-explicitly-not-in-mvp-and-what-it-builds-on) records prerequisites. The bounded safety rule for a member's help request remains in [F14](stories.md#story-f14--ask-for-bounded-help).
 
 The economic direction keeps participation free and prevents money from buying access to people or ranking. Revenue mechanisms, sponsorship, institutional contracts, the Commons, spendable capital, paid governance, transfers, member ownership and decision markets are post-MVP. See [PRD §§18–19](source/prd.md#18-regenerative-business-model---no-monthly-membership-fee) and [§39](source/prd.md#39-growth-network-capital-and-member-ownership).
 
