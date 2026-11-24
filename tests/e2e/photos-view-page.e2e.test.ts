@@ -26,7 +26,11 @@ const DAY = 86_400_000;
 describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machine against the site router and the backend)", () => {
   let st: Stack, sql: SQL;
   const realFetch = globalThis.fetch;
-  beforeAll(async () => { st = await startStack({ slopPhotoReviewer: true }); sql = new SQL({ url: st.url, max: 2 }); }, T);
+  const startPhotoStack = async () => {
+    st = await startStack({ slopPhotoReviewer: true });
+    sql = new SQL({ url: st.url, max: 2 });
+  };
+  beforeAll(startPhotoStack, T);
   afterEach(() => { globalThis.fetch = realFetch; });
   afterAll(async () => { globalThis.fetch = realFetch; await sql?.close(); await st?.close(); });
 
@@ -55,9 +59,9 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     const o = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let k = 0; for (const p of parts) { o.set(p, k); k += p.length; } return o;
   };
   let seq = 0;
-  const turn = async (phone: string, text: string) => {
+  const turn = async (phone: string, text: string, app: "slop" | "friends" = "slop") => {
     const messageId = `photos-view-page-${++seq}`;
-    const body: TurnRequest = { messageId, channel: "blooio", from: phone, to: null, text, transport: "imessage", receivedAt: st.clock.now(), app: "slop" };
+    const body: TurnRequest = { messageId, channel: "blooio", from: phone, to: null, text, transport: "imessage", receivedAt: st.clock.now(), app };
     const raw = JSON.stringify(body);
     const res = await st.svc.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...await svcSign(TURN_SECRET, { method: "POST", path: TURN_PATH, id: messageId, body: raw, nowS: Math.floor(st.clock.now() / 1000) }) }, body: raw }));
     expect(res.status).toBe(200);
@@ -71,7 +75,7 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
   };
   const phaseOf = async (offerId: string) => (await sql`select phase from platform.photo_offers where id = ${offerId}`)[0]!.phase as string;
 
-  const readyOffer = async (tag: string) => {
+  const reviewOffer = async (tag: string) => {
     const ari = newPhone(), maya = newPhone();
     expect((await webJoin(st, "slop", ari, { age: 29, firstName: "Ari" })).res.status).toBe(200);
     expect((await webJoin(st, "slop", maya, { age: 30, firstName: "Maya" })).res.status).toBe(200);
@@ -95,13 +99,24 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     }
     const [item] = await sql`select id, state from platform.photo_relay_items where offer_id = ${offerId}`;
     expect(item!.state).toBe("pending");
-    const itemId = item!.id as string;
-    const preview = await st.svc.fetch(new Request(`http://127.0.0.1/relay/${itemId}/photo?app=slop`, { headers: { authorization: `Bearer ${SAFETY_TOKEN}` } }));
+    return { ari, maya, sender, receiver, offerId, itemId: item!.id as string };
+  };
+
+  const previewItem = (itemId: string, app: "slop" | "friends") =>
+    st.svc.fetch(new Request(`http://127.0.0.1/relay/${itemId}/photo?app=${app}`, { headers: { authorization: `Bearer ${SAFETY_TOKEN}` } }));
+
+  const releaseItem = (itemId: string, app: "slop" | "friends", photoReviewToken: string | null) =>
+    st.svc.fetch(new Request(`http://127.0.0.1/relay/${itemId}/release?app=${app}`, {
+      method: "POST", headers: { authorization: `Bearer ${SAFETY_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ note: "Photo checked for consent and safety", photoReviewToken }),
+    }));
+
+  const readyOffer = async (tag: string) => {
+    const { ari, maya, sender, receiver, offerId, itemId } = await reviewOffer(tag);
+    const preview = await previewItem(itemId, "slop");
     expect(preview.status).toBe(200);
     await preview.arrayBuffer();
-    const release = await st.svc.fetch(new Request(`http://127.0.0.1/relay/${itemId}/release?app=slop`, { method: "POST",
-      headers: { authorization: `Bearer ${SAFETY_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ note: "Photo checked for consent and safety", photoReviewToken: preview.headers.get("x-network-photo-review-token") }) }));
+    const release = await releaseItem(itemId, "slop", preview.headers.get("x-network-photo-review-token"));
     expect(release.status, await release.clone().text()).toBe(200);
     expect(await phaseOf(offerId)).toBe("ready");
     const [ready] = await sql`select body from network.messages where app_id = 'slop' and member_id = ${receiver.memberId} and id = ${`photo-ready:${offerId}`}`;
@@ -297,5 +312,48 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     expect([p.page.screen, p.page.linkHeld]).toEqual(["ViewGone", false]);
     await p.tap();
     expect(sent).toHaveLength(0);
+  }, T);
+
+  test("a signed DELETE PHOTOS turn on Friends closes a live Slop photo and blocks a pending release", async () => {
+    await sql.close();
+    await st.close();
+    await startPhotoStack();
+    const ready = await readyOffer("delete-ready");
+    const pending = await reviewOffer("delete-pending");
+    const preview = await previewItem(pending.itemId, "slop");
+    expect(preview.status).toBe(200);
+    await preview.arrayBuffer();
+    const reviewToken = preview.headers.get("x-network-photo-review-token");
+    expect(reviewToken).toBeTruthy();
+    expect((await previewItem(pending.itemId, "friends")).status).toBe(403);
+    expect((await releaseItem(pending.itemId, "friends", reviewToken)).status).toBe(403);
+
+    phoneOn(new Browser());
+    const first = new ViewPage(ready.token);
+    await first.tap();
+    expect([first.page.screen, first.page.loaded]).toEqual(["ViewShowing", 1]);
+    const erase = async (phone: string) => {
+      expect((await webJoin(st, "friends", phone, { age: 29, firstName: "Ari" })).res.status).toBe(200);
+      expect(await turn(phone, "DELETE PHOTOS", "friends")).toMatchObject({
+        outcome: "handled", reply: "I deleted your photo and the private rating made from it.",
+      });
+    };
+    await erase(ready.ari);
+    expect((await previewItem(pending.itemId, "slop")).status).toBe(200);
+    await erase(pending.ari);
+
+    const ended = new ViewPage(ready.token);
+    await ended.tap();
+    expect([ended.page.screen, ended.page.loaded]).toEqual(["ViewGone", 0]);
+    expect((await loadPhotoView(ready.token, 1)).url).toBeUndefined();
+    const erasedPreview = await previewItem(pending.itemId, "slop");
+    expect(erasedPreview.status).toBe(403);
+    expect(erasedPreview.headers.get("x-network-photo-review-token")).toBeNull();
+    expect(await erasedPreview.json()).toEqual({ ok: false, reason: "photo_unavailable" });
+    const erasedRelease = await releaseItem(pending.itemId, "slop", reviewToken);
+    expect(erasedRelease.status).toBe(409);
+    expect(await erasedRelease.json()).toEqual({ ok: false, reason: "not_held" });
+    expect(await sql`select 1 from platform.photo_relay_items where id = ${pending.itemId}`).toEqual([]);
+    expect(await sql`select 1 from network.messages where app_id = 'slop' and id = ${`photo-ready:${pending.offerId}`}`).toEqual([]);
   }, T);
 });

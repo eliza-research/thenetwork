@@ -22,6 +22,10 @@ describe.skipIf(!pgAvailable)("birth dates and age readings (PostgreSQL)", () =>
     return a.join(app, { e164, personId: null }, input);
   };
   const personRow = async (e164: string) => (await store.sql`select p.* from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${e164}`)[0];
+  const matchingAgeRow = (memberId: string) => store.sql.begin(async tx => {
+    await tx`select set_config('app.age_as_of', ${new Date(now).toISOString()}, true)`;
+    return (await tx`select * from platform.matching_ages where app_id = 'friends' and member_id = ${memberId}`)[0]!;
+  });
 
   beforeAll(async () => { url = await migratedDb("birth_date"); store = new PgPeopleStore(url); }, 120_000);
   afterAll(async () => { await store?.close(); if (url) await dropDb(url); });
@@ -63,8 +67,16 @@ describe.skipIf(!pgAvailable)("birth dates and age readings (PostgreSQL)", () =>
     const person = await a.personFor(e164);
     expect(await a.lowestAge(e164, person)).toBe(17);
     expect((await a.ageRecord(e164, person)).birthExact).toBe(true);
+    const memberId = `friends_leap_birth_${process.pid}_${seq}`;
+    await store.sql`insert into network.members (id, app_id, name, home_city, account_status, person_id)
+      values (${memberId}, 'friends', 'Sam', 'nyc', 'active', ${person!.id}::uuid)`;
+    expect((await store.ageStanding(person!.id, a.phoneHash(e164))).signup?.eligibleAt).toBe(dayOf(20260301));
+    now = dayOf(20260301, 11, 59);
+    expect(await a.lowestAge(e164, person)).toBe(17);
+    expect(await matchingAgeRow(memberId)).toMatchObject({ age: 17, signup_minor_cap: null });
     now = dayOf(20260301);
     expect(await a.lowestAge(e164, person)).toBe(18);
+    expect(await matchingAgeRow(memberId)).toMatchObject({ age: 18, signup_minor_cap: null });
   });
 
   test("memberAge: a lower typed age after a birth date wins, makes a conflict and bars the phone from the teen pool", async () => {
@@ -177,6 +189,7 @@ describe.skipIf(!pgAvailable)("birth dates and age readings (PostgreSQL)", () =>
     const owner = { e164: oldNumber, personId: joined.membership.personId };
     expect(await a.lowestAge(oldNumber, await a.personFor(oldNumber))).toBe(15);
     now = dayOf(20260320);
+    expect(await a.lowestAge(oldNumber, await a.personFor(oldNumber))).toBe(16);
     expect(await a.startNumberChange(app, owner, newNumber, true, async () => ({ ok: true }))).toEqual({ ok: true });
     expect(await a.confirmNumberChange(owner, async () => true)).toEqual({ ok: true, e164: newNumber, personId: owner.personId });
     const moved = await a.personFor(newNumber);
@@ -226,23 +239,51 @@ describe.skipIf(!pgAvailable)("birth dates and age readings (PostgreSQL)", () =>
     expect(await a.ageRecord(e164, await a.personFor(e164))).toMatchObject({ age: 16, birthExact: true, ageConflict: false });
   });
 
-  test("the 0082 matching-age view carries the birth readings, the floor readings and the bar, and no confirmation", async () => {
-    now = dayOf(20261122);
+  test("the matching-age view carries separate birth readings, phone floor readings and the bar", async () => {
+    now = dayOf(20260310);
     const a = accounts(), e164 = phone();
     expect((await joinWith(a, e164, { birthdate: "2010-03-15" })).ok).toBe(true);
     const person = (await a.personFor(e164))!;
     const memberId = `friends_birth_${process.pid}_${seq}`;
     await store.sql`insert into network.members (id, app_id, name, home_city, account_status, person_id) values (${memberId}, 'friends', 'Sam', 'nyc', 'active', ${person.id}::uuid)`;
-    const view = async () => (await store.sql`select * from platform.matching_ages where app_id = 'friends' and member_id = ${memberId}`)[0]!;
+    const view = () => matchingAgeRow(memberId);
+    expect(await view()).toMatchObject({ age: 15 });
+    now = dayOf(20260320);
     const before = await view();
-    expect(before).toMatchObject({ birth_date: 20100315, birth_lower: 20100314, birth_upper: 20100315, teen_pool_barred: false });
+    expect(before).toMatchObject({
+      age: 16, birth_date: 20100315, birth_lower: 20100314, birth_upper: 20100315, teen_pool_barred: false,
+      floor_birth_lower: null, floor_birth_upper: null, floor_birth_youngest: null, signup_minor_cap: null,
+    });
     expect(Object.keys(before)).not.toContain("teen_confirmed_birth");
-    expect(before.floor_birth_upper - before.floor_birth_lower).toBe(10000);
+    expect(await store.ageFloorRecord(a.phoneHash(e164))).toBeUndefined();
+    await a.recordAge(e164, person, 16);
+    expect(await view()).toMatchObject({
+      age: 16, birth_date: 20100315, floor_birth_lower: 20090320, floor_birth_upper: 20100320, floor_birth_youngest: 20100320,
+    });
     await a.barTeenPool(e164, "older_than_stated", now);
     expect(await view()).toMatchObject({ teen_pool_barred: true });
     const typed = phone();
     expect((await joinWith(a, typed, { age: 16 })).ok).toBe(true);
     expect((await a.teenAgeFacts((await a.personFor(typed))!.id)).firstReadingExact).toBe(false);
+  });
+
+  test("memberAge: a later private eligibility date continues to limit a different exact birth reading", async () => {
+    now = dayOf(20260310);
+    const a = accounts(), e164 = phone();
+    const joined = await joinWith(a, e164, { birthdate: "2010-03-15" });
+    if (!joined.ok) throw new Error(`fixture join failed: ${joined.error}`);
+    const person = await a.personFor(e164);
+    const hash = a.phoneHash(e164);
+    expect(await store.saveSignupAge(joined.membership, e164, hash, { initialMinorAge: 14, eligibleAt: dayOf(20290320) }, now)).toBe(true);
+    const memberId = `friends_mismatched_birth_${process.pid}_${seq}`;
+    await store.sql`insert into network.members (id, app_id, name, home_city, account_status, person_id)
+      values (${memberId}, 'friends', 'Sam', 'nyc', 'active', ${person!.id}::uuid)`;
+    now = dayOf(20280315);
+    expect(await a.ageRecord(e164, person)).toMatchObject({ age: 14, maxAge: 18, birthExact: true });
+    expect(await matchingAgeRow(memberId)).toMatchObject({ age: 14, signup_minor_cap: 14 });
+    now = dayOf(20290320);
+    expect(await a.lowestAge(e164, person)).toBe(19);
+    expect(await matchingAgeRow(memberId)).toMatchObject({ age: 19, signup_minor_cap: null });
   });
 
   test("friendIntroAge: an exact-date 16 with no signal reads the teen facts with no confirmation row and no staff step", async () => {
