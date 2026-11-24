@@ -260,7 +260,8 @@ describe.each(SITES)("$domain", (s) => {
         expect(skill).toContain("exact current `consent.text` and `consent.version`");
         expect(skill).toContain("Ask for their birthday first, not only their age.");
         expect(skill).not.toMatch(/[#&?]age=/);
-        expect(skill).not.toContain("https://peon.biz/join");
+        expect(skill).toContain("https://peon.biz/join?via=agent");
+        expect(skill).not.toContain("**Finish signup**");
         expect(skill).not.toContain("ask for a new code");
         expect(skill).toContain("Only an `onboarding` or `active`");
         expect(skill).toContain("returns `submitted: true`");
