@@ -798,14 +798,20 @@ export class PhotoRelayService {
   }
 
   async viewCurrent(o: PhotoOfferRow, tx?: SQL): Promise<boolean> {
-    if (!this.enabled || !(await this.partiesCurrent(o, tx))) return false;
-    return (await this.viewItems(o, tx)).length > 0;
+    if (!this.enabled || !await this.partiesCurrent(o, tx) || (await this.viewItems(o, tx)).length === 0) return false;
+    const current = await this.offer(o.id, tx);
+    return current?.phase === "ready" && !current.partyEnded;
   }
 
   async viewBytes(o: PhotoOfferRow, n: number) {
     const item = (await this.viewItems(o))[n - 1];
     if (!item) return;
-    return this.o.photos.relayBytes(item.senderPersonId, item.app, item.photoId, item);
+    const image = await this.o.photos.relayBytes(item.senderPersonId, item.app, item.photoId, item);
+    if (!image) return;
+    const offer = await this.offer(o.id);
+    if (offer?.phase !== "ready" || offer.partyEnded) return;
+    const current = (await this.viewItems(offer))[n - 1];
+    return current?.id === item.id ? image : undefined;
   }
 
   async ownBytes(personId: string, app: AppId, n: number, expectedSetSha?: string) {
