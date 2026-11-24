@@ -8,9 +8,10 @@ async function requestClimbingPartner(fixture: SignedTurnFixture) {
   const signup = { apps: ["friends"], interests: ["climbing", "hiking"], neighborhood: "Greenpoint" } satisfies Parameters<SignedTurnFixture["createMember"]>[1];
   const requester = await fixture.createMember({}, { ...signup, firstName: "Ari" });
   const candidate = await fixture.createMember({}, { ...signup, firstName: "Bo" });
-  for (const { phone } of [requester, candidate]) {
+  for (const member of [requester, candidate]) {
+    await fixture.verifyFriendsAdult(member);
     for (const text of ["I enjoy climbing and hiking.", "Weekends mostly.", "One-on-one is good."]) {
-      await fixture.sendTurn(phone, text, { app: "friends" });
+      await fixture.sendTurn(member.phone, text, { app: "friends" });
     }
   }
   const { response } = await fixture.sendTurn(requester.phone,
