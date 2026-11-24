@@ -180,16 +180,23 @@ function Transport() {
 }
 
 type Hit = { key: string; label: string; meta: string; go(): void };
-/** The members, neighborhoods and opportunity ids that match the query (at most 5 + 3 + 3), in the groups that the generated `hitGroups` allows. */
+/** Best first within a group: an exact name, then a name that starts with the query, then a name that only contains it. Stable within each rank. */
+function matchRank(name: string, q: string): number {
+  const n = name.toLowerCase();
+  return n === q ? 0 : n.startsWith(q) ? 1 : 2;
+}
+/** The members, neighborhoods and opportunity ids that match the query (at most 5 + 3 + 3, best first), in the groups that the generated `hitGroups` allows. */
 function searchHits(query: string, groups: HitGroups): Hit[] {
   const hits: Hit[] = [];
   if (groups === "NoHits") return hits;
   const q = query.trim().toLowerCase();
-  for (const m of store.members.values()) {
-    if (hits.length >= 5) break;
-    if (m.name.toLowerCase().includes(q) || m.id === q) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.pickHit({ kind: "member", id: m.id }) });
-  }
-  for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
+  const memberRank = (m: { name: string; id: string }): number => Math.min(matchRank(m.name, q), m.id === q ? 0 : 2);
+  const members = [...store.members.values()]
+    .filter(m => m.name.toLowerCase().includes(q) || m.id === q)
+    .sort((a, b) => memberRank(a) - memberRank(b))
+    .slice(0, 5);
+  for (const m of members) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.pickHit({ kind: "member", id: m.id }) });
+  for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
   if (groups === "NamesPlacesAndIds") {
     let k = 0;
     for (const o of store.opps.values()) {
