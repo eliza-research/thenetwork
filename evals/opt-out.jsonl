@@ -40,6 +40,19 @@
 {"text": "remove my number", "label": "stop", "lang": "en"}
 {"text": "delete my number please", "label": "stop", "lang": "en"}
 {"text": "lose my number", "label": "stop", "lang": "en"}
+{"text": "delete my account", "label": "stop", "lang": "en"}
+{"text": "stop, delete my data", "label": "stop", "lang": "en"}
+{"text": "please erase all my data", "label": "stop", "lang": "en"}
+{"text": "close my account", "label": "stop", "lang": "en"}
+{"text": "remove my profile", "label": "stop", "lang": "en"}
+{"text": "I want out", "label": "stop", "lang": "en"}
+{"text": "don't delete my account", "label": "not_stop", "lang": "en"}
+{"text": "how do I delete my account?", "label": "not_stop", "lang": "en"}
+{"text": "I might delete my account", "label": "not_stop", "lang": "en"}
+{"text": "delete my account on instagram", "label": "not_stop", "lang": "en"}
+{"text": "She said delete my account", "label": "not_stop", "lang": "en"}
+{"text": "I want out of my lease", "label": "not_stop", "lang": "en"}
+{"text": "can you delete my data?", "label": "not_stop", "lang": "en"}
 {"text": "I don't want these texts", "label": "stop", "lang": "en"}
 {"text": "i dont want any more messages", "label": "stop", "lang": "en"}
 {"text": "I do not want your messages", "label": "stop", "lang": "en"}

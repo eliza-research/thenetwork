@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 
-ACTION = re.compile(r"action-[0-9a-f]{24}\.json\.gz\Z")
+ACTION = re.compile(r"action-[0-9a-f]{24}\.json\.(?:zst|gz)\Z")
 CACHE = Path(".spec-cache/formal")
 
 

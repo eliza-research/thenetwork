@@ -42,7 +42,7 @@ export function canObserveCandidate(l: SeatLedger, candidate: string, occupies: 
 //@ pure
 export function observeCandidate(l: SeatLedger, candidate: string, occupies: boolean): SeatLedger {
   //@ ensures (inv(l) && canObserveCandidate(l, candidate, occupies)) ==> stepPublishedOccupancyStaysFixed(l, \result)
-  return { ...l, occupied: l.occupied.concat([candidate].filter((set_x: string) => !l.occupied.includes(set_x))) };
+  return { ...l, occupied: l.occupied.concat(([candidate] as string[]).filter((set_x: string) => !l.occupied.includes(set_x))) };
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
