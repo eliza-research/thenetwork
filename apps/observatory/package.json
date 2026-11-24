@@ -25,6 +25,8 @@
     "tailwindcss": "catalog:"
   },
   "devDependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "@cloudflare/workers-types": "4.20260429.1",
     "@types/d3-force": "^3.0.10",
     "@types/leaflet": "^1.9.22",
     "@types/react": "catalog:",

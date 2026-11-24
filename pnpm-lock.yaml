@@ -223,6 +223,12 @@ importers:
         specifier: 'catalog:'
         version: 4.3.5
     devDependencies:
+      '@cloudflare/containers':
+        specifier: 0.3.7
+        version: 0.3.7
+      '@cloudflare/workers-types':
+        specifier: 4.20260429.1
+        version: 4.20260429.1
       '@types/d3-force':
         specifier: ^3.0.10
         version: 3.0.10
@@ -649,6 +655,12 @@ packages:
 
   '@cacheable/utils@2.5.0':
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==}
+
+  '@cloudflare/containers@0.3.7':
+    resolution: {integrity: sha512-DM9dm3FnIBSyiSJ1FLavKwl/lk3oAmTaynCzZQ9pZR0ncRPquSxkxd8Nu2MFILxmDDsPkxKsSNEh9mHHMty4Fw==}
+
+  '@cloudflare/workers-types@4.20260429.1':
+    resolution: {integrity: sha512-WtwRki7i/RnkzXkJXhI9PmrmMpftpwDocRdeBQ29aHOOSCwV7nAlh163XRzjftnQGuW9nDEnu7Om+RJMn46N+Q==}
 
   '@dual-bundle/import-meta-resolve@4.2.1':
     resolution: {integrity: sha512-id+7YRUgoUX6CgV0DtuhirQWodeeA7Lf4i2x71JS/vtA5pRb/hIGWlw+G6MeXvsM+MXrz0VAydTGElX1rAfgPg==}
@@ -3718,6 +3730,10 @@ snapshots:
     dependencies:
       hashery: 1.5.1
       keyv: 5.6.0
+
+  '@cloudflare/containers@0.3.7': {}
+
+  '@cloudflare/workers-types@4.20260429.1': {}
 
   '@dual-bundle/import-meta-resolve@4.2.1': {}
 
