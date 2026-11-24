@@ -4872,7 +4872,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         o.sentAt = { ...o.sentAt, [m.id]: this.now() };
         const gathering = isGatheringRepeat(o);
         this.send(m, copy.timesRetry(attention.timeOptionsPhrase(fresh, NY)), { type: "scheduling", proactive: false, timeOptions: fresh,
-          ...(gathering || (this.app.id === "slop" && o.category === "romance") ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
+          ...(gathering || this.app.id === "friends" || (this.app.id === "slop" && o.category === "romance") ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
           ...(gathering ? { key: gatheringRepeatProbeKey(o.id, m.id, true), noDefer: true } : {}) });
         return;
       }
@@ -8484,7 +8484,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? meta.plan?.planId ?? "");
     if (opportunity && this.app.id === "friends" && meta.type && peerContactTypes.includes(meta.type)) {
-      const roster = meta.booked && meta.participants?.length ? meta.participants : this.oppRoster(opportunity);
+      const peers = meta.booked && meta.participants?.length ? meta.participants : o.about ?? this.blockRoster(opportunity);
+      const roster = [...new Set([m.id, ...peers])];
       if (!this.friendsRosterVerificationCurrent(roster)) return this.refuse(m.id, kind, "friends_verification_required", this.hookFns(m, o.hook));
     }
     if (this.app.id === "slop" && opportunity?.category === "romance" && this.opts.hooks?.hardDatingPairCurrent
