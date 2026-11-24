@@ -1,6 +1,6 @@
 # MCP signup drafts
 
-The [OAuth and MCP flow model](models/oauth_mcp.md) covers the connector grant, and the [connector browser authorization](oauthBrowserAuthorization.md) covers the connection page and its Finish signup step. The draft keeps the approved first name and home city that the agent saved for that step; the step does not show them, so the person enters the details on the page. The MCP shell reads the site, connector grant, phone session, recorded age, ban and stored records. It keeps the browser response, storage transactions, and cleanup operations.
+The [OAuth and MCP flow model](models/oauth_mcp.md) covers the connector grant, and the [connector browser authorization](oauthBrowserAuthorization.md) covers the connection page and its Finish signup step. The draft keeps the approved first name and home city for the verified signup form. When the client, app, phone and person match, the form can show the draft once. The person can edit those fields before submitting signup. The MCP shell reads the site, connector grant, phone session, recorded age, ban and stored records. It keeps the browser response, storage transactions, and cleanup operations.
 
 ## Story: Prepare an editable Join form after authorization
 
@@ -114,7 +114,7 @@ pure def lawRefusedBannedSessionDeletesDraft(banned: bool): bool =
 
 ### A draft is written and read only under its current binding
 
-A write needs a live unrevoked grant with the profile write scope and the matching app and phone. Exactly one row is written for each grant. A read needs the matching app, phone and person, one compatible grant, and a draft that is unused and current. The signup result, a recorded age that blocks enrollment, a ban, erasure, a number change and the deadline delete the draft.
+A write needs a live unrevoked grant with the profile write scope and the matching app and phone. At most one draft is written for each grant. A private flag on the grant records the first write. Deleting the draft removes its fields and binding. The flag stays with the grant until grant deletion. An upgrade sets the flag for each retained draft or old consumed record before it removes consumed records. A read needs the matching app, phone and person, one compatible grant, and a draft that is unused and current. The signup result, a recorded age that blocks enrollment, a ban, erasure, a number change and the deadline delete the draft.
 
 ```quint
 pure def signupDraftGrantAllowed(bindingMatches: bool, grantCurrent: bool, unrevoked: bool, writeScope: bool): bool =
@@ -122,6 +122,11 @@ pure def signupDraftGrantAllowed(bindingMatches: bool, grantCurrent: bool, unrev
 
 pure def signupDraftRowReadable(bindingMatches: bool, unconsumed: bool, expiresAt: int, asOf: int): bool =
   bindingMatches and unconsumed and expiresAt > asOf
+
+pure def signupDraftCanPrepare(alreadyPrepared: bool): bool = not(alreadyPrepared)
+
+pure def lawOneDraftPerGrant(alreadyPrepared: bool): bool =
+  alreadyPrepared implies not(signupDraftCanPrepare(alreadyPrepared))
 
 pure def signupDraftUnique(matches: int): bool = matches == 1
 pure def signupDraftExpired(expiresAt: int, asOf: int): bool = expiresAt <= asOf

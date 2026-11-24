@@ -4,7 +4,7 @@ import { fileAt } from "../../core/src/runtime/files.ts";
 import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
-import { signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { signupDraftCanPrepare, signupDraftExpired, signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { signupPrefillAllowed, useSignupPrefill as markSignupPrefillUsed } from "../../core/src/generated/authorizationPages.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { parseState as parseHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
@@ -103,13 +103,15 @@ export class PgOAuthStore implements OAuthStore {
 
   async putSignupDraft(d: SignupDraft, at: number) {
     return this.sql.begin(async tx => {
-      const [g] = await tx<{ app_id: string; phone_key: string; expires_at: Date; revoked_at: Date | null; scopes: unknown }[]>`
-        select app_id, phone_key, expires_at, revoked_at, scopes from oauth.grants where id=${d.grantId} for update`;
+      const [g] = await tx<{ app_id: string; phone_key: string; expires_at: Date; revoked_at: Date | null; scopes: unknown; signup_draft_prepared: boolean }[]>`
+        select app_id, phone_key, expires_at, revoked_at, scopes, signup_draft_prepared from oauth.grants where id=${d.grantId} for update`;
       if (!g || !signupDraftGrantAllowed(g.app_id === d.app && g.phone_key === d.phoneKey, ms(g.expires_at)! > at, g.revoked_at === null, arr(g.scopes).includes("profile:write"))
-        || d.expiresAt <= at) return false;
+        || signupDraftExpired(d.expiresAt, at) || !signupDraftCanPrepare(g.signup_draft_prepared)) return false;
       const rows = await tx`insert into oauth.signup_drafts (grant_id, app_id, phone_key, fields, expires_at)
         values (${d.grantId}, ${d.app}, ${d.phoneKey}, ${d.fields}::jsonb, ${ts(d.expiresAt)}) on conflict (grant_id) do nothing returning grant_id`;
-      return signupDraftUnique(rows.length);
+      if (!signupDraftUnique(rows.length)) return false;
+      await tx`update oauth.grants set signup_draft_prepared=true where id=${d.grantId}`;
+      return true;
     });
   }
 
