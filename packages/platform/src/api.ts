@@ -58,8 +58,9 @@ function readJoinPrefill(input: unknown) {
 }
 
 export type HomeHelpVenueRequest = { id: string; revision: number } & (
-  { action: "submit"; address: string } | { action: "reveal" | "revoke" }
+  { action: "submit"; address: string } | { action: "reveal" | "revoke" | "status" }
 );
+export type HomeHelpVenueResponse = { address?: string } | { role: "requester" | "helper"; addressSaved: boolean };
 
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
@@ -96,7 +97,7 @@ export interface PublicApiOptions extends AccountHooks {
   photoRelay?: PhotoRelayService;
   photoLinks?: PhotoUploadLinks;
   /** Private home-help address for the current approved revision. Use the verified app session only. */
-  homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<{ address?: string } | undefined>;
+  homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<HomeHelpVenueResponse | undefined>;
   calendarInvite?: (app: AppInfo, code: string) => Promise<Response>;
   /**
    * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
@@ -620,7 +621,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         if (!venue) return json(404, { ok: false, error: "not_found" });
         return withSession(async who => {
           const { action, id, revision, address } = b;
-          if ((action !== "submit" && action !== "reveal" && action !== "revoke")
+          if ((action !== "submit" && action !== "reveal" && action !== "revoke" && action !== "status")
             || typeof id !== "string" || id.length === 0 || id.length > 36
             || typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 || revision > 2_147_483_647
             || ("app" in b && b.app !== appId)

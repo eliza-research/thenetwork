@@ -102,7 +102,9 @@ import { BOUNDED_HOME_HELP_CLARIFICATION, boundedHomeHelpCommand, boundedHomeHel
 import { boundedHomeHelpSenderCurrent, createBoundedHomeHelpAuthority } from "./bounded-home-help-authority.ts";
 import { handleBoundedHomeHelpStaff, writeBoundedHomeHelpStaffAudit } from "./bounded-home-help-staff.ts";
 import { BOUNDED_HOME_HELP_CONSENT_CLARIFICATION, boundedHomeHelpConsentCard, boundedHomeHelpConsentCommand,
-  boundedHomeHelpConsentReply, homeHelpPlanCode, homeHelpPlanId, type BoundedHomeHelpConsentCommand } from "./bounded-home-help-consent-command.ts";
+  boundedHomeHelpConsentReply, boundedHomeHelpVenueCommand, homeHelpPlanCode, homeHelpPlanId,
+  type BoundedHomeHelpConsentCommand, type BoundedHomeHelpVenueCommand } from "./bounded-home-help-consent-command.ts";
+import { homeHelpVenueLinkAllowed } from "../../core/src/generated/privateHomeHelpVenue.ts";
 import { queueReviewedHomeHelp, reconcileHomeHelpDelivery, stageApprovedHomeHelp } from "./bounded-home-help-delivery.ts";
 import { BoundedHomeHelp } from "../src/bounded-help.ts";
 import { BoundedHomeHelpConsent, type HomeHelpConsentKey } from "../src/bounded-home-help-consent.ts";
@@ -132,7 +134,7 @@ import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
 import type { Membership, PeopleStore, PendingText, Person, SignupAge } from "../../platform/src/store.ts";
-import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
+import { createPublicApi, type HomeHelpVenueRequest, type HomeHelpVenueResponse, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
@@ -558,20 +560,26 @@ export class NetworkService implements RuntimeHost {
 
   private homeHelpVenue() {
     const consent = this.homeHelpConsent();
-    return new BoundedHomeHelpVenue((tx, key) => consent.currentConsent(tx, key), this.homeHelpVenueKey, () => this.clock.now());
+    return new BoundedHomeHelpVenue(consent.currentConsent.bind(consent), this.homeHelpVenueKey, () => this.clock.now());
   }
 
-  private async privateHomeHelpVenue(app: AppInfo, who: Who, input: HomeHelpVenueRequest): Promise<{ address?: string } | undefined> {
+  private async privateHomeHelpVenue(app: AppInfo, who: Who, input: HomeHelpVenueRequest): Promise<HomeHelpVenueResponse | undefined> {
     const runtime = this.runtimeFor(app.id);
     const id = homeHelpPlanId(input.id);
     if (!runtime?.net.allowedCategories.has("help") || !id || !who.personId) return;
-    return runtime.scoped(async tx => {
+    if (input.action === "status" && (app.id !== "ntwrk" || this.routePolicy)) return;
+    return runtime.scoped(async (tx): Promise<HomeHelpVenueResponse | undefined> => {
       const accounts = this.accountsFor(tx);
       const participant = await accounts.activeMembership(app, who);
       if (!participant || !canBeMatched(await accounts.lowestAge(who.e164, participant.person))) return;
       const actor = { app: app.id, memberId: participant.membership.memberId };
       const version = { id, revision: input.revision };
       const venue = this.homeHelpVenue();
+      if (input.action === "status") {
+        const status = await venue.status(tx, actor, version);
+        if (status === "VenueUnavailable" || (await accounts.activeMembership(app, who))?.membership.memberId !== actor.memberId) return;
+        return { role: status === "VenueHelperSaved" ? "helper" : "requester", addressSaved: status !== "VenueRequesterEmpty" };
+      }
       if (input.action === "reveal") {
         const result = await venue.reveal(tx, actor, version);
         // Recheck this session's exact phone binding after taking the roster locks.
@@ -2265,6 +2273,19 @@ export class NetworkService implements RuntimeHost {
         rt.unit.memberCommand = tx => this.replyToExpectedInvitation(tx, rt, memberId, signedDirect.from, rowId, inviteDelivery);
         return "member_invitation_delivery";
       }
+      const homeHelpAddress = !keyword && boundedHomeHelpVenueCommand(ev.text);
+      if (homeHelpAddress) {
+        if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "bounded_home_help";
+        rt.unit.inbound = inbound;
+        rt.unit.privateHomeHelpTurn = true;
+        rt.unit.memberCommand = async tx => {
+          const reply = await this.homeHelpVenueReply(tx, rt, { memberId, e164: signedDirect.from }, homeHelpAddress);
+          if (!reply) return;
+          rt.unit.atomicReply = "bounded_home_help";
+          rt.collectedMemberReply(memberId, `home-help-venue:${rowId}`, reply.body, "bounded_home_help", reply.link ? [reply.link] : []);
+        };
+        return "bounded_home_help";
+      }
       const homeHelpConsent = signedDirect && boundedHomeHelpConsentCommand(ev.text);
       if (homeHelpConsent && rt.signedMemberTurn(memberId, rowId)) {
         rt.unit.inbound = inbound;
@@ -2598,6 +2619,23 @@ export class NetworkService implements RuntimeHost {
     const result = await store.respond(tx, { ...key, actor, decision: command.decision, receivedAt });
     if (result) rt.unit.atomicReply = "bounded_home_help";
     rt.collectedMemberReply(actor.memberId, responseId, boundedHomeHelpConsentReply(result), "bounded_home_help");
+  }
+
+  private async homeHelpVenueReply(tx: SQL, rt: NetworkRuntime, actor: { memberId: MemberId; e164: string },
+    command: BoundedHomeHelpVenueCommand): Promise<{ body: string; link?: string } | undefined> {
+    if (rt.app.id !== "ntwrk" || this.routePolicy) return;
+    const accounts = this.accountsFor(tx);
+    if (!await boundedHomeHelpSenderCurrent(accounts, rt.app, actor)) return;
+    const unavailable = { body: "That home-help address is unavailable. Check the plan ID and revision on your message." };
+    if (command.kind !== "address") return unavailable;
+    const status = await this.homeHelpVenue().status(tx, { app: rt.app.id, memberId: actor.memberId }, command);
+    const currentSender = await boundedHomeHelpSenderCurrent(accounts, rt.app, actor);
+    if (!currentSender) return;
+    if (!homeHelpVenueLinkAllowed(currentSender, status)) return unavailable;
+    const origin = stagingSiteOrigins(this.env).ntwrk ?? `https://${rt.app.domain}`;
+    const link = `${origin}/home-help#${homeHelpPlanCode(command.id)}-${command.revision}`;
+    const statusText = status === "VenueRequesterSaved" ? "Your address is saved for this plan." : "Everyone on this plan agreed.";
+    return { body: `${statusText} Open the private address page: ${link}`, link };
   }
 
   /**
@@ -3725,6 +3763,15 @@ export class NetworkService implements RuntimeHost {
         const memberId = handled.memberId;
         const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
         if (!rt || !memberId || !await rt.scoped(tx => boundedHomeHelpSenderCurrent(this.accountsFor(tx), rt.app, { memberId, e164: input.from }))) {
+          return json({error: "turn_home_help_changed", retryable: false}, 409);
+        }
+      }
+      if (handled.replyIds?.some(id => id.startsWith("home-help-venue:"))) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const command = boundedHomeHelpVenueCommand(input.text);
+        const live = rt && memberId && command && await rt.scoped(tx => this.homeHelpVenueReply(tx, rt, { memberId, e164: input.from }, command));
+        if (!live || handled.replies.length !== 1 || handled.replies[0] !== live.body) {
           return json({error: "turn_home_help_changed", retryable: false}, 409);
         }
       }

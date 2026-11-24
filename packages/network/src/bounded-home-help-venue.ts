@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, type KeyObject } from "node:crypto";
 import {
-  mayReadHomeHelpVenue, mayRevokeHomeHelpVenue, mayStoreHomeHelpVenue,
+  currentHomeHelpVenueStatus, mayReadHomeHelpVenue, mayRevokeHomeHelpVenue, mayStoreHomeHelpVenue, type HomeHelpVenueStatus,
 } from "../../core/src/generated/privateHomeHelpVenue.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { AppId } from "../../platform/src/apps.ts";
@@ -18,7 +18,7 @@ export interface HomeHelpVenueVersion {
 }
 
 type VenueKey = HomeHelpVenueVersion & { app: AppId };
-export type CurrentHomeHelpConsent = (tx: SQL, key: VenueKey) => Promise<HomeHelpReviewPlan | undefined>;
+export type CurrentHomeHelpConsent = (tx: SQL, key: VenueKey, readOnly?: boolean) => Promise<HomeHelpReviewPlan | undefined>;
 
 interface SealedVenue {
   nonce: Buffer;
@@ -92,12 +92,23 @@ export class BoundedHomeHelpVenue {
     }
   }
 
-  private async consentFor(tx: SQL, actor: HomeHelpVenueActor, version: HomeHelpVenueVersion): Promise<HomeHelpReviewPlan | undefined> {
+  private async consentFor(tx: SQL, actor: HomeHelpVenueActor, version: HomeHelpVenueVersion, readOnly = false): Promise<HomeHelpReviewPlan | undefined> {
     if (!actor.memberId || !validVersion(version)) return;
-    const plan = await this.currentConsent(tx, { app: actor.app, id: version.id, revision: version.revision });
+    const plan = await this.currentConsent(tx, { app: actor.app, id: version.id, revision: version.revision }, readOnly);
     if (plan?.app === actor.app && plan.id === version.id && plan.revision === version.revision && plan.phase === "Approved" && plan.approval) {
       return plan;
     }
+  }
+
+  async status(tx: SQL, actor: HomeHelpVenueActor, version: HomeHelpVenueVersion): Promise<HomeHelpVenueStatus> {
+    const plan = await this.consentFor(tx, actor, version, true);
+    if (!plan) return "VenueUnavailable";
+    const [entry] = await tx<{ expires_at: Date; saved: boolean }[]>`
+      select expires_at, ciphertext is not null as saved from network.bounded_home_help_venue
+      where app_id=${plan.app} and plan_id=${plan.id} and revision=${plan.revision}`;
+    const expiresAt = plan.draft.expiresAt;
+    return currentHomeHelpVenueStatus(plan.requesterId === actor.memberId, plan.helperIds.includes(actor.memberId), true,
+      entry?.saved === true, !!entry && (!entry.saved || entry.expires_at.getTime() !== expiresAt), this.now(), expiresAt);
   }
 
   async submit(tx: SQL, actor: HomeHelpVenueActor, input: HomeHelpVenueVersion & { address: unknown }): Promise<boolean> {
