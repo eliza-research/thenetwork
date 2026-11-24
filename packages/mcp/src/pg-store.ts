@@ -118,13 +118,13 @@ export class PgOAuthStore implements OAuthStore {
     try { return await this.sql.begin(async tx => {
       // Lock grants in the same order as revocation before taking draft rows.
       const grants = await tx`select g.id from oauth.grants g join oauth.signup_drafts d on d.grant_id=g.id
-        where d.phone_key=${phoneKey} and d.app_id=${app} and d.consumed_at is null and d.expires_at>${new Date(at)}
+        where d.phone_key=${phoneKey} and d.app_id=${app} and d.expires_at>${new Date(at)}
         and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
         and g.revoked_at is null and g.expires_at>${new Date(at)} and 'profile:write'=any(g.scopes) order by g.id for update of g`;
       if (!signupDraftUnique(grants.length)) return undefined;
       const liveAt = at + Math.ceil(performance.now() - started);
       const rows = await tx`select d.grant_id,d.fields from oauth.signup_drafts d join oauth.grants g on g.id=d.grant_id
-        where d.grant_id=${grants[0].id} and d.consumed_at is null and d.expires_at>${new Date(liveAt)}
+        where d.grant_id=${grants[0].id} and d.expires_at>${new Date(liveAt)}
         and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
         and g.revoked_at is null and g.expires_at>${new Date(liveAt)} and 'profile:write'=any(g.scopes) for update of d`;
       if (!signupDraftUnique(rows.length)) return undefined;
@@ -136,28 +136,23 @@ export class PgOAuthStore implements OAuthStore {
     try { return await this.sql.begin(async tx => {
       const grants = (await tx`select g.* from oauth.grants g
         join oauth.signup_drafts d on d.grant_id=g.id
-        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} and d.consumed_at is null
+        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId}
         order by g.id for update of g`).map(grant);
-      const drafts = await tx`select d.grant_id,d.app_id,d.phone_key,d.fields,d.expires_at,d.consumed_at from oauth.signup_drafts d
+      const drafts = await tx`select d.grant_id,d.app_id,d.phone_key,d.fields,d.expires_at from oauth.signup_drafts d
         join oauth.grants g on g.id=d.grant_id
-        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} and d.consumed_at is null for update of d`;
+        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} for update of d`;
       const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
       const usable = drafts.filter(d => {
         const g = grants.find(x => x.id === d.grant_id);
         return !!g && signupDraftGrantAllowed(g.personId === ask.personId && g.app === d.app_id && g.phoneKey === d.phone_key, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
-          && signupPrefillAllowed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: d.consumed_at !== null, expiresAt: ms(d.expires_at)! }, request);
+          && signupPrefillAllowed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: false, expiresAt: ms(d.expires_at)! }, request);
       });
       if (!signupDraftUnique(usable.length)) return undefined;
       const d = usable[0]!, g = grants.find(x => x.id === d.grant_id)!;
       if (!markSignupPrefillUsed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: false, expiresAt: ms(d.expires_at)! }, request).used) return undefined;
-      const used = await tx`update oauth.signup_drafts set fields='{}'::jsonb,consumed_at=${new Date(at)} where grant_id=${d.grant_id} and consumed_at is null returning grant_id`;
-      return signupDraftUnique(used.length) ? d.fields as import("./store.ts").SignupDraftFields : undefined;
+      const used = await tx`delete from oauth.signup_drafts where grant_id=${d.grant_id} returning fields`;
+      return signupDraftUnique(used.length) ? used[0].fields as import("./store.ts").SignupDraftFields : undefined;
     }); } catch { throw new Error("Signup draft storage unavailable"); }
-  }
-
-  async discardSignupDrafts(phoneKey: string, app: McpAppId, at: number) {
-    try { await this.sql`update oauth.signup_drafts set fields='{}'::jsonb,consumed_at=${new Date(at)} where phone_key=${phoneKey} and app_id=${app}`; }
-    catch { throw new Error("Signup draft storage unavailable"); }
   }
 
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {

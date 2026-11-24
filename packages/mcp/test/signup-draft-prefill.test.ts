@@ -66,7 +66,7 @@ test("the same client's next authorization shows the approved draft once; the pe
   expect(neverPrefilledAgeOrConsent(first.form)).toBe(true);
   expect(first.form).toContain("Finish signup");
   expect(first.form).not.toContain(PHONE_A);
-  expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
+  expect((e.store as MemoryOAuthStore).signupDrafts.size).toBe(0);
   await first.post("/oauth/authorize/signup", { decision: "skip", signupView: field(first.form, "signupView") });
   expect(blank(await (await first.post("/oauth/authorize/signup", { decision: "open" })).text())).toBe(true);
   expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
@@ -103,10 +103,10 @@ test("another client, another app, another phone, an expired draft and a stale g
   expect(blank((await openSignup(revoked, "friends.help", revokedClient, PHONE_A)).form)).toBe(true);
 });
 
-test("a recorded age below 13 hides and scrubs the draft; a birthday below 13 on the form is refused and a teen joins unmatched", async () => {
+test("a recorded age below 13 deletes the draft; a lower recorded teen age blocks adult matching", async () => {
   const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
   await e.accounts.recordAge(PHONE_A, undefined, 12);
-  expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
+  expect((e.store as MemoryOAuthStore).signupDrafts.size).toBe(0);
   const minor = await authorize(e, "friends.help", clientId, PHONE_A);
   expect(minor.consent).not.toMatch(/\bAri\b/);
   const opened = await (await minor.post("/oauth/authorize/signup", { decision: "open" })).text();
@@ -207,13 +207,33 @@ test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also wh
     const other = (await register(e, "friends.help")).body.client_id as string;
     expect(await store.useSignupPrefill({ clientId: other, app: "friends", phoneKey: key, personId: null, ageAllowed: true }, e.clock.t)).toBeUndefined();
     expect(await store.useSignupPrefill({ clientId, app: "friends", phoneKey: key, personId: null, ageAllowed: false }, e.clock.t)).toBeUndefined();
+    expect((await store.sql`select fields from oauth.signup_drafts where phone_key=${key}`)[0]?.fields).toEqual({ firstName: "Ari", homeCity: "sf" });
     const restarted = new PgOAuthStore(store.sql);
     const ask = { clientId, app: "friends" as const, phoneKey: key, personId: null, ageAllowed: true };
     const pair = await Promise.all([store.useSignupPrefill(ask, e.clock.t), restarted.useSignupPrefill(ask, e.clock.t)]);
     expect(pair.filter(Boolean)).toEqual([{ firstName: "Ari", homeCity: "sf" }]);
-    expect((await store.sql`select fields, consumed_at is not null as used from oauth.signup_drafts where phone_key=${key}`)).toEqual([{ fields: {}, used: true }]);
+    expect(await store.sql`select 1 from oauth.signup_drafts where phone_key=${key}`).toEqual([]);
     expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
     const again = await draftFor(e, "friends.help", PHONE_A, { firstName: "Rae", homeCity: "nyc" });
     expect(shows((await openSignup(e, "friends.help", again, PHONE_A)).form, "Rae", "nyc")).toBe(true);
+  } finally { await store.close(); await dropTestDb(); }
+});
+
+
+test.skipIf(!pgAvailable)("the repeatable OAuth schema removes consumed drafts and preserves an unclaimed draft", async () => {
+  const store = new PgOAuthStore(await testDb());
+  try {
+    const e = setup({ store });
+    await draftFor(e, "friends.help", PHONE_A);
+    await draftFor(e, "friends.help", PHONE_B);
+    const liveKey = e.accounts.phoneHash(PHONE_A);
+    const consumedKey = e.accounts.phoneHash(PHONE_B);
+    await store.sql`alter table oauth.signup_drafts add column consumed_at timestamptz`;
+    await store.sql`update oauth.signup_drafts set consumed_at=${new Date(e.clock.t)} where phone_key=${consumedKey}`;
+    await store.migrate();
+    expect(await store.sql`select phone_key from oauth.signup_drafts`).toEqual([{ phone_key: liveKey }]);
+    await store.sql`update oauth.signup_drafts set fields='{}'::jsonb where phone_key=${liveKey}`;
+    await store.migrate();
+    expect(await store.sql`select 1 from oauth.signup_drafts`).toEqual([]);
   } finally { await store.close(); await dropTestDb(); }
 });

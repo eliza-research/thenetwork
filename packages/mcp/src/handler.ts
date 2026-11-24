@@ -1499,7 +1499,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const signupView = signupAccountView(c.app.id, key, who.personId);
     if (action === "CheckDiscardView") {
       if (!signupDraftDiscardAllowed(action, !!body && body.signupView === signupView)) return json(403, { error: "not_allowed" });
-      await store.discardSignupDrafts(key, c.app.id, now());
+      await store.deleteSignupDrafts(key, c.app.id);
       return json(200, { discarded: true }, who.setCookie ? { "set-cookie": who.setCookie } : {});
     }
     if (!o.platform.withSignupAgePolicy || !o.platform.setSignupAgeCleanup) return json(403, { error: "not_allowed" });

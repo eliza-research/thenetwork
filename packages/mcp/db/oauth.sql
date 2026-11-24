@@ -142,6 +142,7 @@ create table if not exists oauth.signup_drafts (
   fields jsonb not null,
   expires_at timestamptz not null
 );
+delete from oauth.signup_drafts d where d.fields = '{}'::jsonb or (to_jsonb(d)->>'consumed_at') is not null;
 alter table oauth.signup_drafts drop column if exists consumed_at;
 create index if not exists signup_drafts_phone_app on oauth.signup_drafts (phone_key, app_id);
 

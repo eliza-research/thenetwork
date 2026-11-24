@@ -165,7 +165,7 @@ export function checkRefreshRotation(rotation: RefreshRotation, refresh: Token |
 }
 
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
-export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
+export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number }
 export interface SignupPrefillAsk { clientId: string; app: McpAppId; phoneKey: string; personId: string | null; ageAllowed: boolean }
 
 export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "personId">;
@@ -176,7 +176,6 @@ export interface OAuthStore {
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
   /** Recoverable read for the verified phone/app until deliberate discard or expiry. */
   claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
-  discardSignupDrafts(phoneKey: string, app: McpAppId, at: number): Promise<void>;
   useSignupPrefill(ask: SignupPrefillAsk, at: number): Promise<SignupDraftFields | undefined>;
   deleteSignupDrafts(phoneKey: string, app: McpAppId): Promise<void>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
@@ -270,7 +269,7 @@ export class MemoryOAuthStore implements OAuthStore {
   }
   async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
     const drafts = [...this.signupDrafts.values()].filter(d => {
-      if (!signupDraftRowReadable(d.phoneKey === phoneKey && d.app === app, d.consumedAt === null, d.expiresAt, at)) return false;
+      if (!signupDraftRowReadable(d.phoneKey === phoneKey && d.app === app, true, d.expiresAt, at)) return false;
       const g = this.grants.get(d.grantId);
       return !!g && signupDraftGrantAllowed(g.personId === personId && g.app === app && g.phoneKey === phoneKey,
         g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"));
@@ -278,21 +277,18 @@ export class MemoryOAuthStore implements OAuthStore {
     if (!signupDraftUnique(drafts.length)) return undefined;
     return structuredClone(drafts[0].fields);
   }
-  async discardSignupDrafts(phoneKey: string, app: McpAppId, at: number) {
-    for (const d of this.signupDrafts.values()) if (d.phoneKey === phoneKey && d.app === app) { d.fields = { firstName: "" }; d.consumedAt = at; }
-  }
   async useSignupPrefill(ask: SignupPrefillAsk, at: number) {
     const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
     const drafts = [...this.signupDrafts.values()].filter(d => {
       const g = this.grants.get(d.grantId);
       return !!g && signupDraftGrantAllowed(g.personId === ask.personId && g.app === d.app && g.phoneKey === d.phoneKey, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
-        && signupPrefillAllowed({ client: g.clientId, app: d.app, phone: d.phoneKey, used: d.consumedAt !== null, expiresAt: d.expiresAt }, request);
+        && signupPrefillAllowed({ client: g.clientId, app: d.app, phone: d.phoneKey, used: false, expiresAt: d.expiresAt }, request);
     });
     if (!signupDraftUnique(drafts.length)) return undefined;
     const d = drafts[0]!, fields = structuredClone(d.fields);
     const g = this.grants.get(d.grantId)!;
     if (!markSignupPrefillUsed({ client: g.clientId, app: d.app, phone: d.phoneKey, used: false, expiresAt: d.expiresAt }, request).used) return undefined;
-    d.fields = { firstName: "" }; d.consumedAt = at;
+    this.signupDrafts.delete(d.grantId);
     return fields;
   }
 
