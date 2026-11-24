@@ -13,7 +13,7 @@ import type { ReviewReason, StaffPlanPreview } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
 import { OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
 import { stateLabel } from "./panels.tsx";
-import { COMPONENT_SIGN, dur, humanize, stamp } from "./ui.tsx";
+import { COMPONENT_SIGN, dur, hasScoreParts, humanize, stamp } from "./ui.tsx";
 
 /** "you" for the signed-in reviewer, "sim" for the simulated one, else the staff id without the token prefix. */
 export const reviewerName = (r?: string) =>
@@ -51,7 +51,7 @@ export function OppStateMark({ state }: { state: string }) {
 
 /** The score parts of a proposal: a bar each, red for a cost. */
 export function ScoreParts({ c }: { c?: ScoreComponents }) {
-  if (!c) return null;
+  if (!c || !hasScoreParts(c)) return null;
   const rows: MeterRow[] = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
     key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], title: `${k}: ${c[k]}`, tone: COMPONENT_SIGN[k] < 0 ? "destructive" : "primary",
   }));
