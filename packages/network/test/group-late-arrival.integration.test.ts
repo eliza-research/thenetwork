@@ -118,6 +118,7 @@ test.skipIf(!pgAvailable).each([
   const sql = new SQL(url);
   const app = APPS.friends;
   const key = "synthetic-late-arrival-turn-signing-key";
+  const staffToken = "synthetic-late-arrival-staff-token";
   const clock = new SimClock(START);
   const calls: SendRequest[] = [];
   const adapter = new BlooioAdapter({ app: app.id, from: "+12125550280", clock, log: () => {}, provider: {
@@ -128,7 +129,8 @@ test.skipIf(!pgAvailable).each([
     },
   } });
   const service = new NetworkService({ url, clock, log: () => {}, adapter: () => adapter, photoStorage: null,
-    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: key }, networks: [{ id: "friends:nyc", matchingEnabled: false }] });
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: key }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
+    tokens: `safety@friends:${staffToken}` });
   try {
     await service.start();
     const phones = ["+12125550281", "+12125550282", "+12125550283"].slice(0, size);
@@ -139,10 +141,18 @@ test.skipIf(!pgAvailable).each([
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
       members.push(climber(joined.membership.memberId, name));
+      for (const check of ["age", "liveness"]) {
+        const response = await service.fetch(new Request(`http://127.0.0.1/apps/friends/members/${encodeURIComponent(joined.membership.memberId)}/verify`, {
+          method: "POST", headers: { authorization: `Bearer ${staffToken}`, "content-type": "application/json" },
+          body: JSON.stringify({ check, result: "pass", note: "Late arrival fixture" }),
+        }));
+        expect(await response.json()).toEqual({ ok: true });
+      }
     }
     const ids = members.map(member => member.id);
     const [from, ...recipients] = ids as [string, ...string[]];
     const world = new Mini(members, { app: app.id, plans: false, growth: false });
+    world.verify(...ids);
     await world.onboard(...ids);
     const oppId = world.propose(ids);
     await world.answerProbes(ids);
