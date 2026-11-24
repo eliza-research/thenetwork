@@ -14,12 +14,12 @@ How the ledger was made: six agents read every file and the models on the three 
 
 | Verdict | Files |
 |---|---|
-| covered | 320 |
+| covered | 321 |
 | na | 426 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 746 |
+| total | 747 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
