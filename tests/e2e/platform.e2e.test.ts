@@ -1115,7 +1115,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(fj.body.membership.state).toBe("active");
       expect((await webJoin(st, "slop", teen, { age: 13, firstName: "Kai", browser: tb })).res.status).toBe(200);
       const fm = (await memberRow("friends", teen))!;
-      expect(fm.age).toBe(13);
+      const rt = st.svc.runtimeFor("friends")!;
+      expect(fm.age).toBeNull();
+      const [age] = await rt.scoped(tx => tx<{ age: number }[]>`select age from platform.matching_ages where app_id = 'friends' and member_id = ${fm.id}`);
+      expect(age?.age).toBe(13);
       // Adults with the same interests, so the engine has someone to propose.
       const adults: string[] = [];
       for (let i = 0; i < 4; i++) {
@@ -1131,8 +1134,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         await st.text(p, "Small groups are great.");
       }
       for (const p of [...adults, teen]) await st.text(p, "Find me someone to go bouldering with in Brooklyn this Saturday afternoon");
-      const rt = [...st.svc.runtimes.values()].find(r => r.app.id === "friends")!;
-      expect(rt.net.member(fm.id as never).minor).toBe(true);
+      expect(rt.net.member(fm.id as never)).toMatchObject({ age: 13, minor: true });
       // friendsPack matches only members whose age and liveness checks passed (staff record them, PRD 40.5):
       // the adults pass; the minor is checked too, so only the age policy can keep them out.
       for (const p of [...adults, teen]) {
