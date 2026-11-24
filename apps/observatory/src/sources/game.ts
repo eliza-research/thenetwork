@@ -508,6 +508,18 @@ export class GameSource implements DataSource {
   async opportunity(id: string, opts: ViewOptions = {}): Promise<OpportunityDetail | undefined> {
     const o = this.store.opps.get(id);
     if (!o) return undefined;
+    // A member's meeting notice (world.ts personaSend logs it with a
+    // bookingNoticeMeetingId) belongs to the opportunity whose meeting it
+    // cancels, even though it carries no inReplyTo. Resolve it through the
+    // meeting_scheduled record for that meeting.
+    const meetingOpp = new Map<string, string>();
+    for (const r of this.records) if (r.type === "meeting_scheduled") meetingOpp.set(r.meetingId, r.proposalId);
+    const noticeOpp = new Map<string, string>();
+    for (const r of this.records) {
+      if (r.type !== "message" || !r.bookingNoticeMeetingId) continue;
+      const proposalId = meetingOpp.get(r.bookingNoticeMeetingId);
+      if (proposalId) noticeOpp.set(r.msg.id, proposalId);
+    }
     const messages: OpportunityDetail["messages"] = [];
     for (const mid of o.participants) {
       const all = this.world.channel.messagesFor(mid);
@@ -515,7 +527,8 @@ export class GameSource implements DataSource {
       for (const x of all) {
         const direct = x.meta?.proposalId === id || x.meta?.probe?.key === id;
         const reply = x.direction === "inbound" && x.meta?.inReplyTo !== undefined && oppOf.get(x.meta.inReplyTo) === id;
-        if (direct || reply) messages.push({ ...this.obsMessage(x), memberId: mid });
+        const notice = x.direction === "inbound" && noticeOpp.get(x.id) === id;
+        if (direct || reply || notice) messages.push({ ...this.obsMessage(x), memberId: mid });
       }
     }
     messages.sort((a, b) => a.ts - b.ts);
