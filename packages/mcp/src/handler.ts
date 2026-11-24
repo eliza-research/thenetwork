@@ -553,7 +553,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (client.surface === "openai" && resource !== resourceFor(c, "openai")) return fail("invalid_target", "this client must use the /openai endpoint of the app");
     // login_hint, phone or any other person data in the URL is never read: the person types it on our page.
     // A second tab in this browser shares the first tab's token: the cookie holds one value, so a new one would end the first tab.
-    const held = cookieValue(c.req.headers.get("cookie"), browserCookie(c.app));
+    const held = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host, c.app.id));
     const browser = held && /^[A-Za-z0-9_-]{32,128}$/.test(held) ? held : randomToken();
     const r = {
       id: randomId(), browserHash: sha256hex(browser), clientId: client.id, app: c.app.id, redirectUri, state,

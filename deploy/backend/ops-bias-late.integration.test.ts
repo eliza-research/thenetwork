@@ -5,8 +5,8 @@
 // tick_late stays quiet, so the ops round itself must see that the newest report is too old (SD-233).
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../packages/observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../packages/observatory/test/pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../packages/db/dev-pg.ts";
+import { pgAvailable } from "../../apps/observatory/test/pg.ts";
 import type { Notice } from "./ops.ts";
 import { createOps, opsConfigFromEnv, PgAlertStore, runtimeProbe } from "./ops.ts";
 

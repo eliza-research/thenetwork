@@ -6,8 +6,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { DEV_PG_PORT, devPgUp } from "../../packages/observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../packages/observatory/test/pg.ts";
+import { DEV_PG_PORT, devPgUp } from "../../packages/db/dev-pg.ts";
+import { pgAvailable } from "../../apps/observatory/test/pg.ts";
 import { backup } from "./backup.ts";
 import { restore } from "./restore.ts";
 

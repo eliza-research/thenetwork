@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { spawnProcess } from "../../packages/core/src/runtime/process.ts";
-import { DEV_PG_PORT, devPgUp } from "../../packages/observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../packages/observatory/test/pg.ts";
+import { DEV_PG_PORT, devPgUp } from "../../packages/db/dev-pg.ts";
+import { pgAvailable } from "../../apps/observatory/test/pg.ts";
 
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("Postgres required");
 const T = 120_000;

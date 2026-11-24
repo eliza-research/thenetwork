@@ -6,8 +6,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { SimClock } from "../../packages/core/src/index.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../packages/observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../packages/observatory/test/pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../packages/db/dev-pg.ts";
+import { pgAvailable } from "../../apps/observatory/test/pg.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
 import { START } from "../../packages/network/test/mini.ts";
 import { createBackend, jsonLogger, loadConfig } from "./backend.ts";
