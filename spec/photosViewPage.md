@@ -4,7 +4,7 @@ The slop.date site keeps one page at `/photos/view`. It does one step: it shows 
 
 **Model header.** The model does not hold the token, the photos or the sender's first name. The token is one fact: it has the correct shape or not. Each server answer is one answer kind; the open answer also carries the number of photos. The browser shell reads the fragment, removes it from the address, keeps the token in memory, sends the requests, maps each status code and error code to one answer kind, turns the image bytes into object URLs, releases them and writes the copy. Each server answer goes to this machine as one event. The shell never decides what the machine decides.
 
-The owner approved binding the link to the first browser that opens it. The server is on a separate branch, and delivery on the combined revision still needs verification. This spec follows the backend contract (`photoRelay-CONTRACT.md`, section 0 (D14), sections 7.4 and 12), the page amendment of 2026-11-22 (`photoRelay-PAGES-AMENDMENT.md`) and the unmerged `packages/platform/src/photo-pages.ts`:
+The owner approved binding the link to the first browser that opens it. This spec follows the backend contract (`photoRelay-CONTRACT.md`, section 0 (D14), sections 7.4 and 12), the page amendment of 2026-11-22 (`photoRelay-PAGES-AMENDMENT.md`) and `packages/platform/src/photo-pages.ts`:
 
 1. A1. Every call sends `X-Photo-Page-Purpose: view`. `POST /api/photos/page/open {token}` answers `200 {purpose: "view", fromFirstName, count}` on the first open of a ready offer and on each later open on the bound phone. The answer has no end time. `count` is the number of released photos that the sender did not take back. It can change from one open to the next, so the page reads it again on each open.
 2. A2. `POST /api/photos/page/image {token, n}` answers the bytes of photo `n` (1 to `count`) with an image content type, or `404 not_found` when that photo is no longer in the offer (the sender took it back, changed it or deleted it).
@@ -13,6 +13,8 @@ The owner approved binding the link to the first browser that opens it. The serv
 5. A5. An offer holds 1 to 3 photos (`photoSetMax` in [photo relay](photoRelayItem.md)). `photoViewMax` here must stay equal to it.
 6. A6. The `Content-Security-Policy` of slop.date allows `img-src 'self' data: blob:` (`imageSources` in `sites/sites.ts`), so that the page can show the bytes from an object URL. The three photo pages need it. The other sites keep `img-src 'self' data:`, because they have no photo page.
 7. A7. A good open answer always has a first name. An answer without one is a page fault.
+
+**Browser shell and test coverage.** The fetch calls and the status-to-answer maps (`packages/ui/src/api/photosView.ts`), the token regex, `history.replaceState`, the object URLs and their release, the binding cookie (the browser keeps it; the page never clears site data), the context-menu and callout styles, focus and the copy stay in the shell. The play tests of `PhotosViewPageView` and `tests/e2e/photos-view-page.e2e.test.ts` cover them. Screenshots and the other copies in "The page offers no way to save the photo" are outside every test.
 
 ## Story: See the photo my match chose to send me
 
@@ -296,7 +298,3 @@ pure def sometimesUnreachable(page: PhotosViewPage): bool = page.screen == ViewT
 pure def sometimesRequestFailed(page: PhotosViewPage): bool = page.screen == ViewTap and page.error == ViewRequestFailed
 pure def sometimesTapAgainAfterAPhotoFailed(page: PhotosViewPage): bool = page.screen == ViewTap and page.opened and page.error != ViewNoError
 ```
-
-## What stays outside the model
-
-The fetch calls and the status-to-answer maps (`packages/ui/src/api/photosView.ts`), the token regex, `history.replaceState`, the object URLs and their release, the binding cookie (the browser keeps it; the page never clears site data), the context-menu and callout styles, focus and the copy. The play tests of `PhotosViewPageView` and `tests/e2e/photos-view-page.e2e.test.ts` cover them. Screenshots and the other copies in "The page offers no way to save the photo" are outside every test.
