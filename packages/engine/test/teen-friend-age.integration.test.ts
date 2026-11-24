@@ -565,7 +565,7 @@ test("friends plans a table of teens born within 2 years at board games at the l
   expect(planPlaceOffered(false, activityById.get("library_games")!, library)).toBe(false);
 });
 
-test('friends requires staff verification for an adult-only table (spec/friendIntroAge.md, "A teen-ready person needs no staff verification on friends.help")', () => {
+test('friends requires staff verification for an adult-only table (spec/friendIntroAge.md, "A teen-ready person in a roster with a minor needs no staff verification on friends.help")', () => {
   const [eighteen, first, second] = trio;
   const venue: Venue = { ...library, id: "v_cafe_test", name: "the public cafe", activities: ["coffee_crawl"], adultPlans: true };
   const input: EngineInput = {

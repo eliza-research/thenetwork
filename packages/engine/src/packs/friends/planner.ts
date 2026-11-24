@@ -56,6 +56,7 @@ import { activityById, type ActivityType, type Venue } from "../network/activiti
 import { familiarCircle } from "./generators.ts";
 import { chooseVenue, FRIENDS_CITY, hood, NEIGHBORHOODS, transitMinutes, type Neighborhood } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
+import { friendsRosterVerified, friendsSeatVerified } from "./rules.ts";
 
 /** friends.help plans config (its own version; DEFAULT_PLANS is unchanged). */
 export const FRIENDS_PLANS: PlansConfig = {
@@ -187,7 +188,7 @@ function retainedCrewHost(crew: Crew, invited: readonly MemberId[]): MemberId {
 /** Current pack eligibility for an activity partner, including prior group attendance on both sides. */
 export function friendsPartnerEligible(w: World, first: MemberId, second: MemberId, category: Category = "hobby"): boolean {
   const check = { category, role: "peer", format: "one_to_one", timeSensitive: false } as const;
-  return memberReason(w, first, check) === null && memberReason(w, second, check) === null
+  return friendsRosterVerified(w, [first, second]) && memberReason(w, first, check) === null && memberReason(w, second, check) === null
     && pairReason(w, first, second, category) === null;
 }
 
@@ -258,7 +259,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (kept.length >= limit) break;
       const profile = w.match.profileIn(id, "Friend");
       const ageAllowed = teen ? teenGroupReason(w, [...invited, ...kept, id], "social", meetingEnd) === null : !isMinor(w, id);
-      if (!profile || !isPlanAlternate(ageAllowed, table.every(peer => !!peer && w.match.value(profile, peer) >= 0))) continue;
+      if (!profile || !friendsSeatVerified(w, id, teen) || !isPlanAlternate(ageAllowed, table.every(peer => !!peer && w.match.value(profile, peer) >= 0))) continue;
       kept.push(id);
       table.push(profile);
     }
@@ -314,7 +315,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       quorum: p.partner ? 2 : Math.min(p.quorum, invited.length),
     };
     if (pol.timeOptions && (source !== "crew_session" || pol.crewOptions)) plan.options = timeOptions(plan, venue);
-    return teen && teenPlanReason(w, plan, venueOf, plan.options) !== null ? null : plan;
+    if (!friendsRosterVerified(w, planRoster(plan)) || (teen && teenPlanReason(w, plan, venueOf, plan.options) !== null)) return null;
+    return plan;
   };
 
   const timeOptions = (p: FriendsPlan, venue: Venue | undefined): TimeSlot[] => {
@@ -502,7 +504,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
 
   /** New tables among the members of one area, the activities most of them fit first. */
   const tables = (area: readonly MemberId[], universal: boolean, fitFloor: number, minInvite = FRIENDS_TABLE_MIN_INVITE, teen = false) => {
-    const pool = area.filter(id => open(id) && (teen ? teenTableMember(id) : !isMinor(w, id)));
+    const pool = area.filter(id => open(id) && friendsSeatVerified(w, id, teen) && (teen ? teenTableMember(id) : !isMinor(w, id)));
     if (pool.length < minInvite || (teen && !hasMinor(pool))) return;
     const acts = placeable.filter(a => planActivityOffered(teen, a)).map(a => ({ a, n: pool.filter(id => fitOf(id, a, universal) >= fitFloor).length }))
       .filter(x => x.n >= minInvite).sort((x, y) => (y.n - x.n) || compareText(x.a.id, y.a.id));

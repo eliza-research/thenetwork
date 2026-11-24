@@ -59,16 +59,19 @@ pure def lawAnyDoubtMakesUnready(birthExact: bool, ageConflict: bool, minorSigna
     implies not(ageConflict or minorSignalOpen or minorReported or olderReported or barred)
 ```
 
-### A teen-ready person needs no staff verification on friends.help
+### A teen-ready person in a roster with a minor needs no staff verification on friends.help
 
-On friends.help an adult is matched only after the staff liveness and age checks pass. A teen-ready person needs no such check: the exact birth date and the teen-ready state are the check. Changed (owner decision 2026-11-22, D1): the friends pack refused every person without the staff checks, so a teen-ready minor was never matched in production, because only the staff verify step writes those checks and the owner removed the staff confirm-age step.
+On friends.help a roster without a minor requires current staff liveness and age passes for each member. In a roster with a minor that passes the teen rule, a teen-ready member does not need these staff checks. This includes an eligible 18-year-old partner. The whole-roster age rule still requires every member of a teen introduction to be teen ready. Discovered by simulation. The member-level check let an 18-year-old use teen readiness for an adult-only table after a staff check failed.
 
 ```quint
-pure def friendsVerifyPasses(teenReady: bool, staffVerified: bool): bool = teenReady or staffVerified
+pure def friendsVerifyPasses(withMinor: bool, teenReady: bool, staffVerified: bool): bool =
+  staffVerified or (withMinor and teenReady)
 
-pure def lawTeenReadyNeedsNoStaffVerify(staffVerified: bool): bool = friendsVerifyPasses(true, staffVerified)
+pure def lawTeenReadyNeedsNoStaffVerify(staffVerified: bool): bool = friendsVerifyPasses(true, true, staffVerified)
 
-pure def lawUnreadyNeedsStaffVerify(staffVerified: bool): bool = friendsVerifyPasses(false, staffVerified) == staffVerified
+pure def lawUnreadyNeedsStaffVerify(withMinor: bool, staffVerified: bool): bool = friendsVerifyPasses(withMinor, false, staffVerified) == staffVerified
+
+pure def lawAdultRosterNeedsStaffVerify(teenReady: bool, staffVerified: bool): bool = friendsVerifyPasses(false, teenReady, staffVerified) == staffVerified
 ```
 
 ### A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule

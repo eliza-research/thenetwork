@@ -32,6 +32,11 @@ function world(ids: MemberId[], opts: NetworkOptions = {}, spec = climber) {
   return w;
 }
 
+function verified(w: Mini, ...ids: MemberId[]) {
+  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "vouched", confidence: 1 });
+}
+
 const friendSeeker = (id: string, name: string, age: number): Spec => ({
   id, name, age, area: "Greenpoint", interests: ["hiking", "board_games"], skills: ["cooking"],
   wants: [{ objective: "make a few new friends in the city", category: "social" }],
@@ -242,6 +247,7 @@ const stageOf = (w: Mini, id: string) => w.net.exportState().opps.find(o => o.id
 
 test("an invited teen newcomer is never paired with an adult host, while an adult newcomer is", async () => {
   const w = world(["i30", "a30"]);
+  verified(w, "i30", "a30");
   await w.onboard("i30", "a30");
   await w.run(8 * DAY);
   for (const id of ["t16", "n31"]) {
@@ -249,6 +255,7 @@ test("an invited teen newcomer is never paired with an adult host, while an adul
     Object.assign(w.members.find(m => m.id === id)!, { invitedBy: "i30" });
     setBirth(w, id);
   }
+  verified(w, "n31");
   await w.onboard("t16", "n31");
   await w.run(2 * DAY);
   const queued = w.log("review_queued").map(l => (l.detail.proposal as { participants: MemberId[] }).participants);
@@ -433,6 +440,7 @@ test("a teen whose teen-pair text states an age younger than the record opens a 
 
 test("an 18-year-old's introduction to an adult keeps no minor alternate and reaches review", async () => {
   const w = world(["t18", "a30", "t17"]);
+  verified(w, "t18", "a30");
   await w.onboard("t18", "a30", "t17");
   const id = w.propose(["t18", "a30"], { alternates: ["t17"] });
   expect(await w.runUntil(() => w.net.reviewQueue().some(i => i.oppId === id), 2 * DAY)).toBe(true);
@@ -476,6 +484,7 @@ test("after a teen pair meets, each teen gets the feedback ask with no name in i
 test("an adult meeting at a place where a booked teen pair meets within 2 hours takes another slot", async () => {
   const book = async (teenAt?: { at: number; venueId: string }) => {
     const w = world(["a30", "a31", "t16", "t17"], { inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false });
+    verified(w, "a30", "a31");
     await w.onboard("a30", "a31", "t16", "t17");
     if (teenAt) inject(w, { id: "teen-nearby", participants: ["t16", "t17"], stage: "scheduled", teen: true, meetingAt: teenAt.at, venue: { id: teenAt.venueId, name: "", area: "" } });
     const id = w.propose(["a30", "a31"]);
@@ -598,6 +607,7 @@ test("an adult table approved before a teen pair books the same place within 2 h
   const adults = ["a30", "a31", "a32"];
   const book = async (teenNearby: boolean) => {
     const w = world([...adults, "t16", "t17"], { plans: false });
+    verified(w, ...adults);
     await w.onboard(...adults, "t16", "t17");
     const plan = tablePlan(`adult_table_${teenNearby}`, adults, { quorum: 3, max: 3 });
     const { oppId } = await approvedTable(w, plan);
@@ -628,7 +638,7 @@ test("organizing reach adds a fitting adult and never a fitting teen-ready 16-ye
   const coffee = (id: string, name: string, age: number): Spec => ({ id, name, age, area: venue.area, interests: ["coffee", "climbing"] });
   const ids = ["a30", "a31", "a32", "f30", "t16", "t17"];
   const w = world(ids, { plans: false, pack: friendsPack, capital }, coffee);
-  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  verified(w, ...ids);
   await w.onboard(...ids);
   const reach = (plan: plans.Plan) => (w.net as unknown as { withReach(plan: plans.Plan, now: number): plans.Plan }).withReach(plan, w.clock.now());
   const adultPlan = tablePlan("adult_reach", ["a30", "a31", "a32"], { quorum: 3, max: 3, hostId: "a30", activityId: "coffee_crawl", venue });

@@ -1294,6 +1294,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     world.clock.set(clock.now());
     Object.assign(world.members[1]!, { birthKey: Number(peerBirthdate.replaceAll("-", "")), birthExact: true });
     if (fixture.teen) Object.assign(world.members[0]!, { birthKey: 20080601, birthExact: true });
+    else for (const memberId of roster) world.facets.push({ id: `${memberId}:verified-before-booking`, memberId, kind: "fact", value: "Staff verified",
+      tags: ["verify:age:pass", "verify:liveness:pass"], scope: "agent_private", provenance: "vouched", confidence: 1 });
     await world.onboard(...roster);
     if (fixture.teen) await world.say(peer, "Can you find me a regular climbing partner?");
     else world.propose(roster);

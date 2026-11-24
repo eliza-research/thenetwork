@@ -1,5 +1,6 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { peerContactSeatStatuses, peerContactTypes, queuedPeerContactPolicy } from "../../core/src/generated/outboundAdmission.ts";
+import { friendsVerifyPasses } from "../../core/src/generated/friendIntroAge.ts";
 import { storedTeenStatus } from "./teen-roster.ts";
 
 function peerRosters(tx: SQL, app: string, recipient: string, ids: string[]) {
@@ -15,6 +16,17 @@ function peerRosters(tx: SQL, app: string, recipient: string, ids: string[]) {
     join network.members member on member.app_id=msg.app_id and member.id=roster.member_id
     where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.member_id=${recipient}
       and msg.direction='outbound' and msg.opportunity_id is not null and msg.type in ${tx(peerContactTypes)}`;
+}
+
+async function friendsStaffVerified(tx: SQL, roster: string[], now: number): Promise<boolean> {
+  const at = new Date(now);
+  const passes = await tx`select member_id from network.facets
+    where app_id='friends' and member_id in ${tx(roster)} and source='staff' and status='confirmed'
+      and (valid_from is null or valid_from <= ${at}) and (valid_to is null or valid_to >= ${at})
+      and ((id=member_id || ':verify:age' and 'verify:age:pass'=any(tags))
+        or (id=member_id || ':verify:liveness' and 'verify:liveness:pass'=any(tags)))
+    order by member_id, id for share`;
+  return passes.length === 2 * roster.length;
 }
 
 /** Take the same state/person order as the writer, before the queue pins its recipient. */
@@ -36,11 +48,12 @@ export async function peerOpportunityContactRestricted(tx: SQL, app: string, rec
     where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.member_id=${recipient} and msg.direction='outbound'
       and msg.opportunity_id is not null and msg.type in ${tx(peerContactTypes)} order by msg.opportunity_id, msg.id`;
   const rosters = await peerRosters(tx, app, recipient, ids);
-  for (const oppId of new Set(messages.map(m => m.opportunity_id))) {
-    const own = new Set(messages.filter(m => m.opportunity_id === oppId).map(m => m.id));
-    const roster = rosters.filter(r => own.has(String(r.message_id))).map(r => String(r.member_id));
-    const teen = await storedTeenStatus(tx, app, oppId, now, roster);
+  for (const message of messages) {
+    const roster = rosters.filter(r => r.message_id === message.id).map(r => String(r.member_id));
+    const teen = await storedTeenStatus(tx, app, message.opportunity_id, now, roster);
     if (teen.status === "failed" || (teen.status === "unmarked" && teen.minor)) return true;
+    if (app === "friends" && !friendsVerifyPasses(teen.contactMinor, teen.status === "current", false)
+      && (!roster.length || !(await friendsStaffVerified(tx, roster, now)))) return true;
   }
   const [row] = await tx<{ blocked: boolean; restricted: boolean }[]>`with roster as (${peerRosters(tx, app, recipient, ids)})
     select exists (

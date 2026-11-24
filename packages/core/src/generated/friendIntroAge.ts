@@ -59,24 +59,31 @@ export function lawAnyDoubtMakesUnready(birthExact: boolean, ageConflict: boolea
   return !teenReady(birthExact, ageConflict, minorSignalOpen, minorReported, olderReported, barred) || !(ageConflict || minorSignalOpen || minorReported || olderReported || barred);
 }
 
-/** Story: Introduce a minor for friendship only to people close in age / A teen-ready person needs no staff verification on friends.help (spec/friendIntroAge.md) */
+/** Story: Introduce a minor for friendship only to people close in age / A teen-ready person in a roster with a minor needs no staff verification on friends.help (spec/friendIntroAge.md) */
 //@ pure
-export function friendsVerifyPasses(teenReady: boolean, staffVerified: boolean): boolean {
-  return teenReady || staffVerified;
+export function friendsVerifyPasses(withMinor: boolean, teenReady: boolean, staffVerified: boolean): boolean {
+  return staffVerified || (withMinor && teenReady);
 }
 
-/** Story: Introduce a minor for friendship only to people close in age / A teen-ready person needs no staff verification on friends.help (spec/friendIntroAge.md) */
+/** Story: Introduce a minor for friendship only to people close in age / A teen-ready person in a roster with a minor needs no staff verification on friends.help (spec/friendIntroAge.md) */
 //@ pure
 export function lawTeenReadyNeedsNoStaffVerify(staffVerified: boolean): boolean {
   //@ ensures \result === true
-  return friendsVerifyPasses(true, staffVerified);
+  return friendsVerifyPasses(true, true, staffVerified);
 }
 
-/** Story: Introduce a minor for friendship only to people close in age / A teen-ready person needs no staff verification on friends.help (spec/friendIntroAge.md) */
+/** Story: Introduce a minor for friendship only to people close in age / A teen-ready person in a roster with a minor needs no staff verification on friends.help (spec/friendIntroAge.md) */
 //@ pure
-export function lawUnreadyNeedsStaffVerify(staffVerified: boolean): boolean {
+export function lawUnreadyNeedsStaffVerify(withMinor: boolean, staffVerified: boolean): boolean {
   //@ ensures \result === true
-  return friendsVerifyPasses(false, staffVerified) === staffVerified;
+  return friendsVerifyPasses(withMinor, false, staffVerified) === staffVerified;
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A teen-ready person in a roster with a minor needs no staff verification on friends.help (spec/friendIntroAge.md) */
+//@ pure
+export function lawAdultRosterNeedsStaffVerify(teenReady: boolean, staffVerified: boolean): boolean {
+  //@ ensures \result === true
+  return friendsVerifyPasses(false, teenReady, staffVerified) === staffVerified;
 }
 
 /** Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule (spec/friendIntroAge.md) */
