@@ -23,6 +23,13 @@ const CLEAN: PhotoScreenResult = { kind: "answered", riskPerMille: 0 };
 const FLAGGED: PhotoScreenResult = { kind: "answered", riskPerMille: 900 };
 const DOWN: PhotoScreenResult = { kind: "unanswered" };
 
+function signal() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+
 describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the receiver's bound browser", () => {
   let url: string, sql: SQL, people: PgPeopleStore, dir: string;
   beforeAll(async () => { url = await migratedDb("photo_pages"); sql = new SQL({ url, max: 2 }); people = new PgPeopleStore(url); dir = mkdtempSync(join(tmpdir(), "photo-pages-")); }, T);
@@ -258,14 +265,14 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const { offerId, link } = await w.ready([1]);
     const token = w.token(link);
     const linkRow = (await w.relay.pageLink(token))!;
-    const locked = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const locked = signal(), release = signal();
     const barrier = sql.begin(async tx => {
       await w.relay.lockLink(tx, linkRow.id);
       locked.resolve();
       await release.promise;
     });
     await locked.promise;
-    const admitted = Promise.withResolvers<void>();
+    const admitted = signal();
     w.beforeAuthorize(admitted.resolve);
     const opening = w.call("open", { token });
     try {
@@ -285,7 +292,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const { offerId, link } = await w.ready([1]);
     const token = w.token(link);
     const browser = (await w.call("open", { token })).cookie!;
-    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const entered = signal(), release = signal();
     w.beforeObjectRead(async () => { entered.resolve(); await release.promise; });
     const image = w.call("image", { token, n: 1 }, browser);
     try {
