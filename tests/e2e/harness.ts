@@ -33,6 +33,7 @@ export { pgAvailable };
 export const PROXY_SECRET = "e2e-proxy-secret-0123456789abcdef0123456789abcdef";
 export const WEBHOOK_SECRET = "whsec_e2e_shared";
 export const ADMIN_TOKEN = "e2e-admin-token-0123456789abcdef";
+export const SAFETY_TOKEN = "e2e-slop-safety-token-0123456789abcdef";
 /** The Eliza gateway's signing secret (SERVICE_TURN_SECRET): the tests sign /internal/turn and /internal/set-state as the gateway does. */
 export const TURN_SECRET = "e2e-service-turn-secret-0123456789abcdef";
 /** 9:30 in New York (EDT): inside the daily engine run window. */
@@ -94,6 +95,7 @@ let stackSequence = 0;
 export async function startStack(o: {
   privateOpenAiApps?: readonly AppId[];
   slopCity?: "sf";
+  slopPhotoReviewer?: boolean;
   extraNetwork?: "ntwrk:sf";
   simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
 } = {}): Promise<Stack> {
@@ -115,8 +117,10 @@ export async function startStack(o: {
   const outbound = o.simulatedOutbound;
   // The platform's host map plus each local site origin (random ports), so a browser Origin of a site counts as that app's own.
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
+  const tokens = [`admin:${ADMIN_TOKEN}`];
+  if (o.slopPhotoReviewer) tokens.push(`safety@slop:${SAFETY_TOKEN}`);
   const svc = await NetworkService.fromDatabase({
-    url, clock, env, instance: "e2e", tokens: `admin:${ADMIN_TOKEN}`, webhookSecret: WEBHOOK_SECRET,
+    url, clock, env, instance: "e2e", tokens: tokens.join(","), webhookSecret: WEBHOOK_SECRET,
     network: { seed: 1 }, log: () => {},
     // Every test browser is 127.0.0.1: the per-IP OTP limits (unit-tested in packages/platform) would stop the suite.
     publicApi: { otp, minStartMs: 0, minVerifyMs: 0, ipOf, hostMap, otpLimits: { perIpPerHour: 10_000, verifyPerIpPerHour: 10_000 } },

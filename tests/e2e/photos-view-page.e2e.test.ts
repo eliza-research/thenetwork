@@ -26,7 +26,7 @@ const DAY = 86_400_000;
 describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machine against the site router and the backend)", () => {
   let st: Stack, sql: SQL;
   const realFetch = globalThis.fetch;
-  beforeAll(async () => { st = await startStack(); sql = new SQL({ url: st.url, max: 2 }); }, T);
+  beforeAll(async () => { st = await startStack({ slopPhotoReviewer: true }); sql = new SQL({ url: st.url, max: 2 }); }, T);
   afterEach(() => { globalThis.fetch = realFetch; });
   afterAll(async () => { globalThis.fetch = realFetch; await sql?.close(); await st?.close(); });
 
