@@ -553,6 +553,7 @@ const OPT_OUT_ES: RegExp[] = [
   /\bno quiero (?:recibir )?(?:mas )?mensajes\b/,
   /\b(?:darme|dame|dar|denme) de baja\b/,
   /\b(?:eliminame|borrame|sacame|quitame|eliminen mi numero|borren mi numero)\b/,
+  /^(?:por favor |porfavor )?(?:(?:borra|elimina|cierra|borren|eliminen|cierren) (?:mi|mis) (?:cuenta|datos|perfil|informacion)|quiero (?:borrar|eliminar|cerrar) (?:mi|mis) (?:cuenta|datos|perfil|informacion))(?: (?:por favor|porfavor|gracias|ahora|ya))*$/,
   /\bya no me (?:escribas|escriban|envies|mandes)\b/,
   /\bno mas mensajes\b/,
   /\bnumero equivocado\b/,

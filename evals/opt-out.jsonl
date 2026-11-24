@@ -173,3 +173,19 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "Borra mi cuenta", "label": "stop", "lang": "es"}
+{"text": "elimina mi cuenta", "label": "stop", "lang": "es"}
+{"text": "Borra mis datos", "label": "stop", "lang": "es"}
+{"text": "elimina mis datos", "label": "stop", "lang": "es"}
+{"text": "cierra mi cuenta", "label": "stop", "lang": "es"}
+{"text": "borra mi perfil", "label": "stop", "lang": "es"}
+{"text": "Quiero borrar mi cuenta", "label": "stop", "lang": "es"}
+{"text": "quiero eliminar mis datos", "label": "stop", "lang": "es"}
+{"text": "por favor borra mi cuenta", "label": "stop", "lang": "es"}
+{"text": "borren mi cuenta", "label": "stop", "lang": "es"}
+{"text": "Borra ese mensaje", "label": "not_stop", "lang": "es"}
+{"text": "quiero cancelar mi pedido", "label": "not_stop", "lang": "es"}
+{"text": "no me borres la cuenta todavia", "label": "not_stop", "lang": "es"}
+{"text": "borra mi foto", "label": "not_stop", "lang": "es"}
+{"text": "ella quiere borrar su cuenta", "label": "not_stop", "lang": "es"}
+{"text": "como borro mi cuenta?", "label": "not_stop", "lang": "es"}
