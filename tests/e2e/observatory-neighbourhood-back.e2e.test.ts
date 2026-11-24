@@ -93,11 +93,15 @@ browserTest("Back after an app switch drops a member focus from the URL", async 
     const page = await context.newPage();
     await page.goto(`${server.url}/#token=${token}`, { waitUntil: "domcontentloaded" });
     await page.locator("#obs-search").waitFor({ timeout: 60_000 });
-    await page.locator("#obs-search").click();
-    await page.locator("#obs-search").fill("Ravi Sato");
-    await page.locator("text=Ravi Sato").first().click();
-    await expect.poll(() => page.url(), { timeout: 10_000 }).toContain("#m=m0001");
-    await page.locator("h2", { hasText: "Ravi Sato" }).waitFor({ state: "visible", timeout: 10_000 });
+    const openMember = async (name: string, id: string) => {
+      await page.locator("#obs-search").click();
+      await page.locator("#obs-search").fill(name);
+      await page.locator(`text=${name}`).first().click();
+      await expect.poll(() => page.url(), { timeout: 10_000 }).toContain(`#m=${id}`);
+      await page.locator("h2", { hasText: name }).waitFor({ state: "visible", timeout: 10_000 });
+    };
+    await openMember("Ravi Sato", "m0001");
+    await openMember("Vera Quinn", "m0002");
     await page.locator('nav[aria-label="App"] >> text=slop').click();
     await expect.poll(() => page.url(), { timeout: 10_000 }).toContain("#a=slop");
     await page.goBack();
