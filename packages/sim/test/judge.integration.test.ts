@@ -95,4 +95,18 @@ describe("simulator judge and scenario regressions", () => {
     );
     expect(typo[0]?.status).toBe("fail");
   });
+
+  test("fairness: a judge-flagged minor is not counted as an adult with zero proposals", () => {
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    const contact = (id: string, ts: number): RunRecord => ({ t: ts, type: "proposal", source: "network", proposal: { id: "p1", participants: [id], type: "intro" } as never, oracle: {} as never });
+    const run = computeMetrics([
+      ...base(),
+      log(T0, "minor_signal", { memberId: "b" }),
+      contact("a", T0 + DAY),
+    ], {});
+    expect(run.fairness.zeroProposalShare).toBe(0);
+    // The flagged member is still not a declared minor: run.minors counts
+    // declared minors only, and must stay 0 here.
+    expect(run.run.minors).toBe(0);
+  });
 });
