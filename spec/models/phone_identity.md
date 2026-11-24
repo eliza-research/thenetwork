@@ -10,7 +10,7 @@ The [phone change rule](../phoneChange.md) rounds the wait for a refused start t
 
 Check number normalization, ownership, and bans across entry points. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [phone change spec](../phoneChange.md) generates challenge and confirmation decisions for changing the number on an existing account. Number normalization and provider checks still belong to the shell.
+The [phone change spec](../phoneChange.md) generates challenge and confirmation decisions for changing the number on an existing account. A signed member request can read the plain `/phone` path after the verified identity, app membership, and holds check. The read leaves the identity and OTP states as they were. Number normalization and provider checks still belong to the shell.
 
 Imported from `quint/phone_identity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -181,11 +181,21 @@ module phone_identity {
   // Proved for P and Q in phone-core.ts (digitsOf: the key is the digits of the input).
   val keysNameOwner = FORMS.forall(w => (P(w) == "" or P(w) == owner(w)) and (P(w) == "" or Q(w) == P(w)))
 
+  def phonePage(w: str, signed: bool, sameAppMember: bool, membershipClear: bool, held: bool): str =
+    if (signed and identities.contains(P(w)) and members.contains(Q(w)) and not(banned.contains(P(w)))
+      and sameAppMember and membershipClear and not(held)) "/phone" else ""
+
+  val phonePageNeedsVerifiedMember = FORMS.forall(w => {
+    (phonePage(w, true, true, true, false) != "") implies
+      (identities.contains(P(w)) and members.contains(Q(w)) and not(banned.contains(P(w))))
+  })
+
   val safety = and {
     bannedNeverServed,
     identitiesAreUsNumbers,
     turnKeysAgree,
     keysNameOwner,
+    phonePageNeedsVerifiedMember,
   }
 
   // ---------------------------------------------------------------- reachability witnesses (expected VIOLATED)
@@ -228,5 +238,12 @@ module phone_identity {
       .then(init)
       .then(webJoin("F_uk"))
       .fail()
+
+  run phonePageNeedsSignedCurrentMemberTest = init.then(webJoin("A"))
+    .expect(phonePage("A", true, true, true, false) == "/phone")
+    .expect(phonePage("A", false, true, true, false) == "" and phonePage("A", true, false, true, false) == "")
+    .expect(phonePage("A", true, true, false, false) == "" and phonePage("A", true, true, true, true) == "")
+    .expect(phonePage("B", true, true, true, false) == "")
+    .then(ban("A")).expect(phonePage("A", true, true, true, false) == "")
 }
 ```

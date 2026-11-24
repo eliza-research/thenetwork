@@ -77,6 +77,8 @@ import {
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
 import { inboundAllowedAfterBan, sharedReportRoute } from "../../core/src/generated/safetyCase.ts";
+import { phoneChangeLinkAllowed } from "../../core/src/generated/phoneChange.ts";
+import { phoneChangeLinkReply, phoneChangeLinkRequest } from "./phone-change-link.ts";
 import { inboundReleasesHeldTexts } from "../../core/src/generated/outboundAdmission.ts";
 import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
@@ -1969,6 +1971,20 @@ export class NetworkService implements RuntimeHost {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
       if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
       return "held";
+    }
+
+    if (signed && !kw && !profileRead && !intentCommand && !ev.mediaUrls?.length && phoneChangeLinkRequest(ev.text)) {
+      const person = e164 && memberId ? await this.accounts.personFor(e164) : undefined;
+      const membership = person ? await this.people.getMembership(person.id, app.id) : undefined;
+      if (person && membership) {
+        const hold = await rt.scoped(tx => currentStaffHold(tx, app.id, person.id));
+        if (phoneChangeLinkAllowed(membership.memberId === memberId, membership.state, membership.review === null,
+          hold.local !== null || hold.global !== null)) {
+          const origin = stagingSiteOrigins(this.env)[app.id] ?? `https://${app.domain}`;
+          await this.direct(rt, ev.from, phoneChangeLinkReply(origin), `sys:${rowId}`, "reply");
+        }
+      }
+      return "handled";
     }
 
     if (factCommand) {
