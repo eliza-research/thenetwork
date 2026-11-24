@@ -565,6 +565,34 @@ test("friends plans a table of teens born within 2 years at board games at the l
   expect(planPlaceOffered(false, activityById.get("library_games")!, library)).toBe(false);
 });
 
+test('friends requires staff verification for an adult-only table (spec/friendIntroAge.md, "A teen-ready person needs no staff verification on friends.help")', () => {
+  const [eighteen, first, second] = trio;
+  const venue: Venue = { ...library, id: "v_cafe_test", name: "the public cafe", activities: ["coffee_crawl"], adultPlans: true };
+  const input: EngineInput = {
+    ...gamesBase,
+    facets: [...gamesBase.facets, ...trio.map((memberId): Facet => ({
+      id: `${memberId}:coffee`, memberId, kind: "interest", value: "coffee", tags: ["coffee"], scope: "shareable", provenance: "said", confidence: 1,
+    }))],
+  };
+  const failedAgeCheck: EngineInput = {
+    ...input,
+    facets: input.facets.map(f => f.memberId === eighteen ? { ...f, tags: f.tags.map(t => t === "verify:age:pass" ? "verify:age:fail" : t) } : f),
+  };
+  const adultAges = { [eighteen]: born(20080701), [first]: born(19990101, false), [second]: born(19980101, false) };
+  const teenAges = { ...adultAges, [first]: born(20090501), [second]: born(20100501) };
+  const evidence = new Map(trio.map(id => [id, saturday(id)]));
+  const offers = (ages: typeof adultAges, snapshot: EngineInput) => {
+    const week = planFriendsWeek(worldOf(ages, true, snapshot), { now: NOW, tz: NY, evidence, venues: [venue], crews: [], outcomes: [], offered: [] });
+    return [...week.plans, ...week.partners];
+  };
+
+  const wholeTable = expect.objectContaining({ invited: expect.arrayContaining(trio), venueId: venue.id });
+  expect(offers(adultAges, input)).toContainEqual(wholeTable);
+  expect(offers(teenAges, failedAgeCheck)).toContainEqual(wholeTable);
+  const adultOffers = offers(adultAges, failedAgeCheck).flatMap(p => [...p.invited, ...p.alternates]);
+  expect(adultOffers).not.toContain(eighteen);
+});
+
 test("a teen table is refused with a person aged 19, at a wine bar, in the evening, or with a 7th member", () => {
   const week = (ages: Readonly<Record<MemberId, Partial<Member>>>, venue: Venue) =>
     planFriendsWeek(worldOf(ages, true, gamesBase), { now: NOW, tz: NY, evidence: new Map(trio.map(id => [id, saturday(id)])), venues: [venue], crews: [], outcomes: [], offered: [] });
