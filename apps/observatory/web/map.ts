@@ -4,6 +4,7 @@ import { memberPoint, NEIGHBORHOOD, VENUES } from "@thenetwork/network/geo";
 import type { ObsMember } from "../src/types.ts";
 import { EDGE_STYLE, memberPaint, oppInk, type Palette, readPalette } from "./graph.ts";
 import { memberTooltipText, textNode } from "./safe.ts";
+import { observeMapSize } from "./map-size.ts";
 import { focusKey, OPEN, store } from "./store.ts";
 import { pickMember } from "./ui.tsx";
 
@@ -33,6 +34,7 @@ export class MapView {
   private lastBorough = "all";
   private raf = 0;
   private last = 0;
+  private stopObservingSize: () => void;
 
   constructor(el: HTMLElement) {
     this.map = L.map(el, { zoomControl: true, preferCanvas: true, attributionControl: true }).setView(NYC, 12);
@@ -46,10 +48,13 @@ export class MapView {
         .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer));
     }
     if (store.pendingFly) { this.map.setView([store.pendingFly.lat, store.pendingFly.lng], 15); store.pendingFly = null; this.lastFocusKey = focusKey(store.ui.focus); }
+    this.stopObservingSize = observeMapSize(el, () => {
+      this.map.invalidateSize({ animate: false, debounceMoveend: true });
+    });
     this.raf = requestAnimationFrame(this.frame);
   }
 
-  destroy() { cancelAnimationFrame(this.raf); this.map.remove(); }
+  destroy() { cancelAnimationFrame(this.raf); this.stopObservingSize(); this.map.remove(); }
 
   focus(id: string) {
     const m = store.members.get(id);
