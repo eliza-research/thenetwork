@@ -668,7 +668,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   // ---------------- exposure & per-member load
   // Fairness and "nothing yet" are about members the Network may connect: minors are excluded
   // by policy (they get single-player value only), so they'd otherwise read as zero exposure.
-  const members = [...joinedAt.keys()].filter(id => !isAdv(id) && !isDeclaredMinor(id));
+  const members = [...joinedAt.keys()].filter(id => !isAdv(id) && !isMinor(id));
   const counts = members.map(id => proposalCount.get(id) ?? 0);
   const memberWeeks = [...joinedAt].reduce((s, [, t]) => s + Math.max(0, endT - t) / (7 * DAY), 0);
 
