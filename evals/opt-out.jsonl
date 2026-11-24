@@ -187,3 +187,6 @@
 {"text": "no me llames a trabajar", "label": "not_stop", "lang": "es"}
 {"text": "no me textees a esta hora", "label": "not_stop", "lang": "es"}
 {"text": "no me escribas el informe", "label": "not_stop", "lang": "es"}
+{"text": "no me escribas ahora", "label": "not_stop", "lang": "es"}
+{"text": "no me llames ahora", "label": "not_stop", "lang": "es"}
+{"text": "ella dijo no me escribas", "label": "not_stop", "lang": "es"}
