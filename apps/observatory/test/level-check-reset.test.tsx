@@ -32,7 +32,8 @@ test("a pending level check cannot repopulate the result after resetting the sam
   const restore = installDom(window, { window, document: window.document, navigator: window.navigator, IS_REACT_ACT_ENVIRONMENT: true });
   const { createRoot } = await import("react-dom/client");
   const { Levels } = await import("../web/network.tsx");
-  const box = window.document.body.appendChild(window.document.createElement("div"));
+  const box = window.document.createElement("div");
+  window.document.body.appendChild(box);
   const root = createRoot(box as unknown as HTMLElement);
   const button = (label: string) => {
     const found = [...box.querySelectorAll("button")].find(node => node.textContent?.startsWith(label));
