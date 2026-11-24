@@ -1,10 +1,8 @@
-// An SF member's map pin must land in San Francisco, resolved in its own city's table: the
-// NYC-only lookup pinned every SF member in Midtown (and SF "Financial District"/"Chinatown"
-// members on top of their NYC namesakes). NYC pins must stay byte-identical.
 import { describe, expect, test } from "vitest";
 import { km, memberPoint, SF_NEIGHBORHOODS } from "../src/geo.ts";
 
 const DOGPATCH = { lat: 37.7621, lng: -122.3971 };
+const OUTER_SUNSET = { lat: 37.7454, lng: -122.4861 };
 const SF_FIDI = { lat: 37.7914, lng: -122.4021 };
 const SF_CHINATOWN = { lat: 37.792, lng: -122.4086 };
 const SF_CENTER = { lat: 37.7749, lng: -122.4194 };
@@ -22,7 +20,6 @@ describe("memberPoint pins an SF member in San Francisco", () => {
   test("colliding names resolve in the member's own city", () => {
     expect(km(memberPoint("sf-0044", "Financial District", "sf"), SF_FIDI)).toBeLessThan(1.5);
     expect(km(memberPoint("sf-0018", "Chinatown", "sf"), SF_CHINATOWN)).toBeLessThan(1.5);
-    // The NYC namesakes stay where they were.
     expect(memberPoint("ny-0005", "Financial District", "nyc")).toEqual({ lat: 40.701008203523806, lng: -74.00525802926815 });
     expect(memberPoint("ny-0085", "Chinatown", "nyc")).toEqual({ lat: 40.71238725697266, lng: -74.00507008347786 });
   });
@@ -30,6 +27,16 @@ describe("memberPoint pins an SF member in San Francisco", () => {
   test("an unknown SF area falls back to the SF center, never to Midtown", () => {
     expect(km(memberPoint("sf-9999", "No Such Place", "sf"), SF_CENTER)).toBeLessThan(1.5);
     expect(km(memberPoint("sf-9999", undefined, "sf"), SF_CENTER)).toBeLessThan(1.5);
+  });
+
+  test("a combined \"A / B\" area label resolves on either part", () => {
+    expect(km(memberPoint("sf-0107", "Potrero Hill / Dogpatch", "sf"), DOGPATCH)).toBeLessThan(1.5);
+    expect(km(memberPoint("sf-0116", "Parkside / Outer Sunset", "sf"), OUTER_SUNSET)).toBeLessThan(1.5);
+    expect(km(memberPoint("sf-0108", "Chinatown / Union Square", "sf"), SF_CHINATOWN)).toBeLessThan(1.5);
+  });
+
+  test("a combined label with no part in the table still falls back to the SF center", () => {
+    expect(km(memberPoint("sf-9998", "Rincon Hill / East Cut", "sf"), SF_CENTER)).toBeLessThan(1.5);
   });
 
   test("an LA member falls back to the LA center", () => {

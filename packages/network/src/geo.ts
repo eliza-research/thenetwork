@@ -41,10 +41,6 @@ export const NEIGHBORHOODS: Neighborhood[] = [
 ];
 export const NEIGHBORHOOD = new Map(NEIGHBORHOODS.map(n => [n.name, n]));
 
-// San Francisco neighborhoods for the member map, keyed by city so an SF area never resolves
-// through the NYC table (names such as "Financial District" and "Chinatown" collide across cities).
-// Approximate WGS84 centroids like the NYC table: 24 reuse packages/engine/src/packs/slop/zips.ts
-// (its "A / B" areas split apart, one zip each, no collisions); the other 10 are well-known public centroids.
 export interface CityNeighborhood extends LatLng { name: string }
 const S = (name: string, lat: number, lng: number): CityNeighborhood => ({ name, lat, lng });
 export const SF_NEIGHBORHOODS: CityNeighborhood[] = [
@@ -180,12 +176,20 @@ export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 
     .sort((a, b) => a.s - b.s).slice(0, n).map(x => x.v);
 }
 
+function sfNeighborhood(area: string): CityNeighborhood | undefined {
+  const exact = SF_NEIGHBORHOOD.get(area);
+  if (exact) return exact;
+  for (const part of area.split(" / ")) {
+    const hit = SF_NEIGHBORHOOD.get(part.trim());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 /** Deterministic jitter so members in one neighborhood don't sit on one point (map display). */
 export function memberPoint(memberId: string, area: string | undefined, city?: City): LatLng {
-  // City first: an SF area resolves in the SF table (or the SF center when unknown); without a city
-  // the legacy NYC-only path runs unchanged, so existing NYC pins are byte-identical.
   let c: LatLng;
-  if (city === "sf") c = (area && SF_NEIGHBORHOOD.get(area)) || CITY_CENTER.sf;
+  if (city === "sf") c = (area && sfNeighborhood(area)) || CITY_CENTER.sf;
   else if (city === "la") c = CITY_CENTER.la;
   else c = neighborhood(area);
   let h = 2166136261;
