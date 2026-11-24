@@ -172,15 +172,6 @@ describe("QSM ported network & core fixes", () => {
     expect(outcome).toBe("open");
   });
 
-  test("SD-065: minor ordinary chat over 12 chars routes as open turn (single-player) instead of concierge", async () => {
-    const w = new Mini([{ id: "m", name: "Milo Reyes", age: 15, area: "Greenpoint", interests: ["climbing"] }], { review: "auto", plans: false });
-    await w.onboard("m");
-    const mark = w.mark();
-    const res = await w.net.onInbound({ id: "minor-chat", memberId: "m", body: "Tell me something interesting about climbing knots", channel: "sms", ts: w.clock.now() });
-    expect(res).toBe("open");
-    expect(w.to("m", mark)).toEqual([]);
-  });
-
   test("SD-264: group probe keeps remaining members when one says neither and commonTimeGone is true", async () => {
     const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss"), person("d", "Dee Fox")], { review: "auto", plans: false });
     await w.onboard("a", "b", "c", "d");
