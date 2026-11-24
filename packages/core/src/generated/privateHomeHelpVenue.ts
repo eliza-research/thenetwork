@@ -1,6 +1,8 @@
 // GENERATED from spec/privateHomeHelpVenue.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
+/** Story: Control who can read my home-help address / A current participant can open the private address step (spec/privateHomeHelpVenue.md) */
+export type HomeHelpVenueStatus = "VenueUnavailable" | "VenueRequesterEmpty" | "VenueRequesterSaved" | "VenueHelperSaved";
 
 
 /** Story: Control who can read my home-help address / The requester supplies one address after everyone accepts this revision (spec/privateHomeHelpVenue.md) */
@@ -40,6 +42,39 @@ export function lawExpiredHomeHelpVenueIsUnavailable(owner: boolean, helper: boo
 export function lawHomeHelpVenueReadRequiresHelperAndConsent(helper: boolean, unanimousCurrentConsent: boolean, now: number, expiresAt: number): boolean {
   //@ ensures \result === true
   return !mayReadHomeHelpVenue(false, unanimousCurrentConsent, now, expiresAt) && !mayReadHomeHelpVenue(helper, false, now, expiresAt);
+}
+
+/** Story: Control who can read my home-help address / A current participant can open the private address step (spec/privateHomeHelpVenue.md) */
+//@ pure
+export function homeHelpVenueLinkAllowed(signedDirect: boolean, status: HomeHelpVenueStatus): boolean {
+  return signedDirect && status !== "VenueUnavailable";
+}
+
+/** Story: Control who can read my home-help address / A current participant can open the private address step (spec/privateHomeHelpVenue.md) */
+//@ pure
+export function currentHomeHelpVenueStatus(owner: boolean, helper: boolean, unanimous: boolean, saved: boolean, revoked: boolean, now: number, expiresAt: number): HomeHelpVenueStatus {
+  return revoked ? "VenueUnavailable" : (mayStoreHomeHelpVenue(owner, unanimous, now, expiresAt) ? (saved ? "VenueRequesterSaved" : "VenueRequesterEmpty") : (saved && mayReadHomeHelpVenue(helper, unanimous, now, expiresAt) ? "VenueHelperSaved" : "VenueUnavailable"));
+}
+
+/** Story: Control who can read my home-help address / A current participant can open the private address step (spec/privateHomeHelpVenue.md) */
+//@ pure
+export function lawHomeHelpVenueLinkRequiresDirectTurn(status: HomeHelpVenueStatus): boolean {
+  //@ ensures \result === true
+  return !homeHelpVenueLinkAllowed(false, status) && !homeHelpVenueLinkAllowed(true, "VenueUnavailable");
+}
+
+/** Story: Control who can read my home-help address / A current participant can open the private address step (spec/privateHomeHelpVenue.md) */
+//@ pure
+export function lawHomeHelpVenueStatusRequiresCurrentParticipant(owner: boolean, helper: boolean, unanimous: boolean, saved: boolean, revoked: boolean, now: number, expiresAt: number): boolean {
+  //@ ensures \result === true
+  return !(currentHomeHelpVenueStatus(owner, helper, unanimous, saved, revoked, now, expiresAt) !== "VenueUnavailable") || (unanimous && (owner || helper) && !revoked && homeHelpVenueLive(now, expiresAt));
+}
+
+/** Story: Control who can read my home-help address / A current participant can open the private address step (spec/privateHomeHelpVenue.md) */
+//@ pure
+export function lawHomeHelpHelperStatusRequiresSavedAddress(owner: boolean, helper: boolean, unanimous: boolean, revoked: boolean, now: number, expiresAt: number): boolean {
+  //@ ensures \result === true
+  return currentHomeHelpVenueStatus(owner, helper, unanimous, false, revoked, now, expiresAt) !== "VenueHelperSaved";
 }
 
 /** Story: Control who can read my home-help address / Revocation, plan change and expiry end access (spec/privateHomeHelpVenue.md) */

@@ -55,6 +55,40 @@ pure def lawExpiredHomeHelpVenueIsUnavailable(owner: bool, helper: bool, unanimo
   and not(mayReadHomeHelpVenue(helper, unanimousCurrentConsent, expiresAt, expiresAt))
 ```
 
+### A current participant can open the private address step
+
+After the current reviewed roster unanimously accepts, a directly verified
+requester can read whether the address is saved. A directly verified helper
+can read their role only after the address is saved. A revoked or unavailable
+address gives a closed result to both roles. This status reads no address
+bytes and changes no plan, consent or venue. In a signed direct member turn,
+the same current status permits a link to the address step on ntwrk.party.
+The link names the plan and revision only. It grants no browser authority.
+Recheck the status before returning a saved reply with a link.
+
+```quint
+type HomeHelpVenueStatus = VenueUnavailable | VenueRequesterEmpty | VenueRequesterSaved | VenueHelperSaved
+
+pure def currentHomeHelpVenueStatus(owner: bool, helper: bool, unanimous: bool, saved: bool, revoked: bool, now: int, expiresAt: int): HomeHelpVenueStatus =
+  if (revoked) VenueUnavailable
+  else if (mayStoreHomeHelpVenue(owner, unanimous, now, expiresAt)) (if (saved) VenueRequesterSaved else VenueRequesterEmpty)
+  else if (saved and mayReadHomeHelpVenue(helper, unanimous, now, expiresAt)) VenueHelperSaved
+  else VenueUnavailable
+
+pure def homeHelpVenueLinkAllowed(signedDirect: bool, status: HomeHelpVenueStatus): bool =
+  signedDirect and status != VenueUnavailable
+
+pure def lawHomeHelpVenueStatusRequiresCurrentParticipant(owner: bool, helper: bool, unanimous: bool, saved: bool, revoked: bool, now: int, expiresAt: int): bool =
+  currentHomeHelpVenueStatus(owner, helper, unanimous, saved, revoked, now, expiresAt) != VenueUnavailable
+    implies (unanimous and (owner or helper) and not(revoked) and homeHelpVenueLive(now, expiresAt))
+
+pure def lawHomeHelpHelperStatusRequiresSavedAddress(owner: bool, helper: bool, unanimous: bool, revoked: bool, now: int, expiresAt: int): bool =
+  currentHomeHelpVenueStatus(owner, helper, unanimous, false, revoked, now, expiresAt) != VenueHelperSaved
+
+pure def lawHomeHelpVenueLinkRequiresDirectTurn(status: HomeHelpVenueStatus): bool =
+  not(homeHelpVenueLinkAllowed(false, status)) and not(homeHelpVenueLinkAllowed(true, VenueUnavailable))
+```
+
 ### Revocation, plan change and expiry end access
 
 The verified requester can revoke access for the current revision without

@@ -6,6 +6,8 @@ const MAX_REVISION = 2_147_483_647;
 const PREFIX = /^(?:yes|no|withdraw)[ \t]+home[ \t]+help\b/i;
 const OFFER = /^withdraw[ \t]+home[ \t]+help[ \t]+offer\b/i;
 const ANSWER = /^(yes|no|withdraw)[ \t]+home[ \t]+help[ \t]+([a-z0-9_-]{1,36})[ \t]+([1-9]\d{0,9})$/i;
+const VENUE = /^home[ \t]+help[ \t]+address\b/i;
+const VENUE_REQUEST = /^home[ \t]+help[ \t]+address[ \t]+([a-z0-9_-]{1,36})[ \t]+([1-9]\d{0,9})$/i;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const DISPLAY_CODE = /^hh_([a-p]{8})([a-p]{4})([a-p]{4})([a-p]{4})([a-p]{12})$/;
 const HEX = "0123456789abcdef";
@@ -27,6 +29,17 @@ export function homeHelpPlanId(code: string): string | undefined {
 export type BoundedHomeHelpConsentCommand =
   | { kind: "answer"; id: string; revision: number; decision: typeof ACTIONS[keyof typeof ACTIONS] }
   | { kind: "invalid" };
+
+export type BoundedHomeHelpVenueCommand = { kind: "address"; id: string; revision: number } | { kind: "invalid" };
+
+export function boundedHomeHelpVenueCommand(text: string): BoundedHomeHelpVenueCommand | undefined {
+  const line = text.trim();
+  if (!VENUE.test(line)) return;
+  const [, code, rawRevision] = VENUE_REQUEST.exec(line) ?? [];
+  const id = code && homeHelpPlanId(code);
+  const revision = Number(rawRevision);
+  return id && revision <= MAX_REVISION ? { kind: "address", id, revision } : { kind: "invalid" };
+}
 
 export const BOUNDED_HOME_HELP_CONSENT_CLARIFICATION = "To answer, copy an exact command from the home-help message. Include the plan ID and revision. Leave out the street address.";
 

@@ -52,13 +52,13 @@ export class BoundedHomeHelpConsent {
     private readonly now: () => number,
   ) {}
 
-  private async approval(tx: SQL, key: HomeHelpConsentKey): Promise<HomeHelpReviewPlan | undefined> {
+  private async approval(tx: SQL, key: HomeHelpConsentKey, readOnly = false): Promise<HomeHelpReviewPlan | undefined> {
     if (!keyValid(key)) return;
     const [row] = await tx<{ helper_ids: string[] }[]>`select helper_ids from network.bounded_home_help
       where app_id=${key.app} and id=${key.id} and revision=${key.revision} and phase='Approved'`;
     if (!row) return;
     const plan = await this.plans.currentApproval(tx, { ...key, helperIds: row.helper_ids, ongoingConsent: true });
-    if (plan) return plan;
+    if (plan || readOnly) return plan;
     await tx`update network.bounded_home_help_consent set phase=${cancelled}
       where app_id=${key.app} and plan_id=${key.id} and revision=${key.revision} and phase in ${tx(active)}`;
   }
@@ -165,8 +165,8 @@ export class BoundedHomeHelpConsent {
   }
 
   /** Use inside the later action transaction. Holds the current approval and exact consent rows. */
-  async currentConsent(tx: SQL, key: HomeHelpConsentKey): Promise<HomeHelpReviewPlan | undefined> {
-    const plan = await this.approval(tx, key);
+  async currentConsent(tx: SQL, key: HomeHelpConsentKey, readOnly = false): Promise<HomeHelpReviewPlan | undefined> {
+    const plan = await this.approval(tx, key, readOnly);
     if (!plan) return;
     const roster = await this.recipients(tx, plan);
     const accepted = roster.rows.filter(row => row.phase === "Accepted").length;
