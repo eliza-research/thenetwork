@@ -722,7 +722,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!allows(page, decision === "open" ? "ReplySignupForm" : "ReplyConsent")) return expired();
 
     const who = await readAuthorizationSession(c);
-    if (who === "unavailable") return browserUnavailable(c);
+    if (who === "unavailable") return allows(page, "ReplySignupUnavailable") ? browserUnavailable(c) : expired();
     if (!who || !browserSignupOpenAllowed(flow, storedPageOf(r.step), !!r.e164,
       who.e164 === r.e164 && who.personId === r.personId, true)) return expired();
     if (decision === "skip") return verifiedConsentPage(c, r, client, who);
@@ -783,7 +783,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       return verifiedConsentPage(c, enrolled, client, who);
     } catch {
       // Ambiguous membership completion cannot approve this connection or infer ownership on retry.
-      return messagePage(c, "Connect again", "We couldn’t confirm signup. Check your membership before starting a new connection.", 503);
+      return allows(page, "ReplyConnectAgain")
+        ? messagePage(c, "Connect again", "We couldn’t confirm signup. Check your membership before starting a new connection.", 503)
+        : expired();
     }
   }
 

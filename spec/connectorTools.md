@@ -80,7 +80,7 @@ pure def lawGrantNeverCrossesApps(grantApp: AppId, requestApp: AppId): bool =
 
 ### The member tools name the site where the person signs in
 
-The person confirms the phone and allows access on the site that serves the endpoint. This is the OAuth issuer of that endpoint. For each path on the ntwrk.party host, the sign-in site is ntwrk.party, also for slop, peon and friends. For the `/mcp` endpoint of an app site, the sign-in site is that app site. The descriptions of `check_status`, `get_updates` and `prepare_signup` name the sign-in site. The server instructions name `app_info`, `start_signup`, `check_status`, `read_profile`, `submit_profile`, `get_updates` and `prepare_signup`, and keep the rules in the first 512 characters. On the OpenAI surface of an app other than slop.date, the descriptions and the instructions do not name slop.date or dating.
+The person confirms the phone and allows access on the site that serves the endpoint. This is the OAuth issuer of that endpoint. For each path on the ntwrk.party host, the sign-in site is ntwrk.party, also for slop, peon and friends. For the `/mcp` endpoint of an app site, the sign-in site is that app site. The descriptions of `check_status`, `get_updates` and `prepare_signup` name the sign-in site. The server instructions name `app_info`, `start_signup`, `check_status`, `read_profile`, `submit_profile`, `get_updates` and `prepare_signup`, and give the privacy rules in the first 512 characters. On the OpenAI surface of an app other than slop.date, the descriptions and the instructions do not name slop.date or dating.
 
 ```quint
 pure def signInSite(site: AppId, app: AppId): AppId = if (site == hubHost) hubHost else app

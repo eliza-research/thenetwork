@@ -48,9 +48,9 @@ pure def chooseEntry(flow: BrowserFlow, session: EntrySession, cloudRequired: bo
 
 ### The stored page determines what a form can do
 
-Phone submission starts or restarts verification until the request reaches consent. Only a code page with a stored phone can verify a code. Only a consent page with a phone accepts a consent decision. A dedicated cancel form can end any bound request. A delayed phone proof, browser retry or Cloud response can advance only the same live stored page and phone binding it began with.
+Phone submission starts or restarts verification until the request reaches consent. Only a code page with a stored phone can verify a code. Only a consent page with a phone accepts a consent decision. A dedicated cancel form can end a bound request before enrollment starts. An enrollment in progress expires every form. After enrollment, a form must include the new consent proof. A delayed phone proof, browser retry or Cloud response can advance only the same live stored page and phone binding it began with.
 
-The stored request keeps its step as a word: `phone`, `code`, `consent`, `enrolling` or `enrolled`. Each step gives one stored page. A step that is not one of these words gives the pending enrollment page, so every form on it expires and the browser cannot resume it. Each posted form route gives one form: `phone`, `code`, `consent` or `cancel`. A route that is not one of these words gives the cancel form, which can only end the request.
+The stored request keeps its step as a word: `phone`, `code`, `consent`, `enrolling` or `enrolled`. Each step gives one stored page. The `enrolling` step and any unknown step give the pending enrollment page. Every form on that page expires, and the browser cannot resume it. The router serves four regular form routes: `phone`, `code`, `consent` and `cancel`. The form mapper treats all other inputs as cancel. It never treats a posted form as a Cloud return.
 
 ```quint
 type StoredPage = PhonePage | CodePage | ConsentPage | SignupEnrollmentPending | EnrolledConsentPage

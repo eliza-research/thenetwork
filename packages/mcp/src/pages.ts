@@ -122,8 +122,10 @@ export type MessageTitle = keyof typeof messageReplies | "Sign in first";
 
 export function messagePage(at: PageApp, title: MessageTitle, text: string, status = 400, retryPath?: string) {
   const { app, siteOrigin } = pageAppOf(at);
-  const view = (title === "Sign in first" ? load(consentsInitial, "LoadedSignedOut", 0).view : pageFor(messageReplies[title]).view) as AuthMessage;
-  return respond(app, title, h(AuthMessageView, { app: appKeyOf(app), siteOrigin, view, text, retryHref: retryPath }), { status });
+  const view = title === "Sign in first"
+    ? load(consentsInitial, "LoadedSignedOut", 0).view
+    : pageFor(title === "Please try again" && !retryPath ? "ReplySignupUnavailable" : messageReplies[title]).view;
+  return respond(app, title, h(AuthMessageView, { app: appKeyOf(app), siteOrigin, view: view as AuthMessage, text, retryHref: retryPath }), { status });
 }
 
 /**

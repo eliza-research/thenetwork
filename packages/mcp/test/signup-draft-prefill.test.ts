@@ -32,7 +32,7 @@ async function authorize(e: Env, domain: string, clientId: string, phone: string
     method: "POST", body: new URLSearchParams({ rid, ...form }).toString(),
     headers: { "content-type": "application/x-www-form-urlencoded", origin: `https://${domain}`, cookie: cookie() },
   })));
-  return { consent, post };
+  return { consent, post, rid };
 }
 
 async function openSignup(e: Env, domain: string, clientId: string, phone: string) {
@@ -75,6 +75,54 @@ test("a signup form from another request expires before reading the phone sessio
   expect(sessionReads.mock.calls.length).toBe(1);
   expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
   expect((await e.store.auditRows()).filter(row => row.kind === "consent_granted")).toEqual([]);
+});
+
+test.skipIf(!pgAvailable)("signup outages show a message without exposing fields or issuing an authorization code", async ({ onTestFinished }) => {
+  const store = new PgOAuthStore(await testDb());
+  onTestFinished(async () => { await store.close(); await dropTestDb(); });
+  const e = setup({ store });
+  const registration = await register(e, "friends.help");
+  const client = registration.body.client_id;
+  if (typeof client !== "string") throw new Error("no registered client");
+  const { post, rid } = await authorize(e, "friends.help", client, PHONE_A);
+  const session = vi.spyOn(e.sessions, "authenticate");
+  const enrollment = vi.spyOn(e.accounts, "join");
+  onTestFinished(() => { session.mockRestore(); enrollment.mockRestore(); });
+  const signup = (fields: Record<string, string>) => post("/oauth/authorize/signup", fields);
+  const expectMessage = async (response: Response, title: string) => {
+    expect(response.status).toBe(503);
+    expect(response.headers.get("location")).toBeNull();
+    const html = await response.text();
+    expect(html).toContain(title);
+    expect(html).not.toMatch(/<form|>Try again<|name="(?:phone|code|birthdate)"/);
+    expect(await store.grantsFor(e.accounts.phoneHash(PHONE_A), "friends", e.clock.t)).toEqual([]);
+  };
+
+  session.mockRejectedValueOnce(new Error("test session outage"));
+  const unavailable = await signup({ decision: "open" });
+  expect(unavailable.headers.get("retry-after")).toBe("5");
+  await expectMessage(unavailable, "Please try again");
+  expect((await store.getAuthRequest(rid))?.step).toBe("consent");
+
+  const opened = await signup({ decision: "open" });
+  expect(opened.status).toBe(200);
+  const form = await opened.text();
+  const proof = field(form, "signupView");
+  expect(proof).not.toBe("");
+  session.mockRejectedValueOnce(new Error("test session outage"));
+  await expectMessage(await signup({ decision: "skip", signupView: proof }), "Please try again");
+  expect((await store.getAuthRequest(rid))?.step).toBe("consent");
+
+  enrollment.mockRejectedValueOnce(new Error("test enrollment outage"));
+  await expectMessage(await signup({
+    decision: "join", signupView: proof, consentVersion: field(form, "consentVersion"),
+    firstName: "Ari", birthdate: "1997-01-15", homeCity: "sf", smsConsent: "yes",
+  }), "Connect again");
+  expect((await store.getAuthRequest(rid))?.step).toBe("enrolling");
+  const stale = await post("/oauth/authorize/consent", { decision: "approve" });
+  expect(stale.status).toBe(400);
+  expect(stale.headers.get("location")).toBeNull();
+  expect((await store.auditRows()).filter(row => row.kind === "code_issued")).toEqual([]);
 });
 
 async function draftFor(e: Env, domain: string, phone: string, fields: Record<string, unknown> = { firstName: "Ari", homeCity: "sf" }) {

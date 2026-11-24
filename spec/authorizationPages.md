@@ -10,19 +10,19 @@ The handler (`packages/mcp/src/handler.ts`) also uses the guards of this machine
 
 ### The server reply selects the page view
 
-Each server reply selects exactly one view. A phone page, a code page, a consent page or the signup page can show a form. A message page shows a title, one sentence and, for "Please try again" only, a retry link. Three replies leave this site: the hand-off to Cloud sign-in, the return to the assistant with a code, and the return to the assistant with a refusal. A field error is part of the reply and shows only on the page of its field. The phone page shows a security check only when the site has one.
+Each server reply selects exactly one view. A phone page, a code page, a consent page or the signup page can show a form. A message page shows a title and one sentence. A "Please try again" page shows a retry link when the server gives the browser a way to resume the request. Three replies leave this site: the hand-off to Cloud sign-in, the return to the assistant with a code, and the return to the assistant with a refusal. A field error is part of the reply and shows only on the page of its field. The phone page shows a security check only when the site has one.
 
 ```quint
 type AuthView =
   Opening | PhoneView | CodeView | ConsentView | ConsentRetryView | CloudView | ApprovedView | DeclinedView |
   LinkInvalidView | TooManyTriesView | NotAvailableView | PageExpiredView | AlreadySignedInView |
-  CheckNumberView | ConnectAgainView | PleaseRetryView | SignInUnavailableView | NotAllowedView | SignupView
+  CheckNumberView | ConnectAgainView | PleaseRetryView | SignupUnavailableView | SignInUnavailableView | NotAllowedView | SignupView
 type Reply =
   ReplyPhone | ReplyCode | ReplyConsent | ReplyConsentRetry | ReplyCloud | ReplyApproved | ReplyDeclined |
   ReplyCheckFailed | ReplyPhoneInvalid | ReplyTooManyCodes | ReplySendUnavailable | ReplyCodeRejected |
   ReplyLinkInvalid | ReplyTooManyTries | ReplyNotAvailable | ReplyExpired | ReplyAlreadySignedIn |
   ReplyCheckNumber | ReplyConnectAgain | ReplyRetryLater | ReplySignInUnavailable | ReplyNotAllowed |
-  ReplySignupForm | ReplySignupRefused
+  ReplySignupForm | ReplySignupRefused | ReplySignupUnavailable
 type FieldError = NoFieldError | CheckNotPassed | PhoneNotValid | CodesRateLimited | CodeSendFailed | CodeNotAccepted
 type SecurityCheck = CheckOff | CheckWaiting | CheckSolved | CheckExpired
 type AuthPage = {
@@ -61,6 +61,7 @@ pure def viewFor(reply: Reply): AuthView =
   else if (reply == ReplyCheckNumber) CheckNumberView
   else if (reply == ReplyConnectAgain) ConnectAgainView
   else if (reply == ReplyRetryLater) PleaseRetryView
+  else if (reply == ReplySignupUnavailable) SignupUnavailableView
   else if (reply == ReplySignInUnavailable) SignInUnavailableView
   else if (reply == ReplySignupForm or reply == ReplySignupRefused) SignupView
   else NotAllowedView
@@ -81,7 +82,7 @@ pure def isConsentView(view: AuthView): bool = view == ConsentView or view == Co
 pure def isMessageView(view: AuthView): bool =
   view == LinkInvalidView or view == TooManyTriesView or view == NotAvailableView or view == PageExpiredView
     or view == AlreadySignedInView or view == CheckNumberView or view == ConnectAgainView
-    or view == PleaseRetryView or view == SignInUnavailableView or view == NotAllowedView
+    or view == PleaseRetryView or view == SignupUnavailableView or view == SignInUnavailableView or view == NotAllowedView
 
 pure def isFinal(view: AuthView): bool =
   view == ApprovedView or view == DeclinedView or (isMessageView(view) and view != PleaseRetryView)
@@ -139,7 +140,7 @@ pure def openPage(page: AuthPage, reply: Reply, turnstileOn: bool): AuthPage =
 
 ### The return from Cloud sign-in and the retry link resume the same request
 
-After Cloud sign-in, the browser comes back to the same request. Its retry uses the same return address. A retry of the initial session check uses a separate address for the same request. A current session opens consent. A signed-out person goes to the phone page or the app's required Cloud sign-in. A failed check leaves the same retry link available. An expired or unbound request gets "This page has expired".
+After Cloud sign-in, the browser comes back to the same request. A current session opens consent. If the check is temporarily unavailable, the retry link uses the same Cloud return address. If the browser has no current permitted session, it shows "Connect again". A retry of the initial session check uses a separate address for the same request. On that initial retry, a signed-out person goes to the phone page or the app's required Cloud sign-in. An expired or unbound request gets "This page has expired".
 
 ```quint
 pure def isCloudReturnReply(reply: Reply): bool =
@@ -299,18 +300,20 @@ pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
 
 ### The signup page is a step of the same request
 
-"Finish signup" on the consent page opens the signup page of the same request. The signup page shows no phone field and no code field. It offers "Finish signup" and "Back to connection" and nothing else. "Finish signup" goes back to the consent page when the server saves the signup. When the server refuses the form, the signup page shows again with the reason. "Back to connection" goes back to the consent page and saves nothing. A request that is no longer live gets "This page has expired". The other replies are "Not allowed" and "Not available". The signup page never sends the approval and never returns a code to the assistant. Only a consent page opens the signup page, so the signup page always follows a consent page.
+"Finish signup" on the consent page opens the signup page of the same request. The signup page shows no phone field and no code field. It offers "Finish signup" and "Back to connection" and nothing else. "Finish signup" goes back to the consent page when the server saves the signup. When the server refuses the form, the signup page shows again with the reason. "Back to connection" goes back to the consent page and saves nothing. A request that is no longer live gets "This page has expired". The other replies are "Not allowed" and "Not available". If the session check is unavailable, the page shows "Please try again" without a retry link or form fields. If the server cannot confirm a submitted signup, the page shows "Connect again" without form fields. The signup page never sends the approval and never returns a code to the assistant. Only a consent page opens the signup page, so the signup page always follows a consent page.
 
 ```quint
 pure def isSignupOpenReply(reply: Reply): bool =
   reply == ReplySignupForm or reply == ReplyExpired or reply == ReplyNotAllowed or reply == ReplyNotAvailable
+    or reply == ReplySignupUnavailable
 
 pure def isSignupReply(reply: Reply): bool =
   reply == ReplyConsent or reply == ReplySignupRefused or reply == ReplyExpired
-    or reply == ReplyNotAllowed or reply == ReplyNotAvailable
+    or reply == ReplyNotAllowed or reply == ReplyNotAvailable or reply == ReplySignupUnavailable or reply == ReplyConnectAgain
 
 pure def isLeaveSignupReply(reply: Reply): bool =
   reply == ReplyConsent or reply == ReplyExpired or reply == ReplyNotAllowed or reply == ReplyNotAvailable
+    or reply == ReplySignupUnavailable
 
 pure def canOpenSignup(page: AuthPage, reply: Reply): bool = page.view == ConsentView and isSignupOpenReply(reply)
 pure def openSignup(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
@@ -332,6 +335,7 @@ pure def stepSignupNeverApproves(before: AuthPage, via: str, after: AuthPage): b
   (via == "openSignup" or via == "submitSignup" or via == "leaveSignup") implies after.approved == before.approved
 
 pure def sometimesSignupShown(page: AuthPage): bool = page.view == SignupView
+pure def sometimesSignupUnavailable(page: AuthPage): bool = page.view == SignupUnavailableView
 ```
 
 ### A new person sees Finish signup as the main action on the consent page
@@ -593,7 +597,7 @@ pure def cancelRequest(page: AuthPage, reply: Reply): AuthPage = showReply(reply
 
 ### A message page shows no credential field and at most a retry link
 
-No message page shows a phone field or a code field. Only "Please try again" offers a link, and the link retries the same request. A final view does not change.
+No message page shows a phone field or a code field. A "Please try again" page can offer a link for the initial session retry or Cloud return. That link retries the same request. The signup session error offers no link. A final view does not change.
 
 ```quint
 pure def lawMessagePagesShowNoCredentialField(view: AuthView): bool =
