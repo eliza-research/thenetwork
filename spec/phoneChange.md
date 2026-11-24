@@ -8,6 +8,21 @@ The shell's store move keeps the person's member IDs and history. In the same tr
 
 > As a member, I want to prove I own the new number and keep my account, history and consents.
 
+### A signed request can return the app's phone change page
+
+The signed conversation accepts CHANGE NUMBER and UPDATE NUMBER as whole requests. It allows an initial PLEASE, the words MY and PHONE before NUMBER, and trailing punctuation. It ignores case and surrounding space. It returns the routed app's plain `/phone` address only to a member whose verified current phone and app membership agree and whose membership and staff hold checks are clear. The reply carries no sign-in authority and starts no challenge. The page still requires a fresh sign-in on the current number and a new-number code.
+
+```quint
+pure val phoneChangePagePath: str = "/phone"
+
+pure def phoneChangeLinkAllowed(sameMember: bool, membership: str, reviewClear: bool, staffHeld: bool): bool =
+  sameMember and (membership == "active" or membership == "paused" or membership == "onboarding")
+    and reviewClear and not(staffHeld)
+
+pure def lawAnUnboundOrHeldMemberGetsNoPhoneChangeLink(sameMember: bool, membership: str, reviewClear: bool, staffHeld: bool): bool =
+  (not(sameMember) or not(reviewClear) or staffHeld) implies not(phoneChangeLinkAllowed(sameMember, membership, reviewClear, staffHeld))
+```
+
 ### The request uses the existing account
 
 A new challenge cannot target the current number. Both operations check the current phone, hold and account owner before progressing. The shell checks the account and returns its trusted result.

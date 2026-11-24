@@ -74,6 +74,68 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
   expect(escaped).toBe(0);
 },60_000);
 
+test("signed CHANGE NUMBER gives an existing verified member the app's plain page", async () => {
+  const number = "+13105550198", next = "+13105550199";
+  const request = (app: "friends" | "slop", path: string, body: unknown, cookie?: string) => fetchWithHost(new URL(path, server.url), {
+    method: "POST", body: JSON.stringify(body),
+    headers: { host: APPS[app].domain, "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+  });
+  const signup = async (app: "friends" | "slop") => {
+    clock.advance(31_000);
+    expect((await request(app, "/api/auth/otp/start", { phone: number })).status).toBe(200);
+    const verified = await request(app, "/api/auth/otp/verify", { phone: number, code });
+    expect(verified.status).toBe(200);
+    const cookie = verified.headers.getSetCookie()[0]!.split(";")[0]!;
+    expect((await request(app, "/api/join", {
+      firstName: "Jo", age: 30, homeCity: "nyc", consent: { sms: true, version: APPS[app].consent.version },
+    }, cookie)).status).toBe(200);
+    return cookie;
+  };
+  const friendSession = await signup("friends");
+  await signup("slop");
+  const person = (await service.accounts.personFor(number))!;
+  const original = (await service.people.getMembership(person.id, "friends"))!;
+  const outboundBefore = escaped;
+  for (const app of ["friends", "slop"] as const) {
+    const command = app === "friends" ? "CHANGE NUMBER" : "Please update my phone number!";
+    const input = turn(`phone-page-${app}`, number, command, app);
+    const response = await post(input);
+    const body = await response.json() as { outcome: string; delivery: string; replies: string[] };
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ outcome: "handled", delivery: "collected" });
+    expect(body.replies).toHaveLength(1);
+    const urls = body.replies[0]!.match(/https:\/\/[^\s]+/g);
+    expect(urls).toEqual([`https://${APPS[app].domain}/phone`]);
+    expect(await (await post(input)).json()).toEqual(body);
+  }
+  expect(escaped).toBe(outboundBefore);
+  expect(await sql`select person_id from platform.phone_changes where person_id = ${person.id}`).toEqual([]);
+
+  const noLink = async (id: string, from: string, text = "CHANGE NUMBER") => {
+    const response = await post(turn(id, from, text, "friends"));
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(await response.json())).not.toContain("/phone");
+  };
+  await noLink("phone-page-other-words", number, "I want to change the number on this plan.");
+  await noLink("phone-page-unverified", "+13105550196");
+  expect((await post(turn("phone-page-invalid-signature", number, "CHANGE NUMBER", "friends"), "/wrong/internal/turn")).status).toBe(401);
+  await sql`insert into platform.staff_safety_holds (person_id, app_id, decision_id, held_at)
+    values (${person.id}, 'friends', ${randomUUID()}, ${new Date(clock.now())})`;
+  await noLink("phone-page-staff-held", number);
+  await sql`delete from platform.staff_safety_holds where person_id = ${person.id}`;
+  await service.people.setPhoneHold(number, "recycled_number", clock.now());
+  await noLink("phone-page-identity-held", number);
+  await service.people.setPhoneHold(number, null, clock.now());
+
+  expect((await request("friends", "/api/me/phone/start", { phone: next })).status).toBe(401);
+  expect((await request("friends", "/api/me/phone/start", { phone: next }, friendSession)).status).toBe(200);
+  expect((await request("friends", "/api/me/phone/confirm", { code: "000000" }, friendSession)).status).toBe(400);
+  expect((await request("friends", "/api/me/phone/confirm", { code }, friendSession)).status).toBe(200);
+  expect(await service.accounts.personFor(number)).toBeUndefined();
+  expect((await service.accounts.personFor(next))?.id).toBe(person.id);
+  expect((await service.people.getMembership(person.id, "friends"))?.memberId).toBe(original.memberId);
+}, 60_000);
+
 test("signed answers to the enrollment question require a positive app choice", async () => {
   // spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
   const cases = [

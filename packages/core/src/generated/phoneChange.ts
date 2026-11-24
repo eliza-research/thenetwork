@@ -2,15 +2,15 @@
 //@ backend dafny
 
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
+export type PhoneChangeFailure = "NoFailure" | "SameNumber" | "ReviewNeeded" | "NoPerson" | "RateLimited" | "NoPendingChange" | "InvalidCode" | "NumberInUse";
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type CurrentPhone = "OwnedPhone" | "UnavailablePhone" | "WrongPerson";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type MovePolicy = "MoveAllowed" | "MoveBlocked" | "NumberTaken";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
-export type PhoneChangePhase = "Beginning" | "CheckingStartOwner" | "CheckingConfirmOwner" | "CheckingStartPolicy" | "AwaitingRateLimit" | "AwaitingCodeSend" | "AwaitingPendingWrite" | "PendingRecorded" | "AwaitingPendingRead" | "AwaitingVerification" | "AwaitingMovePolicy" | "AwaitingMove" | "Moved" | "Refused";
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type MoveOutcome = "MoveApplied" | "MoveNumberTaken" | "MoveMissingPhone" | "MoveBanned" | "MoveRequestStale";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
-export type PhoneChangeFailure = "NoFailure" | "SameNumber" | "ReviewNeeded" | "NoPerson" | "RateLimited" | "NoPendingChange" | "InvalidCode" | "NumberInUse";
+export type PhoneChangePhase = "Beginning" | "CheckingStartOwner" | "CheckingConfirmOwner" | "CheckingStartPolicy" | "AwaitingRateLimit" | "AwaitingCodeSend" | "AwaitingPendingWrite" | "PendingRecorded" | "AwaitingPendingRead" | "AwaitingVerification" | "AwaitingMovePolicy" | "AwaitingMove" | "Moved" | "Refused";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export interface PhoneChange { phase: PhoneChangePhase; failure: PhoneChangeFailure; codeVerified: boolean; moveAllowed: boolean }
 
@@ -28,6 +28,8 @@ export type Event =
   | { type: "checkMovePolicy"; policy: MovePolicy }
   | { type: "recordMove"; moveResult: MoveOutcome };
 
+/** Story: Keep my account when my phone changes / A signed request can return the app's phone change page (spec/phoneChange.md) */
+export const phoneChangePagePath: string = "/phone";
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 export const phoneChangesPerDay: number = 3;
 /** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
@@ -39,6 +41,19 @@ export const initial: PhoneChange = { phase: "Beginning", failure: "NoFailure", 
 //@ pure
 export function inv(current: PhoneChange): boolean {
   return alwaysMoveRequiresProof(current);
+}
+
+/** Story: Keep my account when my phone changes / A signed request can return the app's phone change page (spec/phoneChange.md) */
+//@ pure
+export function phoneChangeLinkAllowed(sameMember: boolean, membership: string, reviewClear: boolean, staffHeld: boolean): boolean {
+  return sameMember && (membership === "active" || membership === "paused" || membership === "onboarding") && reviewClear && !staffHeld;
+}
+
+/** Story: Keep my account when my phone changes / A signed request can return the app's phone change page (spec/phoneChange.md) */
+//@ pure
+export function lawAnUnboundOrHeldMemberGetsNoPhoneChangeLink(sameMember: boolean, membership: string, reviewClear: boolean, staffHeld: boolean): boolean {
+  //@ ensures \result === true
+  return !(!sameMember || !reviewClear || staffHeld) || !phoneChangeLinkAllowed(sameMember, membership, reviewClear, staffHeld);
 }
 
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
