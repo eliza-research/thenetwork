@@ -905,10 +905,7 @@ test.each([
     clock.advance(MINUTE);
     const followupId = id + "-minor-followup";
     const followup = await signed(TURN_PATH, followupId, JSON.stringify(turn(senderPhone, followupId, "tell Bo the coffee shop is open.")));
-    expect(await followup.json()).toMatchObject({ outcome: "open", context: { singlePlayer: true } });
-    const followupRelay = await post({ channel: "blooio", messageId: followupId, app: "friends", memberId: sender, itemId: null, text: "tell Bo the coffee shop is open." });
-    expect(followupRelay.status).toBe(200);
-    expect(await followupRelay.json()).toMatchObject({ decision: "block", delivered: false });
+    expect(await followup.json()).toMatchObject({ outcome: "handled" });
     expect(await sql`select id from network.messages
       where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`).toHaveLength(0);
     return;

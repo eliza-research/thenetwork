@@ -4224,8 +4224,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         ?? o.participants.filter(id => o.status.get(id) === "no");
       const declined = hireProbeWasDeclined(reason === "declined", recorded !== undefined && declinedBy.length > 0);
       this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(),
-        outcome: declined ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy, ...(acceptedBy?.length ? { acceptedBy } : {}),
-        ...(o.seat ? { noResponse: (o.noAnswer ?? []).filter(p => o.participants.includes(p)) } : {}) });
+        outcome: declined ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy, ...(acceptedBy?.length ? { acceptedBy } : {}) });
     }
     this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", {
       proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason,

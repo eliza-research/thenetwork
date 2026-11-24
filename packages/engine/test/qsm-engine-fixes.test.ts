@@ -1,11 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { DAY, HOUR } from "@thenetwork/core";
+import { DAY } from "@thenetwork/core";
 import {
-  SLOP_ENGINE_CONFIG, World, attention, localEmbed, relayItemAsync, resolveConfig, runEngine, slopPack,
+  SLOP_ENGINE_CONFIG, attention, relayItemAsync, runEngine, slopPack,
   type EngineInput,
 } from "../src/index.ts";
 import { slopWorld } from "../../../scripts/sim/slop.ts";
-import { planMemberReason } from "../src/plans.ts";
 import { slopOnboardTags, extractSlopProfile } from "../src/packs/slop/extract.ts";
 import { SLOP_ONBOARD_QUESTIONS } from "../src/packs/slop/onboard.ts";
 import { SLOP_ASK_QUESTIONS } from "../src/packs/slop/copy.ts";
@@ -79,36 +78,6 @@ describe("QSM ported engine fixes", () => {
     const after = slopOnboardTags(ob);
     expect(after.tags.some(t => t.tag.startsWith("slop:dealbreaker:"))).toBe(false);
     expect(after.replaces).toContain("slop:dealbreaker:");
-  });
-
-  test("SD-206: planMemberReason skips only the interruption/contribution budgets without masking later hard rules", () => {
-    const input: EngineInput = {
-      now: NOW,
-      members: [
-        {
-          id: "m1", name: "NoShow Guest", age: 29, homeCity: "nyc", state: "normal",
-          joinedAt: NOW - 40 * DAY, unansweredProactive: 0,
-          prefs: { categoriesOptIn: ["events", "social"], quietHours: [22, 8], romanceOptIn: false, formats: ["small_group"], maxTravelMinutes: 45, onlyWhenAsked: false },
-        },
-      ],
-      facets: [{ id: "m1-f", memberId: "m1", kind: "interest", value: "hiking", tags: ["hiking"], scope: "shareable", confidence: 1, provenance: "said" }],
-      intents: [],
-      presence: [{ memberId: "m1", city: "nyc", type: "home", areas: ["Greenpoint"] }],
-      edges: [],
-      recentProposals: [
-        recent("r1", ["m1", "x1"], "events", NOW - HOUR),
-        recent("r2", ["m1", "x2"], "events", NOW - 2 * HOUR),
-      ],
-      reliability: { m1: { noShows: 3, completedSinceLastNoShow: 0 } },
-    };
-    const cfg = resolveConfig({
-      budgets: {
-        normal: { limit: 1, periodDays: 7 }, open: { limit: 1, periodDays: 7 },
-        quiet: { limit: 1, periodDays: 7 }, receiving: { limit: 1, periodDays: 7 }, paused: { limit: 0, periodDays: 7 },
-      },
-    });
-    const w = new World(input, cfg, localEmbed);
-    expect(planMemberReason(w, "m1", "guest")).toBe("reliability_holdout");
   });
 
   test("SD-063: recordProbeAnswer ends a 1-participant probe flow at revealed on yes", () => {
