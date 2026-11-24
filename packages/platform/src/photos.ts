@@ -291,10 +291,10 @@ interface UnfinishedPhoto { row: PhotoRow; reserved: boolean; hidden: boolean; c
 export interface PhotoHolder { personId: string; app: AppId }
 export interface PhotoStore {
   reserve(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
-  confirm(id: string, at: number): Promise<boolean>;
+  confirm(row: PhotoRow, at: number, admit: PhotoAdmission): Promise<boolean>;
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
-  hide(personId: string, at: number, scope: { app?: AppId; id?: string }): Promise<PhotoRow[]>;
+  hide(personId: string, at: number, scope: { app?: AppId; id?: string; ownerLocked?: boolean }): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
   unfinished(limit: number): Promise<UnfinishedPhoto[]>;
   holders(limit: number, at: number): Promise<PhotoHolder[]>;
@@ -323,18 +323,20 @@ export class MemoryPhotoStore implements PhotoStore {
       return undefined;
     });
   }
-  async confirm(id: string, at: number) {
-    const r = this.rows.get(id);
-    if (!r || r.storedAt !== null || r.hiddenAt !== null) return false;
-    r.storedAt = at;
-    return true;
+  async confirm(row: PhotoRow, at: number, admit: PhotoAdmission) {
+    return this.locked(row.personId, async () => {
+      const r = this.rows.get(row.id);
+      if (!r || r.storedAt !== null || r.hiddenAt !== null || await admit()) return false;
+      r.storedAt = at;
+      return true;
+    });
   }
   async get(id: string) { const r = this.rows.get(id); return r && this.live(r) ? this.copy(r) : undefined; }
   async list(personId: string, app?: AppId) {
     return [...this.rows.values()].filter(r => this.live(r) && r.personId === personId && (!app || r.app === app))
       .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => this.copy(r));
   }
-  async hide(personId: string, at: number, scope: { app?: AppId; id?: string }) {
+  async hide(personId: string, at: number, scope: { app?: AppId; id?: string; ownerLocked?: boolean }) {
     return this.locked(personId, async () => {
       const hidden: PhotoRow[] = [];
       for (const r of this.rows.values()) {
@@ -387,8 +389,16 @@ export class PgPhotoStore implements PhotoStore {
       return undefined;
     });
   }
-  async confirm(id: string, at: number) {
-    return (await this.sql`update platform.photos set stored_at = ${new Date(at)} where id = ${id} and stored_at is null and deleted_at is null returning id`).length === 1;
+  async confirm(row: PhotoRow, at: number, admit: PhotoAdmission) {
+    return this.sql.begin(async tx => {
+      const [person] = await tx`select id from platform.people where id = ${row.personId}::uuid and deleted_at is null for update`;
+      if (!person) return false;
+      await tx`select set_config('app.app_id', ${row.app}, true), set_config('app.age_as_of', ${new Date(at).toISOString()}, true)`;
+      if (await admit(tx)) return false;
+      return (await tx`update platform.photos set stored_at = ${new Date(at)}
+        where id = ${row.id} and person_id = ${row.personId}::uuid and app_id = ${row.app}
+          and stored_at is null and deleted_at is null returning id`).length === 1;
+    });
   }
   async get(id: string) {
     const [r] = await this.sql`select * from platform.photos where id = ${id} and stored_at is not null and deleted_at is null`;
@@ -401,9 +411,9 @@ export class PgPhotoStore implements PhotoStore {
       : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and stored_at is not null and deleted_at is null order by created_at, id`;
     return (rows as Record<string, any>[]).map(photoRow);
   }
-  async hide(personId: string, at: number, scope: { app?: AppId; id?: string }) {
+  async hide(personId: string, at: number, scope: { app?: AppId; id?: string; ownerLocked?: boolean }) {
     return this.sql.begin(async tx => {
-      await tx`select id from platform.people where id = ${personId}::uuid for update`;
+      if (!scope.ownerLocked) await tx`select id from platform.people where id = ${personId}::uuid for update`;
       const rows = await tx`update platform.photos set deleted_at = ${new Date(at)}
         where person_id = ${personId}::uuid and deleted_at is null
           ${scope.app ? tx`and app_id = ${scope.app}` : tx``} ${scope.id ? tx`and id = ${scope.id}` : tx``}
@@ -542,7 +552,7 @@ export class PhotoService {
     await this.o.storage.put(key, bytes, type);
     change = stepPhotoChange(change, { type: "recordUploadBytes" });
     if (!canRecordUploadRow(change)) throw new Error("photo bytes did not advance the upload");
-    const confirmed = await this.o.meta.confirm(id, this.now());
+    const confirmed = await this.o.meta.confirm(row, this.now(), tx => this.ratingRefusal(personId, app, undefined, tx));
     change = stepPhotoChange(change, { type: "recordUploadRow", confirmed });
     if (canRecordUploadDiscard(change)) {
       await this.o.storage.delete(key);
@@ -643,8 +653,8 @@ export class PhotoService {
     return row?.id === id ? this.erasePhoto(row, personId, app, true) : false;
   }
 
-  async deleteFor(personId: string, app?: AppId): Promise<number> {
-    const rows = await this.o.meta.hide(personId, this.now(), app ? { app } : {});
+  async deleteFor(personId: string, app?: AppId, ownerLocked = false): Promise<number> {
+    const rows = await this.o.meta.hide(personId, this.now(), { app, ownerLocked });
     let removed = 0;
     for (const r of rows) if (await this.erasePhoto(r, personId, app, false)) removed++;
     if (removed) this.o.log?.(`[photos] deleted ${removed} photo(s)${app ? ` on ${app}` : ""}`);

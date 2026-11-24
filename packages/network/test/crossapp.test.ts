@@ -67,7 +67,7 @@ async function seed(svc: NetworkService) {
       ids[p.key]![app] = memberId;
       const m = { app, personId: person.id, memberId, state: "active" as const, review: null, firstName: p.name, profile: {}, joinedAt: START - 30 * 24 * HOUR, leftAt: null };
       await people.putMembership(m);
-      await svc.createMember(svc.runtimeFor(app)!, m, { age: 30, firstName: p.name, neighborhood: "Greenpoint" });
+      await svc.createMember(svc.runtimeFor(app)!, m, { age: 30, recordedAge: 30, firstName: p.name, neighborhood: "Greenpoint" });
       await sql.begin(async tx => {
         await tx`select set_config('app.app_id', ${app}, true)`;
         for (const tag of p.interests[app] ?? []) {

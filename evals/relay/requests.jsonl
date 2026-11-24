@@ -438,3 +438,17 @@
 {"text": "Nobody's gotta ask first. Share my number with him.", "want": "contact_share"}
 {"text": "Send him my number. It is for work on Friday.", "want": "contact_share"}
 {"text": "Send him my number. It is for him on Friday.", "want": "none"}
+{"text": "Tell them I asked Ana to send him my number, and send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana to send him my number, please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana to send him my number, but send Ari my number.", "want": "contact_share"}
+{"text": "Ask them to send me their number, and send them my number.", "want": "contact_share"}
+{"text": "Tell him hi, send him my number", "want": "contact_share"}
+{"text": "Tell him hi, and send him my number", "want": "contact_share"}
+{"text": "Ana said, send him my number", "want": "none"}
+{"text": "Tell him he can have it if he asks, send him my number", "want": "text"}
+{"text": "I said no, send him my number", "want": "none"}
+{"text": "Tell him to wait until I say so, send him my number", "want": "text"}
+{"text": "I'm joking, send him my number", "want": "none"}
+{"text": "Tell him Ana said, send him my number", "want": "text"}
+{"text": "Tell him hi, I'm joking, send him my number", "want": "text"}
+{"text": "Tell him hi, hypothetically, send him my number", "want": "text"}

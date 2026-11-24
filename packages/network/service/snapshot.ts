@@ -4,7 +4,7 @@
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
+import { ADULT_AGE, DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
 
 import { participationOverride, participationWindowModeKnown, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
@@ -50,14 +50,14 @@ export function effectiveParticipation(row: {participation_state: ParticipationS
 interface BirthRow {
   ab_birth_date: unknown; ab_birth_lower: unknown; ab_birth_upper: unknown; ab_birth_youngest: unknown;
   ab_floor_birth_lower: unknown; ab_floor_birth_upper: unknown; ab_floor_birth_youngest: unknown;
-  ab_teen_pool_barred?: unknown; ab_teen_pool_held?: unknown;
+  ab_teen_pool_barred?: unknown; ab_teen_pool_held?: unknown; ab_signup_minor_cap?: number | null;
 }
 
 export interface AgeRow extends BirthRow { matching_age: unknown; age_missing?: unknown }
 
 export const birthColumns = (sql: SQL) => sql`a.birth_date as ab_birth_date, a.birth_lower as ab_birth_lower, a.birth_upper as ab_birth_upper,
   a.birth_youngest as ab_birth_youngest, a.floor_birth_lower as ab_floor_birth_lower, a.floor_birth_upper as ab_floor_birth_upper,
-  a.floor_birth_youngest as ab_floor_birth_youngest`;
+  a.floor_birth_youngest as ab_floor_birth_youngest, a.signup_minor_cap as ab_signup_minor_cap`;
 
 const readingOf = (lower: unknown, upper: unknown, youngest: unknown): BirthReadings | undefined =>
   upper === null || upper === undefined ? undefined : { lower: Number(lower), upper: Number(upper), youngest: Number(youngest) };
@@ -71,7 +71,10 @@ function readingsOf(r: BirthRow): BirthReadings | undefined {
 export function effectiveAgeOf(r: AgeRow, now: number): number | undefined {
   if (r.age_missing === true) return undefined;
   const readings = readingsOf(r);
-  if (readings) return effectiveAge(readings, earliestDayKeyOf(now));
+  if (readings) {
+    const age = effectiveAge(readings, earliestDayKeyOf(now));
+    return r.ab_signup_minor_cap == null ? age : Math.min(age, r.ab_signup_minor_cap);
+  }
   return r.matching_age === null || r.matching_age === undefined ? undefined : Number(r.matching_age);
 }
 
@@ -89,7 +92,8 @@ export function birthFieldsOf(r: BirthRow, now: number): Pick<Member, "birthKey"
 
 export async function effectiveAgesOf(tx: SQL, app: string, memberIds: readonly string[], now: number): Promise<Map<string, number | undefined>> {
   if (memberIds.length === 0) return new Map();
-  const rows = await tx<(AgeRow & { member_id: string })[]>`select a.member_id, a.age as matching_age, (m.age is null or p.id is null or p.lowest_age is null) as age_missing,
+  await tx`select set_config('app.age_as_of', ${new Date(now).toISOString()}, true)`;
+  const rows = await tx<(AgeRow & { member_id: string })[]>`select a.member_id, a.age as matching_age, ((m.age is null or p.id is null or p.lowest_age is null) and not a.signup_age_observed) as age_missing,
       ${birthColumns(tx)}
     from platform.matching_ages a join network.members m on m.app_id=a.app_id and m.id=a.member_id
     left join platform.people p on p.id=m.person_id
@@ -127,7 +131,7 @@ export function presenceOf(r: any): Presence {
 
 interface SnapshotMemberRow extends AgeRow {
   id: string; name: string; home_city: Member["homeCity"]; prefs: Member["prefs"]; account_status: string; canonical_banned: boolean | null;
-  safety_held: boolean | null; person_minor_signal_at: Date | null; invited_by: string | null; joined_at: Date | null;
+  safety_held: boolean | null; matured_signup: boolean; person_minor_signal_at: Date | null; invited_by: string | null; joined_at: Date | null;
   unanswered_proactive: number; participation_state: ParticipationState; participation_window: unknown; opted_out: boolean;
 }
 
@@ -137,6 +141,8 @@ interface PairRow { from_id: string; to_id: string; created_at: Date }
 export interface SnapshotScope { app: string; city?: string; homeCities?: readonly string[];
   /** Internal owned profile review only. Default snapshots feed matching/background work and exclude deferred Google intake. */
   purpose?: "profile_review";
+  /** Network runtime only. Adds a boolean for a cleared signup restriction. */
+  includeMaturedSignup?: boolean;
 }
 
 /**
@@ -158,7 +164,9 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   const app = scope.app;
   const [members, facets, intents, presence, edges, recent, parts, personBlocks, events, teenAvoid] = await Promise.all([
     sql<SnapshotMemberRow[]>`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at,
-      ${birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held from network.members m
+      ${birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held,
+      ${scope.includeMaturedSignup ? sql`exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id and s.eligible_at <= ${new Date(now)})` : sql`false`} as matured_signup
+      from network.members m
       left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
     // Acceptance authorizes private intake, not matching or downstream automated use. Privacy scope is independent.
@@ -200,6 +208,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       accountStatus: durableStaffHoldSnapshotStatus(staffBanSnapshotStatus(r.account_status, r.canonical_banned === true), r.safety_held === true),
       ...(isAppId(app) ? { apps: [app] } : {}),
       ...(r.person_minor_signal_at ? { minorSignalAt: ms(r.person_minor_signal_at)! } : {}),
+      ...(r.matured_signup === true ? { maturedSignup: true } : {}),
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, unansweredProactive: r.unanswered_proactive,

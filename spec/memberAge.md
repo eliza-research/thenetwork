@@ -333,3 +333,36 @@ pure val firstKeyValues = Set(19900101, 20080229, 20100315, 20120315)
 pure val secondKeyValues = Set(19900101, 20080301, 20100315, 20120316)
 pure val adultBirthKeyValues = Set(19000101, 19900101, 20071122, 20100101, 20130601, 20130602)
 ```
+
+## Story: Move from private signup eligibility to adult access
+
+> As a member who entered my birthday on a verified signup form, I want my age limits to update when I turn 18 while the date stays private.
+
+### A private signup date can end a birthday-only minor restriction
+
+A successful signup from a verified browser can keep the initial minor age and the date when that member turns 18. This date stays with the verified person, separate from app profiles, staff data, and age statements heard elsewhere. Before that date, the signup observation supplies its initial age. When the Clock reaches that date, it supplies 18. A lower independent age still applies on every app. An older cached signup age can stop restricting the member only when the new effective age is an adult age and no other youth statement, signal, report or conflict keeps it restricted. An unresolved age stays restricted. If the person later gives a second accepted date, use the later date and the lower initial minor age. Deleting the account removes the date. The existing safety rule for a retained numeric age remains in force.
+
+```quint
+pure def signupAgeAt(initialMinorAge: int, eligibleAt: int, now: int): int =
+  if (now >= eligibleAt) adultAge else initialMinorAge
+
+pure def lawSignupAgeDoesNotAdvanceEarly(initialMinorAge: int, eligibleAt: int, now: int): bool =
+  now < eligibleAt implies signupAgeAt(initialMinorAge, eligibleAt, now) == initialMinorAge
+
+pure def lawSignupAgeAdvancesAtEligibility(initialMinorAge: int, eligibleAt: int): bool =
+  signupAgeAt(initialMinorAge, eligibleAt, eligibleAt) == adultAge
+
+pure def lawSignupAgeKeepsAnIndependentFloor(initialMinorAge: int, eligibleAt: int, now: int, independentAge: int): bool =
+  lowerAge(independentAge, signupAgeAt(initialMinorAge, eligibleAt, now)) <= independentAge
+
+pure def mayClearMaturedSignupMinor(maturedSignup: bool, currentAdult: bool, otherYouthEvidence: bool): bool =
+  maturedSignup and currentAdult and not(otherYouthEvidence)
+
+pure def lawOtherYouthEvidenceKeepsMinorRestricted(maturedSignup: bool, currentAdult: bool): bool =
+  not(mayClearMaturedSignupMinor(maturedSignup, currentAdult, true))
+
+pure def keepLaterEligibilityDate(first: int, second: int): int = if (first >= second) first else second
+
+pure def lawAnotherSignupCannotAdvanceEligibility(first: int, second: int): bool =
+  keepLaterEligibilityDate(first, second) >= first and keepLaterEligibilityDate(first, second) >= second
+```

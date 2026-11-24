@@ -9,6 +9,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
 import { createHmac } from "node:crypto";
 import { devShortcutsAllowed, INVALID_BIRTHDATE_MESSAGE, ipBucket, parseJoin, type Env } from "@thenetwork/platform";
+import { adultAge, joinableAge } from "../../core/src/generated/memberAge.ts";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
 import {
@@ -18,8 +19,9 @@ import {
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
-  type AuthPage, type AuthView, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
-  canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial, solveCheck,
+  type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
+  ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor,
+  initial as pageInitial, signupAdultDate, signupClockDay, solveCheck,
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
@@ -727,8 +729,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (decision !== "open" && !(decision === "join" && exactForm)) return expired();
     const enrollment = await availableSignup(c, who);
     if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
-    const showSignup = (error?: string) => {
-      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error });
+    const showSignup = (error?: string, birthdateError?: string) => {
+      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error, birthdateError });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;
     };
@@ -738,28 +740,38 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const offered = offerHandoff(browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version));
     if (offered.phase !== "AwaitingPhoneConfirmation")
       return showSignup("Review and accept the current text message terms to continue.");
-    const birthdate = form.get("birthdate") ?? "";
-    const age = form.get("age") ?? "";
+    const typedBirthdate = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(form.get("birthdate") ?? "");
+    const birth: CalendarDate | undefined = typedBirthdate
+      ? { year: Number(typedBirthdate[1]), month: Number(typedBirthdate[2]), day: Number(typedBirthdate[3]) }
+      : undefined;
+    const today = calendarDateOfDay(signupClockDay(now()));
+    if (!birth || !birthdateAccepted(birth, today))
+      return showSignup(undefined, "Enter your birthday. It must be a real date, not after today.");
+    const enteredAge = ageOnDate(birth, today);
     const input = parseJoin({
-      firstName: form.get("firstName"),
-      ...(birthdate ? { birthdate } : { age: /^[0-9]{1,3}$/.test(age) ? Number(age) : undefined }),
+      firstName: form.get("firstName"), age: enteredAge,
       homeCity: form.get("homeCity"), consent: { sms: true, version },
     });
-    if (!input) return showSignup("Enter your first name, birth date and home city.");
+    if (!input) return showSignup("Enter your first name, birthday and home city.");
     const typedInvitation = form.get("invitation");
     const invitation = signupInvitation(c.app, typedInvitation);
     if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.");
 
+    let signupAge;
+    if (joinableAge(enteredAge) && enteredAge < adultAge) {
+      const date = signupAdultDate(birth);
+      signupAge = { initialMinorAge: enteredAge, eligibleAt: Date.UTC(date.year, date.month - 1, date.day, 12) };
+    }
     const pending = { ...r, step: "enrolling" as const, handoff: offered };
     if (!await store.advanceAuthRequest(r, pending, now)) return expired();
     try {
-      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation);
+      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation, signupAge);
       await settleSignupDraft(c.app.id, who.e164, joined.ok ? "joined" : joined.error);
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
-        const error = joined.error === "under_age" ? "You can’t join this app at the age entered."
-          : joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
+        if (joined.error === "under_age") return showSignup(undefined, "You can’t join this app with the birthday entered.");
+        const error = joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
           : joined.error === "consent_wording" ? "The text message terms changed. Open signup again to review them."
           : joined.error === "invalid_birthdate" ? INVALID_BIRTHDATE_MESSAGE
           : "We couldn’t finish signup. Return to the connection page or try again later.";

@@ -403,6 +403,59 @@ export function lawLowerStatedAgeWins(birthKey: number, age: number, dayKey: num
   return !(dayKey >= birthKey && age >= 0 && age < ageOnDay(birthKey, dayKey)) || ageOnDay(effectiveBirthKey(local_8), dayKey) === age;
 }
 
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function signupAgeAt(initialMinorAge: number, eligibleAt: number, now: number): number {
+  return now >= eligibleAt ? adultAge : initialMinorAge;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function mayClearMaturedSignupMinor(maturedSignup: boolean, currentAdult: boolean, otherYouthEvidence: boolean): boolean {
+  return maturedSignup && currentAdult && !otherYouthEvidence;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function keepLaterEligibilityDate(first: number, second: number): number {
+  return first >= second ? first : second;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawSignupAgeDoesNotAdvanceEarly(initialMinorAge: number, eligibleAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !(now < eligibleAt) || signupAgeAt(initialMinorAge, eligibleAt, now) === initialMinorAge;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawSignupAgeAdvancesAtEligibility(initialMinorAge: number, eligibleAt: number): boolean {
+  //@ ensures \result === true
+  return signupAgeAt(initialMinorAge, eligibleAt, eligibleAt) === adultAge;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawSignupAgeKeepsAnIndependentFloor(initialMinorAge: number, eligibleAt: number, now: number, independentAge: number): boolean {
+  //@ ensures \result === true
+  return lowerAge(independentAge, signupAgeAt(initialMinorAge, eligibleAt, now)) <= independentAge;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawOtherYouthEvidenceKeepsMinorRestricted(maturedSignup: boolean, currentAdult: boolean): boolean {
+  //@ ensures \result === true
+  return !mayClearMaturedSignupMinor(maturedSignup, currentAdult, true);
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawAnotherSignupCannotAdvanceEligibility(first: number, second: number): boolean {
+  //@ ensures \result === true
+  return keepLaterEligibilityDate(first, second) >= first && keepLaterEligibilityDate(first, second) >= second;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_memberAge(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

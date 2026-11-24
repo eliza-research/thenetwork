@@ -483,7 +483,8 @@ export class OutboundQueue {
     }
     if (agent) {
       const member = row.memberId ? await this.sql.begin(async tx => {
-        await tx`select set_config('app.app_id',${row.app},true)`;
+        await tx`select set_config('app.app_id',${row.app},true),
+          set_config('app.age_as_of',${new Date(now).toISOString()},true)`;
         return this.memberDeliverySettings(tx, row);
       }) : undefined;
       const timing = this.quietTiming(row, member, now);
@@ -565,7 +566,8 @@ export class OutboundQueue {
 
   private async send(row: QueueRow, isNew: boolean, reengagement: boolean, seenInbound: unknown): Promise<StatusChange> {
     const admission = await this.sql.begin(async tx => {
-      await tx`select set_config('app.app_id',${this.app},true)`;
+      await tx`select set_config('app.app_id',${this.app},true),
+        set_config('app.age_as_of',${new Date(this.now).toISOString()},true)`;
       await this.o.checks.lockAdmission?.(row, tx);
       let member: MemberDeliverySettings | undefined;
       if (row.memberId) {

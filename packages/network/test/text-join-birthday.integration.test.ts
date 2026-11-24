@@ -79,7 +79,7 @@ async function staffMember(s: NetworkService, clock: SimClock, app: AppId, e164:
   const m = { app, personId: person.id, memberId: `${app}_${randomUUID()}`, state: "active" as const, review: null, firstName, profile: {}, joinedAt: clock.now(), leftAt: null };
   await people.putMembership(m);
   await people.addConsent({ e164, app, state: "opted_in", source: "staff", at: clock.now() });
-  expect(await s.createMember(s.runtimeFor(app)!, m, { age, firstName })).toBe(true);
+  expect(await s.createMember(s.runtimeFor(app)!, m, { age, recordedAge: age, firstName })).toBe(true);
   return m.memberId;
 }
 

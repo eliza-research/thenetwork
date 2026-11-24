@@ -287,10 +287,10 @@ module photos_rating {
     st.upl.get(u) == "reserved",
     st' = { ...st, upl: st.upl.set(u, "bytes"), objects: st.objects.union(Set(u)), last: "uploadBytes" },
   }
-  /** recordUploadRow: PgPhotoStore.confirm sets stored_at only while the row is reserved and not hidden. */
+  /** recordUploadRow: PgPhotoStore.confirm takes the same person lock as signup and rechecks eligibility before publishing a reservation. */
   action uploadRow(u: int): bool = all {
     st.upl.get(u) == "bytes",
-    if (st.reserved.contains(u))
+    if (st.reserved.contains(u) and ratingOk(st, Set()))
       st' = { ...st, upl: st.upl.set(u, "idle"), reserved: st.reserved.exclude(Set(u)), rows: st.rows.union(Set(u)), rateDue: true,
               hadPhotos: true, rowBeforeBytes: st.rowBeforeBytes or not(st.objects.contains(u)), last: "uploadRow" }
     else st' = { ...st, upl: st.upl.set(u, "discard"), last: "uploadHidden" },
@@ -298,7 +298,7 @@ module photos_rating {
   /** recordUploadDiscard: the row was hidden meanwhile; the upload deletes its bytes, then its row. */
   action uploadDiscard(u: int): bool = all {
     st.upl.get(u) == "discard",
-    st' = { ...st, upl: st.upl.set(u, "idle"), objects: st.objects.exclude(Set(u)), abandoned: st.abandoned.exclude(Set(u)), last: "uploadDiscard" },
+    st' = { ...st, upl: st.upl.set(u, "idle"), objects: st.objects.exclude(Set(u)), reserved: st.reserved.exclude(Set(u)), abandoned: st.abandoned.exclude(Set(u)), last: "uploadDiscard" },
   }
 
   // ---------------------------------------------------------------- erasePhoto (hidden row: bytes, dropRatings, row)

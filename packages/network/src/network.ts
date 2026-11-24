@@ -30,6 +30,7 @@ import {
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
 import { appKeys, brandFor } from "../../core/src/generated/brandIdentity.ts";
+import { mayClearMaturedSignupMinor } from "../../core/src/generated/memberAge.ts";
 import { crewHandoffDue, crewMemberWindowAvailable, crewOfferReplyCurrent, crewSessionVenueAllowed, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import { friendsRepeatAttendanceAllowed, friendsRepeatBookingProofCurrent, friendsRepeatHostIndex, friendsRepeatRosterCurrent, friendsRepeatSourceAllowed } from "../../core/src/generated/friendsWeek.ts";
 import {
@@ -9085,6 +9086,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
   private rows?: SnapshotRows;
 
+  /**
+   * Keep the member state in step with the member record, which staff and the member's settings can
+   * change at any time: quiet hours, participation state, account status, inviter and age. A record
+   * age under 18 makes the member a minor. Only a matured birthday signup can clear that cached restriction.
+   * The send-time checks call this, so a change applies to the next send. Returns true when the
+   * record now keeps the member out of matching (a minor, or a paused or restricted account).
+   */
   private syncRecord(m: MemberState): boolean {
     const r = this.record(m.id);
     if (r) {
@@ -9098,6 +9106,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       const acct = r.accountStatus === "paused" || r.accountStatus === "restricted" ? r.accountStatus : undefined;
       if (acct !== m.account) { if (acct) m.account = acct; else delete m.account; }
       if (validAge(r.age) && r.age !== m.age) m.age = r.age;
+      const youthEvidence = !!(m.minorSignal || m.minorReported || m.ageConflict || m.ageUnknown)
+        || (validAge(m.statedAge) && isMinor(m.statedAge));
+      if (m.minor && mayClearMaturedSignupMinor(r.maturedSignup === true, canBeMatched(r.age), youthEvidence)) m.minor = false;
       if (validAge(r.age) && isMinor(r.age) && !m.minor) { m.minor = true; this.ctx.log("minor_record", { memberId: m.id }); this.minorAfterContact(m.id); }
       if (recordMinorSignalOpen(r, m) && !m.minorSignal) {
         const wasMinor = m.minor;
@@ -9912,7 +9923,7 @@ export interface NetworkState {
   flagged?: [string, { reason: JudgeReasonCode; at: number }][];
 }
 
-type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string; minorSignalAt?: number };
+type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string; minorSignalAt?: number; maturedSignup?: boolean };
 export function storedTeenStop(st: unknown): boolean {
   return !!st && typeof st === "object" && Object.hasOwn(st, "teenStop");
 }

@@ -2,12 +2,12 @@ import { canBeMatched, canJoin, validAge } from "../../core/src/policy.ts";
 import { birthKeyOfParts, earliestDayKeyOf, latestDayKeyOf } from "../../core/src/birth-date.ts";
 import {
   ageOnDay, birthDateExact, birthDateLower, birthKeyUsable, type BirthReadings, effectiveAge, effectiveBirthKey, laterBirthKey,
-  lowerAge, readingsConflict, statedAgeBeforeBirthDates, statedAgeLower, statedAgeUpper,
+  lowerAge, readingsConflict, signupAgeAt, statedAgeBeforeBirthDates, statedAgeLower, statedAgeUpper,
 } from "../../core/src/generated/memberAge.ts";
 import { teenBarOnConflict } from "../../core/src/generated/friendIntroAge.ts";
 import { exactReadingKept, firstReadingExact, floorStatedAge, mergeAgeReadings } from "../../core/src/generated/siteEnrollment.ts";
 import type { AppInfo } from "./apps.ts";
-import type { AgeFloorRecord, Person } from "./store.ts";
+import type { AgeFloorRecord, Person, SignupAge } from "./store.ts";
 
 /** The lowest valid age of the ones given (undefined if none is valid). Unknown never raises an age. */
 export function lowestAge(...ages: unknown[]): number | undefined {
@@ -37,7 +37,7 @@ export function joinAgeCheck(stated: unknown, personLowest: number | null | unde
 export type AgeReading = { kind: "age"; age: number } | { kind: "birthDate"; birthDate: number };
 export type TeenBarReason = "conflict" | "report" | "older_than_stated" | "ban";
 
-export interface AgeStanding { person: Person | undefined; floor: AgeFloorRecord | undefined }
+export interface AgeStanding { person: Person | undefined; floor: AgeFloorRecord | undefined; signup?: SignupAge }
 
 export interface AgeRecord {
   age: number | undefined;
@@ -96,9 +96,11 @@ function combinedReadings(s: AgeStanding, at: number): BirthReadings | undefined
 }
 
 export function effectiveAgeAt(s: AgeStanding, at: number): number | undefined {
-  if (!hasStoredReadings(s)) return lowestAge(livePerson(s.person)?.lowestAge ?? undefined, s.floor?.age);
-  const readings = combinedReadings(s, at);
-  return readings === undefined ? undefined : effectiveAge(readings, earliestDayKeyOf(at));
+  const readings = hasStoredReadings(s) ? combinedReadings(s, at) : undefined;
+  const age = readings ? effectiveAge(readings, earliestDayKeyOf(at)) : lowestAge(livePerson(s.person)?.lowestAge, s.floor?.age);
+  if (!s.signup) return age;
+  const signup = signupAgeAt(s.signup.initialMinorAge, s.signup.eligibleAt, at);
+  return at < s.signup.eligibleAt ? lowestAge(age, signup) : age ?? signup;
 }
 
 export function ageRecordOf(s: AgeStanding, at: number, barred: boolean): AgeRecord {
@@ -110,7 +112,7 @@ export function ageRecordOf(s: AgeStanding, at: number, barred: boolean): AgeRec
   const key = effectiveBirthKey(readings);
   const birthDate = livePerson(s.person)?.birth?.birthDate ?? null;
   return {
-    age: ageOnDay(key, earliestDayKeyOf(at)),
+    age: effectiveAgeAt(s, at),
     maxAge: ageOnDay(key, latestDayKeyOf(at)),
     birthKey: key,
     birthExact: birthDateExact(birthDate !== null, birthDate ?? 0, readings),
