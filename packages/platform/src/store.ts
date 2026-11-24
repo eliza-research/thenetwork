@@ -12,7 +12,7 @@ import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
-import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, mergedFloors, movedPersonAge, type TeenBarReason } from "./age.ts";
+import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, mergedFloors, movedPersonAge, verifiedBrowserBirthWrite, type TeenBarReason } from "./age.ts";
 
 export type PhoneMethod = "otp_sms" | "otp_whatsapp" | "inbound_message" | "staff";
 export type MembershipState = "invited" | "onboarding" | "active" | "paused" | "restricted" | "removed";
@@ -98,6 +98,7 @@ export interface RateBucket { key: string; windowMs: number }
 export interface RateBucketRead { used: number; prevAt: number | null }
 export interface RecordedMemberAge { personId: string | null; phoneHash: string }
 export interface SignupAge { initialMinorAge: number; eligibleAt: number }
+export interface SignupBirth { birthKey: number; eligibility?: SignupAge }
 
 export interface PeopleStore {
   findPhone(e164: string): Promise<PhoneIdentity | undefined>;
@@ -121,6 +122,7 @@ export interface PeopleStore {
   teenAgeFacts(personId: string): Promise<TeenAgeFactsRow | undefined>;
   minorSignalOpen(personId: string): Promise<boolean>;
   saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, at: number): Promise<boolean>;
+  saveSignupBirth(member: Membership, e164: string, phoneHash: string, birth: SignupBirth, at: number): Promise<boolean>;
 
   memberships(personId: string): Promise<Membership[]>;
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
@@ -263,18 +265,35 @@ export class MemoryPeopleStore implements PeopleStore {
     return effectiveAgeAt(await this.ageStanding(personId, phoneHash), at);
   }
   async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, at: number) {
-    if (!browserSignupMemberAllowed(member.state)) return false;
     return this.withLock(`person-phone-binding:${member.personId}`, async () => {
-      const current = this.members.get(`${member.app}:${member.personId}`);
-      if (current?.memberId !== member.memberId || current.state !== member.state || current.review !== null
-        || !await this.enrollmentOwnerAllowed(member.personId, e164, phoneHash, at)) return false;
-      const previous = this.signupAges.get(member.personId);
-      this.signupAges.set(member.personId, previous ? {
-        initialMinorAge: lowerAge(previous.initialMinorAge, age.initialMinorAge),
-        eligibleAt: keepLaterEligibilityDate(previous.eligibleAt, age.eligibleAt),
-      } : { ...age });
+      if (!await this.signupMemberAllowed(member, e164, phoneHash, at)) return false;
+      this.writeSignupAge(member.personId, age);
       return true;
     });
+  }
+  async saveSignupBirth(member: Membership, e164: string, phoneHash: string, birth: SignupBirth, at: number) {
+    return this.withLock(`person-phone-binding:${member.personId}`, async () => {
+      if (!await this.signupMemberAllowed(member, e164, phoneHash, at)) return false;
+      const change = verifiedBrowserBirthWrite(await this.ageStanding(member.personId, phoneHash), birth.birthKey, at);
+      const person = this.people.get(member.personId);
+      if (!change || !person) return false;
+      person.birth = { readings: change.readings, birthDate: change.birthDate, firstExact: change.firstExact };
+      if (birth.eligibility) this.writeSignupAge(member.personId, birth.eligibility);
+      if (change.bar) this.barTeenPoolNow(phoneHash, "conflict", at);
+      return true;
+    });
+  }
+  private async signupMemberAllowed(member: Membership, e164: string, phoneHash: string, at: number): Promise<boolean> {
+    const current = this.members.get(`${member.app}:${member.personId}`);
+    return browserSignupMemberAllowed(member.state) && current?.memberId === member.memberId && current.state === member.state
+      && current.review === null && await this.enrollmentOwnerAllowed(member.personId, e164, phoneHash, at);
+  }
+  private writeSignupAge(personId: string, age: SignupAge) {
+    const previous = this.signupAges.get(personId);
+    this.signupAges.set(personId, previous ? {
+      initialMinorAge: lowerAge(previous.initialMinorAge, age.initialMinorAge),
+      eligibleAt: keepLaterEligibilityDate(previous.eligibleAt, age.eligibleAt),
+    } : { ...age });
   }
   private writeAgeReading(person: Person | undefined, phoneHash: string, stated: AgeReading, at: number) {
     const w = ageWrite({ person, floor: this.ageFloors.get(phoneHash) }, stated, at);

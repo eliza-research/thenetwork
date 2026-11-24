@@ -299,6 +299,19 @@ pure val addedValues = Set(
   { lower: 20120314, upper: 20100315, youngest: 20120315 })
 ```
 
+### A verified browser join can keep a private teen birth reading
+
+A verified connector or direct-site signup can keep the exact birth date in the person's private age authority when the age on the Clock date is 13 through 18. Enrollment, its invitation if any, and ownership must still be valid at the write. The match can use the reading only under the [teen friendship rules](friendIntroAge.md). An older member gives only a numeric age. A refusal keeps no birth date. The private date when a minor reaches adult eligibility, and an independent younger age statement, still apply.
+
+```quint
+pure def browserEnrollmentKeepsPrivateBirth(membershipAccepted: bool, bindingCurrent: bool, age: int): bool =
+  Age::verifiedBrowserBirthMayBeKept(membershipAccepted and bindingCurrent, age)
+
+pure def lawBrowserEnrollmentBirthNeedsCurrentAcceptedOwner(membershipAccepted: bool, bindingCurrent: bool, age: int): bool =
+  browserEnrollmentKeepsPrivateBirth(membershipAccepted, bindingCurrent, age) implies
+    (membershipAccepted and bindingCurrent)
+```
+
 ### A birth date below the join age is kept only as a typed age
 
 A stated birth date stays on the person as an exact date only when a person exists and the age that the person's readings give with that date is at least 13. Otherwise the statement is kept as the typed age that it gives on the Clock day. So a refused person under 13 never has a birth date on record, and a phone with no person keeps only the coarse typed age. Changed (owner decision 2026-11-22): the service now asks for a birth date, and this decision moved from the platform code into this rule.
@@ -318,11 +331,17 @@ pure val ageWithBirthDateValues = Set(-1, 0, 12, 13, 17, 18, 120, 121)
 
 ### The phone floor keeps the lowest age that a statement gives
 
-The phone's age floor gets the typed-age reading of the lower of two ages: the age of the statement, and the age that the merged readings give after the statement. When the merged readings give no usable age, the floor keeps the age of the statement. So the floor never gets an age above the statement, and it follows a lower age that the person stated before. Changed (owner decision 2026-11-22): the service now asks for a birth date, and this decision moved from the platform code into this rule.
+The phone's age floor gets the typed-age reading of the lower of two ages: the age of the statement, and the age that the merged readings give after the statement. When the merged readings give no usable age, the floor keeps the age of the statement. So the floor never gets an age above the statement, and it follows a lower age that the person stated before. A later numeric statement from a person with a verified browser eligibility date only adds that numeric statement to the floor. The birthday reading still applies separately, so an older typed age cannot freeze the earlier birthday age. Changed (owner decision 2026-11-22): the service now asks for a birth date, and this decision moved from the platform code into this rule.
 
 ```quint
 pure def floorStatedAge(statedAge: int, mergedAge: int): int =
   if (Age::ageInRange(mergedAge)) Age::lowerAge(statedAge, mergedAge) else statedAge
+
+pure def floorAgeAfterReading(statedAge: int, mergedAge: int, privateSignup: bool, typed: bool): int =
+  if (privateSignup and typed) statedAge else floorStatedAge(statedAge, mergedAge)
+
+pure def lawPrivateBrowserAgeNeverBecomesATypedFloor(statedAge: int, mergedAge: int): bool =
+  floorAgeAfterReading(statedAge, mergedAge, true, true) == statedAge
 
 pure def lawFloorNeverRaisesTheStatedAge(statedAge: int, mergedAge: int): bool =
   floorStatedAge(statedAge, mergedAge) <= statedAge

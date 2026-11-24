@@ -120,7 +120,7 @@ import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
-import type { Membership, PeopleStore, PendingText, Person, SignupAge } from "../../platform/src/store.ts";
+import type { Membership, PeopleStore, PendingText, Person, SignupBirth } from "../../platform/src/store.ts";
 import { createPublicApi, type HomeHelpVenueAnswer, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
@@ -1160,7 +1160,7 @@ export class NetworkService implements RuntimeHost {
         and exists (select 1 from network.members member where member.app_id=${app} and member.id=message.member_id and member.person_id=${personId}::uuid)
       left join network.opportunities opportunity on opportunity.app_id=${app}
         and opportunity.id=coalesce(subject.opportunity_id, message.opportunity_id, subject.subject_id)`;
-    const [reader] = await tx<AgeRow[]>`select a.age as matching_age, ((m.age is null or p.id is null or p.lowest_age is null) and not a.signup_age_observed) as age_missing, ${birthColumns(tx)}
+    const [reader] = await tx<AgeRow[]>`select a.age as matching_age, ((m.age is null or p.id is null or p.lowest_age is null) and a.birth_date is null and not a.signup_age_observed) as age_missing, ${birthColumns(tx)}
       from network.members m
       join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
       left join platform.people p on p.id=m.person_id
@@ -1412,6 +1412,7 @@ export class NetworkService implements RuntimeHost {
       memberExists: async ctx => (await this.runtimeFor(ctx.app.id)?.scoped(tx => tx`select 1 from network.members where app_id=${ctx.app.id} and id=${ctx.memberId} and account_status not in ('invited','removed')`) ?? []).length > 0,
       commitReferredJoin: ctx => this.commitReferredJoin(ctx),
       commitBrowserSignup: (ctx, consent) => this.commitBrowserSignup(ctx, consent),
+      commitExistingBrowserBirth: (ctx, at) => this.commitExistingBrowserBirth(ctx, at),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, "global"),
       onForget: async (ctx, reason) => {
         const endsAccess = forgetEndsAppAccess(reason === "join_failed");
@@ -1444,10 +1445,12 @@ export class NetworkService implements RuntimeHost {
       await this.dropRatings(personId);
     }
     if (confirmedUnderage(age)) return this.finishUnderageCleanup(personId);
+    const recordedAge = (await this.people.getPerson(personId))?.lowestAge;
+    if (recordedAge == null) return;
     for (const m of await this.people.memberships(personId)) {
       const rt = this.runtimeFor(m.app);
       if (!rt || m.state === "removed") continue;
-      await rt.scoped(tx => tx`update network.members set age = least(coalesce(age, ${age}), ${age}) where app_id = ${m.app} and id = ${m.memberId}`);
+      await rt.scoped(tx => tx`update network.members set age = least(coalesce(age, ${recordedAge}), ${recordedAge}) where app_id = ${m.app} and id = ${m.memberId}`);
     }
   }
 
@@ -1474,7 +1477,7 @@ export class NetworkService implements RuntimeHost {
     await this.welcomeBrowserJoin(rt, ctx);
   }
 
-  private async commitBrowserSignup(ctx: JoinHookContext & { signupAge: SignupAge }, consent: ConsentEvent) {
+  private async commitBrowserSignup(ctx: JoinHookContext & { signupBirth: SignupBirth }, consent: ConsentEvent) {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt || ctx.membership.state !== "active") throw new JoinReviewRequired();
     await rt.scoped(async tx => {
@@ -1482,10 +1485,20 @@ export class NetworkService implements RuntimeHost {
       const phoneHash = this.accounts.phoneHash(ctx.e164);
       if (!await store.admitMembership(ctx.membership, consent, phoneHash, ctx.session ?? null, tx)) throw new JoinReviewRequired();
       if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx })) throw new JoinReviewRequired();
-      if (!await store.saveSignupAge(ctx.membership, ctx.e164, phoneHash, ctx.signupAge, consent.at, tx)) throw new JoinReviewRequired();
-      await this.removeMinorMediaForSignup(tx, ctx.person.id);
+      if (!await store.saveSignupBirth(ctx.membership, ctx.e164, phoneHash, ctx.signupBirth, consent.at, tx)) throw new JoinReviewRequired();
+      if (!canBeMatched(ctx.age)) await this.removeMinorMediaForSignup(tx, ctx.person.id);
     });
     await this.welcomeBrowserJoin(rt, ctx).catch(() => this.log(`[join] browser welcome waits for inbound (${rt.id})`));
+  }
+
+  private async commitExistingBrowserBirth(ctx: JoinHookContext & { signupBirth: SignupBirth }, at: number) {
+    const rt = this.runtimeFor(ctx.app.id);
+    if (!rt) return false;
+    return rt.scoped(async tx => {
+      const saved = await new PgPeopleStore(tx).saveSignupBirth(ctx.membership, ctx.e164, this.accounts.phoneHash(ctx.e164), ctx.signupBirth, at, tx);
+      if (saved && !canBeMatched(ctx.age)) await this.removeMinorMediaForSignup(tx, ctx.person.id);
+      return saved;
+    });
   }
 
   private async removeMinorMediaForSignup(tx: SQL, personId: string) {
@@ -1541,9 +1554,9 @@ export class NetworkService implements RuntimeHost {
       if ("kind" in referral) {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
       }
-      if (ctx.signupAge) {
-        if (!await new PgPeopleStore(tx).saveSignupAge(ctx.membership, ctx.e164, accounts.phoneHash(ctx.e164), ctx.signupAge, at, tx)) throw new JoinReviewRequired();
-        await this.removeMinorMediaForSignup(tx, ctx.person.id);
+      if (ctx.signupBirth) {
+        if (!await new PgPeopleStore(tx).saveSignupBirth(ctx.membership, ctx.e164, accounts.phoneHash(ctx.e164), ctx.signupBirth, at, tx)) throw new JoinReviewRequired();
+        if (!canBeMatched(ctx.age)) await this.removeMinorMediaForSignup(tx, ctx.person.id);
       }
     });
     // The token is consumed and attribution is durable. A failed welcome can retry independently,
@@ -3258,7 +3271,7 @@ export class NetworkService implements RuntimeHost {
     const m = await people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
-    const read = (tx: SQL) => tx`select a.age, (m.age is not null or exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id)) as age_source,
+    const read = (tx: SQL) => tx`select a.age, (m.age is not null or a.birth_date is not null or a.signup_age_observed) as age_source,
         f.tags, f.valid_from from network.members m
       join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)}

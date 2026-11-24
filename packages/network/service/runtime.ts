@@ -1058,7 +1058,7 @@ export class NetworkRuntime {
       const [snapshot, names] = await Promise.all([
         loadSnapshot(tx, now, { app, city: this.city, homeCities: homes, includeMaturedSignup: true }),
         tx<(AgeRow & { id: string; invited_by: string; name: string | null })[]>`select i.id,i.invited_by,i.name,a.age as matching_age,
-            ((i.age is null or p.id is null or p.lowest_age is null) and not a.signup_age_observed) as age_missing, ${birthColumns(tx)}
+            ((i.age is null or p.id is null or p.lowest_age is null) and a.birth_date is null and not a.signup_age_observed) as age_missing, ${birthColumns(tx)}
           from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
           join platform.matching_ages a on a.app_id=i.app_id and a.member_id=i.id
           left join platform.people p on p.id=i.person_id

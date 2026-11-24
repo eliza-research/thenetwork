@@ -456,6 +456,19 @@ export function lawAnotherSignupCannotAdvanceEligibility(first: number, second: 
   return keepLaterEligibilityDate(first, second) >= first && keepLaterEligibilityDate(first, second) >= second;
 }
 
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function verifiedBrowserBirthMayBeKept(enrollmentVerified: boolean, age: number): boolean {
+  return enrollmentVerified && joinableAge(age) && age <= adultAge;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawBrowserBirthNeedsEligibleVerifiedEnrollment(enrollmentVerified: boolean, age: number): boolean {
+  //@ ensures \result === true
+  return !verifiedBrowserBirthMayBeKept(enrollmentVerified, age) || (enrollmentVerified && age >= minMemberAge && age <= adultAge);
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_memberAge(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

@@ -2,10 +2,10 @@ import { canBeMatched, canJoin, validAge } from "../../core/src/policy.ts";
 import { birthKeyOfParts, earliestDayKeyOf, latestDayKeyOf } from "../../core/src/birth-date.ts";
 import {
   ageOnDay, birthDateExact, birthDateLower, birthKeyUsable, type BirthReadings, effectiveAge, effectiveBirthKey, laterBirthKey,
-  lowerAge, readingsConflict, signupAgeAt, statedAgeBeforeBirthDates, statedAgeLower, statedAgeUpper,
+  lowerAge, readingsConflict, signupAgeAt, statedAgeBeforeBirthDates, verifiedBrowserBirthMayBeKept, statedAgeLower, statedAgeUpper,
 } from "../../core/src/generated/memberAge.ts";
 import { teenBarOnConflict } from "../../core/src/generated/friendIntroAge.ts";
-import { exactReadingKept, firstReadingExact, floorStatedAge, mergeAgeReadings } from "../../core/src/generated/siteEnrollment.ts";
+import { exactReadingKept, firstReadingExact, floorAgeAfterReading, mergeAgeReadings } from "../../core/src/generated/siteEnrollment.ts";
 import type { AppInfo } from "./apps.ts";
 import type { AgeFloorRecord, Person, SignupAge } from "./store.ts";
 
@@ -100,7 +100,7 @@ export function effectiveAgeAt(s: AgeStanding, at: number): number | undefined {
   const age = readings ? effectiveAge(readings, earliestDayKeyOf(at)) : lowestAge(livePerson(s.person)?.lowestAge, s.floor?.age);
   if (!s.signup) return age;
   const signup = signupAgeAt(s.signup.initialMinorAge, s.signup.eligibleAt, at);
-  return at < s.signup.eligibleAt ? lowestAge(age, signup) : age ?? signup;
+  return at < s.signup.eligibleAt || livePerson(s.person)?.birth?.birthDate == null ? lowestAge(age, signup) : age ?? signup;
 }
 
 export function ageRecordOf(s: AgeStanding, at: number, barred: boolean): AgeRecord {
@@ -159,7 +159,7 @@ export function ageWrite(s: AgeStanding, stated: AgeReading, at: number): AgeWri
   const keepExact = exactReadingKept(statesBirthDate, person !== undefined, ageWithBirthDate);
   const personNext = keepExact && exact ? exact : person ? personAfter(person, at, typed, null, statedAge) : undefined;
   const withStatement = personNext ? mergeRecords(personNext.readings, floorBefore) ?? personNext.readings : mergeInto(floorBefore, typed);
-  const floorAge = floorStatedAge(statedAge, effectiveAge(withStatement, today));
+  const floorAge = floorAgeAfterReading(statedAge, effectiveAge(withStatement, today), s.signup !== undefined, stated.kind === "age");
   const floorLowest = lowestAge(s.floor?.age, floorAge, person?.lowestAge ?? undefined) ?? floorAge;
   const floorAfter = mergeInto(floorBefore, typedReading(floorAge, today));
   const floor: AgeFloorRecord = {
@@ -168,6 +168,16 @@ export function ageWrite(s: AgeStanding, stated: AgeReading, at: number): AgeWri
   };
   const final = mergeRecords(personNext?.readings, floorAfter) ?? floorAfter;
   return { person: personNext, floor, bar: teenBarOnConflict(readingsConflict(final), ageOnDay(final.youngest, latestDayKeyOf(at))) };
+}
+
+export function verifiedBrowserBirthWrite(s: AgeStanding, key: number, at: number) {
+  const person = livePerson(s.person);
+  const inputAge = ageOnDay(key, earliestDayKeyOf(at));
+  if (!person || !joinBirthDateUsable(key, at) || !verifiedBrowserBirthMayBeKept(true, inputAge)) return;
+  const change = personAfter(person, at, exactReading(key), key, inputAge);
+  const combined = mergeRecords(change.readings, floorReadings(s.floor)) ?? change.readings;
+  const bar = teenBarOnConflict(readingsConflict(combined), ageOnDay(combined.youngest, latestDayKeyOf(at)));
+  return { ...change, lowestAge: person.lowestAge, bar };
 }
 
 export function createdReadings(floor: AgeFloorRecord | undefined, lowest: number | null, at: number): BirthReadings | undefined {

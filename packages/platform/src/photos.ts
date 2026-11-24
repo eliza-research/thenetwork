@@ -340,8 +340,8 @@ export class MemoryPhotoStore implements PhotoStore {
     return this.locked(personId, async () => {
       const hidden: PhotoRow[] = [];
       for (const r of this.rows.values()) {
-        if (r.personId !== personId || r.hiddenAt !== null || (scope.app && r.app !== scope.app) || (scope.id && r.id !== scope.id)) continue;
-        r.hiddenAt = at;
+        if (r.personId !== personId || (r.hiddenAt !== null && (!scope.ownerLocked || r.storedAt === null)) || (scope.app && r.app !== scope.app) || (scope.id && r.id !== scope.id)) continue;
+        r.hiddenAt ??= at;
         if (r.storedAt !== null) hidden.push(this.copy(r));
       }
       return hidden;
@@ -414,8 +414,9 @@ export class PgPhotoStore implements PhotoStore {
   async hide(personId: string, at: number, scope: { app?: AppId; id?: string; ownerLocked?: boolean }) {
     return this.sql.begin(async tx => {
       if (!scope.ownerLocked) await tx`select id from platform.people where id = ${personId}::uuid for update`;
-      const rows = await tx`update platform.photos set deleted_at = ${new Date(at)}
-        where person_id = ${personId}::uuid and deleted_at is null
+      const rows = await tx`update platform.photos set deleted_at = coalesce(deleted_at, ${new Date(at)})
+        where person_id = ${personId}::uuid
+          and (deleted_at is null ${scope.ownerLocked ? tx`or stored_at is not null` : tx``})
           ${scope.app ? tx`and app_id = ${scope.app}` : tx``} ${scope.id ? tx`and id = ${scope.id}` : tx``}
         returning *`;
       return (rows as Record<string, any>[]).filter(r => r.stored_at !== null).map(photoRow)

@@ -5,8 +5,12 @@ declare
   a text;
   service_clock text := 'coalesce(nullif(current_setting(''app.age_as_of'', true), '''')::timestamptz, transaction_timestamp())';
   projection text := 'select m.app_id, m.id as member_id,
-    least(m.age, p.lowest_age, f.lowest_age,
-      case when %1$s >= se.eligible_at then 18 else se.initial_minor_age end) as age,
+    least(case when p.birth_upper is null and f.birth_upper is null then least(m.age, p.lowest_age, f.lowest_age)
+      else (to_char((%1$s at time zone ''UTC'') - interval ''12 hours'', ''YYYYMMDD'')::int -
+        case when greatest(p.birth_lower, f.birth_lower) >= least(p.birth_upper, f.birth_upper)
+          then greatest(p.birth_youngest, f.birth_youngest)
+          else least(p.birth_upper, f.birth_upper) end) / 10000 end,
+      case when %1$s < se.eligible_at then se.initial_minor_age when p.birth_date is null and se.person_id is not null then 18 end) as age,
     exists (select 1 from platform.bans b where (b.scope = ''person'' and b.person_id = p.id)
       or b.phone_hash = p.phone_hash) as banned,
     exists (select 1 from platform.staff_safety_holds h where h.person_id=p.id
@@ -17,7 +21,7 @@ declare
     f.birth_lower as floor_birth_lower, f.birth_upper as floor_birth_upper, f.birth_youngest as floor_birth_youngest,
     exists (select 1 from platform.teen_pool_bars t where t.phone_hash=p.phone_hash) as teen_pool_barred,
     exists (select 1 from platform.teen_pool_holds h where h.phone_hash=p.phone_hash and h.app_id <> m.app_id) as teen_pool_held,
-    case when %1$s < se.eligible_at then se.initial_minor_age else null end as signup_minor_cap,
+    case when %1$s < se.eligible_at then se.initial_minor_age when p.birth_date is null and se.person_id is not null then 18 end as signup_minor_cap,
     se.person_id is not null as signup_age_observed
     from network.members m
     left join platform.people p on p.id = m.person_id

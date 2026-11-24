@@ -93,7 +93,7 @@ export function birthFieldsOf(r: BirthRow, now: number): Pick<Member, "birthKey"
 export async function effectiveAgesOf(tx: SQL, app: string, memberIds: readonly string[], now: number): Promise<Map<string, number | undefined>> {
   if (memberIds.length === 0) return new Map();
   await tx`select set_config('app.age_as_of', ${new Date(now).toISOString()}, true)`;
-  const rows = await tx<(AgeRow & { member_id: string })[]>`select a.member_id, a.age as matching_age, ((m.age is null or p.id is null or p.lowest_age is null) and not a.signup_age_observed) as age_missing,
+  const rows = await tx<(AgeRow & { member_id: string })[]>`select a.member_id, a.age as matching_age, ((m.age is null or p.id is null or p.lowest_age is null) and a.birth_date is null and not a.signup_age_observed) as age_missing,
       ${birthColumns(tx)}
     from platform.matching_ages a join network.members m on m.app_id=a.app_id and m.id=a.member_id
     left join platform.people p on p.id=m.person_id

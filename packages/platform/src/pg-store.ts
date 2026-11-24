@@ -12,8 +12,8 @@ import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src
 import type { AppId } from "./apps.ts";
 import { resolveConsent, type ConsentEvent, type ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
-import type { AgeFloorRecord, AppLeaveAdmission, AppLeaveInput, Ban, BirthRecord, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RateBucket, RateBucketRead, RecordedMemberAge, Session, ShareGrant, SignupAge, StaffBanProjection, TeenAgeFactsRow } from "./store.ts";
-import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, mergedFloors, movedPersonAge, type TeenBarReason } from "./age.ts";
+import type { AgeFloorRecord, AppLeaveAdmission, AppLeaveInput, Ban, BirthRecord, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RateBucket, RateBucketRead, RecordedMemberAge, Session, ShareGrant, SignupAge, SignupBirth, StaffBanProjection, TeenAgeFactsRow } from "./store.ts";
+import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, mergedFloors, movedPersonAge, verifiedBrowserBirthWrite, type TeenBarReason } from "./age.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -192,20 +192,37 @@ export class PgPeopleStore implements PeopleStore {
     return effectiveAgeAt(await this.sql.begin(tx => writeAgeReading(tx, personId, phoneHash, stated, at)), at);
   }
   async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, at: number, transaction?: SQL): Promise<boolean> {
-    if (!browserSignupMemberAllowed(member.state)) return false;
     const save = async (tx: SQL) => {
-      if (!await this.enrollmentOwnerAllowed(tx, member.personId, e164, phoneHash, at)) return false;
-      const [current] = await tx`select member_id from platform.memberships where person_id = ${member.personId}::uuid
-        and app_id = ${member.app} and member_id = ${member.memberId} and state = ${member.state} and review is null for update`;
-      if (!current) return false;
-      await tx`insert into platform.signup_eligibility (person_id, initial_minor_age, eligible_at)
-        values (${member.personId}::uuid, ${age.initialMinorAge}, ${ts(age.eligibleAt)})
-        on conflict (person_id) do update set
-          initial_minor_age = least(platform.signup_eligibility.initial_minor_age, excluded.initial_minor_age),
-          eligible_at = greatest(platform.signup_eligibility.eligible_at, excluded.eligible_at)`;
+      if (!await this.signupMemberAllowed(tx, member, e164, phoneHash, at)) return false;
+      await this.writeSignupAge(tx, member.personId, age);
       return true;
     };
     return transaction ? save(transaction) : this.sql.begin(save);
+  }
+  async saveSignupBirth(member: Membership, e164: string, phoneHash: string, birth: SignupBirth, at: number, transaction?: SQL): Promise<boolean> {
+    const save = async (tx: SQL) => {
+      if (!await this.signupMemberAllowed(tx, member, e164, phoneHash, at)) return false;
+      const change = verifiedBrowserBirthWrite(await readAgeStanding(tx, member.personId, phoneHash, true), birth.birthKey, at);
+      if (!change) return false;
+      await putPersonAge(tx, member.personId, change);
+      if (birth.eligibility) await this.writeSignupAge(tx, member.personId, birth.eligibility);
+      if (change.bar) await barTeenPoolIn(tx, phoneHash, "conflict", at);
+      return true;
+    };
+    return transaction ? save(transaction) : this.sql.begin(save);
+  }
+  private async signupMemberAllowed(tx: SQL, member: Membership, e164: string, phoneHash: string, at: number): Promise<boolean> {
+    if (!browserSignupMemberAllowed(member.state) || !await this.enrollmentOwnerAllowed(tx, member.personId, e164, phoneHash, at)) return false;
+    const [current] = await tx`select member_id from platform.memberships where person_id = ${member.personId}::uuid
+      and app_id = ${member.app} and member_id = ${member.memberId} and state = ${member.state} and review is null for update`;
+    return !!current;
+  }
+  private async writeSignupAge(tx: SQL, personId: string, age: SignupAge): Promise<void> {
+    await tx`insert into platform.signup_eligibility (person_id, initial_minor_age, eligible_at)
+      values (${personId}::uuid, ${age.initialMinorAge}, ${ts(age.eligibleAt)})
+      on conflict (person_id) do update set
+        initial_minor_age = least(platform.signup_eligibility.initial_minor_age, excluded.initial_minor_age),
+        eligible_at = greatest(platform.signup_eligibility.eligible_at, excluded.eligible_at)`;
   }
   async ageStanding(personId: string | null, phoneHash: string | null) {
     return readAgeStanding(this.sql, personId, phoneHash, false);

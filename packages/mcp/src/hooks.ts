@@ -1,4 +1,4 @@
-import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService, SignupAge } from "@thenetwork/platform";
+import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
 import { canJoinApp, effectiveAgeAt, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { PhotoAccessState } from "@thenetwork/platform/src/photo-relay.ts";
 import type { McpAppId } from "./apps.ts";
@@ -103,7 +103,7 @@ export interface PlatformHooks {
   session?(app: McpAppId, req: Request): Promise<SignedIn | "unavailable" | undefined>;
   createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
   signupEnrollment?(app: McpAppId, who: SignedIn): Promise<BrowserSignup | undefined>;
-  joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string, signupAge?: SignupAge): Promise<BrowserSignupResult>;
+  joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string): Promise<BrowserSignupResult>;
 }
 
 const PUBLIC_STATUS: Record<MemberStatus, PublicStatus> = {
@@ -269,11 +269,11 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if ((eligibility.person?.id ?? null) !== who.personId || (!eligibility.canJoin && eligibility.reason !== "invite_only")) return undefined;
       return { consent: app.consent, requiresInvitation: eligibility.reason === "invite_only" };
     },
-    async joinSignup(id, who, input, invitation, signupAge) {
+    async joinSignup(id, who, input, invitation) {
       const app = p.app(id);
       if (!app || app.joinMode === "waitlist") return { ok: false, error: "invalid" };
       const view = signupAccountView(id, p.accounts.phoneHash(who.e164), who.personId);
-      return p.accounts.join(app, { e164: who.e164, personId: who.personId, session: who.browserBinding }, input, undefined, invitation, view, signupAge);
+      return p.accounts.join(app, { e164: who.e164, personId: who.personId, session: who.browserBinding }, input, undefined, invitation, view);
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);

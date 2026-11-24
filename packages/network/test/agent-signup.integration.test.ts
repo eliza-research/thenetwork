@@ -1,5 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { HOUR, SimClock } from "@thenetwork/core";
+import { earliestDayKeyOf, latestDayKeyOf } from "../../core/src/birth-date.ts";
+import { groupAgeAllowed } from "../../core/src/generated/friendIntroAge.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
 import { serveHttp } from "../../core/src/runtime/http.ts";
@@ -12,6 +14,7 @@ import { APPS } from "../../platform/src/apps.ts";
 import { PHOTO_CONSENT, type PhotoStorage } from "../../platform/src/photos.ts";
 import { createServiceMcp } from "../service/serve.ts";
 import { NetworkService } from "../service/service.ts";
+import { loadSnapshot } from "../service/snapshot.ts";
 
 const domain = "friends.help";
 const origin = `https://${domain}`;
@@ -319,15 +322,20 @@ test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup pa
     expect(await w.connector.store.sql`select first_name from platform.memberships where first_name = 'Kit'`).toEqual([]);
     expect(await w.connector.store.sql`select person_id from platform.signup_eligibility`).toEqual([]);
 
-    const retried = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "1996-01-15" });
+    const retried = await browser("/oauth/authorize/signup", {
+      rid, decision: "join", signupView: hiddenField(refused.form, "signupView"),
+      consentVersion: hiddenField(refused.form, "consentVersion"), smsConsent: "yes", homeCity: "nyc",
+      firstName: "Kit", birthdate: "1996-01-15",
+    });
     expect(retried.status).toBe(400);
-    expect(retried.html).toContain("You can’t join this app with the birthday entered.");
+    expect(await retried.text()).not.toContain("Signup confirmed.");
+    expect(await w.connector.store.sql`select id from platform.people where birth_date in (20140115,19960115)`).toEqual([]);
     expect(await w.service.accounts.personFor(number)).toBeUndefined();
     expect(await w.connector.store.sql`select id from oauth.grants where client_id=${opened.clientId}`).toEqual([]);
   });
 }, 60_000);
 
-test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup page joins but stays out of matching as a minor", async () => {
+test.skipIf(!pgAvailable)("friends.help: verified connector signup keeps a teen's private exact birthday for friendship eligibility", async () => {
   await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
     const site = "friends.help", number = "+12125550166";
     const browser = browserOn(w, site);
@@ -353,6 +361,63 @@ test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup pag
     const lowest = await w.service.accounts.lowestAge(number, person);
     expect(lowest).toBe(15);
     expect(canBeMatched(lowest)).toBe(false);
+    expect(await w.service.accounts.ageRecord(number, person)).toMatchObject({ birthKey: 20110115, birthExact: true, ageConflict: false });
+    expect(joined.html).not.toContain("2011-01-15");
+    expect(joined.html).not.toContain("20110115");
+    expect((await w.service.people.getMembership(person.id, "friends"))?.profile).toEqual({ homeCity: "nyc" });
+  });
+}, 60_000);
+
+test.skipIf(!pgAvailable)("verified direct site signup keeps an exact 18-year-old peer date and no raw date outside the eligible age range", async () => {
+  await withSignupWorld(["friends:nyc"], async w => {
+    const directSignup = async (phone: string, birthdate: string) => {
+      const post = (path: string, body: unknown, cookie?: string) => w.env.fetch(new Request(`https://friends.help${path}`, {
+        method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+      }));
+      expect((await post("/api/auth/otp/start", { phone })).status).toBe(200);
+      const verified = await post("/api/auth/otp/verify", { phone, code: w.harness.provider.last(phone) });
+      expect(verified.status).toBe(200);
+      const cookie = verified.headers.getSetCookie()[0]?.split(";")[0];
+      expect(cookie).toBeDefined();
+      return post("/api/join", { firstName: "Ari", birthdate, homeCity: "nyc", consent: { sms: true, version: APPS.friends.consent.version } }, cookie);
+    };
+    const peer = "+12125550188", older = "+12125550189", underage = "+12125550190", teen = "+12125550191";
+    const peerSignup = await directSignup(peer, "2008-10-09");
+    expect(peerSignup.status).toBe(200);
+    expect(await peerSignup.text()).not.toMatch(/2008-10-09|20081009|birthKey|birthDate/);
+    const peerPerson = await w.service.accounts.personFor(peer);
+    expect(await w.service.accounts.ageRecord(peer, peerPerson)).toMatchObject({ age: 18, maxAge: 18, birthKey: 20081009, birthExact: true });
+    expect(await w.connector.store.sql`select person_id from platform.signup_eligibility where person_id = ${peerPerson!.id}`).toEqual([]);
+
+    const olderSignup = await directSignup(older, "2007-10-09");
+    expect(olderSignup.status).toBe(200);
+    const olderPerson = await w.service.accounts.personFor(older);
+    expect(await w.service.accounts.ageRecord(older, olderPerson)).toMatchObject({ age: 19, birthExact: false });
+    expect(await w.connector.store.sql`select birth_date from platform.people where id = ${olderPerson!.id}`).toEqual([{ birth_date: null }]);
+
+    expect((await directSignup(teen, "2009-10-09")).status).toBe(200);
+    const teenPerson = (await w.service.accounts.personFor(teen))!;
+    const runtime = w.service.runtimeFor("friends")!;
+    const now = w.clock.now();
+    const snapshot = await runtime.scoped(tx => loadSnapshot(tx, now, { app: "friends" }));
+    const side = async (personId: string) => {
+      const member = await w.service.people.getMembership(personId, "friends");
+      const row = snapshot.members.find(m => m.id === member?.memberId);
+      if (!row) throw new Error("Missing joined Friends member in the runtime age snapshot");
+      return { adult: canBeMatched(row.age), ready: row.birthExact === true && !row.ageConflict && !row.teenBarred, birthKey: row.birthKey ?? 0 };
+    };
+    const firstDay = earliestDayKeyOf(now), lastDay = latestDayKeyOf(now);
+    const teenSide = await side(teenPerson.id);
+    expect(groupAgeAllowed(true, true, firstDay, lastDay, [teenSide, await side(peerPerson!.id)])).toBe(true);
+    expect(groupAgeAllowed(true, true, firstDay, lastDay, [teenSide, await side(olderPerson!.id)])).toBe(false);
+    expect(groupAgeAllowed(true, false, firstDay, lastDay, [teenSide, await side(peerPerson!.id)])).toBe(false);
+
+    const declined = await directSignup(underage, "2014-10-09");
+    expect(declined.status).toBe(400);
+    expect(await declined.json()).toMatchObject({ error: "under_age" });
+    expect(await w.service.accounts.personFor(underage)).toBeUndefined();
+    expect(await w.service.people.ageFloorRecord(w.service.accounts.phoneHash(underage))).toMatchObject({ age: 12 });
+    expect(await w.connector.store.sql`select id from platform.people where birth_date in (20071009,20141009)`).toEqual([]);
   });
 }, 60_000);
 
@@ -403,6 +468,8 @@ test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages
     w.clock.advance(1_000);
     expect.soft(await agesFor(firstNumber)).toEqual({ account: 18, matching: 18 });
     expect(await agesFor(secondNumber)).toEqual({ account: 16, matching: 16 });
+    expect(await w.service.accounts.ageRecord(secondNumber, await w.service.accounts.personFor(secondNumber)))
+      .toMatchObject({ age: 16, birthExact: false, ageConflict: true });
 
     await runtime.tick();
     expect(await cachedMinor()).toBe(false);
@@ -411,9 +478,11 @@ test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages
       await tx`set local role network_observatory_friends`;
       const [rights] = await tx`select has_table_privilege(current_user, 'platform.signup_eligibility', 'select') as reads_private_date`;
       expect(rights?.reads_private_date).toBe(false);
-      const row = await tx`select * from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`;
+      const row = await tx`select app_id, member_id, age, banned, staff_held, report_held
+        from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`;
       await tx`select set_config('app.age_as_of', '2000-01-01T00:00:00Z', true)`;
-      expect(await tx`select * from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`).toEqual(row);
+      expect(await tx`select app_id, member_id, age, banned, staff_held, report_held
+        from platform.matching_ages_friends where member_id = ${firstMembership.memberId}`).toEqual(row);
       return row;
     });
     expect(staffAge).toEqual([{ app_id: "friends", member_id: firstMembership.memberId, age: expect.any(Number),
@@ -485,6 +554,7 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
     await addPriorPhoto("02-first-photo");
     expect((await signup("friends.help", "failed-first", "2008-10-10")).status).toBe(503);
     expect(await privateRow()).toEqual([]);
+    expect(await sql`select birth_date from platform.people where id = ${person.id}`).toEqual([{ birth_date: null }]);
     expect(await membership("friends")).toBeUndefined();
     expect(await sql`select id from network.members where person_id = ${person.id}`).toEqual([]);
     expect(await sql`select state from platform.consent_events where e164 = ${number} and app_id = 'friends'`).toEqual([]);
@@ -508,6 +578,7 @@ test.skipIf(!pgAvailable)("failed browser enrollment preserves only the private 
     await addPriorPhoto("prior-photo");
     expect((await signup("ntwrk.party", "failed-later", "2009-10-10", invitation)).status).toBe(503);
     expect(await privateRow()).toEqual([{ initial_minor_age: 17, eligible_at: new Date(firstDate) }]);
+    expect(await sql`select birth_date from platform.people where id = ${person.id}`).toEqual([{ birth_date: 20081010 }]);
     expect(await membership("friends")).toMatchObject({ state: "active" });
     expect(await membership("ntwrk")).toBeUndefined();
     expect(await sql`select state from platform.consent_events where e164 = ${number} and app_id = 'ntwrk'`).toEqual([]);
@@ -654,7 +725,7 @@ test.skipIf(!pgAvailable)("cross-app minor signup refuses and removes an in-flig
       return w.service.accounts.lowestAge(number, owner);
     };
     const rows = () => w.connector.store.sql.unsafe<{ id: string; storage_key: string }[]>(
-      "select id,storage_key from platform.photos where person_id=$1 and deleted_at is null order by id", [person.id],
+      "select id,storage_key from platform.photos where person_id=$1 and deleted_at is null and stored_at is not null order by id", [person.id],
     );
     expect(await currentAge()).toBe(29);
     const existingUpload = await upload();
