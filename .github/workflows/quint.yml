@@ -36,9 +36,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
-  whole-flow:
+  plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -57,20 +60,55 @@ jobs:
             timeout --kill-after=5s 20s git fetch --no-tags --depth=1 origin "$BASE" || true
           fi
           node scripts/quint-ci-plan.ts "$BASE" >> "$GITHUB_OUTPUT"
+
+  model-check:
+    name: whole-flow (${{ matrix.name }})
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.name == 'oauth_mcp' && 90 || 65 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
       - name: Install the Quint toolchain
-        if: steps.plan.outputs.run == 'true'
         working-directory: tools/vibestack
         run: |
           npm install --global corepack@0.35.0 && corepack enable pnpm
           corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
       - name: Install the pinned Quint Rust evaluator
-        if: steps.plan.outputs.run == 'true'
         uses: ./.github/actions/setup-quint
       - name: Check whole-flow models at their configured bounds
-        if: steps.plan.outputs.run == 'true'
         shell: bash
         env:
-          MODELS: ${{ steps.plan.outputs.models }}
+          MODELS: ${{ matrix.models }}
         run: |
           read -r -a models <<< "$MODELS"
+          (( ${#models[@]} > 0 ))
+          corepack pnpm@10.24.0 run quint:check --tangle-only
           /usr/bin/time -p corepack pnpm@10.24.0 run quint:check --jobs 4 "${models[@]}"
+
+  whole-flow:
+    needs: [plan, model-check]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the plan and all selected model checks
+        shell: bash
+        env:
+          PLAN: ${{ needs.plan.result }}
+          RUN: ${{ needs.plan.outputs.run }}
+          CHECKS: ${{ needs.model-check.result }}
+        run: |
+          case "$PLAN:$RUN:$CHECKS" in
+            success:true:success|success:false:skipped) ;;
+            *) exit 1 ;;
+          esac

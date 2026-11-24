@@ -10,16 +10,17 @@ The site build checks each served skill's step markers against this model. This 
 
 ### The selected app determines the available transport
 
-The three native connector skills require that exact app's supported connector. A client without that capability stops before requesting a profile. Reading a skill gives no tools or grants. Slop has no public OpenAI connector. Peon retains its existing connector and Messages paths, pending separate production qualification.
+The three native connector skills require that exact app's supported connector. Reading a skill gives no tools or grants. When the agent does not have the app's connector tools, it first checks whether the client can add a supported connector for the selected app. If the client can add one, the agent tells the person to add this app's own endpoint in the client's connector settings, and then to continue in the same conversation. This endpoint is on ntwrk.party for every app ([connector tools](connectorTools.md)): `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for each other app, with `/openai` added in ChatGPT for The Network, peon and friends. The skill names the endpoint and the app. The agent gives this setup step one time only. Only after this check can the agent choose a path without connector tools. A native skill without connector tools then stops before it asks for a profile, with "Signup isn't supported in this agent yet." Slop has no public ChatGPT or Codex connector. For a Slop agent without tools, a ChatGPT or Codex client has no available public setup and stops before requesting a profile. Peon retains its existing connector and Messages paths, pending separate production qualification.
 
 ```quint
 import brandIdentity.* from "./brandIdentity"
 
 type Transport = TransportUndecided | NativeConnectorHandoff | ConnectorHandoff | MessagesHandoff | NoTransport
 type SkillKind = NativeConnectorSkill | PeonSkill
+type ConnectorSetup = SetupNotChecked | SetupOffered | SetupImpossible
 type AgeBand = AgeNotStated | Under13 | Teen | Adult
 type SignupPhase =
-  CheckingCapability | Unsupported | ReadingApp | WrongApp |
+  CheckingCapability | AwaitingConnector | Unsupported | ReadingApp | WrongApp |
   Drafting | BelowJoinAge | AwaitingApproval | Declined |
   ReadyForHandoff | HandedOff | CheckingStatus | ExistingMember |
   NeedsInvite | InvitationUnavailable | OnReview | MessagesStopped |
@@ -28,6 +29,7 @@ type SignupPhase =
 type AgentSignup = {
   phase: SignupPhase,
   transport: Transport,
+  connectorSetup: ConnectorSetup,
   age: AgeBand,
   inviteOnly: bool,
   approved: bool,
@@ -38,7 +40,7 @@ type AgentSignup = {
   submits: int
 }
 pure val initial: AgentSignup = {
-  phase: CheckingCapability, transport: TransportUndecided, age: AgeNotStated, inviteOnly: false,
+  phase: CheckingCapability, transport: TransportUndecided, connectorSetup: SetupNotChecked, age: AgeNotStated, inviteOnly: false,
   approved: false, minorNotified: false, handoffs: 0, browserEnrolled: false, inviteAccepted: false, submits: 0
 }
 
@@ -52,7 +54,19 @@ pure def transportFor(skillKind: SkillKind, connectorTools: bool): Transport =
 pure def lawNativeSkillRequiresItsConnector(connectorTools: bool): bool =
   (transportFor(NativeConnectorSkill, connectorTools) == NativeConnectorHandoff) iff connectorTools
 
-pure def canChooseTransport(s: AgentSignup): bool = s.phase == CheckingCapability
+pure def canCheckConnectorSetup(s: AgentSignup): bool =
+  s.phase == CheckingCapability and s.connectorSetup == SetupNotChecked
+
+pure def checkConnectorSetup(s: AgentSignup, clientCanAdd: bool): AgentSignup =
+  if (clientCanAdd) { ...s, connectorSetup: SetupOffered, phase: AwaitingConnector }
+  else { ...s, connectorSetup: SetupImpossible }
+
+pure def canResumeAfterConnector(s: AgentSignup): bool = s.phase == AwaitingConnector
+
+pure def resumeAfterConnector(s: AgentSignup): AgentSignup = { ...s, phase: CheckingCapability }
+
+pure def canChooseTransport(s: AgentSignup, connectorTools: bool): bool =
+  s.phase == CheckingCapability and (connectorTools or s.connectorSetup != SetupNotChecked)
 
 pure def chooseTransport(s: AgentSignup, skillKind: SkillKind, connectorTools: bool): AgentSignup =
   val chosen = transportFor(skillKind, connectorTools)
@@ -60,7 +74,13 @@ pure def chooseTransport(s: AgentSignup, skillKind: SkillKind, connectorTools: b
     if (chosen == NoTransport) Unsupported else if (chosen == NativeConnectorHandoff) ReadingApp else Drafting }
 
 pure def alwaysTransportFixedAfterChoice(s: AgentSignup): bool =
-  s.phase == CheckingCapability iff s.transport == TransportUndecided
+  (s.phase == CheckingCapability or s.phase == AwaitingConnector) iff s.transport == TransportUndecided
+
+pure def alwaysAwaitingConnectorWasOffered(s: AgentSignup): bool =
+  s.phase == AwaitingConnector implies s.connectorSetup == SetupOffered
+
+pure def alwaysNoConnectorPathFollowsSetupCheck(s: AgentSignup): bool =
+  (s.transport == NoTransport or s.transport == MessagesHandoff) implies s.connectorSetup != SetupNotChecked
 
 pure def canReadAppFacts(s: AgentSignup): bool = s.phase == ReadingApp and s.transport == NativeConnectorHandoff
 
@@ -79,7 +99,7 @@ pure def alwaysNoTransportStops(s: AgentSignup): bool =
 
 ### The person approves the exact draft and current text consent
 
-For the native connector path, read the selected app's public policy and exact text consent before drafting. Use the lowest stated age. Below 13 stops the flow. Anyone 13 through 17 receives the adult-only matching notice. Draft the person's first name, age, confirmed supported city/region and neighborhood, and the app-specific profile. Obtain explicit approval for the exact draft and the current app consent. Changes return to drafting. Refusal ends the attempt. In Peon's Messages path, the person's own Messages app opens the approved text with the [Peon signup line](textEnrollment.md#a-prepared-peon-signup-names-its-app-on-a-separate-first-line). The person sends it.
+For the native connector path, read the selected app's public policy and exact text consent before drafting. Ask for the person's birthday, and use it in the conversation only to explain what the person gets. No tool receives a birthday or an age; the person types the birthday on the signup page. Use the lowest stated age. Below 13 stops the flow. Anyone 13 through 17 receives the minor notice: today they get their own help (answers, public events and plans for themselves), they are never matched on dates or for work, and friendship is the only kind of introduction that can open to people under 18, only with people within 2 years of their own age. The notice promises no introduction. The agent offers a person aged 13 through 17 neither dating nor work matching, and collects no dating preferences or photos from them. Draft the person's first name, confirmed supported city/region and neighborhood, and the app-specific profile. Obtain explicit approval for the exact draft and the current app consent. Changes return to drafting. Refusal ends the attempt. In Peon's Messages path, the person's own Messages app opens the approved text with the [Peon signup line](textEnrollment.md#a-prepared-peon-signup-names-its-app-on-a-separate-first-line). The person sends it.
 
 ```quint
 pure def lowerBand(a: AgeBand, b: AgeBand): AgeBand =
@@ -134,7 +154,8 @@ Discovered by the proof: until the person approves the draft, the attempt has no
 
 ```quint
 pure def alwaysNoApprovalBeforeDecision(s: AgentSignup): bool =
-  (s.phase == CheckingCapability or s.phase == ReadingApp or s.phase == Drafting or s.phase == AwaitingApproval)
+  (s.phase == CheckingCapability or s.phase == AwaitingConnector or s.phase == ReadingApp or
+   s.phase == Drafting or s.phase == AwaitingApproval)
     implies not(s.approved)
 ```
 
@@ -298,6 +319,11 @@ pure def sometimesOnReview(s: AgentSignup): bool = s.phase == OnReview
 pure def sometimesBelowJoinAge(s: AgentSignup): bool = s.phase == BelowJoinAge
 pure def sometimesTeenApproved(s: AgentSignup): bool = s.age == Teen and s.approved
 pure def sometimesUnsupported(s: AgentSignup): bool = s.phase == Unsupported
+pure def sometimesAwaitingConnector(s: AgentSignup): bool = s.phase == AwaitingConnector
+pure def sometimesSavedAfterConnectorSetup(s: AgentSignup): bool =
+  s.phase == Saved and s.transport == NativeConnectorHandoff and s.connectorSetup == SetupOffered
+pure def sometimesUnsupportedWithoutConnectorSupport(s: AgentSignup): bool =
+  s.phase == Unsupported and s.connectorSetup == SetupImpossible
 pure def sometimesDeclined(s: AgentSignup): bool = s.phase == Declined
 pure def sometimesWrongApp(s: AgentSignup): bool = s.phase == WrongApp
 pure def sometimesProfileNotSent(s: AgentSignup): bool = s.phase == ProfileNotSent

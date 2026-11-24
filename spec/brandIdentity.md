@@ -111,12 +111,38 @@ pure def lawAccentInkDiffersFromAccent(accent: Accent): bool =
 
 ### An app site never names The Network or another app
 
-slop.date, peon.biz and friends.help name only themselves on every page, in the agent skill and in the skill catalog. The support address help@ntwrk.party is the one exception, because it is the only inbox that receives mail.
+slop.date, peon.biz and friends.help name only themselves on every page, in the agent skill and in the skill catalog. There are three exceptions. The support address help@ntwrk.party can show on every surface, because it is the only inbox that receives mail. The agent skill of an app can also name the connector endpoint of that app, because ntwrk.party serves the connector of every app ([agent entry](./agentEntry.md)). The full endpoint is `https://ntwrk.party/mcp/<app>`. Peon and friends also have a public ChatGPT endpoint at `https://ntwrk.party/mcp/<app>/openai`. Slop has no public ChatGPT endpoint. The agent skill of an app can also name the page where the person sees and removes the access of an agent, `https://ntwrk.party/oauth/consents`, because the person gives that access on ntwrk.party. The skill names only the endpoint of its own app, and it does not name The Network in other words. The skill of The Network names its own endpoint, `https://ntwrk.party/mcp`.
 
 ```quint
 type Surface = LandingSurface | LegalSurface | NotFoundSurface | JoinSurface | SkillSurface | CatalogSurface
 
 pure val supportEmail = "help@ntwrk.party"
+
+pure val agentAccessPage = "https://ntwrk.party/oauth/consents"
+
+pure def connectorEndpoint(app: AppKey): str =
+  if (app == Ntwrk) "https://ntwrk.party/mcp"
+  else if (app == Slop) "https://ntwrk.party/mcp/slop"
+  else if (app == Peon) "https://ntwrk.party/mcp/peon"
+  else "https://ntwrk.party/mcp/friends"
+
+pure def openaiConnectorEndpoint(app: AppKey): str =
+  if (app == Ntwrk) "https://ntwrk.party/mcp/openai"
+  else if (app == Slop) ""
+  else if (app == Peon) "https://ntwrk.party/mcp/peon/openai"
+  else "https://ntwrk.party/mcp/friends/openai"
+
+pure def hubTextsOnAppSurface(site: AppKey, surface: Surface): List[str] =
+  if (surface != SkillSurface) List(supportEmail)
+  else if (openaiConnectorEndpoint(site) == "") List(supportEmail, agentAccessPage, connectorEndpoint(site))
+  else List(supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site))
+
+pure def lawAppEndpointsAreDistinct(a: AppKey, b: AppKey): bool =
+  a != b implies (connectorEndpoint(a) != connectorEndpoint(b) and openaiConnectorEndpoint(a) != openaiConnectorEndpoint(b)
+    and connectorEndpoint(a) != openaiConnectorEndpoint(b))
+
+pure def lawOnlyTheSkillNamesTheEndpoint(site: AppKey, surface: Surface): bool =
+  surface != SkillSurface implies hubTextsOnAppSurface(site, surface) == List(supportEmail)
 
 pure def mayName(site: AppKey, named: AppKey, surface: Surface): bool =
   site == named or (site == Ntwrk and (surface == LegalSurface or surface == CatalogSurface))

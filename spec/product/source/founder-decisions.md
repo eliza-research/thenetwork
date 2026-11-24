@@ -4,6 +4,19 @@ The runtime commands below use the current project entrypoints. The [pre-migrati
 
 These dated decisions were recorded in the former repository instructions. The [product specification](../README.md) reconciles them with the PRD, MVP plan, and later decisions.
 
+## Founder decision — 2026-11-22: members aged 13 to 17 and friendship introductions
+
+The owner's exact words:
+
+1. "If the user is 13-17 we will provide single player experience only, they can only do friendship matches, not romantic."
+2. "Keep it 13+ but they need to know that it won't match them on dates, it will only connect them for friendships" (slop.date join stays 13+).
+3. "Yes, teen friend intros".
+4. "We should only introduce teens to people over 13 and within 2 years of their age, unless they are 18. So a 15 year old can hang with a 17 year old, a 16 with 18, but thats max."
+5. "We want to ask them their birthday generally, so we dont just have their age but we're trakcing when they turn a new year etc".
+6. "we arent going to do dating matchmaking but we can do teen friendship matchmaking".
+
+Status: teen friendship introductions are not live. They start only after the backend delivers them and the owner turns them on (a staff switch, off by default). Until then, no member aged 13 to 17 is introduced to anyone. A member aged 13 to 17 is never matched on dates or for work. Public copy tells a member aged 13 to 17 what they get today (their own help: answers, public events and plans for themselves) and that friendship is the only kind of introduction that can open to them, only with people within 2 years of their own age. Copy does not promise a teen an introduction. The agent asks for a birthday in conversation only to explain what the person gets; the person types the birthday on the signup page, and no tool receives a birthday or an age.
+
 ## Founder decision — 2026-11-16: reciprocal matching, lanes and bounded search
 
 1. **Goal.** Match people with people who are close to them in interests and in approximate value to each other, and build circles of people who fit. A match must be a good value exchange in both directions. Do not propose a pair with a large standing gap: for example, do not introduce a well-known investor to a first-time founder as peers. The same rule applies to appearance and to money. Keep the engine clean, concise and verified, with minimal bloat.

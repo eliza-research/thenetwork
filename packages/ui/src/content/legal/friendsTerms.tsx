@@ -10,7 +10,7 @@ export const friendsTerms: LegalText = {
   sections: [
     {
       heading: "Who can join",
-      body: <p>You must be 13 or older to join. Only adults 18 and older are matched, put in groups or introduced. Members aged 13 to 17 are never matched or introduced to anyone. Give your real first name and your real age, and keep your phone number current. One person, one membership.</p>,
+      body: <p>You must be 13 or older to join. Only adults 18 and older are matched, put in groups or introduced. Members aged 13 to 17 are never matched on dates or for work. Today, no member under 18 is introduced to anyone. If introductions ever open to members under 18, they will be friendship introductions only, with people within 2 years of their own age. Give your real first name and your real birth date or age, and keep your phone number current. One person, one membership.</p>,
     },
     {
       sms: {

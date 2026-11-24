@@ -19,6 +19,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY, HOUR, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { appEndpointPath, appOpenAiEndpointPath } from "../../packages/core/src/generated/agentEntry.ts";
 import { INTERESTS } from "../../packages/engine/src/packs/network/vocabulary.ts";
 import { pairKey } from "../../packages/engine/src/world.ts";
 import { PolicyPersonaAgent, World } from "../../packages/sim/src/index.ts";
@@ -314,19 +315,22 @@ async function sitesGates(b: Block) {
       } finally { rmSync(copy, { recursive: true, force: true }); }
     });
 
-    await b.run("plugin-prototypes-26, platform-9: one SKILL.md per site, same backend, its own agent transport; STOP stops every app and \"leave <site>\" one, in the skill and the SMS terms", () => {
+    await b.run("plugin-prototypes-26, platform-9: each published skill uses its own connector path on the common host; STOP stops every app and \"leave <site>\" one", () => {
       for (const s of SITES) {
         const r = built[s.domain]!;
         const skill = readFileSync(join(r.out, "SKILL.md"), "utf8");
-        expect([s.domain, skill.includes(`https://${s.domain}/mcp`)]).toEqual([s.domain, true]);
+        const siteEndpoint = `https://ntwrk.party${appEndpointPath(s.key)}`;
+        const openAiEndpoint = `https://ntwrk.party${appOpenAiEndpointPath(s.key)}`;
+        const skillEndpoints = new Set(skill.match(/https:\/\/[\w.-]+\/mcp(?:\/[\w-]+)*/g));
+        expect([s.domain, skillEndpoints.has(siteEndpoint)]).toEqual([s.domain, true]);
+        expect([s.domain, [...skillEndpoints].filter(endpoint => endpoint !== siteEndpoint && endpoint !== openAiEndpoint)]).toEqual([s.domain, []]);
         if (["friends", "slop", "ntwrk"].includes(s.app)) {
           expect(skill).toContain(`https://${s.domain}/api/app`);
-          expect(skill).toContain("native OAuth flow");
+          expect(skill).toMatch(/native (?:connector )?OAuth (?:flow|handoff)/);
           expect(skill).toContain("<!-- agentSignup: offerHandoff -->");
           expect(skill).not.toMatch(/\/api\/(?:auth\/otp\/verify|me\/export)/);
         }
         expect(skill).toContain("help@ntwrk.party");
-        for (const o of SITES.filter(o => o.domain !== s.domain)) expect([s.domain, o.domain, skill.includes(`https://${o.domain}/mcp`)]).toEqual([s.domain, o.domain, false]);
         expect([s.domain, readFileSync(join(r.out, "_worker.js"), "utf8").includes(DEFAULT_BACKEND_ORIGIN)]).toEqual([s.domain, true]);
         expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older/i.test(skill)]).toEqual([s.domain, true]);
         if (s.app === "ntwrk") continue;

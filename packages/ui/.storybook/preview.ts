@@ -1,5 +1,5 @@
+import "@thenetwork/design-system/fonts.css";
 import "@thenetwork/design-system/theme.css";
-import "@thenetwork/design-system/brands.css";
 
 interface Globals {
   theme: string;

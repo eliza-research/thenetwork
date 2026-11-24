@@ -25,6 +25,13 @@ function hiddenField(html: string, name: string): string {
   return value;
 }
 
+function finishSignupComesFirst(html: string): boolean {
+  const decisions = [...html.matchAll(/<button\b[^>]*>/g)].map(m => m[0])
+    .filter(tag => /\sname="decision"/.test(tag)).map(tag => /\svalue="([^"]*)"/.exec(tag)?.[1]);
+  const open = decisions.indexOf("open"), approve = decisions.indexOf("approve");
+  return open >= 0 && approve >= 0 && open < approve;
+}
+
 // spec/agentPhoneHandoff.md, "Only the browser and the authorized connector complete the handoff"
 test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits the approved profile once through MCP", async () => {
   const url = await testDb();
@@ -89,6 +96,7 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       expect(verified.status).toBe(200);
       const verifiedPage = await verified.text();
       expect(verifiedPage).toContain('action="/oauth/authorize/signup"');
+      expect(finishSignupComesFirst(verifiedPage)).toBe(true);
       expect(await service.accounts.personFor(phone)).toBeUndefined();
 
       const signup = await browser("/oauth/authorize/signup", { rid, decision: "open" });
@@ -301,13 +309,57 @@ async function submitSignup(browser: Browser, rid: string, fields: Record<string
   return { form, status: sent.status, html: await sent.text() };
 }
 
+async function exchange(w: SignupWorld, site: string, clientId: string, location: string) {
+  const code = new URL(location).searchParams.get("code")!;
+  const token = await tokenRequest(w.env, site, { grant_type: "authorization_code", code, redirect_uri: clientReturn, client_id: clientId, code_verifier: VERIFIER });
+  expect(token.res.status).toBe(200);
+  return token.body.access_token as string;
+}
+
+test.skipIf(!pgAvailable)("Allow before signup leaves a grant with no person; Finish signup is first and a later signup ends that grant", async () => {
+  await withSignupWorld(["ntwrk:nyc", "friends:nyc"], async w => {
+    const site = "friends.help", number = "+12125550164";
+    const browser = browserOn(w, site);
+    const first = await openConnection(w, site, browser, "allow-first");
+    const rid = hiddenField(first.html, "rid");
+    const consent = await confirmPhone(w, browser, rid, number);
+    expect(finishSignupComesFirst(consent)).toBe(true);
+
+    const allowed = await browser("/oauth/authorize/consent", { rid, decision: "approve" });
+    expect(allowed.status).toBe(303);
+    const early = await exchange(w, site, first.clientId, allowed.headers.get("location")!);
+    expect(await w.connector.store.sql`select person_id from oauth.grants where client_id=${first.clientId}`).toEqual([{ person_id: null }]);
+    const status = (token: string) => call(w.env, `https://${site}/mcp`, "check_status", { app: "friends" }, { token });
+    expect((await status(early)).body?.result.structuredContent).toMatchObject({ app: "friends", status: "not_joined" });
+    expect(await w.service.accounts.personFor(number)).toBeUndefined();
+
+    const second = await openConnection(w, site, browser, "signup-second");
+    expect(second.html).toContain('action="/oauth/authorize/signup"');
+    expect(finishSignupComesFirst(second.html)).toBe(true);
+    const rid2 = hiddenField(second.html, "rid");
+    const joined = await submitSignup(browser, rid2, { firstName: "Noa", birthdate: "1995-01-15" });
+    expect(joined.status).toBe(200);
+    expect(joined.html).toContain("Signup confirmed.");
+    expect(joined.html).not.toContain('action="/oauth/authorize/signup"');
+    const person = await w.service.accounts.personFor(number);
+    if (!person) throw new Error("No person after signup");
+
+    expect((await status(early)).res.status).toBe(401);
+    const approved = await browser("/oauth/authorize/consent", { rid: rid2, decision: "approve", signupApproval: hiddenField(joined.html, "signupApproval") });
+    expect(approved.status).toBe(303);
+    const later = await exchange(w, site, second.clientId, approved.headers.get("location")!);
+    expect((await status(later)).body?.result.structuredContent).toMatchObject({ app: "friends", status: expect.stringMatching(/^(active|onboarding)$/) });
+  });
+}, 60_000);
+
 test.skipIf(!pgAvailable)("slop.date: a birthday under 13 typed on the signup page is refused and a higher age later does not undo it", async () => {
   await withSignupWorld(["slop:nyc"], async w => {
     const site = "slop.date", number = "+12125550165";
     const browser = browserOn(w, site);
     const opened = await openConnection(w, site, browser, "under-13");
     const rid = hiddenField(opened.html, "rid");
-    await confirmPhone(w, browser, rid, number);
+    const consent = await confirmPhone(w, browser, rid, number);
+    expect(finishSignupComesFirst(consent)).toBe(true);
 
     const refused = await submitSignup(browser, rid, { firstName: "Kit", birthdate: "2014-01-15" });
     expect(refused.status).toBe(400);
@@ -439,7 +491,8 @@ test.skipIf(!pgAvailable)("ntwrk.party: the signup page requires an invitation a
     const browser = browserOn(w, site);
     const opened = await openConnection(w, site, browser, "invite-only");
     const rid = hiddenField(opened.html, "rid");
-    await confirmPhone(w, browser, rid, number);
+    const consent = await confirmPhone(w, browser, rid, number);
+    expect(finishSignupComesFirst(consent)).toBe(true);
 
     const missing = await submitSignup(browser, rid, { firstName: "Ash", birthdate: "1993-01-15", invitation: "" });
     expect(missing.form).toMatch(/<input\b(?=[^>]*\sname="invitation")(?=[^>]*\srequired)[^>]*>/);
