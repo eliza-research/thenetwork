@@ -199,6 +199,8 @@ describe("the public OpenAI surface", () => {
     expect(l.body!.result.tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "peon", "friends"]);
     expect(l.text).not.toMatch(/slop|dating/i);
     expect((await rpc(env, OPENAI, "server/discover")).text).not.toMatch(/slop|dating/i);
+    expect((await rpc(env, OPENAI, "initialize", { protocolVersion: "2025-03-26" })).text).not.toMatch(/slop|dating/i);
+    expect((await rpc(env, "https://slop.date/mcp", "server/discover")).body?.result.instructions).toContain("my_photos");
     const all = await call(env, OPENAI, "app_info");
     expect(all.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "peon", "friends"]);
     expect(all.text).not.toMatch(/slop|dating/i);

@@ -35,7 +35,7 @@ import { appAtPath, connectorApp, connectorSurface, defaultApps, defaultHostMap,
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage, type SignupPrefill } from "./pages.ts";
 import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, scopesOn, type Token } from "./store.ts";
-import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
+import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, PHOTO_INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
 export const LATEST_PROTOCOL = "2026-07-28";
@@ -1367,7 +1367,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (auth && openAiUnavailable(c, auth.client)) return out(404, rpcError(null, -32601, "Not available"));
     if (auth && !(await customSlopEligible(c, auth.client, auth.grant.personId, auth.grant.phoneKey))) return out(401, rpcError(null, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
     const onboardingOnly = customSlopPeople !== null && c.app.id === "slop" && c.host.id === "slop" && (!auth || customSlopClient(c, auth.client));
-    const outsidePilot = new Set(["get_updates", "read_profile", "photo_holdings", "photo_request"]);
+    const outsidePilot = new Set(["get_updates", "read_profile", "my_photos", "photo_request"]);
 
     const text = await readCappedText(c.req, 65_536);
     if (text === "too_large") return out(413, rpcError(null, -32600, "Request too large"));
@@ -1408,18 +1408,21 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       return out(404, rpcError(id, -32601, "Not available"));
     }
 
+    const visibleTools = () => toolDefs(apps, surface, host).filter(tool => !onboardingOnly || !outsidePilot.has(tool.name));
+    const instructions = () => visibleTools().some(tool => tool.name === "my_photos") ? `${INSTRUCTIONS} ${PHOTO_INSTRUCTIONS}` : INSTRUCTIONS;
+
     switch (msg.method) {
       case "initialize": {
         const asked = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
         const protocolVersion = (LEGACY_PROTOCOLS as readonly string[]).includes(asked) ? asked : LEGACY_PROTOCOLS[0];
-        return result({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
+        return result({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: instructions() });
       }
       case "server/discover":
-        return result({ supportedVersions: [...MODERN_PROTOCOLS, ...LEGACY_PROTOCOLS], capabilities: { tools: { listChanged: false } }, instructions: INSTRUCTIONS });
+        return result({ supportedVersions: [...MODERN_PROTOCOLS, ...LEGACY_PROTOCOLS], capabilities: { tools: { listChanged: false } }, instructions: instructions() });
       case "ping":
         return result({});
       case "tools/list":
-        return result({ tools: toolDefs(apps, surface, host).filter(t => !onboardingOnly || !outsidePilot.has(t.name)) });
+        return result({ tools: visibleTools() });
       case "tools/call": {
         const name = params.name;
         if (!(TOOL_NAMES as readonly string[]).includes(name)) return out(200, { jsonrpc: "2.0", id, result: { ...(modern ? { resultType: "complete" } : {}), content: [{ type: "text", text: "Unknown tool." }], isError: true } });

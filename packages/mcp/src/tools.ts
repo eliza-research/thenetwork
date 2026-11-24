@@ -70,7 +70,9 @@ export const INSTRUCTIONS =
   "Helps a person learn about apps powered by The Network and sign themselves up. Never ask for, accept or relay a phone number or a verification code. " +
   "The person completes signup and authorization themselves. Never send a message on their behalf. start_signup points to the app's published signup instructions. " +
   "check_status works only after the person signs in and authorizes access in that app's browser, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps. " +
-  "list_looking_for shows what an app is looking for for the person; pause_looking_for and resume_looking_for change one thing only after the person asks. " +
+  "list_looking_for shows what an app is looking for for the person; pause_looking_for and resume_looking_for change one thing only after the person asks.";
+
+export const PHOTO_INSTRUCTIONS =
   "On slop.date, my_photos lists the person's own photos without the photos, and photo_request passes their own words; only the person confirms a photo send, on their phone.";
 
 const annotations = (title: string) => ({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
