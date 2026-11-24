@@ -173,3 +173,14 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "delete everything about me", "label": "stop", "lang": "en"}
+{"text": "erase everything about me", "label": "stop", "lang": "en"}
+{"text": "remove everything about me", "label": "stop", "lang": "en"}
+{"text": "wipe everything about me", "label": "stop", "lang": "en"}
+{"text": "please delete everything about me", "label": "stop", "lang": "en"}
+{"text": "delete everything you have on me", "label": "stop", "lang": "en"}
+{"text": "delete everything about me on instagram", "label": "not_stop", "lang": "en"}
+{"text": "she said delete everything about me", "label": "not_stop", "lang": "en"}
+{"text": "how do I delete everything about me?", "label": "not_stop", "lang": "en"}
+{"text": "don't delete everything about me", "label": "not_stop", "lang": "en"}
+{"text": "delete everything in the chat", "label": "not_stop", "lang": "en"}
