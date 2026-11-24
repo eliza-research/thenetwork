@@ -192,3 +192,8 @@
 {"text":"anything except Sunday doesn't work","answer":"unclear","keys":[]}
 {"text":"no, anything except Sunday works","answer":"unclear","keys":[]}
 {"text":"anything except Sunday works lol jk none of them","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, nothing works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, neither works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, none works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, if Ana says Saturday works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, Ana said Thursday works","answer":"unclear","keys":[]}

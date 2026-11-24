@@ -858,6 +858,10 @@ const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|
 const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
 ]);
+const EXCEPT_SPAN_TOKEN = new RegExp(
+  `(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\b|\\b(?:morning|afternoon|evening|night|weekend|weekday)s?\\b|\\b(?:and|or)\\b|,)`, "g");
+const exceptSpanIsOnlyExcludedTimes = (span: string) =>
+  span.replace(EXCEPT_SPAN_TOKEN, "").trim() === "";
 const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
 const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times)\b/;
 const OTHER_TIMES = /\bother times?\b/;
@@ -1536,8 +1540,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) || conditionalUnresolved.size ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
+  const exceptSpan = /^\s*(?:any\s?(?:thing|day|time)|every\s?(?:thing|day)|all|whichever)\s+except\s+(.+?)\s+works?[.!\s]*$/.exec(t)?.[1];
   if (c.why === "mixed" && !explicitTimesOnly && namedExclusion && !contradictedExclusion
-    && open.length && /^\s*(?:any\s?(?:thing|day|time)|every\s?(?:thing|day)|all|whichever)\s+except\s+[a-z ,]+?\s+works?[.!\s]*$/.test(t)) return explicitYes(open);
+    && open.length && !unresolved.length && exceptSpan !== undefined
+    && exceptSpanIsOnlyExcludedTimes(exceptSpan)) return explicitYes(open);
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
   if (explicitTimesOnly) {
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
