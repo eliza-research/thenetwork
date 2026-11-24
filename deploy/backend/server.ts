@@ -4,7 +4,7 @@ import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 //   node --import tsx --env-file-if-exists=.env deploy/backend/server.ts [--port N] [--dry-run]
 //
 // 1. Checks the environment (backend.ts loadConfig; a deployed environment without its secrets stops here).
-// 2. Applies pending migrations under the advisory lock (packages/observatory/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
+// 2. Applies pending migrations under the advisory lock (packages/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
 // 3. Starts every network in platform.networks, the public port (PORT) and the private staff port (STAFF_PORT).
 // 4. Ticks every network each minute. SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
 // Sends are dry-run unless NETWORK_CHANNEL=blooio, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1, and each
@@ -19,7 +19,7 @@ const { RealClock } = await import("../../packages/core/src/clock.ts");
 const { BlooioClient } = await import("../../packages/blooio/src/blooio/client.ts");
 const { BlooioAdapter: ProviderAdapter } = await import("../../packages/blooio/src/adapters/blooio-adapter.ts");
 const { resolveSenderLine } = await import("../../packages/blooio/src/line.ts");
-const { migrate } = await import("../../packages/observatory/db/migrate.ts");
+const { migrate } = await import("../../packages/db/migrate.ts");
 const { CloudChannelAdapter } = await import("../../packages/network/service/cloud-channel.ts");
 const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");

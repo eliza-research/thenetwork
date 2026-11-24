@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { HOUR, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { findExecutable } from "../../core/src/runtime/process.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { BoundedHomeHelpConsent, type HomeHelpConsentKey } from "../src/bounded-home-help-consent.ts";
 import { BoundedHomeHelp, type HomeHelpDraft } from "../src/bounded-help.ts";
 

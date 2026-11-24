@@ -3,8 +3,8 @@ import { monthlyGatheringStaffAllowed } from "../../core/src/generated/monthlyGa
 import { gatheringGroupingApprovalCurrent, gatheringGroupingCanSeat, gatheringGroupingReviewAllowed, gatheringGroupingSizeAllowed } from "../../core/src/generated/monthlyGatheringGrouping.ts";
 import { gatheringRsvpRosterAllowed } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { allowed, rolesFor } from "../../observatory/src/staff.ts";
-import type { StaffUser } from "../../observatory/src/types.ts";
+import { allowed, rolesFor } from "../../../apps/observatory/src/staff.ts";
+import type { StaffUser } from "../../../apps/observatory/src/types.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { readCappedText } from "../../platform/src/body.ts";

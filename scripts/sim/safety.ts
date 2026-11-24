@@ -28,10 +28,10 @@ import { platformHooks } from "../../packages/mcp/src/hooks.ts";
 import { PhotoIntake, PHOTO_TEXT } from "../../packages/network/service/photoIntake.ts";
 import { biasReport, type BiasMember, type BiasOpp } from "../../packages/network/service/bias.ts";
 import { reviewerOfRecord, slaAlerts } from "../../packages/network/service/service.ts";
-import { APP_REASONS, DEFAULT_SLA_HOURS, PACK_READY, toNetworkReason } from "../../packages/observatory/src/apps.ts";
+import { APP_REASONS, DEFAULT_SLA_HOURS, PACK_READY, toNetworkReason } from "../../apps/observatory/src/apps.ts";
 import { checkInReport, URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { runScenario, type NetScenario } from "../../packages/network/harness/index.ts";
-import type { StaffUser } from "../../packages/observatory/src/types.ts";
+import type { StaffUser } from "../../apps/observatory/src/types.ts";
 import { Block, expect } from "./gate.ts";
 
 const HASH_KEY = "sim-safety-hash-key";
@@ -394,7 +394,7 @@ export async function safetyBlock(b: Block): Promise<void> {
 
 // ======================================================================== Postgres
 async function pgPart(b: Block): Promise<void> {
-  const { pgAvailable } = await import("../../packages/observatory/test/pg.ts");
+  const { pgAvailable } = await import("../../apps/observatory/test/pg.ts");
   let url: string | undefined;
   if (pgAvailable) {
     try { url = await (await import("../../packages/platform/test/pg.ts")).migratedDb("simsafety"); } catch (e) { b.track("Postgres scenarios: skipped (the dev Postgres did not start)", false, (e as Error).message.split("\n")[0]); return; }

@@ -161,8 +161,8 @@ It prints the experiment JSON (indented) with a `judge` object per arm. On 2026-
 ### 3.3 The Observatory report
 
 ```bash
-node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1
-node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 2 --review human
+node --import tsx --env-file-if-exists=.env apps/observatory/src/report.ts --days 14 --seed 1
+node --import tsx --env-file-if-exists=.env apps/observatory/src/report.ts --days 2 --review human
 ```
 
 It plays the game world headless and prints JSON: the review gate counts, the judge counts (invariants, canary leaks, minor contacts), the proposal funnel, engine runs by day, the learned graph and the scoreboard. With `--review human` nobody reviews, so every queued item expires unsent. Use that to check the gate.

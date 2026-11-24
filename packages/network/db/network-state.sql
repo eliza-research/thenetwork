@@ -1,5 +1,5 @@
 -- The ConsentNetwork's stored state (packages/network/src/store.ts, PgStore). Idempotent: safe to
--- run again, and safe before or after packages/observatory/db/schema.sql (the tables both define
+-- run again, and safe before or after packages/db/schema.sql (the tables both define
 -- have the same columns; this file only adds columns and tables).
 create schema if not exists network;
 
@@ -13,7 +13,7 @@ create table if not exists network.network_state (
 );
 
 -- Normalized rows for the console (written from the state on every save; read-only for the console).
--- Same definition as packages/observatory/db/schema.sql.
+-- Same definition as packages/db/schema.sql.
 create table if not exists network.opportunities (
   id           text primary key,
   kind         text not null,
@@ -38,7 +38,7 @@ create table if not exists network.opportunities (
 create index if not exists opportunities_state on network.opportunities (state);
 
 -- Who is in each opportunity (participants with their status, and alternates). Same columns as
--- packages/observatory/db/schema.sql; that file also adds a foreign key to network.members.
+-- packages/db/schema.sql; that file also adds a foreign key to network.members.
 create table if not exists network.participations (
   opportunity_id text not null references network.opportunities (id) on delete cascade,
   member_id      text not null,
@@ -51,7 +51,7 @@ create table if not exists network.participations (
 );
 create index if not exists participations_member on network.participations (member_id);
 
--- Same definition as packages/observatory/db/schema.sql, plus the columns below.
+-- Same definition as packages/db/schema.sql, plus the columns below.
 create table if not exists network.review_items (
   opportunity_id text primary key references network.opportunities (id) on delete cascade,
   queued_at      timestamptz not null,

@@ -7,7 +7,7 @@ import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
-import { applySchema, DEV_PG_PORT } from "../../packages/observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT } from "../../packages/db/dev-pg.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
 
 export type FixtureApp = "slop" | "friends";

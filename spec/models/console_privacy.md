@@ -19,15 +19,15 @@ Production chooses its view class with [Observatory staff permissions](../staffP
 // console_privacy: what the Observatory gives each staff caller about members and persons.
 //
 // WHAT THIS MODELS
-//   - The view class of one caller for one app (viewClass in packages/observatory/src/shape.ts). The
+//   - The view class of one caller for one app (viewClass in apps/observatory/src/shape.ts). The
 //     roles change at any time. The server shapes each delta for the class that the socket has when it
 //     sends (server.ts sets w.cls again on each check).
 //   - The member and opportunity fields that one delta carries for that class (countsMember, countsOpp),
 //     the hidden truth (shapeState) and the oracle verdict (stripOracle).
-//   - The cross-app person view (packages/observatory/src/people.ts summary, web/apps.tsx): the
+//   - The cross-app person view (apps/observatory/src/people.ts summary, web/apps.tsx): the
 //     membership rows of one person change, the summary is built from them, and a staff member opens
 //     one app's panel with a typed reason.
-//   Each LemmaScript function in packages/observatory/src/privacy-core.ts is a pure def here with the
+//   Each LemmaScript function in apps/observatory/src/privacy-core.ts is a pure def here with the
 //   same name and the same decision. Each server or shell event is an action that calls it.
 //
 // BOUNDS

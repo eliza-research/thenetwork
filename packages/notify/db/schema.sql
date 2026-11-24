@@ -1,5 +1,5 @@
 -- Single inbox, deliveries, task tokens and surface signals (packages/notify).
--- Applied by packages/observatory/db/migrate.ts as the repeatable 9002_notify_schema (idempotent),
+-- Applied by packages/db/migrate.ts as the repeatable 9002_notify_schema (idempotent),
 -- after the roles exist, so the deployed service login never needs CREATE rights.
 -- person_id is platform.people.id (uuid, kept as text); no foreign key so this file also applies on
 -- its own (packages/notify tests).

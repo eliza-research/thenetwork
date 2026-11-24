@@ -25,7 +25,7 @@ deletion publishes a reset so the browser reads the new complete graph.
 // observatory_sync: the Observatory console state sync, on the browser side.
 //
 // WHAT THIS MODELS
-//   The browser state of one console tab (packages/observatory/web/store.ts, map.ts, drawer.tsx):
+//   The browser state of one console tab (apps/observatory/web/store.ts, map.ts, drawer.tsx):
 //   - The app switch (setApp and the `app` setter in store.ts). The data of the old app leaves.
 //   - Full loads (load, beginLoad in store.ts). Each load has a generation. The server reads the
 //     state at some time after the start, and the answer comes late, out of order, or fails.
@@ -36,7 +36,7 @@ deletion publishes a reset so the browser reads the new complete graph.
 //   - The PII reveal badge (reveal, unreveal, loadReveals in store.ts) against the server grant.
 //   - The global filters per drawer tab (filters.ts; the filter bar in drawer.tsx dims a filter by
 //     APPLIES, which is tabKeys).
-//   Each LemmaScript function in packages/observatory/web/logic/sync.ts and logic/filters.ts that
+//   Each LemmaScript function in apps/observatory/web/logic/sync.ts and logic/filters.ts that
 //   takes a decision is a pure def here with the same name and the same decision. Each shell event
 //   is an action that calls it. The server is a nondeterministic environment.
 //

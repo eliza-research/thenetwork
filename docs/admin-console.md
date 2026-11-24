@@ -1,10 +1,10 @@
 # Admin console: MVP requirements and gaps
 
-Status: gap analysis, 2026-10-07. Updated the same day three times: after the review gate, the server auth and the real-mode PII rules were built; after the server gaps in section 6 were closed in `packages/network` and `packages/observatory`; and after the Observatory's real mode started to act through the Network service, verify the Cloudflare Access JWT and show the attention v1.2 send path. Updated 2026-10-08 for the four apps on one backend (ntwrk, slop, peon, friends): the app switcher, roles per app, per-app review reasons and SLAs, and the cross-app person view (section 4.6). Updated again on 2026-10-08 for the audit fixes in the console (docs/audit/2026-10-08-weaknesses.md), the per-app Member 360 panels (3.3.1) and the post-date report queue (3.7.1). Hand-written by a Claude agent from code reading. Each status was checked against the code and, where it says so, against a running server.
+Status: gap analysis, 2026-10-07. Updated the same day three times: after the review gate, the server auth and the real-mode PII rules were built; after the server gaps in section 6 were closed in `packages/network` and `apps/observatory`; and after the Observatory's real mode started to act through the Network service, verify the Cloudflare Access JWT and show the attention v1.2 send path. Updated 2026-10-08 for the four apps on one backend (ntwrk, slop, peon, friends): the app switcher, roles per app, per-app review reasons and SLAs, and the cross-app person view (section 4.6). Updated again on 2026-10-08 for the audit fixes in the console (docs/audit/2026-10-08-weaknesses.md), the per-app Member 360 panels (3.3.1) and the post-date report queue (3.7.1). Hand-written by a Claude agent from code reading. Each status was checked against the code and, where it says so, against a running server.
 
-Sources: PRD sections 28, 31.5, 32.8, 32.9, 32.14, 32.19, 32.20, 34.6, 35, 36 and 37 ([prd-snapshot.md](prd-snapshot.md)); the 2026-10-07 audit (`docs/research/2026-10-07-audit.md`, in git history at 16cde70); [observatory.md](observatory.md); `packages/observatory` and `packages/network/src/network.ts`.
+Sources: PRD sections 28, 31.5, 32.8, 32.9, 32.14, 32.19, 32.20, 34.6, 35, 36 and 37 ([prd-snapshot.md](prd-snapshot.md)); the 2026-10-07 audit (`docs/research/2026-10-07-audit.md`, in git history at 16cde70); [observatory.md](observatory.md); `apps/observatory` and `packages/network/src/network.ts`.
 
-The admin console is the backend dashboard that the team uses to run the Network. The Observatory (`packages/observatory`) is its first implementation. This document says what the console must do before launch, what exists today, and what is missing.
+The admin console is the backend dashboard that the team uses to run the Network. The Observatory (`apps/observatory`) is its first implementation. This document says what the console must do before launch, what exists today, and what is missing.
 
 ## 1. Summary
 
@@ -183,7 +183,7 @@ The Safety tab starts with "Held texts", per app, in two queues: **Leak review**
 | `GET /staff/relay/held?app=` | | `200 {ok, items: [{id, kind, text?, reasons, createdAt, memberId?, minor?}]}` |
 | `POST /staff/relay/<id>/release?app=` and `.../reject` | `{note}` (the service also accepts `reason`) | `200 {ok: true}` or `409 {reason}` |
 
-**Status (2026-10-09):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `packages/observatory/test/held.test.ts`), and the service serves all four routes (`packages/network/service/service.ts`; contract-checked against the real service in `packages/network/test/relay.test.ts` and `cloud-outbound.integration.test.ts`). A network with no outbound queue (dry run) answers the leak queue with 404, which the console shows as "Not available". Game mode has no held texts.
+**Status (2026-10-09):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `apps/observatory/test/held.test.ts`), and the service serves all four routes (`packages/network/service/service.ts`; contract-checked against the real service in `packages/network/test/relay.test.ts` and `cloud-outbound.integration.test.ts`). A network with no outbound queue (dry run) answers the leak queue with 404, which the console shows as "Not available". Game mode has no held texts.
 
 How to test locally: run `pnpm run observatory:db`, then the console in real mode with a service (`NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network NETWORK_SERVICE_URL=http://127.0.0.1:4848 NETWORK_SERVICE_TOKEN=<an admin token of the service> PLATFORM_ENV=dev pnpm run observatory --mode real`). Open the printed URL, pick slop, open Safety. Both queues say "Not available" until the service has the routes. To see rows without the service routes, point `NETWORK_SERVICE_URL` at a local fake that answers the calls above (as `held.test.ts` does). In a minor report, **Clear minor signal (every app)** needs a note and then dismisses the report.
 
@@ -258,7 +258,7 @@ How to test locally: run `pnpm run observatory:db`, then the console in real mod
 
 A person can hold more than one role. Each action checks the role on the server, not only in the browser.
 
-What the server enforces today (`packages/observatory/src/server.ts`, `src/staff.ts`). Every check is for the request's app (`?app=`): a role holds for one app (`reviewer@slop`) or for every app (`reviewer@*`). Admin for an app passes every check for that app. The Engineer role is built for simulated worlds only (game controls and the lab); in real mode it has no access. `cross_app_safety` has no app view, only the cross-app person view (4.6).
+What the server enforces today (`apps/observatory/src/server.ts`, `src/staff.ts`). Every check is for the request's app (`?app=`): a role holds for one app (`reviewer@slop`) or for every app (`reviewer@*`). Admin for an app passes every check for that app. The Engineer role is built for simulated worlds only (game controls and the lab); in real mode it has no access. `cross_app_safety` has no app view, only the cross-app person view (4.6).
 
 | Route or command | Roles |
 |---|---|
@@ -344,7 +344,7 @@ Status: built in the Observatory, 2026-10-08. The service takes the reviewer of 
 | Auth | Bind to 127.0.0.1; optional token | SSO and roles | SSO, second factor, roles, IP allow-list or an access proxy |
 | Banner | "SIMULATION" or "LOCAL DATABASE" | "STAGING" | "PRODUCTION · read-only · PII scrubbed" |
 
-The start guard (`deployGuard` in `src/server.ts`) fails closed. A console with real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start without `PLATFORM_ENV`. Under `staging` and `production` it needs Cloudflare Access. Staff tokens work only with `PLATFORM_ENV=dev` and local databases. A console WebSocket opened with an Access JWT closes with code 4401 when the JWT expires (`packages/observatory/test/staff.test.ts`, OBS-05).
+The start guard (`deployGuard` in `src/server.ts`) fails closed. A console with real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start without `PLATFORM_ENV`. Under `staging` and `production` it needs Cloudflare Access. Staff tokens work only with `PLATFORM_ENV=dev` and local databases. A console WebSocket opened with an Access JWT closes with code 4401 when the JWT expires (`apps/observatory/test/staff.test.ts`, OBS-05).
 
 How it reads data:
 
@@ -356,7 +356,7 @@ How it reads data:
 
 ## 6. Gaps, ranked
 
-Owner areas: **network** = `packages/network`; **obs** = `packages/observatory`; **schema** = `packages/observatory/db/schema.sql` and `packages/network/db/network-state.sql`; **core** = `packages/core`; **ops** = deployment and infrastructure; **docs** = PRD and docs.
+Owner areas: **network** = `packages/network`; **obs** = `apps/observatory`; **schema** = `packages/db/schema.sql` and `packages/network/db/network-state.sql`; **core** = `packages/core`; **ops** = deployment and infrastructure; **docs** = PRD and docs.
 
 Status: **Built** (done in code, with tests), **Partial** (some of it is done; the rest is in the last column), **Missing**.
 

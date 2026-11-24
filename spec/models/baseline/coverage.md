@@ -14,12 +14,12 @@ How the ledger was made: six agents read every file and the models on the three 
 
 | Verdict | Files |
 |---|---|
-| covered | 297 |
+| covered | 298 |
 | na | 411 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 708 |
+| total | 709 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
@@ -282,94 +282,95 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/notify/src/tokens.ts | production | none | none | na | Token format, random generation and regex find; no state. |
 | packages/notify/src/types.ts | data | none | none | na | Types only. |
 | packages/notify/src/wiring.ts | production | none | none | na | Adapters that connect the notifier to the queue and thread hooks; no decision. |
-| packages/observatory/db/dev-pg.ts | devtool | none | none | na | Local dev Postgres starter; the backend table marks it dev tooling with no production decision. |
-| packages/observatory/db/migrate.ts | production | runtime_ops [wave2/runtime_ops] | packages/observatory/db/numbers.ts [claude/lemmascript-backend] | covered | The number check calls dupAt in the numbers core, and runtime_ops models the migration runner lock and ledger. |
-| packages/observatory/db/migrations/0003_platform.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0004_network_apps.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0005_console_apps.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0006_platform_safety.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0007_friends_platform_safety.sql | sql | outbound_queue [claude/quint-state-machines], join_age [claude/quint-state-machines] | none | na | SQL migration; outbound_queue models its person_cap_take function and join_age models its min_join_age rows. |
-| packages/observatory/db/migrations/0010_console_read_paths.sql | sql | none | none | na | SQL migration for read grants; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0011_bans_photos_packs.sql | sql | staff_console [wave2/staff_console] | none | na | SQL migration; staff_console models its pack registry row and the integration tests run it. |
-| packages/observatory/db/migrations/0012_person_cap_release.sql | sql | outbound_queue [claude/quint-state-machines] | none | na | SQL migration; outbound_queue models the person cap release on every not-sent status. |
-| packages/observatory/db/migrations/0014_photo_consent_bias.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0015_outbound_queue.sql | sql | none | none | na | SQL migration for the queue table; the backend read it in full and the integration tests run it. |
-| packages/observatory/db/migrations/0020_cost_ledger_ops_alerts.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0021_shared_agent_turns.sql | sql | turn_consent [claude/quint-state-machines] | none | na | SQL migration; sql-schema.md maps its one-processing-turn-per-sender index to the turn model. |
-| packages/observatory/db/migrations/0022_cloud_outbound_receipts.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0023_shared_agent_actions.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0024_notification_projection.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0025_eliza_notices.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0026_relay.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0030_ntwrk_party_domain.sql | sql | none | none | na | SQL data migration; the backend tables mark it N/A. |
-| packages/observatory/db/migrations/0031_relay_network.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0032_outbound_leak_review.sql | sql | outbound_queue [claude/quint-state-machines] | none | na | SQL migration; outbound_queue models its leak_released_by column. |
-| packages/observatory/db/migrations/0033_phone_changes.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0034_otp_provider_chat_id.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0035_pending_join_home.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0036_inbound_route_authority.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0037_photo_relay.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0038_matching_age_floor.sql | sql | join_age [claude/quint-state-machines] | none | na | SQL migration; join_age models its lowest-age matching view. |
-| packages/observatory/db/migrations/0039_profile_suggestions.sql | sql | profile_learning [wave2/profile_learning] | none | na | SQL migration; profile_learning names it in its code map. |
-| packages/observatory/db/migrations/0040_profile_suggestion_connection_receipts.sql | sql | profile_learning [wave2/profile_learning] | none | na | SQL migration; profile_learning names it in its code map. |
-| packages/observatory/db/migrations/0041_profile_cleanup_results.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
-| packages/observatory/db/migrations/0042_turn_consent.sql | sql | turn_consent [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/migrations/0043_join_age.sql | sql | join_age [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/migrations/0044_identity_sagas.sql | sql | identity_sagas [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/migrations/0045_outbound_queue_network.sql | sql | outbound_queue [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/migrations/0049_safety_trust.sql | sql | safety_trust [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/migrations/0052_profile_learning.sql | sql | profile_learning [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/migrations/0054_runtime_ops.sql | sql | runtime_ops [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/migrations/0057_notify_capital_state_machines.sql | sql | notify_capital [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
-| packages/observatory/db/numbers.ts | production | staff_console [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
-| packages/observatory/db/schema.sql | sql | runtime_ops [wave2/runtime_ops] | none | na | Base SQL schema; runtime_ops cites its keys and the security tests check the audit triggers. |
-| packages/observatory/db/seed.ts | devtool | staff_console [wave2/staff_console] | none | na | Local seed tool behind a local-host guard; staff_console lists the seed-writer machine. |
-| packages/observatory/db/writer.ts | devtool | staff_console [wave2/staff_console] | none | na | Row writer for the dev seed, one truncate and insert transaction; staff_console lists the seed-writer machine. |
-| packages/observatory/src/appProfile.ts | production | staff_console [wave2/staff_console] | packages/core/src/policy.ts [claude/lemmascript-backend] | covered | photosAllowed takes its age decision from validAge in the policy core, and staff_console models the photo gate. |
-| packages/observatory/src/apps.ts | config | staff_console [wave2/staff_console] | none | covered | App registry and env parsing; staff_console models its PACK_READY gate, and a proof adds nothing to a table. |
-| packages/observatory/src/console-gate.ts | production | staff_console, runtime_ops [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
-| packages/observatory/src/engineCapture.ts | devtool | none | none | na | Summary of a simulated engine run with no production decision. |
-| packages/observatory/src/events.ts | data | none | none | na | Row mapping and event labels; the backend tables mark it N/A. |
-| packages/observatory/src/health.ts | production | staff_console [wave2/staff_console] | none | covered | Alert and scorecard arithmetic that enforces nothing; staff_console models the appHealth matching line. |
-| packages/observatory/src/lab.ts | devtool | none | none | na | Lab run launcher for simulator jobs; the backend tables mark it N/A. |
-| packages/observatory/src/ops.ts | production | none | none | na | Cost SQL and arithmetic for display only; the backend tables mark it N/A. |
-| packages/observatory/src/people.ts | production | console_privacy [claude/lemmascript-frontend] | packages/observatory/src/privacy-core.ts [claude/lemmascript-frontend] | covered | Gap closed on 2026-11-08: The cross-app person view hides private apps and folds their holds into restricted, and no model or core holds this privacy rule. |
-| packages/observatory/src/privacy-core.ts | production | see its shell | self [claude/lemmascript-frontend] | covered | New import-free core with //@ contracts; the shell calls it. |
-| packages/observatory/src/projector.ts | production | staff_console [wave2/staff_console] | none | covered | Game-mode opportunity projection that staff_console models as opp-projection; a lemma core adds little to a dashboard projection. |
-| packages/observatory/src/report.ts | devtool | none | none | na | Run report writer with no production decision. |
-| packages/observatory/src/runDiff.ts | devtool | none | none | na | Diff of two run reports with no production decision. |
-| packages/observatory/src/scoring.ts | devtool | none | none | na | Game scoring, not a safety path, per the backend tables. |
-| packages/observatory/src/scrub.ts | production | none | none | na | Regex contact scrubbing that LemmaScript cannot model and that has no state; corpora test it. |
-| packages/observatory/src/server.ts | production | staff_console [wave2/staff_console], observatory_sync [claude/lemmascript-frontend] | packages/observatory/src/console-gate.ts [claude/lemmascript-backend] | covered | The start guard calls deployVerdict, route checks go through the staff-roles core, and staff_console models reveals, tickets, sockets and audit. |
-| packages/observatory/src/shape.ts | production | console_privacy [claude/lemmascript-frontend] | packages/observatory/src/privacy-core.ts [claude/lemmascript-frontend] | covered | Gap closed on 2026-11-08: viewClass and the counts shaping decide what member data each socket class sees, and no core or model holds them. |
-| packages/observatory/src/sources/game.ts | devtool | none | none | na | Game-mode world driver that the real-only image never loads. |
-| packages/observatory/src/sources/real.ts | production | staff_console [wave2/staff_console] | packages/observatory/src/console-gate.ts [claude/lemmascript-backend] | covered | Age view and login check call consoleMinor and loginVerdict, and staff_console models real-source and console-age-view. |
-| packages/observatory/src/sources/service.ts | production | staff_console [wave2/staff_console] | none | covered | HTTP client to the service whose status mapping and timeout staff_console models as staff-action-relay; a lemma core is not meaningful here. |
-| packages/observatory/src/sources/source.ts | data | none | none | na | Source interface and error tables only. |
-| packages/observatory/src/staff-roles.ts | production | staff_console [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
-| packages/observatory/src/staff.ts | production | staff_console [wave2/staff_console] | packages/observatory/src/staff-roles.ts [claude/lemmascript-backend] | covered | Role checks call the staff-roles core, and staff_console models staff identity and grant reloads. |
-| packages/observatory/src/store.ts | production | staff_console [wave2/staff_console] | none | na | In-memory view store with no decision; staff_console covers its setEdges replacement. |
-| packages/observatory/src/takeover.ts | devtool | none | none | na | Game-mode play-as agent; it uses the shared yes/no parser. |
-| packages/observatory/src/types.ts | data | none | none | na | Types and constant lists with no logic. |
-| packages/observatory/web/admin.tsx | production | review_desk, observatory_sync [claude/lemmascript-frontend], staff_console [wave2/staff_console], spec/consoleWorkspace.md | none | covered | Held texts, cases, reports, requests, the matching switch, the audit log and the lab; spec/consoleWorkspace.md owns their view states. The cited logic/review.ts is not on this branch. |
-| packages/observatory/web/apps.tsx | production | console_privacy, console_views [claude/lemmascript-frontend], spec/consoleNavigation.md | none | covered | App switcher, all-apps page and person page; spec/consoleNavigation.md owns which page shows and spec/staffPermissions.md the role scope. The cited privacy-core.ts is not on this branch. |
-| packages/observatory/web/drawer.tsx | production | console_views, observatory_sync [claude/lemmascript-frontend], spec/consoleNavigation.md | none | covered | spec/consoleNavigation.md owns tab visibility, the fallback to the feed and the filter keys of each tab; the cited logic/views.ts is not on this branch. |
-| packages/observatory/web/graph.ts | production | none | none | na | Canvas force graph and colors for display only. |
-| packages/observatory/web/logic/filters.ts | removed | spec/observatorySync.md, spec/consoleNavigation.md | none | covered | Not on this branch. spec/observatorySync.md owns the filter sync and spec/consoleNavigation.md owns the filter dimming. |
-| packages/observatory/web/logic/review.ts | removed | spec/staffReview.md | none | covered | Not on this branch. review.tsx imports the generated staffReview decisions. |
-| packages/observatory/web/logic/sync.ts | removed | spec/observatorySync.md | none | covered | Not on this branch. store.ts imports the generated observatorySync decisions. |
-| packages/observatory/web/logic/views.ts | removed | spec/consoleNavigation.md, spec/consoleWorkspace.md | none | covered | Not on this branch. spec/consoleNavigation.md owns tabs, search and picks; spec/consoleWorkspace.md owns panel views and the propose gate. |
-| packages/observatory/web/main.tsx | production | console_views [claude/lemmascript-frontend], spec/consoleNavigation.md, spec/staffSignIn.md | none | covered | The top bar, search, stage and sign-in panels; spec/consoleNavigation.md and spec/staffSignIn.md own them. The cited logic/views.ts is not on this branch. |
-| packages/observatory/web/map.ts | production | observatory_sync [claude/lemmascript-frontend] | none | covered | Map renderer; marker data comes from the store, which imports the generated observatorySync decisions (spec/observatorySync.md). The cited logic/sync.ts is not on this branch. |
-| packages/observatory/web/network.tsx | production | none | none | na | Game-mode scenario buttons; the server gates reset. |
-| packages/observatory/web/ops.tsx | production | none | none | na | Cost panel display with a budget tone only. |
-| packages/observatory/web/panels.tsx | production | console_views, staff_console [wave2/staff_console], spec/consoleMemberView.md, spec/consoleWorkspace.md | none | covered | The inspector imports the generated consoleMemberView decisions for photo reads; spec/consoleWorkspace.md owns the panel views. The cited logic/views.ts is not on this branch. |
-| packages/observatory/web/review.tsx | production | review_desk [claude/lemmascript-frontend], spec/staffReview.md | none | covered | The review controller imports the generated staffReview decisions. The cited logic/review.ts is not on this branch. |
-| packages/observatory/web/safe.ts | production | none | none | na | DOM text node and tooltip text helpers with no decision. |
-| packages/observatory/web/store.ts | production | observatory_sync, staff_console [wave2/staff_console], spec/observatorySync.md, spec/staffPermissions.md | none | covered | Imports the generated observatorySync and staffPermissions decisions. The cited logic/sync.ts is not on this branch. |
-| packages/observatory/web/ui.tsx | production | console_views [claude/lemmascript-frontend] | none | covered | Shared display helpers with no state. The cited logic/views.ts is not on this branch. |
+| packages/db/dev-pg.ts | devtool | none | none | na | Local dev Postgres starter; the backend table marks it dev tooling with no production decision. |
+| packages/db/migrate.ts | production | runtime_ops [wave2/runtime_ops] | packages/db/numbers.ts [claude/lemmascript-backend] | covered | The number check calls dupAt in the numbers core, and runtime_ops models the migration runner lock and ledger. |
+| packages/db/migrations/0003_platform.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0004_network_apps.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0005_console_apps.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0006_platform_safety.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0007_friends_platform_safety.sql | sql | outbound_queue [claude/quint-state-machines], join_age [claude/quint-state-machines] | none | na | SQL migration; outbound_queue models its person_cap_take function and join_age models its min_join_age rows. |
+| packages/db/migrations/0010_console_read_paths.sql | sql | none | none | na | SQL migration for read grants; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0011_bans_photos_packs.sql | sql | staff_console [wave2/staff_console] | none | na | SQL migration; staff_console models its pack registry row and the integration tests run it. |
+| packages/db/migrations/0012_person_cap_release.sql | sql | outbound_queue [claude/quint-state-machines] | none | na | SQL migration; outbound_queue models the person cap release on every not-sent status. |
+| packages/db/migrations/0014_photo_consent_bias.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0015_outbound_queue.sql | sql | none | none | na | SQL migration for the queue table; the backend read it in full and the integration tests run it. |
+| packages/db/migrations/0020_cost_ledger_ops_alerts.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0021_shared_agent_turns.sql | sql | turn_consent [claude/quint-state-machines] | none | na | SQL migration; sql-schema.md maps its one-processing-turn-per-sender index to the turn model. |
+| packages/db/migrations/0022_cloud_outbound_receipts.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0023_shared_agent_actions.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0024_notification_projection.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0025_eliza_notices.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0026_relay.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0030_ntwrk_party_domain.sql | sql | none | none | na | SQL data migration; the backend tables mark it N/A. |
+| packages/db/migrations/0031_relay_network.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0032_outbound_leak_review.sql | sql | outbound_queue [claude/quint-state-machines] | none | na | SQL migration; outbound_queue models its leak_released_by column. |
+| packages/db/migrations/0033_phone_changes.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0034_otp_provider_chat_id.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0035_pending_join_home.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0036_inbound_route_authority.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0037_photo_relay.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0038_matching_age_floor.sql | sql | join_age [claude/quint-state-machines] | none | na | SQL migration; join_age models its lowest-age matching view. |
+| packages/db/migrations/0039_profile_suggestions.sql | sql | profile_learning [wave2/profile_learning] | none | na | SQL migration; profile_learning names it in its code map. |
+| packages/db/migrations/0040_profile_suggestion_connection_receipts.sql | sql | profile_learning [wave2/profile_learning] | none | na | SQL migration; profile_learning names it in its code map. |
+| packages/db/migrations/0041_profile_cleanup_results.sql | sql | none | none | na | SQL migration; the backend tables mark it N/A and the integration tests run it. |
+| packages/db/migrations/0042_turn_consent.sql | sql | turn_consent [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0043_join_age.sql | sql | join_age [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0044_identity_sagas.sql | sql | identity_sagas [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0045_outbound_queue_network.sql | sql | outbound_queue [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0049_safety_trust.sql | sql | safety_trust [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0052_profile_learning.sql | sql | profile_learning [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0054_runtime_ops.sql | sql | runtime_ops [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0057_notify_capital_state_machines.sql | sql | notify_capital [claude/quint-state-machines] | none | covered | Schema for the state machine that the Quint module of the same name models; the integration tests cover the SQL. |
+| packages/db/migrations/0072_private_signup_eligibility.sql | sql | signup_age_eligibility | none | covered | The integration test verifies the private write, numeric-only staff projections and removal on account erasure. |
+| packages/db/numbers.ts | production | staff_console [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
+| packages/db/schema.sql | sql | runtime_ops [wave2/runtime_ops] | none | na | Base SQL schema; runtime_ops cites its keys and the security tests check the audit triggers. |
+| apps/observatory/db/seed.ts | devtool | staff_console [wave2/staff_console] | none | na | Local seed tool behind a local-host guard; staff_console lists the seed-writer machine. |
+| apps/observatory/db/writer.ts | devtool | staff_console [wave2/staff_console] | none | na | Row writer for the dev seed, one truncate and insert transaction; staff_console lists the seed-writer machine. |
+| apps/observatory/src/appProfile.ts | production | staff_console [wave2/staff_console] | packages/core/src/policy.ts [claude/lemmascript-backend] | covered | photosAllowed takes its age decision from validAge in the policy core, and staff_console models the photo gate. |
+| apps/observatory/src/apps.ts | config | staff_console [wave2/staff_console] | none | covered | App registry and env parsing; staff_console models its PACK_READY gate, and a proof adds nothing to a table. |
+| apps/observatory/src/console-gate.ts | production | staff_console, runtime_ops [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
+| apps/observatory/src/engineCapture.ts | devtool | none | none | na | Summary of a simulated engine run with no production decision. |
+| apps/observatory/src/events.ts | data | none | none | na | Row mapping and event labels; the backend tables mark it N/A. |
+| apps/observatory/src/health.ts | production | staff_console [wave2/staff_console] | none | covered | Alert and scorecard arithmetic that enforces nothing; staff_console models the appHealth matching line. |
+| apps/observatory/src/lab.ts | devtool | none | none | na | Lab run launcher for simulator jobs; the backend tables mark it N/A. |
+| apps/observatory/src/ops.ts | production | none | none | na | Cost SQL and arithmetic for display only; the backend tables mark it N/A. |
+| apps/observatory/src/people.ts | production | console_privacy [claude/lemmascript-frontend], signup_age_eligibility | apps/observatory/src/privacy-core.ts [claude/lemmascript-frontend] | covered | Gap closed on 2026-11-08: The cross-app person view hides private apps and folds their holds into restricted, and no model or core holds this privacy rule. |
+| apps/observatory/src/privacy-core.ts | production | see its shell | self [claude/lemmascript-frontend] | covered | New import-free core with //@ contracts; the shell calls it. |
+| apps/observatory/src/projector.ts | production | staff_console [wave2/staff_console] | none | covered | Game-mode opportunity projection that staff_console models as opp-projection; a lemma core adds little to a dashboard projection. |
+| apps/observatory/src/report.ts | devtool | none | none | na | Run report writer with no production decision. |
+| apps/observatory/src/runDiff.ts | devtool | none | none | na | Diff of two run reports with no production decision. |
+| apps/observatory/src/scoring.ts | devtool | none | none | na | Game scoring, not a safety path, per the backend tables. |
+| apps/observatory/src/scrub.ts | production | none | none | na | Regex contact scrubbing that LemmaScript cannot model and that has no state; corpora test it. |
+| apps/observatory/src/server.ts | production | staff_console [wave2/staff_console], observatory_sync [claude/lemmascript-frontend] | apps/observatory/src/console-gate.ts [claude/lemmascript-backend] | covered | The start guard calls deployVerdict, route checks go through the staff-roles core, and staff_console models reveals, tickets, sockets and audit. |
+| apps/observatory/src/shape.ts | production | console_privacy [claude/lemmascript-frontend] | apps/observatory/src/privacy-core.ts [claude/lemmascript-frontend] | covered | Gap closed on 2026-11-08: viewClass and the counts shaping decide what member data each socket class sees, and no core or model holds them. |
+| apps/observatory/src/sources/game.ts | devtool | none | none | na | Game-mode world driver that the real-only image never loads. |
+| apps/observatory/src/sources/real.ts | production | staff_console [wave2/staff_console] | apps/observatory/src/console-gate.ts [claude/lemmascript-backend] | covered | Age view and login check call consoleMinor and loginVerdict, and staff_console models real-source and console-age-view. |
+| apps/observatory/src/sources/service.ts | production | staff_console [wave2/staff_console] | none | covered | HTTP client to the service whose status mapping and timeout staff_console models as staff-action-relay; a lemma core is not meaningful here. |
+| apps/observatory/src/sources/source.ts | data | none | none | na | Source interface and error tables only. |
+| apps/observatory/src/staff-roles.ts | production | staff_console [claude/quint-state-machines] | self [claude/lemmascript-backend] | covered | Proved import-free core; its callers are the shells, and the named Quint modules model their flows. |
+| apps/observatory/src/staff.ts | production | staff_console [wave2/staff_console] | apps/observatory/src/staff-roles.ts [claude/lemmascript-backend] | covered | Role checks call the staff-roles core, and staff_console models staff identity and grant reloads. |
+| apps/observatory/src/store.ts | production | staff_console [wave2/staff_console] | none | na | In-memory view store with no decision; staff_console covers its setEdges replacement. |
+| apps/observatory/src/takeover.ts | devtool | none | none | na | Game-mode play-as agent; it uses the shared yes/no parser. |
+| apps/observatory/src/types.ts | data | none | none | na | Types and constant lists with no logic. |
+| apps/observatory/web/admin.tsx | production | review_desk, observatory_sync [claude/lemmascript-frontend], staff_console [wave2/staff_console], spec/consoleWorkspace.md | none | covered | Held texts, cases, reports, requests, the matching switch, the audit log and the lab; spec/consoleWorkspace.md owns their view states. The cited logic/review.ts is not on this branch. |
+| apps/observatory/web/apps.tsx | production | console_privacy, console_views [claude/lemmascript-frontend], spec/consoleNavigation.md | none | covered | App switcher, all-apps page and person page; spec/consoleNavigation.md owns which page shows and spec/staffPermissions.md the role scope. The cited privacy-core.ts is not on this branch. |
+| apps/observatory/web/drawer.tsx | production | console_views, observatory_sync [claude/lemmascript-frontend], spec/consoleNavigation.md | none | covered | spec/consoleNavigation.md owns tab visibility, the fallback to the feed and the filter keys of each tab; the cited logic/views.ts is not on this branch. |
+| apps/observatory/web/graph.ts | production | none | none | na | Canvas force graph and colors for display only. |
+| apps/observatory/web/logic/filters.ts | removed | spec/observatorySync.md, spec/consoleNavigation.md | none | covered | Not on this branch. spec/observatorySync.md owns the filter sync and spec/consoleNavigation.md owns the filter dimming. |
+| apps/observatory/web/logic/review.ts | removed | spec/staffReview.md | none | covered | Not on this branch. review.tsx imports the generated staffReview decisions. |
+| apps/observatory/web/logic/sync.ts | removed | spec/observatorySync.md | none | covered | Not on this branch. store.ts imports the generated observatorySync decisions. |
+| apps/observatory/web/logic/views.ts | removed | spec/consoleNavigation.md, spec/consoleWorkspace.md | none | covered | Not on this branch. spec/consoleNavigation.md owns tabs, search and picks; spec/consoleWorkspace.md owns panel views and the propose gate. |
+| apps/observatory/web/main.tsx | production | console_views [claude/lemmascript-frontend], spec/consoleNavigation.md, spec/staffSignIn.md | none | covered | The top bar, search, stage and sign-in panels; spec/consoleNavigation.md and spec/staffSignIn.md own them. The cited logic/views.ts is not on this branch. |
+| apps/observatory/web/map.ts | production | observatory_sync [claude/lemmascript-frontend] | none | covered | Map renderer; marker data comes from the store, which imports the generated observatorySync decisions (spec/observatorySync.md). The cited logic/sync.ts is not on this branch. |
+| apps/observatory/web/network.tsx | production | none | none | na | Game-mode scenario buttons; the server gates reset. |
+| apps/observatory/web/ops.tsx | production | none | none | na | Cost panel display with a budget tone only. |
+| apps/observatory/web/panels.tsx | production | console_views, staff_console [wave2/staff_console], spec/consoleMemberView.md, spec/consoleWorkspace.md | none | covered | The inspector imports the generated consoleMemberView decisions for photo reads; spec/consoleWorkspace.md owns the panel views. The cited logic/views.ts is not on this branch. |
+| apps/observatory/web/review.tsx | production | review_desk [claude/lemmascript-frontend], spec/staffReview.md | none | covered | The review controller imports the generated staffReview decisions. The cited logic/review.ts is not on this branch. |
+| apps/observatory/web/safe.ts | production | none | none | na | DOM text node and tooltip text helpers with no decision. |
+| apps/observatory/web/store.ts | production | observatory_sync, staff_console [wave2/staff_console], spec/observatorySync.md, spec/staffPermissions.md | none | covered | Imports the generated observatorySync and staffPermissions decisions. The cited logic/sync.ts is not on this branch. |
+| apps/observatory/web/ui.tsx | production | console_views [claude/lemmascript-frontend] | none | covered | Shared display helpers with no state. The cited logic/views.ts is not on this branch. |
 | packages/platform/src/accounts.ts | production | identity_sagas, join_age, turn_consent [claude/quint-state-machines], auth_edge [wave2/auth_edge], profile_learning [wave2/profile_learning], photos_rating [wave2/photos_rating], signup_age_eligibility | packages/platform/src/decisions.ts, packages/platform/src/consent.ts, packages/core/src/policy.ts [claude/lemmascript-backend] | covered | joinPlan, resolveConsent and validAge are verified cores, and join, leave and delete are in several Quint models. |
-| packages/platform/src/age.ts | production | join_age [claude/quint-state-machines], signup_age_eligibility | packages/core/src/policy.ts, packages/platform/src/decisions.ts [claude/lemmascript-backend], packages/core/src/generated/memberAge.ts | covered | Age rules call the verified policy core and lowestOf, and join_age models the age flow. |
+| packages/platform/src/age.ts | production | join_age [claude/quint-state-machines], signup_age_eligibility | packages/core/src/policy.ts, packages/platform/src/decisions.ts [claude/lemmascript-backend] | covered | Age rules call the verified policy core and lowestOf, and join_age models the age flow. |
 | packages/platform/src/api.ts | production | auth_edge [wave2/auth_edge], join_flow [claude/lemmascript-frontend], cloud_auth [wave4/cloud_auth], signup_age_eligibility | packages/platform/src/routing-core.ts [claude/lemmascript-frontend] | covered | Gap closed on 2026-11-08: Routes and gates are in auth_edge, but oauthReturnPath, cloudReturnPath and parseCookies have no verified core. |
 | packages/platform/src/apps.ts | production | join_age [claude/quint-state-machines] | packages/platform/src/routing-core.ts [claude/lemmascript-frontend] | covered | Gap closed on 2026-11-08: keywordApp and lookingFor are only oracles in join_age, and appForHost and keyword routing have no verified core. |
 | packages/platform/src/body.ts | production | none | none | na | Capped stream reader; the backend doc rates it N/A and the 413 step is part of the edge-trust flow. |

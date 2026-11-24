@@ -8,7 +8,7 @@ import {randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {DAY} from "@thenetwork/core";
 import {peonPack,PEON_ENGINE_CONFIG,runEngine,type EngineInput} from "@thenetwork/engine";
-import {applySchema} from "../../observatory/db/dev-pg.ts";
+import {applySchema} from "../../db/dev-pg.ts";
 import {appWiring} from "../service/packs.ts";
 import {loadSnapshot} from "../service/snapshot.ts";
 

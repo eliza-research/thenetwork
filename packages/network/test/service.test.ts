@@ -1,5 +1,5 @@
 // The production service (packages/network/service) against the local dev Postgres, in a database
-// of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is sent: the
+// of its own per test process (the apps/observatory/test/pg.ts pattern). Nothing is sent: the
 // default adapter is dry-run, and the Blooio adapter gets a fake provider. Skipped without Postgres.
 import { setTimeout as sleep } from "node:timers/promises";
 import { findExecutable } from "../../core/src/runtime/process.ts";
@@ -10,7 +10,7 @@ import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { GENERATOR_NAMES } from "../../engine/src/config.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";

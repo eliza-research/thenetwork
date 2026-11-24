@@ -29,7 +29,7 @@ Imported from `quint/identity_sagas.qnt` at `30d950e`. See [model index](README.
 //   packages/network/service/runtime.ts     (identities, the forget path)
 //   packages/network/service/photoIntake.ts (consentAnswer)
 //   packages/blooio/src/outbound-queue.ts   (admission binding, line_conversations)
-//   packages/observatory/db/migrations/0044_identity_sagas.sql (member_apps, forget_profile_suggestions)
+//   packages/db/migrations/0044_identity_sagas.sql (member_apps, forget_profile_suggestions)
 // Line numbers in the comments below are those of ad67275 where a fix did not change the code.
 //
 // Rules of the model (quint/README.md):
