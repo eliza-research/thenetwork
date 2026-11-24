@@ -1536,12 +1536,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) || conditionalUnresolved.size ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
-  // An explicit exclusion range ("anything except Sunday works") scans as mixed only because
-  // "except" carries a negation signal beside the affirmation. The exclusion itself is already
-  // proven and uncontradicted, so it answers with the times it leaves open, exactly as the
-  // unvetoed exclusion path at the end of this function does.
   if (c.why === "mixed" && !explicitTimesOnly && namedExclusion && !contradictedExclusion
-    && open.length && EXPLICIT_ALTERNATIVE_RANGE.test(t)) return explicitYes(open);
+    && open.length && /^\s*(?:any\s?(?:thing|day|time)|every\s?(?:thing|day)|all|whichever)\s+except\s+[a-z ,]+?\s+works?[.!\s]*$/.test(t)) return explicitYes(open);
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
   if (explicitTimesOnly) {
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };

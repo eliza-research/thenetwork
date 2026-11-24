@@ -190,3 +190,5 @@
 {"text":"any time except Saturday works","answer":"yes","keys":["a","c"]}
 {"text":"anything but Sunday works","answer":"yes","keys":["a","b"]}
 {"text":"anything except Sunday doesn't work","answer":"unclear","keys":[]}
+{"text":"no, anything except Sunday works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday works lol jk none of them","answer":"unclear","keys":[]}
