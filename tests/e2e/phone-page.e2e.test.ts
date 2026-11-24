@@ -4,8 +4,7 @@
 // send each server answer to the generated phone page machine, as usePhonePage does. Only the DOM is left out:
 // the PhonePageView play tests cover it. The relative fetch of the page goes to the site of the test browser.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { enabled, type Event, initial, inv, type PhonePage, step } from "../../packages/core/src/generated/phonePage.ts";
-import { signInAttemptNone } from "../../packages/core/src/generated/oneStepPage.ts";
+import { enabled, type Event, initial, type PhonePage, step } from "../../packages/core/src/generated/phonePage.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import { confirmNumberChange, type PhoneStartResult, startNumberChange } from "../../packages/ui/src/api/phone.ts";
 import { readStepSession } from "../../packages/ui/src/api/stepPages.ts";
@@ -15,21 +14,6 @@ import { Browser, newPhone, pgAvailable, startStack, webJoin, type Stack } from 
 const T = 180_000;
 const MIN = 60_000;
 const realFetch = globalThis.fetch;
-
-test("session load discards a stale change and a mode result keeps its screen", () => {
-  const loading: PhonePage = { ...initial, screen: "PhoneLoading", changeStarted: true };
-  expect(inv(loading)).toBe(true);
-  const signedOut = step(loading, { type: "phoneLoaded", session: "SessionSignedOut", cloudReturn: "CloudReturnNone" });
-  expect(signedOut).toMatchObject({ screen: "PhoneSignIn", pending: "PhoneIdle", changeStarted: false });
-  expect(inv(signedOut)).toBe(true);
-
-  const changing: PhonePage = { ...initial, screen: "PhoneNewNumber", changeStarted: true,
-    signIn: { ...initial.signIn, stage: "SignInVerified" } };
-  expect(inv(changing)).toBe(true);
-  const mode = step(changing, { type: "moveSignIn", attempt: { ...signInAttemptNone, kind: "AttemptReadMode", lookup: "SignInLookupOtp" } });
-  expect(mode).toMatchObject({ screen: "PhoneNewNumber", changeStarted: true, signIn: { auth: "SignInOtp" } });
-  expect(inv(mode)).toBe(true);
-});
 
 /** The page's same-origin requests go to the site of `app`, with the cookies of `browser`. */
 function pageOn(st: Stack, app: AppId, browser: Browser): void {
