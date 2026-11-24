@@ -161,8 +161,8 @@ export interface AccountHooks {
   findInvitation?(app: AppId, token: string, at: number, verifiedPhone: string): Promise<EnrollmentReferral | undefined>;
   /** Commit the referred membership, opt-in, session attachment, Network member and invitation together. */
   commitReferredJoin?(ctx: JoinHookContext & { referral: EnrollmentReferral }): Promise<void>;
-  /** Commit a browser minor's membership, Network member and private eligibility together. */
-  commitBrowserSignup?(ctx: JoinHookContext & { signupAge: SignupAge }, consent: ConsentEvent): Promise<void>;
+  /** Commit private eligibility. A consent event accompanies a new enrollment. */
+  commitBrowserSignup?(ctx: JoinHookContext & { signupAge: SignupAge }, consent?: ConsentEvent): Promise<void>;
   /** Create the network member (the service mounts this). A throw undoes the join. */
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
@@ -494,7 +494,23 @@ export class Accounts {
       if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
       return { ok: false, error: "under_age" };
     }
-    if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing, created: false };
+    if (ageCheck.phase === "ReturnExisting" && existing && person) {
+      if (signupAge) {
+        try {
+          if (this.hooks.commitBrowserSignup) {
+            await this.hooks.commitBrowserSignup({
+              app, person, membership: existing, e164: who.e164, age: age.effective ?? statedAge, recordedAge: null, input, signupAge,
+            });
+          } else if (!await this.store.saveSignupAge(existing, who.e164, this.phoneHash(who.e164), signupAge)) {
+            return { ok: false, error: "review" };
+          }
+        } catch (error) {
+          if (error instanceof JoinReviewRequired) return { ok: false, error: "review" };
+          throw error;
+        }
+      }
+      return { ok: true, membership: existing, created: false };
+    }
     if (ageCheck.phase === "InvalidInvitation") return { ok: false, error: "invalid_invitation" };
     if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
     if (!person) person = await this.createPerson(who.e164, "otp_sms", signupAge ? recordedAge ?? null : age.effective ?? statedAge);

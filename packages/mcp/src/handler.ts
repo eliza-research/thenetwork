@@ -1,6 +1,7 @@
 import { setTimeout as waitForMs } from "node:timers/promises";
 import { createHmac } from "node:crypto";
 import { devShortcutsAllowed, ipBucket, parseJoin, signupAccountView, type Env } from "@thenetwork/platform";
+import { parseSignupBirthday } from "@thenetwork/platform/src/age.ts";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
 import { signupDraftAppEnabled, signupDraftBrowserAction, signupDraftBrowserSource, signupDraftClaimRoute, signupDraftDiscardAllowed } from "../../core/src/generated/mcpSignupDraft.ts";
@@ -9,12 +10,10 @@ import {
   browserSignupJoinAllowed, browserSignupMemberAllowed, browserSignupOpenAllowed, browserSignupOwnerBindingAllowed,
   initial as browserInitial, mayCompareBrowserDigest, sessionMatchesConsent, step as stepBrowser,
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
-import { adultAge, joinableAge } from "../../core/src/generated/memberAge.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
-  type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
-  ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial,
-  signupAdultDate, signupClockDay, solveCheck,
+  type AuthPage, type AuthView, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
+  canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, initial as pageInitial, solveCheck,
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
@@ -738,12 +737,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const version = form.get("consentVersion");
     if (!browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version))
       return showSignup("Review and accept the current text message terms to continue.", sent);
-    const typedBirthdate = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(form.get("birthdate") ?? "");
-    const birth: CalendarDate | undefined = typedBirthdate ? { year: Number(typedBirthdate[1]), month: Number(typedBirthdate[2]), day: Number(typedBirthdate[3]) } : undefined;
-    const today = calendarDateOfDay(signupClockDay(now()));
-    if (!birth || !birthdateAccepted(birth, today)) return showSignup(undefined, sent, "Enter your birthday. It must be a real date, not after today.");
+    const birthday = parseSignupBirthday(form.get("birthdate"), now());
+    if (!birthday)
+      return showSignup(undefined, sent, "Enter your birthday. It must be a real date, not after today.");
     const input = parseJoin({
-      firstName: form.get("firstName"), age: ageOnDate(birth, today),
+      firstName: form.get("firstName"), age: birthday.age,
       homeCity: form.get("homeCity"), consent: { sms: true, version },
     });
     if (!input) return showSignup("Enter your first name, birthday and home city.", sent);
@@ -751,15 +749,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const invitation = signupInvitation(c.app, typedInvitation);
     if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.", sent);
 
-    let signupAge;
-    if (joinableAge(input.age) && input.age < adultAge) {
-      const date = signupAdultDate(birth);
-      signupAge = { initialMinorAge: input.age, eligibleAt: Date.UTC(date.year, date.month - 1, date.day, 12) };
-    }
     const pending = { ...r, step: "enrolling" as const };
     if (!await store.advanceAuthRequest(r, pending, now)) return expired();
     try {
-      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation, signupAge);
+      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation, birthday.signupAge);
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();

@@ -408,6 +408,57 @@ test.skipIf(!pgAvailable)("friends.help: a teen birthday typed on the signup pag
   });
 }, 60_000);
 
+// spec/siteEnrollment.md, "An authenticated join accepts one age input"
+test.skipIf(!pgAvailable)("the site join uses private birthday eligibility for new and existing members", async () => {
+  await withSignupWorld(["friends:nyc"], async w => {
+    const site = "https://friends.help";
+    const newNumber = "+12125550196", existingNumber = "+12125550197";
+    const birthdate = "2008-10-10";
+    const profile = { firstName: "Jo", homeCity: "nyc", consent: { sms: true, version: APPS.friends.consent.version } };
+    let cookie = "";
+    const post = (path: string, body: unknown) => w.env.fetch(new Request(site + path, {
+      method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", cookie },
+    }));
+    const signIn = async (number: string) => {
+      w.clock.advance(31_000);
+      expect((await post("/api/auth/otp/start", { phone: number })).status).toBe(200);
+      const verified = await post("/api/auth/otp/verify", { phone: number, code: w.harness.provider.last(number) });
+      expect(verified.status).toBe(200);
+      cookie = verified.headers.getSetCookie()[0]!.split(";")[0]!;
+    };
+    const join = async (fields: Record<string, unknown>) => {
+      const response = await post("/api/join", { ...profile, ...fields });
+      return { status: response.status, body: await response.json() };
+    };
+
+    await signIn(newNumber);
+    expect(await join({ birthdate, age: 30 })).toMatchObject({ status: 400, body: { error: "invalid" } });
+    expect(await join({ birthdate: "2008-02-30" })).toMatchObject({ status: 400, body: { error: "invalid_birthdate" } });
+    expect(await w.service.accounts.personFor(newNumber)).toBeUndefined();
+    expect(await join({ birthdate })).toMatchObject({ status: 200, body: { ok: true } });
+    const newPerson = (await w.service.accounts.personFor(newNumber))!;
+    const membership = (await w.service.people.getMembership(newPerson.id, "friends"))!;
+    expect(membership.profile).toEqual({ homeCity: "nyc" });
+    expect(newPerson.lowestAge).toBeNull();
+    expect(await w.service.people.signupAgeAt(newPerson.id, w.clock.now())).toBe(17);
+
+    await signIn(existingNumber);
+    expect(await join({ age: 30 })).toMatchObject({ status: 200, body: { ok: true } });
+    const existingPerson = (await w.service.accounts.personFor(existingNumber))!;
+    const existing = (await w.service.people.getMembership(existingPerson.id, "friends"))!;
+    await w.connector.store.sql`insert into platform.photos(id,person_id,app_id,storage_key,content_type,bytes,sha256,consent_version,created_at)
+      values ('http-join-photo',${existingPerson.id},'slop','http-join-storage','image/jpeg',1,'http-join-sha','http-join-consent',${new Date(w.clock.now())})`;
+    expect(await join({ birthdate, firstName: "Changed" })).toMatchObject({ status: 200, body: { ok: true } });
+    expect(await w.service.people.getMembership(existingPerson.id, "friends")).toEqual(existing);
+    expect(await w.service.accounts.lowestAge(existingNumber, existingPerson)).toBe(17);
+    expect(await w.connector.store.sql`select id from platform.photos where person_id=${existingPerson.id} and deleted_at is null`).toEqual([]);
+
+    w.clock.set(Date.UTC(2026, 9, 10, 12));
+    expect(await w.service.accounts.lowestAge(newNumber, newPerson)).toBe(18);
+    expect(await w.service.accounts.lowestAge(existingNumber, existingPerson)).toBe(18);
+  });
+}, 60_000);
+
 test.skipIf(!pgAvailable)("a browser birthday advances account and matching ages while a lower recorded age stays binding", async () => {
   await withSignupWorld(["friends:nyc"], async w => {
     const site = "friends.help";

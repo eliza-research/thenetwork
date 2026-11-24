@@ -112,6 +112,19 @@ export function confirmConsent(joining: Enrollment, consentMatches: boolean): En
   return { ...joining, currentConsent: consentMatches, phase: consentMatches ? "AwaitingEligibility" : "ConsentMismatch" };
 }
 
+/** Story: Save my approved profile in the app I asked for / An authenticated join accepts one age input (spec/siteEnrollment.md) */
+//@ pure
+export function joinAgeInputAllowed(ageSupplied: boolean, birthdaySupplied: boolean): boolean {
+  return ageSupplied !== birthdaySupplied;
+}
+
+/** Story: Save my approved profile in the app I asked for / An authenticated join accepts one age input (spec/siteEnrollment.md) */
+//@ pure
+export function lawJoinRefusesAmbiguousAgeInput(ageSupplied: boolean, birthdaySupplied: boolean): boolean {
+  //@ ensures \result === true
+  return !(ageSupplied === birthdaySupplied) || !joinAgeInputAllowed(ageSupplied, birthdaySupplied);
+}
+
 /** Story: Save my approved profile in the app I asked for / A hold or ban prevents enrollment (spec/siteEnrollment.md) */
 //@ pure
 export function canCheckEligibility(joining: Enrollment): boolean {

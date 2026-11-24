@@ -1331,20 +1331,25 @@ export class NetworkService implements RuntimeHost {
     await this.welcomeBrowserJoin(rt, ctx);
   }
 
-  private async commitBrowserSignup(ctx: JoinHookContext & { signupAge: SignupAge }, consent: ConsentEvent) {
-    const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
-    if (!rt || ctx.membership.state !== "active") throw new JoinReviewRequired();
+  private async commitBrowserSignup(ctx: JoinHookContext & { signupAge: SignupAge }, consent?: ConsentEvent) {
+    const runtime = this.runtimeFor(ctx.app.id);
+    const rt = consent ? this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? runtime?.city ?? "") : runtime;
+    if (!rt) throw new JoinReviewRequired();
     await rt.scoped(async tx => {
       const store = new PgPeopleStore(tx);
       const phoneHash = this.accounts.phoneHash(ctx.e164);
-      if (!await store.admitMembership(ctx.membership, consent, phoneHash, tx)) throw new JoinReviewRequired();
-      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx })) throw new JoinReviewRequired();
+      if (consent) {
+        if (!await store.admitMembership(ctx.membership, consent, phoneHash, tx)) throw new JoinReviewRequired();
+        if (ctx.membership.state === "active" &&
+          !await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx })) throw new JoinReviewRequired();
+      }
       if (!await store.saveSignupAge(ctx.membership, ctx.e164, phoneHash, ctx.signupAge, tx)) throw new JoinReviewRequired();
       // The birth-derived date and app rows roll back if the existing minor-media cleanup fails.
       await this.removeMinorMedia(ctx.person.id);
     });
     // Enrollment is durable. The ordinary inbound path can still welcome a new member if projection fails.
-    await this.welcomeBrowserJoin(rt, ctx).catch(() => this.log(`[join] browser welcome waits for inbound (${rt.id})`));
+    if (consent && ctx.membership.state === "active")
+      await this.welcomeBrowserJoin(rt, ctx).catch(() => this.log(`[join] browser welcome waits for inbound (${rt.id})`));
   }
 
   private async welcomeBrowserJoin(rt: NetworkRuntime, ctx: JoinHookContext) {

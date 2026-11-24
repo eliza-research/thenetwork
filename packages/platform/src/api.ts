@@ -14,7 +14,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //   const api = createPublicApi({ store, otp, turnstile });
 //   serveHttp({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
-import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { initial as enrollmentInitial, joinAgeInputAllowed, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
 import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
@@ -26,6 +26,7 @@ import {
 import { productionCloudDelegation } from "./cloud-delegation.ts";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
+import { parseSignupBirthday } from "./age.ts";
 import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
@@ -698,13 +699,18 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           });
           if (accountView.phase === "AccountChanged")
             return json(409, { ok: false, error: "account_changed" });
-          const input = parseJoin(b);
+          if (!joinAgeInputAllowed(b.age !== undefined, b.birthdate !== undefined))
+            return json(400, { ok: false, error: "invalid" });
+          const birthday = b.birthdate === undefined ? undefined : parseSignupBirthday(b.birthdate, now());
+          if (b.birthdate !== undefined && !birthday)
+            return json(400, { ok: false, error: "invalid_birthdate" });
+          const input = parseJoin(birthday ? { ...b, age: birthday.age } : b);
           const enrollment = stepEnrollment(accountView, { type: "decodeProfile", decoded: input !== undefined });
           if (!input || enrollment.phase !== "AwaitingConsent") return json(400, { ok: false, error: "invalid" });
           if (b.inviteToken !== undefined && typeof b.inviteToken !== "string")
             return json(400, { ok: false, error: "invalid_invitation" });
           try {
-            const r = await accounts.join(app, who, input, enrollment, b.inviteToken, typeof b.signupView === "string" ? b.signupView : undefined);
+            const r = await accounts.join(app, who, input, enrollment, b.inviteToken, typeof b.signupView === "string" ? b.signupView : undefined, birthday?.signupAge);
             if (!r.ok && r.error === "account_changed") return json(409, { ok: false, error: r.error });
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });

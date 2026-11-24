@@ -2,9 +2,10 @@
 // Age is a person-level fact: the lowest age a person ever stated or a record held, on any app,
 // decides. A person who said 15 on ntwrk cannot join slop later by saying 25.
 import { canBeMatched, validAge } from "../../core/src/policy.ts";
-import { lowerAge } from "../../core/src/generated/memberAge.ts";
+import { adultAge, joinableAge, lowerAge } from "../../core/src/generated/memberAge.ts";
+import { ageOnDate, birthdateAccepted, calendarDateOfDay, signupAdultDate, signupClockDay } from "../../core/src/generated/authorizationPages.ts";
 import type { AppInfo } from "./apps.ts";
-import type { PeopleStore, Person } from "./store.ts";
+import type { PeopleStore, Person, SignupAge } from "./store.ts";
 
 /** The lowest valid age of the ones given (undefined if none is valid). Unknown never raises an age. */
 export function lowestAge(...ages: unknown[]): number | undefined {
@@ -21,6 +22,19 @@ export function lowestAge(...ages: unknown[]): number | undefined {
 /** Resolve only the effective age. The private eligibility date stays inside the store. */
 export async function personAgeAt(store: Pick<PeopleStore, "signupAgeAt">, person: Person, now: number): Promise<number | undefined> {
   return lowestAge(person.lowestAge, await store.signupAgeAt(person.id, now));
+}
+
+/** Convert a browser birthday before it reaches the account or profile. */
+export function parseSignupBirthday(value: unknown, now: number): { age: number; signupAge?: SignupAge } | undefined {
+  const parts = typeof value === "string" ? /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(value) : null;
+  if (!parts) return;
+  const birth = { year: Number(parts[1]), month: Number(parts[2]), day: Number(parts[3]) };
+  const today = calendarDateOfDay(signupClockDay(now));
+  if (!birthdateAccepted(birth, today)) return;
+  const age = ageOnDate(birth, today);
+  if (!joinableAge(age) || age >= adultAge) return { age };
+  const adultDate = signupAdultDate(birth);
+  return { age, signupAge: { initialMinorAge: age, eligibleAt: Date.UTC(adultDate.year, adultDate.month - 1, adultDate.day, 12) } };
 }
 
 /** True if a person of this age may join the app. Missing or invalid ages fail closed. */

@@ -12,6 +12,8 @@ An additional app checks the effective age for admission. Its durable member age
 
 Acceptance means the transaction committed the current verified membership and Network member. A failed attempt leaves any earlier eligibility date and initial age unchanged. The media cleanup occurs before the transaction commits. Welcome and profile projection use the accepted membership after commit.
 
+The authenticated site join also accepts one birthday. The same private update can apply to an existing verified membership. The membership, profile and consent do not change on that path. A request with both age inputs cannot update the date.
+
 ```quint
 // quint-check: max-steps=14 max-samples=4000 verify-steps=8
 // quint-witness: witness_birthdayAdvances birthdayAdvancesTest
@@ -37,6 +39,9 @@ module signup_age_eligibility {
       s.with("eligibleAt", if (date > s.eligibleAt) date else s.eligibleAt).with("signupAge", lower(s.signupAge, initialAge))
     else s
 
+  action submitHttpBirthday(verified: bool, accepted: bool, ageSupplied: bool, birthdaySupplied: bool, initialAge: int, date: int): bool =
+    enroll(verified and birthdaySupplied and not(ageSupplied), accepted, initialAge, date)
+
   action recordIndependent(observation: int): bool = s' = s.with("phoneFloor", lower(s.phoneFloor, observation))
   action enrollAdditionalApp(observation: int): bool = {
     val independent = lower(s.phoneFloor, observation)
@@ -49,6 +54,7 @@ module signup_age_eligibility {
   action step = any {
     enroll(true, true, 17, 2), enroll(true, true, 16, 3), enroll(true, true, 12, 2),
     enroll(false, true, 17, 2), enroll(true, false, 17, 2),
+    submitHttpBirthday(true, true, false, true, 17, 2), submitHttpBirthday(true, true, true, true, 16, 3),
     recordIndependent(16), recordIndependent(20), enrollAdditionalApp(-1), enrollAdditionalApp(16), enrollAdditionalApp(25),
     markOtherYouth, advance, erase,
   }
@@ -81,5 +87,11 @@ module signup_age_eligibility {
   run onlyAcceptedLaterSignupDelaysEligibilityTest = init.then(enroll(true, true, 17, 2))
     .then(enroll(true, true, 16, 3)).then(enroll(true, true, 17, 1))
     .expect(s.eligibleAt == 3 and s.signupAge == 16)
+
+  run existingMemberCanSubmitOneBirthdayTest = init.then(enrollAdditionalApp(30))
+    .then(submitHttpBirthday(true, true, true, true, 16, 3)).expect(s.eligibleAt == -1)
+    .then(submitHttpBirthday(true, true, false, true, 17, 2))
+    .expect(s.appRecordedAge == 30 and s.signupAge == 17 and not(matchingAllowed(s)))
+    .then(advance).then(advance).expect(matchingAllowed(s))
 }
 ```

@@ -97,6 +97,18 @@ pure def confirmConsent(joining: Enrollment, consentMatches: bool): Enrollment =
   { ...joining, currentConsent: consentMatches, phase: if (consentMatches) AwaitingEligibility else ConsentMismatch }
 ```
 
+### An authenticated join accepts one age input
+
+The site API accepts one numeric age or one birthday in year-month-day format. Reject a request with both fields or neither field. Use the same Clock date and calendar rules as the [connector signup form](authorizationPages.md#the-signup-form-takes-the-birthday-and-counts-the-age-on-the-clock-date). A browser birthday enters enrollment as a numeric age. For an eligible minor, it also supplies the private date when that person turns 18. The date follows the [private eligibility rule](memberAge.md#a-private-signup-date-can-end-a-birthday-only-minor-restriction). It can be added to an existing verified membership without changing its profile or consent. A failed submission cannot write the date.
+
+```quint
+pure def joinAgeInputAllowed(ageSupplied: bool, birthdaySupplied: bool): bool =
+  ageSupplied != birthdaySupplied
+
+pure def lawJoinRefusesAmbiguousAgeInput(ageSupplied: bool, birthdaySupplied: bool): bool =
+  ageSupplied == birthdaySupplied implies not(joinAgeInputAllowed(ageSupplied, birthdaySupplied))
+```
+
 ### A hold or ban prevents enrollment
 
 The account service runs eligibility checks under the phone's join lock. A hold or ban returns the existing review outcome. Only an eligible account proceeds to the app membership check.
