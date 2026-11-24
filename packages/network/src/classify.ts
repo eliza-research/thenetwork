@@ -1617,7 +1617,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       /\b(?:both|either)\b/.test(strongAll?.[0] ?? ""), open.length)) {
       return { ...unclear, why: "slot" };
     }
-    const chosen = picked.length && /\bwhichever\b/.test(allAt[0]) ? picked : open;
+    const chosen = picked.length >= 2 && /\bwhichever\b/.test(allAt[0])
+      ? picked.filter(key => !neg.has(key) && open.includes(key)) : open;
     return chosen.length ? explicitYes(chosen) : { ...unclear, why: "slot" };
   }
   if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };

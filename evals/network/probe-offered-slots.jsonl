@@ -192,3 +192,4 @@
 {"text":"whichever of Saturday or Sunday works","answer":"yes","keys":["b","c"]}
 {"text":"Saturday or Sunday, all three","answer":"yes","keys":["a","b","c"]}
 {"text":"Saturday or Sunday, all of them","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday or Sunday, whichever, but not Saturday","answer":"yes","keys":["c"]}
