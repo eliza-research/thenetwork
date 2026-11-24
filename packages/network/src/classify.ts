@@ -859,7 +859,7 @@ const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
 ]);
 const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
-const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times)\b/;
+const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|(?:both|all) (?:days|times) (?:(?:don'?t|do not|won'?t|will not) work|(?:are|is) (?:out|bad|no good|unavailable))|can'?t do (those|either|any of)|not those times)\b/;
 const OTHER_TIMES = /\bother times?\b/;
 const NO_OTHER_TIMES = /\b(?:no|not) other times?\b/g;
 /** "Any of them", "whichever", "any time": every option. */
