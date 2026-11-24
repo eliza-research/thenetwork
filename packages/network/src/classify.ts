@@ -977,8 +977,8 @@ function probeChoiceAuthored(prefix: string): boolean {
 }
 
 /** A clause that opens a condition: "if ...", "unless ...", "provided ...", "assuming ...", "as long as ...". */
-const CONDITIONAL_OPEN = /^(?:if|unless|provided(?:\s+that)?|assuming(?:\s+that)?|as\s+long\s+as|so\s+long\s+as|on\s+(?:the\s+)?condition(?:\s+that)?|only\s+if|only\s+when)\b/;
-const CONDITIONAL_CUE = /\b(?:if|unless|provided(?:\s+that)?|assuming(?:\s+that)?|as\s+long\s+as|so\s+long\s+as|on\s+(?:the\s+)?condition(?:\s+that)?|only\s+if|only\s+when|but\s+only\s+(?:if|when))\b/;
+const CONDITIONAL_OPEN = /^(?:if|unless|provided(?:\s+that)?|assuming(?:\s+that)?|as\s+long\s+as|so\s+long\s+as|on\s+(?:the\s+)?condition(?:\s+that)?|only\s+if|(?:only\s+)?when(?:ever)?)\b/;
+const CONDITIONAL_CUE = /\b(?:if|unless|provided(?:\s+that)?|assuming(?:\s+that)?|as\s+long\s+as|so\s+long\s+as|on\s+(?:the\s+)?condition(?:\s+that)?|only\s+if|(?:only\s+)?when(?:ever)?|but\s+only\s+(?:if|when))\b/;
 
 /** A day named only inside a condition is not a confirmed pick yet. */
 function inConditionalClause(text: string, at: number): boolean {
