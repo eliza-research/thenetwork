@@ -191,3 +191,6 @@
 {"text":"Saturday works, Thursday doesn't work for me","answer":"yes","keys":["b"]}
 {"text":"No, Saturday works, Thursday doesn't work","answer":"unclear","keys":[]}
 {"text":"Saturday works, Thursday doesn't work, I don't want to meet","answer":"unclear","keys":[]}
+{"text":"Saturday works, actually Saturday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, Saturday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, wait Saturday doesn't work, Sunday","answer":"unclear","keys":[]}
