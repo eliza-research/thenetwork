@@ -12,9 +12,9 @@ import {
 import { adultAge, joinableAge } from "../../core/src/generated/memberAge.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
-  type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canOpenPage, canRetryConnection, canReturnFromCloud,
-  ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, checkFor, codeSendFailureReply, initial as pageInitial,
-  signupAdultDate, signupClockDay, solveCheck, storedStepView,
+  type AuthPage, type AuthView, type CalendarDate, type Reply as PageReply, canApprove, canCancelRequest, canLeaveSignup, canOpenPage, canOpenSignup, canRetryConnection, canReturnFromCloud,
+  ageOnDate, birthdateAccepted, calendarDateOfDay, canSolveCheck, canSubmitCode, canSubmitPhone, canSubmitSignup, checkFor, codeSendFailureReply, initial as pageInitial,
+  openSignup, signupAdultDate, signupClockDay, solveCheck, storedStepView,
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
@@ -705,18 +705,31 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form || !live) return expired();
     const { r, client, flow } = live;
     if (!validBrowserEntry(c, r, client) || !signupClientAllowed(c, r, client) || !o.platform.joinSignup) return expired();
+    const decision = form.get("decision");
+    if (decision !== "open" && decision !== "join" && decision !== "skip") return expired();
+    const signupView = signupFormProof(r, "signup");
+    const exactForm = safeEqual(form.get("signupView") ?? "", signupView);
+    const storedPage: AuthPage = {
+      ...pageInitial,
+      view: storedStepView(r.step),
+      codeSent: r.e164 !== null,
+      consentSeen: r.step === "consent" || r.step === "enrolled",
+    };
+    const page = decision !== "open" && exactForm && canOpenSignup(storedPage, "ReplySignupForm")
+      ? openSignup(storedPage, "ReplySignupForm")
+      : storedPage;
+    const allows = decision === "open" ? canOpenSignup : decision === "join" ? canSubmitSignup : canLeaveSignup;
+    if (!allows(page, decision === "open" ? "ReplySignupForm" : "ReplyConsent")) return expired();
+
     const who = await readAuthorizationSession(c);
     if (who === "unavailable") return browserUnavailable(c);
     if (!who || !browserSignupOpenAllowed(flow, storedPageOf(r.step), !!r.e164,
       who.e164 === r.e164 && who.personId === r.personId, true)) return expired();
-    const signupView = signupFormProof(r, "signup");
-    const decision = form.get("decision");
-    const exactForm = safeEqual(form.get("signupView") ?? "", signupView);
-    if (decision === "skip" && exactForm) return verifiedConsentPage(c, r, client, who);
-    if (decision !== "open" && !(decision === "join" && exactForm)) return expired();
+    if (decision === "skip") return verifiedConsentPage(c, r, client, who);
     const enrollment = await availableSignup(c, who);
     if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
     const showSignup = (error?: string, prefill?: SignupPrefill, birthdateError?: string) => {
+      if (!allows(page, decision === "open" ? "ReplySignupForm" : "ReplySignupRefused")) return expired();
       const response = signupPage(c, r.id, { ...enrollment, signupView, error, prefill, birthdateError });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;
