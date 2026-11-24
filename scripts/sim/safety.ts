@@ -347,6 +347,14 @@ export async function safetyBlock(b: Block): Promise<void> {
       ["I felt unsafe, he wouldn't let me leave", "unsafe"],
       ["it was fine, not my type", undefined],
       ["great time, would see them again", undefined],
+      ["he wasn't rude, creepy, or pushy, just no spark", undefined],
+      ["neither rude nor pushy, it was fine", undefined],
+      ["he wasn't rude, creepy", "harassment"],
+      ["I'm afraid not", undefined],
+      ["I'm afraid we didn't click, nice person though", undefined],
+      ["I was afraid I'd be late, great date", undefined],
+      ["great walk even though I'm scared of heights", undefined],
+      ["I'm afraid of him", "unsafe"],
     ];
     expect(cases.map(([t]) => checkInReport(t))).toEqual(cases.map(([, k]) => k));
     expect(URGENT_REPORTS.has("harassment") && URGENT_REPORTS.has("unsafe")).toBe(true);

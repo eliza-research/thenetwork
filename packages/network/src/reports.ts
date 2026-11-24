@@ -62,7 +62,16 @@ const KINDS: [ReportKind, RegExp][] = [
   ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
 ];
 
-const ACTIVE_DENIAL = /\b(?:not(?! only\b)|never|nothing|without|no(?! way\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\s+(?:(?:at all|really|very|even|remotely|a bit|make me feel|an?|be) +)*(?:[a-z]+ (?:or|nor) +)?$/i;
+const ACTIVE_DENIAL = /\b(?:not(?! only\b)|neither|never|nothing|without|no(?! way\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\s+(?:(?:at all|really|very|even|remotely|a bit|make me feel|feel|an?|be) +)*(?:[a-z]+ (?:or|nor) +)?$/i;
+const DENIED_HARM_TERM = "(?:rude|creep(?:y)?|pushy|aggressive|hostile|abusive|insult(?:ed|ing)?|inappropriate|harass(?:ed|ing|ment)?|unsafe|not safe|scared|afraid|terrified|violent|fake|liar|lying|scam(?:mer)?|sexual comments?)";
+const DENIED_HARM_LIST = new RegExp(
+  `\\b(?:not(?! only\\b)|neither|never|nothing|without|no(?! way\\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\\s+`
+  + `(?:(?:at all|really|very|even|remotely|a bit|make me feel|feel|an?|be)\\s+)*`
+  + `${DENIED_HARM_TERM}(?:(?:\\s*,\\s*|\\s+(?:or|nor)\\s+)${DENIED_HARM_TERM})*\\s*(?:,\\s*)?(?:or|nor)\\s+${DENIED_HARM_TERM}\\b(?!\\s+(?:though|tho|actually|instead)\\b)`,
+  "gi",
+);
+const POLITE_AFRAID_AFTER = /^\s*(?:(?:not|so)\b|(?:that\s+)?(?:we\s+(?:didn'?t|did not|don'?t|do not|weren'?t|were not|had no|have no|just didn'?t)\b|it\s+(?:wasn'?t|was not|isn'?t|is not|didn'?t|did not)\b|there\s+(?:was|is)\s+no\b|i\s+(?:can'?t|cannot|couldn'?t|could not|won'?t|will not|don'?t|do not|didn'?t|did not|have to|had to|need to)\b))/i;
+const NON_PERSON_FEAR_AFTER = /^\s+of\s+(?:heights|dogs|cats|spiders|bugs|insects|snakes|flying|planes|needles|water|the\s+dark|roller\s*coasters|(?:scary|horror)\s+movies?)\b/i;
 const CORRECTED_MARRIAGE = /\b(?:not married|isn't married|wasn't married)\s*[,;]?\s*but\s+(?:he|she|they)\s+(?:is|was|are|were)\s*(?:$|[.!?,;])/i;
 const CURRENT_DANGER = /^(?:(?:i am|i'm|we are|we're) (?:in (?:immediate )?danger(?: (?:right now|now))?|(?:not safe|being threatened) (?:right now|now))|(?:i |we )?need emergency help(?: (?:right now|now))?|(?:(?:he|she|they|someone) (?:is|are)|he's|she's|they're) (?:following|threatening|attacking) (?:me|us)(?: (?:right now|now))?)$/i;
 const COUNTERPART_SUBJECT = /^(?:he|she|they|my date|the person i met)\b/i;
@@ -90,10 +99,29 @@ export function emergencyCheckInReportKind(text: string): ReportKind | undefined
 const reportClauseBefore = (text: string, at: number) =>
   text.slice(0, at).split(/[,.!?:;]|\b(?:but|however|although)\b/i).at(-1) ?? "";
 
+function deniedHarmRanges(text: string): [number, number][] {
+  return [...text.matchAll(DENIED_HARM_LIST)].map(hit => [hit.index, hit.index + hit[0].length]);
+}
+
+function casualFearIdiom(text: string, at: number, matched: string): boolean {
+  const lower = matched.toLowerCase();
+  const after = text.slice(at + matched.length);
+  if ((lower === "scared" || lower === "afraid" || lower === "terrified") && NON_PERSON_FEAR_AFTER.test(after)) return true;
+  if (lower !== "afraid") return false;
+  const before = reportClauseBefore(text, at);
+  if (/^\s*$/.test(before) && /^\s*(?:not|so)\b/i.test(after)) return true;
+  if (/\b(?:i'?m|i\s+am)\s+$/i.test(before) && POLITE_AFRAID_AFTER.test(after)) return true;
+  return /\b(?:i\s+was|i'?m|i\s+am)\s+$/i.test(before) && /^\s+(?:i'?d|i\s+would)\s+be\s+late\b/i.test(after);
+}
+
 function reportsHarm(text: string, marker: RegExp): boolean {
+  const denied = deniedHarmRanges(text);
   for (const m of text.matchAll(new RegExp(marker.source, "gi"))) {
-    const affirmative = !ACTIVE_DENIAL.test(reportClauseBefore(text, m.index));
-    if (acceptsReportEvidence(affirmative, m.groups?.casualContact !== undefined)) return true;
+    const end = m.index + m[0].length;
+    const inDeniedList = denied.some(([from, to]) => m.index >= from && end <= to);
+    const affirmative = !ACTIVE_DENIAL.test(reportClauseBefore(text, m.index)) && !inDeniedList;
+    const casual = m.groups?.casualContact !== undefined || casualFearIdiom(text, m.index, m[0]);
+    if (acceptsReportEvidence(affirmative, casual)) return true;
   }
   return false;
 }
