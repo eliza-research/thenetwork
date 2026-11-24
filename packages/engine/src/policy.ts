@@ -324,9 +324,14 @@ export function lorenz(xs: number[], points = 10): number[] {
   const s = [...xs].sort((a, b) => a - b);
   const sum = s.reduce((a, b) => a + b, 0) || 1;
   const out: number[] = [];
+  let whole = 0;
+  let cumulative = 0;
   for (let p = 1; p <= points; p++) {
-    const k = Math.round((p / points) * s.length);
-    out.push(Number((s.slice(0, k).reduce((a, b) => a + b, 0) / sum).toFixed(4)));
+    const position = (p * s.length) / points;
+    const complete = Math.floor(position);
+    while (whole < complete) cumulative += s[whole++] ?? 0;
+    const partial = (position - complete) * (s[complete] ?? 0);
+    out.push(Number(((cumulative + partial) / sum).toFixed(4)));
   }
   return out;
 }
