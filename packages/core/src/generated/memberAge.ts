@@ -424,6 +424,12 @@ export function signupAgeAt(initialMinorAge: number, eligibleAt: number, now: nu
 
 /** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
 //@ pure
+export function signupAgeCapNeeded(hasBirth: boolean, matchingBirth: boolean, beforeEligibility: boolean): boolean {
+  return !hasBirth || (beforeEligibility && !matchingBirth);
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
 export function mayClearMaturedSignupMinor(maturedSignup: boolean, currentAdult: boolean, otherYouthEvidence: boolean): boolean {
   return maturedSignup && currentAdult && !otherYouthEvidence;
 }
@@ -432,6 +438,20 @@ export function mayClearMaturedSignupMinor(maturedSignup: boolean, currentAdult:
 //@ pure
 export function keepLaterEligibilityDate(first: number, second: number): number {
   return first >= second ? first : second;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawMatchingSignupBirthKeepsBirthdays(beforeEligibility: boolean): boolean {
+  //@ ensures \result === true
+  return !signupAgeCapNeeded(true, true, beforeEligibility);
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawOtherBirthCannotAdvanceSignupMinor(ageHasBirth: boolean): boolean {
+  //@ ensures \result === true
+  return signupAgeCapNeeded(ageHasBirth, false, true);
 }
 
 /** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */

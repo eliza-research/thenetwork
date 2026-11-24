@@ -2,8 +2,9 @@ import { canBeMatched, canJoin, validAge } from "../../core/src/policy.ts";
 import { birthKeyOfParts, earliestDayKeyOf, latestDayKeyOf } from "../../core/src/birth-date.ts";
 import {
   ageOnDay, birthDateExact, birthDateLower, birthKeyUsable, type BirthReadings, effectiveAge, effectiveBirthKey, laterBirthKey,
-  lowerAge, readingsConflict, signupAgeAt, statedAgeBeforeBirthDates, verifiedBrowserBirthMayBeKept, statedAgeLower, statedAgeUpper,
+  lowerAge, readingsConflict, signupAgeAt, signupAgeCapNeeded, statedAgeBeforeBirthDates, verifiedBrowserBirthMayBeKept, statedAgeLower, statedAgeUpper,
 } from "../../core/src/generated/memberAge.ts";
+import { signupAdultDate } from "../../core/src/generated/authorizationPages.ts";
 import { teenBarOnConflict } from "../../core/src/generated/friendIntroAge.ts";
 import { exactReadingKept, firstReadingExact, floorAgeAfterReading, mergeAgeReadings } from "../../core/src/generated/siteEnrollment.ts";
 import type { AppInfo } from "./apps.ts";
@@ -77,6 +78,11 @@ export const joinBirthDateUsable = (birthKey: number, at: number): boolean =>
 export const readingAge = (stated: AgeReading, at: number): number =>
   stated.kind === "age" ? stated.age : ageOnDay(stated.birthDate, earliestDayKeyOf(at));
 
+export function signupEligibilityAt(birthKey: number): number {
+  const date = signupAdultDate({ year: Math.trunc(birthKey / 10000), month: Math.trunc(birthKey / 100) % 100, day: birthKey % 100 });
+  return Date.UTC(date.year, date.month - 1, date.day, 12);
+}
+
 function personReadings(p: Person | undefined, at: number): BirthReadings | undefined {
   const live = livePerson(p);
   if (!live) return undefined;
@@ -100,7 +106,9 @@ export function effectiveAgeAt(s: AgeStanding, at: number): number | undefined {
   const age = readings ? effectiveAge(readings, earliestDayKeyOf(at)) : lowestAge(livePerson(s.person)?.lowestAge, s.floor?.age);
   if (!s.signup) return age;
   const signup = signupAgeAt(s.signup.initialMinorAge, s.signup.eligibleAt, at);
-  return at < s.signup.eligibleAt || livePerson(s.person)?.birth?.birthDate == null ? lowestAge(age, signup) : age ?? signup;
+  const birth = livePerson(s.person)?.birth?.birthDate ?? null;
+  const matchingBirth = birth !== null && signupEligibilityAt(birth) === s.signup.eligibleAt;
+  return signupAgeCapNeeded(birth !== null, matchingBirth, at < s.signup.eligibleAt) ? lowestAge(age, signup) : age ?? signup;
 }
 
 export function ageRecordOf(s: AgeStanding, at: number, barred: boolean): AgeRecord {
