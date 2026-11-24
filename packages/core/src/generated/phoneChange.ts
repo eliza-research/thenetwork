@@ -95,8 +95,28 @@ export function checkStartPolicy(change: PhoneChange, oldNumberAllowed: boolean)
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
+export function phoneChangeRetryAfter(waitMs: number): number {
+  return waitMs <= 0 ? 1 : quotient_phoneChange(exact_phoneChange(waitMs + 999), 1000);
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
 export function phoneChangeSlotOpen(startsBefore: number): boolean {
   return 0 <= startsBefore && startsBefore < phoneChangesPerDay;
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
+export function lawPhoneChangeRetryIsPositive(waitMs: number): boolean {
+  //@ ensures \result === true
+  return phoneChangeRetryAfter(waitMs) >= 1;
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
+export function lawPhoneChangeRetryRoundsUp(waitMs: number): boolean {
+  //@ ensures \result === true
+  return !(waitMs > 0) || (exact_phoneChange(phoneChangeRetryAfter(waitMs) * 1000) >= waitMs && exact_phoneChange(exact_phoneChange(phoneChangeRetryAfter(waitMs) - 1) * 1000) < waitMs);
 }
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
@@ -367,4 +387,12 @@ export function initialHolds(): PhoneChange {
 export function exact_phoneChange(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
+}
+
+/** Whole-number division as Quint does it: towards zero. */
+//@ pure
+export function quotient_phoneChange(a: number, b: number): number {
+  //@ requires b !== 0
+  if (b === 0) throw new RangeError(`${a} cannot be divided by zero`);
+  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;
 }

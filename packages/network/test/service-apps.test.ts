@@ -693,7 +693,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     });
     if (!first.ok) throw new Error(`Fixture signup failed: ${first.error}`);
     const owner = { e164: oldNumber, personId: first.membership.personId };
-    expect(await second.accounts.startNumberChange(app, owner, newNumber, async () => true)).toEqual({ ok: true });
+    expect(await second.accounts.startNumberChange(app, owner, newNumber, async () => ({ ok: true }))).toEqual({ ok: true });
     const rt = s.runtimeFor(FR)!;
     const run = rt.unitOfWork.bind(rt);
     let successor: string | undefined;

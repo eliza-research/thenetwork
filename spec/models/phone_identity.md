@@ -6,6 +6,8 @@ A person needs each supported representation of their phone number to resolve to
 
 ### Safety rules and reachability
 
+The [phone change rule](../phoneChange.md) rounds the wait for a refused start to whole seconds. The wait is response data and does not add a transition in this model.
+
 Check number normalization, ownership, and bans across entry points. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
 The [phone change spec](../phoneChange.md) generates challenge and confirmation decisions for changing the number on an existing account. Number normalization and provider checks still belong to the shell.

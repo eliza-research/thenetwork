@@ -14,6 +14,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //   const api = createPublicApi({ store, otp, turnstile });
 //   serveHttp({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
+import { phoneChangeRetryAfter } from "../../core/src/generated/phoneChange.ts";
 import { initial as enrollmentInitial, joinAgeInputAllowed, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
@@ -751,8 +752,12 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
             const e164 = normalizePhone(b.phone);
             if (!e164) return json(400, { ok: false, error: "invalid_phone" });
             if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_CHANGE_MESSAGE });
-            const r = await accounts.startNumberChange(app, who, e164, async () => (await otp.start(app, e164, ip)).ok);
-            if (!r.ok) return json(r.error === "rate_limited" ? 429 : r.error === "review" ? 403 : 400, { ok: false, error: r.error, ...(r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
+            const r = await accounts.startNumberChange(app, who, e164, () => otp.start(app, e164, ip));
+            if (!r.ok) {
+              const status = r.error === "rate_limited" ? 429 : r.error === "review" ? 403 : 400;
+              const headers = "retryAfterMs" in r ? { "retry-after": String(phoneChangeRetryAfter(r.retryAfterMs)) } : undefined;
+              return json(status, { ok: false, error: r.error, ...(r.error === "review" ? { message: REVIEW_MESSAGE } : {}) }, headers);
+            }
             return json(200, { ok: true });
           });
         } finally {

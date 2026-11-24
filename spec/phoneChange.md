@@ -51,10 +51,21 @@ pure def checkStartPolicy(change: PhoneChange, oldNumberAllowed: bool): PhoneCha
 
 ### A challenge needs a send slot and a persisted request
 
-The account has three start requests per day. The store must grant a slot while the prior count is below three. A start request can continue only when the store grants the slot and the account made fewer than three start requests earlier on that day. If its allowance or the OTP service refuses, return the existing rate-limit outcome. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number.
+The account has three start requests per day. The store must grant a slot while the prior count is below three. A start request can continue only when the store grants the slot and the account made fewer than three start requests earlier on that day. A rate-limit response gives the wait in the Retry-After header. Use the remaining time to the next UTC day when the account allowance refuses, or the OTP service's wait when that service refuses. Round up to whole seconds and give at least one second. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number.
 
 ```quint
 pure val phoneChangesPerDay: int = 3
+
+pure val waitMsValues = Set(0, 1, 999, 1000, 1001, 30000, 86400000)
+
+pure def phoneChangeRetryAfter(waitMs: int): int =
+  if (waitMs <= 0) 1 else (waitMs + 999) / 1000
+
+pure def lawPhoneChangeRetryIsPositive(waitMs: int): bool = phoneChangeRetryAfter(waitMs) >= 1
+
+pure def lawPhoneChangeRetryRoundsUp(waitMs: int): bool =
+  waitMs > 0 implies (
+    phoneChangeRetryAfter(waitMs) * 1000 >= waitMs and (phoneChangeRetryAfter(waitMs) - 1) * 1000 < waitMs)
 
 pure def phoneChangeSlotOpen(startsBefore: int): bool = 0 <= startsBefore and startsBefore < phoneChangesPerDay
 pure def canCheckStartRate(change: PhoneChange): bool = change.phase == AwaitingRateLimit

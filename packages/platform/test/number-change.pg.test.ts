@@ -54,7 +54,8 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
       const call = async (method: string, path: string, body?: unknown) => {
         const res = (await api.fetch(new Request(`http://${host}${path}`, { method, headers: { host, ...(cookie ? { cookie } : {}), ...(body ? jsonH : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })))!;
         const c = res.headers.get("set-cookie"); if (c) cookie = c.split(";")[0]!;
-        return { status: res.status, body: await res.json().catch(() => null) as any };
+        const retryAfter = res.headers.get("retry-after");
+        return { status: res.status, body: await res.json().catch(() => null) as any, ...(retryAfter === null ? {} : { retryAfter }) };
       };
       const login = async (phone: string) => {
         expect((await call("POST", "/api/auth/otp/start", { phone })).status).toBe(200);
@@ -139,7 +140,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
       expect(await browser.call("POST", "/api/me/phone/start", { phone })).toEqual({ status: 200, body: { ok: true } });
     }
     expect(await browser.call("POST", "/api/me/phone/start", { phone: "+12125550272" })).toEqual({
-      status: 429, body: { ok: false, error: "rate_limited" },
+      status: 429, body: { ok: false, error: "rate_limited" }, retryAfter: "32400",
     });
     expect(t.sends).toEqual([oldNumber, ...targets]);
     const owner = await store.findPhone(oldNumber);

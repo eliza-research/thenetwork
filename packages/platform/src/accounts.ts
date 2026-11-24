@@ -33,6 +33,7 @@ import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
+import type { OtpStart } from "./otp.ts";
 import { keyedHash } from "./phone.ts";
 import { signupAccountView } from "./sessions.ts";
 import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod, RecordedMemberAge, SignupAge } from "./store.ts";
@@ -290,7 +291,7 @@ export class Accounts {
    * sends a code to the new number through the OTP service and its limits. The answer never says whether
    * the new number is known or banned: that is checked at step 2, after the person proved they hold it.
    */
-  async startNumberChange(app: AppInfo, who: Who, newE164: string, sendCode: () => Promise<boolean>): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> {
+  async startNumberChange(app: AppInfo, who: Who, newE164: string, sendCode: () => Promise<OtpStart>): Promise<OtpStart | ReturnType<typeof numberChangeRefused>> {
     const at = this.now();
     const request = stepPhoneChange(phoneChangeInitial, { type: "requestChallenge", sameNumber: newE164 === who.e164 });
     if (request.phase !== "CheckingStartOwner") return numberChangeRefused(request.failure);
@@ -302,9 +303,10 @@ export class Accounts {
     if (policy.phase !== "AwaitingRateLimit") return numberChangeRefused(policy.failure);
     const slot = await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, DAY, at, { limit: NUMBER_CHANGES_PER_DAY });
     const rated = stepPhoneChange(policy, { type: "checkStartRate", slotGranted: slot.ok, startsBefore: slot.count - 1 });
-    if (rated.phase !== "AwaitingCodeSend") return numberChangeRefused(rated.failure);
-    const sent = stepPhoneChange(rated, { type: "recordCodeSend", sendAccepted: await sendCode() });
-    if (sent.phase !== "AwaitingPendingWrite") return numberChangeRefused(sent.failure);
+    if (rated.phase !== "AwaitingCodeSend") return { ok: false, error: "rate_limited", retryAfterMs: DAY - (at % DAY) };
+    const sentCode = await sendCode();
+    const sent = stepPhoneChange(rated, { type: "recordCodeSend", sendAccepted: sentCode.ok });
+    if (sent.phase !== "AwaitingPendingWrite") return sentCode.ok ? numberChangeRefused(sent.failure) : sentCode;
     await this.store.putPhoneChange({ id: randomUUID(), personId: person.id, app: app.id, newE164, requestedBy: "member", requestedAt: at, confirmedAt: null });
     const pending = stepPhoneChange(sent, { type: "recordPendingWrite" });
     return pending.phase === "PendingRecorded" ? { ok: true } : numberChangeRefused(pending.failure);
