@@ -43,7 +43,7 @@ import {
   memberInviteUsesAllowance, memberInviteVouchWeak, memberInviteWithinBurstWindow, memberInviteWithinWindow, memberMayRequestInvite,
 } from "../../core/src/generated/memberInvitation.ts";
 import {
-  attendanceBookingReceived, checkInReading, checkInSafetyAnswer, checkInSafetyAnswerApplies, checkInSafetyAnswerCurrent, checkInSafetyStep, chooseCheckIn, confirmationChanges, releaseBookingReply, reportedAbsenceIdentifiesMember, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
+  attendanceBookingReceived, availabilityHistoryLimit, checkInReading, checkInSafetyAnswer, checkInSafetyAnswerApplies, checkInSafetyAnswerCurrent, checkInSafetyStep, chooseCheckIn, confirmationChanges, releaseBookingReply, reportedAbsenceIdentifiesMember, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, friendsPlanAttendanceAvailability, meetingFeedbackPrefix,
   deliveredInvitee, feedbackDelayHours, feedbackHistorySeat, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, dayOfReplyAccepted, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, pairedFeedbackAbsence, restoreAttendance,
@@ -4772,7 +4772,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!picked.length) this.counters.optionsNoneFit++;
         const hist = m.availHistory ?? [];
         for (const x of offered) hist.push({ at: x.start, outcome: picked.includes(x) ? "accepted" : "declined_time" });
-        m.availHistory = hist.slice(-40);
+        m.availHistory = hist.slice(-availabilityHistoryLimit);
       }
       // "Yes, but none of those": once, offer other times (a direct reply, never on the cap). Otherwise
       // the plan would be set at a time this member never said works, and is often called off.
@@ -4820,10 +4820,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
       if (picks) {
         o.picks = { ...o.picks, [m.id]: picks.map(slot => slot.start) };
-        if (yes) m.availHistory = [...(m.availHistory ?? []), ...picks.map(slot => ({ at: slot.start, outcome: "accepted" as const }))].slice(-40);
+        if (yes) m.availHistory = [...(m.availHistory ?? []), ...picks.map(slot => ({ at: slot.start, outcome: "accepted" as const }))].slice(-availabilityHistoryLimit);
       } else {
         const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
-        if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-40);
+        if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-availabilityHistoryLimit);
       }
       this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.");
     });
@@ -5778,9 +5778,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.settledAttendance = Object.fromEntries(findings.map(({ p, finding }) => [p, finding.mark]));
     const present = findings.filter(({ finding }) => finding.mark === "Attended").map(({ p }) => p);
     const origin = this.originOf(o);
+    const friendsPlan = this.app.id === "friends" && !!o.plan;
     for (const { p, vouchers, organizerVerified, finding } of findings) {
       const key = `${o.id}:${p}`;
       const confirmers = vouchers.filter(x => said(x)?.confirmedRoster);
+      // spec/meetingSettlement.md, "A settled Friends plan teaches the actual booked time"
+      const availability = friendsPlanAttendanceAvailability(friendsPlan, finding.mark, o.meetingAt);
+      const member = availability.recorded ? this.members.get(p) : undefined;
+      if (member) {
+        member.availHistory = [...(member.availHistory ?? []), { at: availability.at, outcome: "attended" as const }].slice(-availabilityHistoryLimit);
+      }
       // spec/meetingSettlement.md, "Verified value needs an independent attendance confirmation"
       if (verifiedMeetingValueAllowed(finding.mark === "Attended", !!said(p)?.worthwhile, confirmers.length)) {
         this.emit({ type: "value_received", member: p, with: confirmers, confirmedBy: confirmers }, key);

@@ -19,6 +19,8 @@ export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
 export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
+/** Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time (spec/meetingSettlement.md) */
+export interface AttendanceAvailability { recorded: boolean; at: number }
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 export type CheckInSource = "NoCheckIn" | "MissingNames" | "PresentNames" | "BookedParticipants";
 /** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
@@ -39,6 +41,8 @@ export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 360
 export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 3600000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
+/** Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time (spec/meetingSettlement.md) */
+export const availabilityHistoryLimit: number = 40;
 /** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
 export const checkInSafetyAnswerMs: number = exact_meetingSettlement(24 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
@@ -516,6 +520,20 @@ export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding
   const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
   const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
   return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
+}
+
+/** Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time (spec/meetingSettlement.md) */
+//@ pure
+export function friendsPlanAttendanceAvailability(friendsPlan: boolean, mark: AttendanceMark, bookedAt: number): AttendanceAvailability {
+  return { recorded: friendsPlan && mark === "Attended", at: bookedAt };
+}
+
+/** Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time (spec/meetingSettlement.md) */
+//@ pure
+export function lawLearnedAttendanceUsesBookedStart(friendsPlan: boolean, mark: AttendanceMark, bookedAt: number): boolean {
+  //@ ensures \result === true
+  const local_3: AttendanceAvailability = friendsPlanAttendanceAvailability(friendsPlan, mark, bookedAt);
+  return local_3.recorded === (friendsPlan && mark === "Attended" && local_3.at === bookedAt);
 }
 
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
