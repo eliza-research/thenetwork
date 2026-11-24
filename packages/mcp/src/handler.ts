@@ -43,7 +43,7 @@ import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpAp
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage } from "./pages.ts";
 import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, scopesOn, type Token } from "./store.ts";
-import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
+import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs, toolInstructions } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
 export const LATEST_PROTOCOL = "2026-07-28";
@@ -1353,10 +1353,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "initialize": {
         const asked = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
         const protocolVersion = (LEGACY_PROTOCOLS as readonly string[]).includes(asked) ? asked : LEGACY_PROTOCOLS[0];
-        return result({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
+        return result({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: toolInstructions(apps, surface, host) });
       }
       case "server/discover":
-        return result({ supportedVersions: [...MODERN_PROTOCOLS, ...LEGACY_PROTOCOLS], capabilities: { tools: { listChanged: false } }, instructions: INSTRUCTIONS });
+        return result({ supportedVersions: [...MODERN_PROTOCOLS, ...LEGACY_PROTOCOLS], capabilities: { tools: { listChanged: false } }, instructions: toolInstructions(apps, surface, host) });
       case "ping":
         return result({});
       case "tools/list":

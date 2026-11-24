@@ -679,6 +679,24 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect(otherTools).toEqual(expect.arrayContaining(["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "read_profile", "list_looking_for", "my_photos", "photo_request"]));
         expect(await names(token)).toEqual(otherTools);
         expect(await names()).toEqual(otherTools);
+        const discover = (app: AppId, path: string) => rpc(pilot, app, path, "server/discover");
+        const initialize = async (app: AppId, path: string) => {
+          const res = await pilot.site(app, path, { json: {
+            jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {} },
+          } });
+          return { res, body: await res.json() as { result: { instructions: string } } };
+        };
+        for (const ask of [discover, initialize]) {
+          const full = await ask("slop", "/mcp");
+          expect(full.res.status).toBe(200);
+          expect(full.body!.result.instructions).toMatch(/my_photos.*photo_request/);
+          const publicSurface = await ask("ntwrk", "/mcp/openai");
+          expect(publicSurface.res.status).toBe(200);
+          expect(publicSurface.body!.result.instructions).not.toMatch(/slop|my_photos|photo_request/i);
+          const otherHost = await ask("friends", "/mcp");
+          expect(otherHost.res.status).toBe(200);
+          expect(otherHost.body!.result.instructions).not.toMatch(/my_photos|photo_request/);
+        }
         expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "get_updates", arguments: {} }, token)).body!.result.isError).not.toBe(true);
         for (const app of ["ntwrk", "friends"] as const) expect((await rpc(pilot, app, "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list", {}, token)).res.status).toBe(404);
