@@ -742,7 +742,11 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           expect((await webJoin(pilot, kind === "nonmember" ? "peon" : "slop", phone, { age: kind === "minor" ? 16 : 30, browser })).res.status).toBe(200);
           const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
           if (kind !== "unlisted") ids.push(person.id);
-          if (kind === "unknown") { await db`update platform.people set lowest_age=null where id=${person.id}`; await pilot.svc.people.clearAgeFloor(pilot.svc.publicApi.accounts.phoneHash(phone)); }
+          if (kind === "unknown") {
+            await db`update platform.people set lowest_age=null, birth_date=null, birth_lower=null, birth_upper=null,
+              birth_youngest=null, birth_first_exact=null where id=${person.id}`;
+            await db`delete from platform.age_floor where phone_hash=${pilot.svc.publicApi.accounts.phoneHash(phone)}`;
+          }
           if (kind === "review") await db`update platform.memberships set review='recycled_number' where person_id=${person.id} and app_id='slop'`;
           if (kind === "phone-hold") await pilot.svc.people.setPhoneHold(phone, "recycled_number", pilot.clock.now());
           if (kind.endsWith("ban")) await pilot.svc.people.ban({ id: crypto.randomUUID(), scope: kind === "phone-ban" ? "phone" : "person", personId: kind === "person-ban" ? person.id : null, phoneHash: kind === "phone-ban" ? pilot.svc.publicApi.accounts.phoneHash(phone) : null, reason: "owned fixture", reportId: null, bannedBy: "fixture", at: pilot.clock.now() });
@@ -1149,7 +1153,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
   });
 
   describe("minors (13-17)", () => {
-    test("a 13-year-old joins friends.help and slop.date, and is never matched", async () => {
+    test("a 13-year-old stays out of adult proposals after joining friends.help and slop.date", async () => {
       const teen = newPhone();
       const tb = new Browser();
       const fj = await webJoin(st, "friends", teen, { age: 13, firstName: "Kai", interests: ["climbing", "board games"], browser: tb });
@@ -1194,9 +1198,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       // proposals proves nothing about the minor), and the minor is in none of it.
       const opps = await sql<{ id: string; parts: string[] }[]>`select o.id, array_agg(p.member_id) as parts from network.opportunities o join network.participations p on p.app_id = o.app_id and p.opportunity_id = o.id where o.app_id = 'friends' group by o.id`;
       expect(opps.length).toBeGreaterThan(0);
-      // The engine's own input never holds the minor (packInput drops minors before any pack runs).
+      // Friends can consider this teen for friendship. All other people in this fixture are adults.
       const input = rt.net.packInput(st.clock.now());
-      expect(input.members.map(m => m.id)).not.toContain(fm.id);
+      expect(input.members.map(m => m.id)).toContain(fm.id);
       expect(input.members.length).toBeGreaterThanOrEqual(adults.length);
       for (const o of opps) expect(o.parts).not.toContain(fm.id);
       expect((await sql`select 1 from network.participations where member_id = ${fm.id}`).length).toBe(0);
