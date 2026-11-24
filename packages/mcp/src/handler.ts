@@ -1367,7 +1367,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (auth && openAiUnavailable(c, auth.client)) return out(404, rpcError(null, -32601, "Not available"));
     if (auth && !(await customSlopEligible(c, auth.client, auth.grant.personId, auth.grant.phoneKey))) return out(401, rpcError(null, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
     const onboardingOnly = customSlopPeople !== null && c.app.id === "slop" && c.host.id === "slop" && (!auth || customSlopClient(c, auth.client));
-    const outsidePilot = new Set(["get_updates", "read_profile", "my_photos", "photo_request"]);
+    const onboardingTools = new Set(["app_info", "start_signup", "check_status", "submit_profile"]);
 
     const text = await readCappedText(c.req, 65_536);
     if (text === "too_large") return out(413, rpcError(null, -32600, "Request too large"));
@@ -1408,7 +1408,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       return out(404, rpcError(id, -32601, "Not available"));
     }
 
-    const visibleTools = () => toolDefs(apps, surface, host).filter(tool => !onboardingOnly || !outsidePilot.has(tool.name));
+    const visibleTools = () => toolDefs(apps, surface, host).filter(tool => !onboardingOnly || onboardingTools.has(tool.name));
     const instructions = () => visibleTools().some(tool => tool.name === "my_photos") ? `${INSTRUCTIONS} ${PHOTO_INSTRUCTIONS}` : INSTRUCTIONS;
 
     switch (msg.method) {
@@ -1427,7 +1427,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const name = params.name;
         if (!(TOOL_NAMES as readonly string[]).includes(name)) return out(200, { jsonrpc: "2.0", id, result: { ...(modern ? { resultType: "complete" } : {}), content: [{ type: "text", text: "Unknown tool." }], isError: true } });
         const tool = name as ToolName;
-        if (onboardingOnly && outsidePilot.has(tool)) return result({ content: [{ type: "text", text: "This connection supports onboarding only." }], isError: true });
+        if (onboardingOnly && !onboardingTools.has(tool)) return result({ content: [{ type: "text", text: "This connection supports onboarding only." }], isError: true });
         const need = TOOL_SCOPE[tool];
         if (need) {
           const scopeChallenge = challenge(resource, {

@@ -105,21 +105,39 @@ consent. Use the normal disconnect/revoke flow to revoke a grant permanently.
 Hosted ChatGPT acceptance needs a separately reviewed, reachable test endpoint and
 the user's connector consent. A successful local OAuth case does not prove it.
 
-### The slop.date ChatGPT connector
+### Real-account custom ChatGPT pilot (inactive by default)
 
-A person can add `https://slop.date/mcp` as a connector in ChatGPT. Its issuer is
-`https://slop.date`. A DCR client whose redirects all use `chatgpt.com` or
-`chat.openai.com` is a full-surface slop.date connection for every person, with the
-same tools, account checks and revocation as every other connector
-([spec/connectorTools.md](../../spec/connectorTools.md)). No allowlist applies.
-Slop.date is not in the public OpenAI
-plugin and has no `/mcp/openai` surface, because that plugin must suit ages 13 to 17
-([spec/agentEntry.md](../../spec/agentEntry.md), `plugins/build.ts`). A CIMD client
-from an OpenAI host stays unavailable on slop.date.
+The separate `MCP_CUSTOM_CHATGPT_SLOP=on` setting prepares an account-allowlisted
+custom connector at `https://slop.date/mcp`. Its issuer stays `https://slop.date`.
+Set `MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS` to the existing, explicitly approved
+person IDs. Do not log or publish that list. Missing means off; invalid settings,
+an empty allowlist, dev/unknown environments, and a mixed development pilot fail
+startup. This mode requires explicit staging or production configuration and the
+normal deployed database, Turnstile, phone verification and session checks.
 
-The person enters their own phone and code and accepts the terms and text consent
-only in the site flow. Never enable the development pilot or use fictional OTP on
-the deployed service.
+Only DCR clients whose redirects all use the supported ChatGPT hosts qualify.
+Client names do not establish trust. The current person must be allowlisted, have
+the same phone identity, have an active/onboarding Slop membership without review,
+have a stored age floor of at least 18, and have no hold or ban. These checks apply
+at authorization, code exchange, refresh and authenticated MCP requests. Issued codes remain bound to the verified account even if the browser account changes.
+
+This pilot offers onboarding only: `app_info`, `start_signup`, `check_status` and
+`submit_profile`. `get_updates` is omitted and refused for pilot connections.
+While enabled, unauthenticated Slop discovery also offers only those four tools;
+authenticated non-pilot clients retain their existing tool access. Public OpenAI
+plugin filtering and Slop's unavailable `/mcp/openai` surface remain unchanged.
+CIMD does not inherit this exception.
+
+Disable the flag or remove a person from the allowlist to suspend access after
+the runtime reload/restart. Revocation remains available. Re-enabling can resume
+an eligible, unrevoked grant; use the existing disconnect flow for permanent
+withdrawal. No new account store, model service or OTP provider is added.
+
+Preparing or testing this code does not approve activation. Before rollout,
+review the private-connector policy, approve the named accounts, verify staging,
+then obtain deployment approval. The person enters their own real phone/code and
+accepts real Terms/consent only in the site flow. Never enable the development
+pilot or use fictional OTP on the real deployed service.
 
 ```bash
 pnpm run security                                               # the pending security suite (MCP OAuth with platform and backend checks)
