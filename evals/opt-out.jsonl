@@ -173,3 +173,13 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "I want out of this", "label": "stop", "lang": "en"}
+{"text": "i want out of this list", "label": "stop", "lang": "en"}
+{"text": "I want out of the list", "label": "stop", "lang": "en"}
+{"text": "I want out of your list", "label": "stop", "lang": "en"}
+{"text": "please I want out of this", "label": "stop", "lang": "en"}
+{"text": "I just want out of this list", "label": "stop", "lang": "en"}
+{"text": "I want out of this meeting", "label": "not_stop", "lang": "en"}
+{"text": "I want out of this group chat", "label": "not_stop", "lang": "en"}
+{"text": "I want out of this contract", "label": "not_stop", "lang": "en"}
+{"text": "i want out of the group chat", "label": "not_stop", "lang": "en"}
