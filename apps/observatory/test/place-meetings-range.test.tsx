@@ -14,7 +14,9 @@
 // "Meetings · 7d", click it, and read the Met column of the pipeline drawer.
 // Fixture: o-new met 2 days ago (in range both ways), o-old met 10 days ago
 // with feedback 2 days ago (in range by updatedAt only), o-ast met 2 days ago
-// in Astoria (other place, must stay out of both).
+// in Astoria (other place, must stay out of both), o-cancelled cancelled with
+// a meeting 10 days ago and an update 2 days ago (a closed opportunity keeps
+// its updatedAt for the range test, so it stays in the Closed column).
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { expect, test } from "vitest";
@@ -58,6 +60,7 @@ test("Harlem place detail Meetings KPI and the pipeline Met column agree after l
       opp("o-new", "COMPLETED", ["m1", "m2"], NOW - 2 * DAY, NOW - 2 * DAY),
       opp("o-old", "FEEDBACK_COLLECTED", ["m1", "m2"], NOW - 10 * DAY, NOW - 2 * DAY),
       opp("o-ast", "COMPLETED", ["m3", "m4"], NOW - 2 * DAY, NOW - 2 * DAY),
+      opp("o-cancelled", "CANCELLED", ["m1", "m2"], NOW - 10 * DAY, NOW - 2 * DAY),
     ],
     feed: [], stats: stats(), engineRuns: [],
   };
@@ -146,6 +149,14 @@ test("Harlem place detail Meetings KPI and the pipeline Met column agree after l
     expect(text(met.querySelector("b"))).toBe("1");
     expect(text(met)).toContain("Maya + Jon");
     expect(text(met)).not.toContain("Ava + Leo");
+    // Closed states keep updatedAt for the range test: the cancelled meeting
+    // is 10 days old but updated 2 days ago, so it stays in Closed.
+    await act(async () => { store.setFilters({ stateGroup: "closed" }); await sleep(10); });
+    expect(store.ui.filters.stateGroup).toBe("closed");
+    await wait(() => !!window.document.querySelector('section[aria-label="Closed"]'), "the pipeline Closed column");
+    const closed = window.document.querySelector('section[aria-label="Closed"]')!;
+    expect(text(closed.querySelector("b"))).toBe("1");
+    expect(text(closed)).toContain("Maya + Jon");
   } finally {
     for (const s of sockets) { try { s.close(); } catch { /* already closed */ } }
     globalThis.fetch = nativeFetch;
